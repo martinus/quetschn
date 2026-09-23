@@ -89,12 +89,16 @@ struct seqlz_tables;
 
 __SIZE_TYPE__ seqlz_tables_size(void);
 
+/* 1 if every symbol has a code, which the encoder needs; complete prefix codes can leave symbols out. */
+int seqlz_all_symbols(const struct seqlz_tables* t);
+
 /* Builds encode codes and decode tables from code lengths. -1 if the lengths are not a valid prefix
  * code: longer than SEQLZ_MAX_BITS, over-subscribed, or no symbol at all. */
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths);
 
-/* Writes the page for these sequences and literals. Returns the length, or 0 if dst_cap is too small
- * or a symbol has no code in these tables. */
+/* Writes the page for these sequences and literals, the last sequence with match 0. dst_cap must be at
+ * least two pages. Returns the length, or 0 if dst_cap is smaller, the tables lack a code for some
+ * symbol, or the sequences do not fit a page. */
 unsigned int seqlz_encode(const struct seqlz_tables* t,
                           const struct seqlz_sequence* seq,
                           unsigned int n,
@@ -115,9 +119,33 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml) {
     return a + 16U * b;
 }
 
+/*
+ * The compressor: its own matcher, and the sequences coded straight into dst, the literals copied from
+ * the page. The state is per CPU, the hash table in it is never cleared: an entry from an earlier page
+ * only costs a comparison that fails, every match is checked against the bytes.
+ */
+#define SEQLZ_HASH_BITS 12U
+#define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
+
+struct seqlz_state {
+    unsigned short table[1U << SEQLZ_HASH_BITS];
+};
+
+/* The sequences of a page as seqlz's matcher finds them, the last one without a match. Returns their
+ * number. The literals are the bytes of the page that no match covers. */
+unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_sequence* seq);
+
+/* Compresses one page with seqlz_find's matcher and the tables. dst_cap must be at least two pages, as
+ * zram's buffer is, which is always enough (see the encoder in seqlz.c). Returns the length, or 0 if
+ * dst_cap is smaller or the tables lack a code for some symbol. The same bytes as seqlz_encode() for
+ * seqlz_find's sequences. */
+unsigned int
+seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
+
 /* The tables compiled in, trained on resident pages (explore/seqlz_default_tables.c). */
 extern const struct seqlz_lengths seqlz_default_lz4;
 extern const struct seqlz_lengths seqlz_default_lz4hc;
+extern const struct seqlz_lengths seqlz_default_own; /* for seqlz_compress, its own matcher */
 
 #ifdef __cplusplus
 }

@@ -78,6 +78,7 @@ extern const struct quetschn_codec quetschn_codec_bdelta;
 extern const struct quetschn_codec quetschn_codec_zstd_nolit;
 extern const struct quetschn_codec quetschn_codec_seqlz;
 extern const struct quetschn_codec quetschn_codec_seqlz_hc;
+extern const struct quetschn_codec quetschn_codec_seqlz_fast;
 /* optional, explore/zram_memlz.c with QUETSCHN_MEMLZ_DIR */
 extern const struct quetschn_codec quetschn_codec_memlz;
 
