@@ -257,10 +257,16 @@ double percentile(std::vector<double> values, double p) {
         throw std::invalid_argument("percentile: no values");
     }
     std::sort(values.begin(), values.end());
-    // nearest rank: the smallest value with at least p% of all values at or below it
-    auto rank = static_cast<std::size_t>(std::ceil(p / 100.0 * static_cast<double>(values.size())));
-    rank = std::clamp<std::size_t>(rank, 1, values.size());
-    return values[rank - 1];
+    return values[nearest_rank(p, values.size()) - 1];
+}
+
+std::size_t nearest_rank(double p, std::size_t n) {
+    // the smallest value with at least p% of all values at or below it. p is not exact in binary, e.g.
+    // 99.9 / 100 * 2000 is 1998.0000000000002, so a result that close to an integer is that integer.
+    auto const x = p / 100.0 * static_cast<double>(n);
+    auto const nearest = std::round(x);
+    auto const rank = static_cast<std::size_t>(std::abs(x - nearest) <= 1e-9 * std::max(1.0, x) ? nearest : std::ceil(x));
+    return std::clamp<std::size_t>(rank, 1, n);
 }
 
 latency_summary summarize_latency(std::vector<double> const& values) {

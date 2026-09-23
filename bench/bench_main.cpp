@@ -3,6 +3,7 @@
 // One binary per codec (QUETSCHN_CODEC is set by CMake), so that code layout and alignment of one
 // codec cannot shift the numbers of another. See PLAN.md §5.2 for the metrics.
 
+#include "compare.h"
 #include "harness.h"
 #include "zsmalloc_cost.h"
 
@@ -33,7 +34,7 @@ void usage() {
                  "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
                  "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
-                 "--out writes one line per page, for paired comparisons between codecs.\n",
+                 "--out writes one line per page, for quetschn-compare.\n",
                  QUETSCHN_CODEC.name);
 }
 
@@ -155,11 +156,7 @@ int main(int argc, char** argv) {
 
         if (!out_path.empty()) {
             auto out = std::ofstream(out_path);
-            out << "page\tcomp_len\thuge\tcost\tcompress_ns\tdecompress_ns\tdecompress_cold_ns\n";
-            for (auto const& p : r.pages) {
-                out << p.page << '\t' << p.comp_len << '\t' << (p.huge ? 1 : 0) << '\t' << p.cost << '\t' << p.compress_ns
-                    << '\t' << p.decompress_ns << '\t' << p.decompress_cold_ns << '\n';
-            }
+            quetschn::write_page_results(out, r.pages);
             if (!out) {
                 std::fprintf(stderr, "error: cannot write %s\n", out_path.c_str());
                 return 1;

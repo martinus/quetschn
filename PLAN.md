@@ -639,8 +639,9 @@ results/                    published measurements (no raw pages, ever)
 6. The harness runs `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags, with
    and without dictionary: `quetschn-bench-<codec> [--level n] [--dict file]`, one binary per codec.
    `quetschn-split-corpus` splits a corpus by process name, so a dictionary is trained on programs it
-   is not measured on (§5.3). Still missing: the arm64 flags from a real arm64 kernel build, the PMU
-   cycle counter on arm64, and the paired per-page comparison.
+   is not measured on (§5.3). `quetschn-compare` pairs two runs page by page, with bootstrap
+   confidence intervals for the saving and for every latency percentile difference. Still missing:
+   the arm64 flags from a real arm64 kernel build, and the PMU cycle counter on arm64.
 
    First run with dictionaries, only to shake out the harness. 61 043 resident pages of the
    development machine (the biased collector 1), split by process name: 72 names to train a 64 KiB
