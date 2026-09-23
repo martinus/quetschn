@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { echo "usage: tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
+[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
 tree=$1
 corpus=$2
 here=$(cd "$(dirname "$0")" && pwd)
@@ -19,6 +19,12 @@ trap 'rm -rf "$work"' EXIT
 
 git -C "$tree" archive HEAD | tar -x -C "$work" --one-top-level=src
 patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
+# seqlz as a zram backend, with lz4's -O3
+z="$work/src/drivers/block/zram"
+cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../explore/seqlz.c" "$here/../../explore/seqlz.h" \
+    "$here/../../explore/page_lz.h" "$here/../../explore/seqlz_default_tables.c" "$z/"
+sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\tNULL|' "$z/zcomp.c"
+printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o\nCFLAGS_seqlz.o += -O3\n' >>"$z/Makefile"
 make -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 \
     --enable DEVTMPFS --enable BLK_DEV_INITRD
@@ -34,5 +40,6 @@ chmod 600 "$work/initramfs.cpio"
 
 # CPU 2, as the other benchmarks; set a fixed frequency yourself
 taskset -c 2 qemu-system-x86_64 -enable-kvm -cpu host -smp 1 -m 2G -kernel "$work/build/arch/x86/boot/bzImage" \
-    -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1" -nographic -no-reboot |
+    -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=4 quetschn.algos=${ALGOS:-lz4}" \
+    -nographic -no-reboot |
     grep -a RESULT

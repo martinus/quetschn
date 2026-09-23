@@ -587,6 +587,21 @@ page; the prefetch alternates from page to page, the median of 3 runs per page. 
   little core behaves. The flush happens inside the timed part, for all four variants alike. zram
   gives the codec a copy in `local_copy` when an object spans two pages; that copy is warm anyway.
 
+**`seqlz-fast` in the kernel.** `ALGOS=lz4,seqlz tools/zram-vm/run.sh` builds seqlz as a zram backend
+(`backend_seqlz.c`, with `lz4`'s `-O3`), one device per algorithm, and reads the pages from both in turn
+(the destination prefetch left out, it did not help). zram's own `mm_stat` for the 20 000 pages: `lz4`
+27 239 770 bytes compressed, 29 007 872 used by zsmalloc; `seqlz` 20 975 271 and 22 679 552, 22% less
+memory. Read latency p50 / p90 / p99 in ns:
+
+| condition | `lz4` | `lz4`, prefetch | `seqlz` | `seqlz`, prefetch |
+| --- | --- | --- | --- | --- |
+| warm | 1950 / 2510 / 3560 | 1890 / 2469 / 3549 | 2550 / 3291 / 4150 | 2491 / 3211 / 4120 |
+| compressed data flushed | 2370 / 3269 / 4490 | 2200 / 2820 / 3900 | 3150 / 4240 / 5450 | 2790 / 3580 / 4410 |
+| both flushed | 2480 / 3290 / 4490 | 2379 / 2970 / 3990 | 3269 / 4340 / 5490 | 2950 / 3730 / 4580 |
+
+In the real read path `seqlz` is 550 to 600 ns slower per page than `lz4`, warm or cold, with the
+prefetch in both: the difference of the decoders' work, about 0.6 µs, and not of the caches.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.

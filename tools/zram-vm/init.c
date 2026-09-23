@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
-// /init of the VM of run.sh: writes /pages to /dev/zram0 and reads each page back with O_DIRECT, timed, with the
-// prefetch of zram-prefetch.patch off and on (0 none, 1 destination, 2 source, 3 both), warm and with the
-// destination or the compressed source flushed from the cache first.
+// /init of the VM of run.sh. One zram device per algorithm of quetschn.algos= on the kernel command
+// line; writes /pages to each and reads each page back with O_DIRECT, timed, so that zram decompresses
+// straight into this program's page. Per page all algorithms and both prefetches of zram-prefetch.patch
+// (0 none, 2 the compressed data) in turn, warm and with the compressed data or also the destination
+// flushed from the cache first. Prints p50 / p90 / p99 over the pages of the median of 3 runs per page.
 #define _GNU_SOURCE
 #include <fcntl.h>
 #include <stdio.h>
@@ -11,6 +13,9 @@
 #include <sys/reboot.h>
 #include <time.h>
 #include <unistd.h>
+
+#define MAX_ALGOS 4
+#define REPS 3
 
 static void put(const char* path, const char* v) {
     int fd = open(path, O_WRONLY);
@@ -37,70 +42,83 @@ static void flush(void* p, size_t n) {
 }
 
 int main(void) {
+    static const int modes[2] = {0, 2};
+    static const char* const conds[3] = {"warm", "compressed data flushed", "both flushed"};
+    char cmdline[4096] = {0}, algos[MAX_ALGOS][32];
+    int n_algos = 0, fds[MAX_ALGOS];
+
     mount("devtmpfs", "/dev", "devtmpfs", 0, 0);
     mount("sysfs", "/sys", "sysfs", 0, 0);
     mount("proc", "/proc", "proc", 0, 0);
-    put("/sys/block/zram0/comp_algorithm", "lz4");
-    put("/sys/block/zram0/disksize", "512M");
+    {
+        int cf = open("/proc/cmdline", O_RDONLY);
+        read(cf, cmdline, sizeof cmdline - 1);
+        close(cf);
+        char* a = strstr(cmdline, "quetschn.algos=");
+        a = a ? a + strlen("quetschn.algos=") : "lz4";
+        for (char* tok = strtok(a, ", \n"); tok && n_algos < MAX_ALGOS; tok = strtok(NULL, ", \n"))
+            snprintf(algos[n_algos++], sizeof algos[0], "%s", tok);
+    }
+
     int pf = open("/pages", O_RDONLY);
     off_t size = lseek(pf, 0, SEEK_END);
     size_t n = (size_t)size / 4096;
     char* pages;
     posix_memalign((void**)&pages, 4096, (size_t)size);
     pread(pf, pages, (size_t)size, 0);
-    int fd = open("/dev/zram0", O_RDWR | O_DIRECT);
-    printf("INFO pages %zu, fd %d, size %lld\n", n, fd, (long long)size);
-    for (size_t i = 0; i < n; i++)
-        pwrite(fd, pages + i * 4096, 4096, (off_t)(i * 4096));
+    for (int a = 0; a < n_algos; a++) {
+        char path[128], dev[64];
+        snprintf(path, sizeof path, "/sys/block/zram%d/comp_algorithm", a);
+        put(path, algos[a]);
+        snprintf(path, sizeof path, "/sys/block/zram%d/disksize", a);
+        put(path, "512M");
+        snprintf(dev, sizeof dev, "/dev/zram%d", a);
+        fds[a] = open(dev, O_RDWR | O_DIRECT);
+        for (size_t i = 0; i < n; i++)
+            pwrite(fds[a], pages + i * 4096, 4096, (off_t)(i * 4096));
+        snprintf(path, sizeof path, "/sys/block/zram%d/mm_stat", a);
+        char st[256] = {0};
+        int sf = open(path, O_RDONLY);
+        read(sf, st, sizeof st - 1);
+        close(sf);
+        printf("RESULT %-8s mm_stat %s", algos[a], st);
+    }
+
     char* buf;
     posix_memalign((void**)&buf, 4096, 4096);
-    {
-        ssize_t got = pread(fd, buf, 4096, 4096 * 7);
-        printf("INFO read %zd, same %d\n", got, memcmp(buf, pages + 7 * 4096, 4096) == 0);
-        char st[256] = {0};
-        int sf = open("/sys/block/zram0/mm_stat", O_RDONLY);
-        read(sf, st, sizeof st - 1);
-        printf("INFO mm_stat %s", st);
-    }
-    size_t other_n = 2u << 20;
-    char* other = malloc(other_n);
-    memset(other, 1, other_n);
-    int reps = 3;
-    long long* t = malloc(sizeof(long long) * n * reps * 4);
-    const char* names[4] = {"warm", "destination flushed", "source flushed", "source and destination flushed"};
-    volatile long long sink = 0;
-    for (int cond = 0; cond < 4; cond++) {
-        put("/sys/module/zram/parameters/zram_flush_src", cond >= 2 ? "1" : "0");
-        for (int r = 0; r < reps; r++) {
+    size_t per = (size_t)n_algos * 2;
+    long long* t = malloc(sizeof(long long) * n * REPS * per);
+    for (int c = 0; c < 3; c++) {
+        for (int r = 0; r < REPS; r++) {
             for (size_t i = 0; i < n; i++) {
-                for (int m = 0; m < 4; m++) {
-                    int mode = (int)((i + r + m) & 3);
+                for (size_t k = 0; k < per; k++) {
+                    size_t which = (i + (size_t)r + k) % per;
+                    int a = (int)(which / 2), mode = modes[which % 2];
                     char mv[2] = {(char)('0' + mode), 0};
                     put("/sys/module/zram/parameters/zram_prefetch", mv);
                     put("/sys/module/zram/parameters/zram_flush_src", "0");
-                    pread(fd, buf, 4096, (off_t)(i * 4096)); /* warm up the path */
-                    put("/sys/module/zram/parameters/zram_flush_src", cond >= 2 ? "1" : "0");
-                    if (cond == 1 || cond == 3)
+                    pread(fds[a], buf, 4096, (off_t)(i * 4096)); /* warm up the path */
+                    put("/sys/module/zram/parameters/zram_flush_src", c >= 1 ? "1" : "0");
+                    if (c == 2)
                         flush(buf, 4096);
                     long long t0 = now();
-                    pread(fd, buf, 4096, (off_t)(i * 4096));
-                    t[((size_t)mode * reps + (size_t)r) * n + i] = now() - t0;
+                    pread(fds[a], buf, 4096, (off_t)(i * 4096));
+                    t[(which * REPS + (size_t)r) * n + i] = now() - t0;
                 }
             }
         }
-        for (int mode = 0; mode < 4; mode++) {
-            /* median over the repetitions per page, then percentiles over the pages */
+        for (size_t which = 0; which < per; which++) {
             long long* med = malloc(sizeof(long long) * n);
             for (size_t i = 0; i < n; i++) {
-                long long v[3];
-                for (int r = 0; r < reps; r++)
-                    v[r] = t[((size_t)mode * reps + (size_t)r) * n + i];
-                qsort(v, (size_t)reps, sizeof v[0], cmp);
-                med[i] = v[reps / 2];
+                long long v[REPS];
+                for (int r = 0; r < REPS; r++)
+                    v[r] = t[(which * REPS + (size_t)r) * n + i];
+                qsort(v, REPS, sizeof v[0], cmp);
+                med[i] = v[REPS / 2];
             }
             qsort(med, n, sizeof med[0], cmp);
-            printf("RESULT %-32s prefetch %d: p50 %lld p90 %lld p99 %lld ns\n", names[cond], mode, med[n / 2],
-                   med[n * 9 / 10], med[n * 99 / 100]);
+            printf("RESULT %-8s %-24s prefetch %d: p50 %lld p90 %lld p99 %lld ns\n", algos[which / 2], conds[c],
+                   modes[which % 2], med[n / 2], med[n * 9 / 10], med[n * 99 / 100]);
             free(med);
         }
     }
