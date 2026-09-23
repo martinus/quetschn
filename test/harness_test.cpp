@@ -303,6 +303,27 @@ TEST_CASE("harness: interleaved runs give every codec the result of its own run"
     }
 }
 
+TEST_CASE("harness: interleaved, each codec can have its own level") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100)});
+    auto const codecs = std::array<quetschn_codec const*, 2>{&trim_codec, &trim_codec};
+    auto opts = untimed(4);
+    opts.levels = {2, 7};
+    auto const r = quetschn::run_interleaved(c, codecs, model, opts);
+    CHECK(r[0].level == 2);
+    CHECK(r[1].level == 7);
+    CHECK(r[0].stream_bytes == 300);
+    CHECK(r[1].stream_bytes == 800);
+
+    opts.levels = {};
+    auto const same = quetschn::run_interleaved(c, codecs, model, opts);
+    CHECK(same[0].level == 4);
+    CHECK(same[1].level == 4);
+
+    opts.levels = {2};
+    CHECK_THROWS_AS((void)quetschn::run_interleaved(c, codecs, model, opts), std::invalid_argument);
+}
+
 TEST_CASE("harness: interleaved, every codec is timed on every page") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100), page_with_prefix(page_size), page_with_prefix(2000)});

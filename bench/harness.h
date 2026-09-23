@@ -31,6 +31,8 @@ struct run_options {
     bool measure_time = true;
     // zram's algorithm_params level, QUETSCHN_LEVEL_DEFAULT for the codec's default
     int level = QUETSCHN_LEVEL_DEFAULT;
+    // run_interleaved only: one level per codec, instead of level for all. Empty for level.
+    std::vector<int> levels;
     // zram's algorithm_params dict, empty for none. Codecs that do not use dictionaries ignore it, like zram.
     std::vector<std::byte> dict;
 };

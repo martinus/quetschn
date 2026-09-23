@@ -52,6 +52,14 @@ bootstrap that resamples pages, the same pages for both runs.
 `quetschn-bench-spike-switch`, `-branchless`, `-zeroskip` and `-slots` run the decoder latency spike
 of `PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
 
+For trying out designs, `tools/quick-bench.sh` is the fast benchmark: exact zsmalloc cost on the whole
+corpus without timing, and latency on a fixed sample of 20 000 pages, all compared with the first
+codec. 26s instead of 89s for six codecs; `docs/explored-designs.md` says when to run the full one.
+
+```sh
+tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd:-1,spike-slots
+```
+
 Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
 `quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on
 the same page, in rotating order. `--out` is a directory then:

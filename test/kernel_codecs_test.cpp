@@ -8,6 +8,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -107,7 +108,12 @@ std::vector<page> test_pages() {
 }
 
 std::vector<quetschn_codec const*> codecs() {
-    return {&quetschn_codec_lz4, &quetschn_codec_lzo, &quetschn_codec_lzo_rle, &quetschn_codec_zstd};
+    return {&quetschn_codec_lz4,
+            &quetschn_codec_lzo,
+            &quetschn_codec_lzo_rle,
+            &quetschn_codec_zstd,
+            &quetschn_codec_shuffle_lz4,
+            &quetschn_codec_bdelta};
 }
 
 // A zram device (params) with one per-CPU stream, set up the way zram does it.
@@ -307,7 +313,10 @@ TEST_CASE("kernel codecs: compressed sizes are plausible") {
         CHECK(n > page_size);
         CHECK(n < page_size + page_size / 16);
         CHECK(compress(*codec, zero_runs_page()).size() < 200);
-        CHECK(compress(*codec, text_page()).size() < page_size / 2);
+        // the byte-oriented kernel codecs find the repeats in text, the word-oriented candidates do not
+        if (codec != &quetschn_codec_shuffle_lz4 && codec != &quetschn_codec_bdelta) {
+            CHECK(compress(*codec, text_page()).size() < page_size / 2);
+        }
     }
 }
 
@@ -382,6 +391,31 @@ TEST_CASE("kernel codecs: memory per CPU and per device") {
     CHECK(per_cpu(quetschn_codec_zstd, dict) > per_cpu(quetschn_codec_zstd) * 9 / 10);
     CHECK(per_cpu(quetschn_codec_zstd, dict) < per_cpu(quetschn_codec_zstd) * 11 / 10);
     CHECK(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated > 0);
+}
+
+TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts") {
+    auto counter = std::size_t{0};
+    auto* small = quetschn_zalloc(100, &counter);
+    auto* page_block = quetschn_zalloc(4096, &counter);
+    auto* large = quetschn_zalloc(70000, &counter);
+    REQUIRE(small != nullptr);
+    REQUIRE(page_block != nullptr);
+    REQUIRE(large != nullptr);
+    CHECK(reinterpret_cast<std::uintptr_t>(small) % 64 == 0);
+    CHECK(reinterpret_cast<std::uintptr_t>(page_block) % 4096 == 0);
+    CHECK(reinterpret_cast<std::uintptr_t>(large) % 4096 == 0);
+    CHECK(counter == 100 + 4096 + 70000);
+    // zeroed, and all of it writable (ASan)
+    auto const* bytes = static_cast<unsigned char const*>(large);
+    CHECK(std::all_of(bytes, bytes + 70000, [](unsigned char b) {
+        return b == 0;
+    }));
+    std::memset(large, 1, 70000);
+    quetschn_free(large, &counter);
+    quetschn_free(small, &counter);
+    quetschn_free(page_block, &counter);
+    quetschn_free(nullptr, &counter);
+    CHECK(counter == 0);
 }
 
 TEST_CASE("kernel codecs: every allocation is released again") {
