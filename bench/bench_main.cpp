@@ -10,6 +10,8 @@
 #include <sched.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdio>
 #include <cstring>
@@ -18,24 +20,50 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#ifndef QUETSCHN_CODEC
-#    error "QUETSCHN_CODEC must name one of the quetschn_codec_* objects"
+#if !defined(QUETSCHN_CODEC) && !defined(QUETSCHN_INTERLEAVED)
+#    error "QUETSCHN_CODEC must name one of the quetschn_codec_* objects, or QUETSCHN_INTERLEAVED be set"
 #endif
 
 namespace {
 
+#ifdef QUETSCHN_INTERLEAVED
+// All codecs in one binary, for comparisons that must not suffer from drift between separate runs.
+// The price: the code layout of one codec can shift another's numbers, which one binary per codec
+// avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
+auto const all_codecs = std::array<quetschn_codec const*, 8>{&quetschn_codec_lz4,
+                                                             &quetschn_codec_lzo,
+                                                             &quetschn_codec_lzo_rle,
+                                                             &quetschn_codec_zstd,
+                                                             &quetschn_codec_spike_switch,
+                                                             &quetschn_codec_spike_branchless,
+                                                             &quetschn_codec_spike_zeroskip,
+                                                             &quetschn_codec_spike_slots};
+auto const* const program = "quetschn-bench-interleaved";
+#else
+auto const* const program = QUETSCHN_CODEC.name;
+#endif
+
 void usage() {
     std::fprintf(stderr,
+#ifdef QUETSCHN_INTERLEAVED
+                 "usage: %s --codecs <a,b,...> --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>]\n"
+                 "          [--cpu <n>] [--out <dir>]\n"
+                 "\n"
+                 "Runs all codecs on every page, with the timing interleaved: each repetition runs each codec\n"
+                 "once, starting with another codec each time. --out writes <dir>/<codec>.tsv.\n"
+#else
                  "usage: %s --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>] [--cpu <n>]\n"
                  "          [--out <file.tsv>]\n"
                  "\n"
+                 "--out writes one line per page, for quetschn-compare.\n"
+#endif
                  "Reads <base>.pages and <base>.tsv as written by quetschn-collect-resident.\n"
                  "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
                  "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
-                 "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
-                 "--out writes one line per page, for quetschn-compare.\n",
-                 QUETSCHN_CODEC.name);
+                 "--cpu pins the process to one CPU; set a fixed frequency yourself.\n",
+                 program);
 }
 
 template <typename T>
@@ -74,9 +102,31 @@ int main(int argc, char** argv) {
     auto dict_path = std::string();
     auto opts = quetschn::run_options{};
     int cpu = -1;
+    auto codecs = std::vector<quetschn_codec const*>();
+#ifndef QUETSCHN_INTERLEAVED
+    codecs.push_back(&QUETSCHN_CODEC);
+#endif
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
+#ifdef QUETSCHN_INTERLEAVED
+        if (arg == "--codecs" && has_value) {
+            auto names = std::string_view(argv[++i]);
+            while (!names.empty()) {
+                auto const name = names.substr(0, names.find(','));
+                names.remove_prefix(std::min(names.size(), name.size() + 1));
+                auto const it = std::find_if(all_codecs.begin(), all_codecs.end(), [&](auto const* codec) {
+                    return name == codec->name;
+                });
+                if (it == all_codecs.end()) {
+                    std::fprintf(stderr, "error: unknown codec '%.*s'\n", static_cast<int>(name.size()), name.data());
+                    return 2;
+                }
+                codecs.push_back(*it);
+            }
+            continue;
+        }
+#endif
         if (arg == "--corpus" && has_value) {
             base = argv[++i];
         } else if (arg == "--out" && has_value) {
@@ -91,7 +141,7 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (base.empty()) {
+    if (base.empty() || codecs.empty()) {
         usage();
         return 2;
     }
@@ -129,37 +179,45 @@ int main(int argc, char** argv) {
             first_line("/sys/devices/system/cpu/cpu" + std::to_string(governor_cpu) + "/cpufreq/scaling_governor").c_str());
         std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
 
-        auto const r = quetschn::run_codec(c, QUETSCHN_CODEC, model, opts);
-        auto const s = quetschn::summarize(r, c.page_size);
-        if (r.level == QUETSCHN_LEVEL_DEFAULT) {
-            std::printf("codec      %s, no level (zram ignores it for this codec)\n", QUETSCHN_CODEC.name);
-        } else {
-            std::printf("codec      %s, level %d\n", QUETSCHN_CODEC.name, r.level);
-        }
+        auto const results = quetschn::run_interleaved(c, codecs, model, opts);
+        for (std::size_t k = 0; k < codecs.size(); ++k) {
+            auto const* codec = codecs[k];
+            auto const& r = results[k];
+            auto const s = quetschn::summarize(r, c.page_size);
+            std::printf("\n");
+            if (r.level == QUETSCHN_LEVEL_DEFAULT) {
+                std::printf("codec      %s, no level (zram ignores it for this codec)\n", codec->name);
+            } else {
+                std::printf("codec      %s, level %d\n", codec->name, r.level);
+            }
+            std::printf("pages                  %zu measured, %zu same-filled skipped\n", s.pages, s.same_filled);
+            std::printf("zsmalloc cost          %.0f bytes, %.1f%% of uncompressed, %.1f bytes/page\n",
+                        s.total_cost,
+                        s.pages == 0 ? 0.0 : 100.0 * s.total_cost / s.total_uncompressed,
+                        s.pages == 0 ? 0.0 : s.total_cost / static_cast<double>(s.pages));
+            std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
+            std::printf("memory per CPU         %zu bytes\n", r.stream_bytes);
+            std::printf("memory per device      %zu bytes (dictionary %s, %zu bytes)\n",
+                        r.params_bytes,
+                        dict_path.empty() ? "none" : dict_path.c_str(),
+                        opts.dict.size());
+            std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
+            print_latency("compress", s.compress);
+            print_latency("decompress warm", s.decompress);
+            print_latency("decompress cold", s.decompress_cold);
 
-        std::printf("\n");
-        std::printf("pages                  %zu measured, %zu same-filled skipped\n", s.pages, s.same_filled);
-        std::printf("zsmalloc cost          %.0f bytes, %.1f%% of uncompressed, %.1f bytes/page\n",
-                    s.total_cost,
-                    s.pages == 0 ? 0.0 : 100.0 * s.total_cost / s.total_uncompressed,
-                    s.pages == 0 ? 0.0 : s.total_cost / static_cast<double>(s.pages));
-        std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
-        std::printf("memory per CPU         %zu bytes\n", r.stream_bytes);
-        std::printf("memory per device      %zu bytes (dictionary %s, %zu bytes)\n",
-                    r.params_bytes,
-                    dict_path.empty() ? "none" : dict_path.c_str(),
-                    opts.dict.size());
-        std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
-        print_latency("compress", s.compress);
-        print_latency("decompress warm", s.decompress);
-        print_latency("decompress cold", s.decompress_cold);
-
-        if (!out_path.empty()) {
-            auto out = std::ofstream(out_path);
-            quetschn::write_page_results(out, r.pages);
-            if (!out) {
-                std::fprintf(stderr, "error: cannot write %s\n", out_path.c_str());
-                return 1;
+            if (!out_path.empty()) {
+#ifdef QUETSCHN_INTERLEAVED
+                auto const path = out_path + "/" + codec->name + ".tsv";
+#else
+                auto const& path = out_path;
+#endif
+                auto out = std::ofstream(path);
+                quetschn::write_page_results(out, r.pages);
+                if (!out) {
+                    std::fprintf(stderr, "error: cannot write %s\n", path.c_str());
+                    return 1;
+                }
             }
         }
     } catch (std::exception const& e) {

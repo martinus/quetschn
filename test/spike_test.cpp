@@ -21,10 +21,11 @@ struct named_decoder {
     decoder fn;
 };
 
-constexpr auto decoders = std::array<named_decoder, 3>{
+constexpr auto decoders = std::array<named_decoder, 4>{
     named_decoder{"switch", wk64_decompress_switch},
     named_decoder{"branchless", wk64_decompress_branchless},
     named_decoder{"zeroskip", wk64_decompress_zeroskip},
+    named_decoder{"slots", wk64_decompress_slots},
 };
 
 std::vector<unsigned char> compress(page const& p) {
@@ -103,6 +104,19 @@ TEST_CASE("spike: a group of 4 zero words resets slot 0 of the table") {
     CHECK(tag(c, 1) == 3);
     CHECK(c[1] == 0); // words 4 to 7: one zero tag byte
     CHECK(tag(c, 8) == 2);
+    check_roundtrip(p);
+}
+
+TEST_CASE("spike: a single zero word resets slot 0 of the table too") {
+    // like above, but the zero word shares its tag byte with non-zero words, so no fast path applies
+    auto p = page{};
+    p[1] = 0x0000000d00000005ULL;
+    p[2] = 0;
+    p[3] = 7;
+    auto const c = compress(p);
+    CHECK(tag(c, 1) == 3);
+    CHECK(tag(c, 2) == 0);
+    CHECK(tag(c, 3) == 2);
     check_roundtrip(p);
 }
 
@@ -190,7 +204,11 @@ TEST_CASE("spike: any input is safe, and both decoders agree on it") {
             CAPTURE(std::string(d.name));
             auto out = page{};
             REQUIRE(d.fn(c.data(), static_cast<unsigned int>(size), out.data()) == 0);
-            CHECK(out == first);
+            // slots takes the slot to update from the stream; on streams the encoder cannot produce
+            // that can decode differently, which is fine as long as it is memory safe
+            if (d.fn != wk64_decompress_slots) {
+                CHECK(out == first);
+            }
             // and a byte less is never accepted
             CHECK(d.fn(c.data(), static_cast<unsigned int>(size - 1), out.data()) == -1);
         }

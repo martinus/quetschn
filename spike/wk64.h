@@ -44,6 +44,10 @@ int wk64_decompress_switch(const void* src, unsigned int src_len, void* dst);
 int wk64_decompress_branchless(const void* src, unsigned int src_len, void* dst);
 /* like switch, and a zero tag byte writes its 4 zero words at once */
 int wk64_decompress_zeroskip(const void* src, unsigned int src_len, void* dst);
+/* like zeroskip, and the table slot to update comes from the stream instead of from the decoded word.
+ * Decodes every stream of the encoder like the others, but may differ from them on streams the encoder
+ * cannot produce, e.g. an index that is not the slot of its word. */
+int wk64_decompress_slots(const void* src, unsigned int src_len, void* dst);
 
 #ifdef __cplusplus
 }

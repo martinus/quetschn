@@ -60,6 +60,14 @@ struct run_result {
 [[nodiscard]] run_result
 run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& model, run_options const& opts);
 
+// Like run_codec for several codecs, with the timing interleaved: for every page and every repetition,
+// each codec runs once, starting with another codec each time. A drift of CPU frequency or temperature
+// then hits all codecs alike, which separate runs cannot promise. One result per codec, in order.
+[[nodiscard]] std::vector<run_result> run_interleaved(corpus const& c,
+                                                      std::span<quetschn_codec const* const> codecs,
+                                                      zsmalloc_model const& model,
+                                                      run_options const& opts);
+
 // Nearest-rank percentile, p in [0, 100]. values must not be empty.
 [[nodiscard]] double percentile(std::vector<double> values, double p);
 

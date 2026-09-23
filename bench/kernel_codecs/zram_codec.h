@@ -70,6 +70,7 @@ extern const struct quetschn_codec quetschn_codec_zstd;
 extern const struct quetschn_codec quetschn_codec_spike_switch;
 extern const struct quetschn_codec quetschn_codec_spike_branchless;
 extern const struct quetschn_codec quetschn_codec_spike_zeroskip;
+extern const struct quetschn_codec quetschn_codec_spike_slots;
 
 /*
  * Stands in for kzalloc/vzalloc/kvzalloc: zeroed, 64 byte aligned, NULL on failure. The size is added

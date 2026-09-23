@@ -86,6 +86,20 @@ static int spike_decompress_zeroskip(struct quetschn_params* p,
     return 0;
 }
 
+static int spike_decompress_slots(struct quetschn_params* p,
+                                  struct quetschn_stream* s,
+                                  const void* src,
+                                  unsigned int src_len,
+                                  void* dst,
+                                  unsigned int* dst_len) {
+    (void)p;
+    (void)s;
+    if (*dst_len < WK64_PAGE_SIZE || wk64_decompress_slots(src, src_len, dst))
+        return -1;
+    *dst_len = WK64_PAGE_SIZE;
+    return 0;
+}
+
 const struct quetschn_codec quetschn_codec_spike_switch = {
     "spike-switch",
     spike_setup_params,
@@ -114,4 +128,14 @@ const struct quetschn_codec quetschn_codec_spike_zeroskip = {
     spike_destroy,
     spike_compress,
     spike_decompress_zeroskip,
+};
+
+const struct quetschn_codec quetschn_codec_spike_slots = {
+    "spike-slots",
+    spike_setup_params,
+    spike_release_params,
+    spike_create,
+    spike_destroy,
+    spike_compress,
+    spike_decompress_slots,
 };

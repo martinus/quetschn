@@ -4,6 +4,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -124,8 +125,26 @@ int failing_compress(quetschn_params*, quetschn_stream*, void const*, unsigned i
     return -1;
 }
 
+// like trim, with 8 more bytes of zeros at the end, so its sizes differ from trim's
+int pad_compress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    if (trim_compress(p, s, src, src_len, dst, dst_len) != 0 || *dst_len + 8 > 2 * page_size) {
+        return -1;
+    }
+    std::memset(static_cast<unsigned char*>(dst) + *dst_len, 0, 8);
+    *dst_len += 8;
+    return 0;
+}
+
+int pad_decompress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    return src_len < 8 ? -1 : trim_decompress(p, s, src, src_len - 8, dst, dst_len);
+}
+
 quetschn_codec const trim_codec{
     "trim", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, trim_decompress};
+quetschn_codec const pad_codec{
+    "pad", trim_setup_params, trim_release_params, trim_create, trim_destroy, pad_compress, pad_decompress};
 quetschn_codec const broken_codec{
     "broken", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, broken_decompress};
 quetschn_codec const failing_codec{
@@ -253,6 +272,70 @@ TEST_CASE("harness: what was set up is released, also when the run fails") {
     calls = lifecycle{};
     CHECK_THROWS((void)run_codec(c, trim_codec, model, untimed(10)));
     CHECK(calls.create == 0);
+}
+
+TEST_CASE("harness: interleaved runs give every codec the result of its own run") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({
+        page_with_prefix(100),
+        std::vector<std::byte>(page_size, std::byte{0x42}),
+        page_with_prefix(page_size),
+        page_with_prefix(3000),
+    });
+    auto const codecs = std::array<quetschn_codec const*, 2>{&trim_codec, &pad_codec};
+    auto const both = quetschn::run_interleaved(c, codecs, model, untimed());
+    REQUIRE(both.size() == 2);
+    CHECK(both[0].pages[0].comp_len == 102);
+    CHECK(both[1].pages[0].comp_len == 110);
+    for (std::size_t k = 0; k < 2; ++k) {
+        CAPTURE(k);
+        auto const& r = both[k];
+        auto const alone = run_codec(c, *codecs[k], model, untimed());
+        CHECK(r.same_filled == alone.same_filled);
+        REQUIRE(r.pages.size() == alone.pages.size());
+        for (std::size_t i = 0; i < r.pages.size(); ++i) {
+            CAPTURE(i);
+            CHECK(r.pages[i].page == alone.pages[i].page);
+            CHECK(r.pages[i].comp_len == alone.pages[i].comp_len);
+            CHECK(r.pages[i].huge == alone.pages[i].huge);
+            CHECK(r.pages[i].cost == alone.pages[i].cost);
+        }
+    }
+}
+
+TEST_CASE("harness: interleaved, every codec is timed on every page") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100), page_with_prefix(page_size), page_with_prefix(2000)});
+    auto const codecs = std::array<quetschn_codec const*, 3>{&trim_codec, &trim_codec, &trim_codec};
+    auto opts = run_options{};
+    opts.repetitions = 2;
+    auto const results = quetschn::run_interleaved(c, codecs, model, opts);
+    REQUIRE(results.size() == 3);
+    for (std::size_t k = 0; k < results.size(); ++k) {
+        CAPTURE(k);
+        REQUIRE(results[k].pages.size() == 3);
+        for (auto const& p : results[k].pages) {
+            CAPTURE(p.page);
+            CHECK(p.compress_ns > 0.0);
+            CHECK(p.decompress_ns > 0.0);
+            CHECK(p.decompress_cold_ns > 0.0);
+        }
+    }
+}
+
+TEST_CASE("harness: interleaved, a failing codec releases the others too") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100)});
+    for (auto const* second : {&broken_codec, &failing_codec, &failing_create_codec}) {
+        CAPTURE(second->name);
+        calls = lifecycle{};
+        auto const codecs = std::array<quetschn_codec const*, 2>{&trim_codec, second};
+        CHECK_THROWS((void)quetschn::run_interleaved(c, codecs, model, untimed()));
+        CHECK(calls.setup == 2);
+        CHECK(calls.release == 2);
+        CHECK(calls.create == 2);
+        CHECK(calls.destroy == (second == &failing_create_codec ? 1 : 2));
+    }
 }
 
 TEST_CASE("harness: every measured page gets a latency, stored-uncompressed pages included") {
