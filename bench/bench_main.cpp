@@ -32,7 +32,8 @@ namespace {
 // All codecs in one binary, for comparisons that must not suffer from drift between separate runs.
 // The price: the code layout of one codec can shift another's numbers, which one binary per codec
 // avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
-auto const all_codecs = std::array<quetschn_codec const*, 10>{&quetschn_codec_lz4,
+auto const all_codecs = std::array<quetschn_codec const*, 12>{&quetschn_codec_lz4,
+                                                              &quetschn_codec_lz4hc,
                                                               &quetschn_codec_lzo,
                                                               &quetschn_codec_lzo_rle,
                                                               &quetschn_codec_zstd,
@@ -41,7 +42,8 @@ auto const all_codecs = std::array<quetschn_codec const*, 10>{&quetschn_codec_lz
                                                               &quetschn_codec_spike_zeroskip,
                                                               &quetschn_codec_spike_slots,
                                                               &quetschn_codec_shuffle_lz4,
-                                                              &quetschn_codec_bdelta};
+                                                              &quetschn_codec_bdelta,
+                                                              &quetschn_codec_zstd_nolit};
 auto const* const program = "quetschn-bench-interleaved";
 #else
 auto const* const program = QUETSCHN_CODEC.name;
@@ -196,11 +198,17 @@ int main(int argc, char** argv) {
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();
         std::printf("corpus     %s, %zu pages of %zu bytes\n", base.c_str(), c.size(), c.page_size);
-        std::printf(
-            "cpu        %s, pinned: %s, governor: %s\n",
-            cpu_model().c_str(),
-            cpu >= 0 ? std::to_string(cpu).c_str() : "no",
-            first_line("/sys/devices/system/cpu/cpu" + std::to_string(governor_cpu) + "/cpufreq/scaling_governor").c_str());
+        auto const cpufreq = "/sys/devices/system/cpu/cpu" + std::to_string(governor_cpu) + "/cpufreq/";
+        std::printf("cpu        %s, pinned: %s, governor: %s\n",
+                    cpu_model().c_str(),
+                    cpu >= 0 ? std::to_string(cpu).c_str() : "no",
+                    first_line(cpufreq + "scaling_governor").c_str());
+        // Cold latencies depend on the clock, see docs/explored-designs.md. Fixed means min == max and
+        // boost off.
+        std::printf("frequency  %s to %s kHz, boost: %s\n",
+                    first_line(cpufreq + "scaling_min_freq").c_str(),
+                    first_line(cpufreq + "scaling_max_freq").c_str(),
+                    first_line("/sys/devices/system/cpu/cpufreq/boost").c_str());
         if (opts.measure_time) {
             std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
         } else {

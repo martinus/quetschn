@@ -5,10 +5,11 @@ Every design idea that was measured, with the result, and why it was kept or dro
 cost (§3.1) and cold-cache p99 per page (§5.2). Add an entry for everything that gets measured, also
 and especially for what did not work.
 
-Short version so far: nothing beats `lzo-rle` on memory yet. Two decoders beat `lz4` on cold p99,
-but only with formats that need 55.7% and 70.5% of the uncompressed size, against 34.5% for `lz4`.
-The ratio has to come from repeats across the whole page; local tricks on 8 or 64 bytes do not get
-there.
+Short version so far: the gap between `lz4` and `zstd -1` is mostly how the sequences are coded, see
+[Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from). Nothing built here beats
+`lzo-rle` on memory yet. Two decoders beat `lz4` on cold p99, but only with formats that need 55.7%
+and 70.5% of the uncompressed size, against 34.5% for `lz4`. The ratio has to come from repeats across
+the whole page; local tricks on 8 or 64 bytes do not get there.
 
 ## How the numbers are measured
 
@@ -19,9 +20,10 @@ the kernel's compiler flags (`cmake/kernel_codecs.cmake`), the candidates with `
 
 Two benchmarks, and a few rules that came from getting it wrong first:
 
-* **Fast:** `tools/quick-bench.sh build <corpus> <out> lz4,<candidates>`, 26s for six codecs. The
+* **Fast:** `tools/quick-bench.sh build <corpus> <out> lz4,<candidates>`, 91s for five codecs. The
   zsmalloc cost comes from the whole corpus without timing (`--no-timing`), so it is exact. Latency
-  comes from a fixed random sample of 20 000 pages (`quetschn-sample-corpus`), interleaved.
+  comes from a fixed random sample of 20 000 pages (`quetschn-sample-corpus`), interleaved, in 5
+  separate processes.
 * **Full:** `quetschn-bench-interleaved` on the whole corpus, 89s for six codecs. Only to confirm a
   result that goes into this file or `PLAN.md`. The fast one agreed with it within 2% to 4% for five
   of six codecs; for `spike-slots` the fast one said 1800 ns cold p99, the full one 2000 ns. So a
@@ -37,6 +39,28 @@ Two benchmarks, and a few rules that came from getting it wrong first:
   between two builds that only differed in how the corpus was allocated.
 * **Nothing else runs on the machine while a benchmark times.** A build or a test run during a
   benchmark gave numbers that the next clean run did not reproduce.
+* **Fixed clock, compressions apart from decompressions, and several processes.** Cold latency was
+  the hard part; warm latency and compression time were always stable to 1% or 2%. Three causes,
+  found one after the other:
+  * The clock. With boost on, warm decoding ran at 5.3 GHz every time, but the cold numbers of two
+    identical runs differed by up to 520 ns. With CPU 2 fixed at 4.5 GHz and boost off, identical
+    runs agreed within 10 to 80 ns. Counting cycles (APERF via `rdpru`) instead of time did not help:
+    the time spent waiting for DRAM counts more cycles at a higher clock.
+  * The other codecs in the run. With `lz4hc` in a run, `lzo-rle` against `lz4` moved from -100 to
+    +200 ns. `lz4hc` touches a 256 KiB workspace when it compresses, and that ran right before the
+    next codec's decompression. Now every repetition first times all compressions, then all
+    decompressions; `lzo-rle` against `lz4` was then -50 to -110 ns with and without `lz4hc`.
+  * The process. Five identical runs gave `zstd -1` against `lz4` +2390, +4620, +2300, +1800 and
+    +2490 ns, while each run's own confidence interval was about ±80 ns. It only covers which pages
+    were sampled, not e.g. which physical pages the buffers got. So `tools/quick-bench.sh` runs the
+    latency in 5 processes and shows the median and the smallest and largest difference.
+
+  Every benchmark prints the frequency range and boost state, a table needs min equal to max and
+  boost off. The commands for that are in `README.md`.
+
+The latencies in the sections on the word model, byte shuffle and base + delta were measured before
+these three fixes, with boost on and one process. Their differences to `lz4` can be off by a few
+hundred ns; the Σ zsmalloc cost is exact in every section.
 
 ## Baselines
 
@@ -52,6 +76,72 @@ below stores uncompressed, which compares the decoders on the same work.
 
 The target is the gap between the first two rows and the third: `zstd -1` needs 17% less memory than
 `lzo-rle`, and 60% more time at cold p99 than `lz4`.
+
+## Where the ratio of `zstd` comes from
+
+*The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
+and not better matching.* Code: `bench/lz_analysis_main.cpp`, `explore/zstd_nolit.c`,
+`bench/kernel_codecs/zram_lz4hc.c`.
+
+Σ zsmalloc cost on all 455 239 pages, without timing, so exact:
+
+| codec | Σ zsmalloc cost | what changes |
+| --- | --- | --- |
+| `lz4` | 34.5% | |
+| `lz4hc` 1 / 3 / 9 / 16 | 32.4% / 31.3% / 30.7% / 30.6% | better matches, same `lz4` format and decoder |
+| `lzo-rle` | 32.4% | |
+| `zstd -5` | 37.1% | |
+| `zstd -1` | 26.9% | |
+| `zstd` 1 / 3 / 9 / 19 | 23.9% / 23.6% / 22.7% / 21.7% | |
+| `zstd-nolit` 1 / 3 / 9 / 19 | 26.9% / 25.9% / 24.9% / 22.7% | the same without Huffman coded literals |
+
+* **`zstd` never Huffman codes literals at negative levels.** `zstd-nolit 1` writes exactly the bytes
+  of `zstd -1`, so the difference between `zstd -1` and `zstd 1`, 26.9% against 23.9%, is the
+  Huffman coding of the literals and nothing else.
+* **Better matching within the `lz4` format ends at about 30.7%**, reached at `lz4hc` level 9. That is
+  11% less than `lz4` and 5% less than `lzo-rle`, with `lz4`'s decoder.
+* So `zstd -1` gets from 30.7% to 26.9% without coding literals and with a fast matcher that is no
+  better than `lz4hc`'s: through how it codes the sequences.
+
+`quetschn-lz-analysis` puts a number on that. It takes the matches `lz4hc` level 9 finds, checks that
+every page comes back from them, and costs the same matches with zstd-like symbols and a static
+entropy model trained on the whole corpus (tables fixed in the decoder, because a 4 KiB page has no
+room for its own):
+
+| the same `lz4hc` level 9 matches, coded as | Σ zsmalloc cost |
+| --- | --- |
+| `lz4` format, what `lz4hc` writes | 30.7% |
+| entropy coded literal lengths, match lengths and offsets, raw literals | 25.8% |
+| ... with repeat offsets like `zstd`'s | 25.1% |
+| ... and entropy coded literals | 23.6% |
+
+This is an estimate: a real entropy coder needs a bit more than -log2 of the frequency, and the model
+is trained on the pages it is measured on, so it is on the optimistic side. With `lz4hc` level 3 it
+is 31.3%, 26.1%, 25.4% and 23.7%, the matching quality barely matters once the sequences are
+entropy coded. A page has 636 literal bytes and 182 sequences on average: `lz4` spends a byte on
+every token and two on every offset, where 4 KiB of page need 12 bits of offset at most, and
+usually fewer.
+
+Latency with the clock fixed at 4.5 GHz, the median of 5 runs of `tools/quick-bench.sh`, and in
+brackets the smallest and largest difference to `lz4` at cold p99:
+
+| codec | cold p50 / p99 | Δ cold p99 | warm p99 | compress p50 / p99 |
+| --- | --- | --- | --- | --- |
+| `lz4` | 1130 / 2770 ns | | 2370 ns | 2.3 / 4.2 µs |
+| `lzo-rle` | 1010 / 2570 ns | -200 [-320, -10] | 2290 ns | 2.0 / 4.7 µs |
+| `lz4hc` level 9 | 840 / 2370 ns | -400 [-440, -200] | 2180 ns | 23 / 97 µs |
+| `zstd -1` | 2530 / 4560 ns | +1830 [+1730, +1880] | 3970 ns | 5.2 / 10.4 µs |
+| `zstd 1` | 3640 / 6600 ns | +3850 [+3770, +4010] | 5480 ns | 8.3 / 14.9 µs |
+
+* `lz4hc` decodes faster than `lz4`: the same decoder, and fewer, longer sequences. But it
+  compresses 10 to 23 times slower, `PLAN.md` C3 allows 1.2 times `lz4`.
+* Huffman coded literals, `zstd 1` over `zstd -1`, cost another 2000 ns at cold p99 for 3 points of
+  Σ zsmalloc cost.
+
+For the design this means: an LZ whose sequences are entropy coded with static tables, and literals
+raw, is worth about 25% Σ zsmalloc cost by this estimate, better than `zstd -1`, and the matcher can
+be cheap. Whether its decoder is fast is the open question. `zstd -1` also decodes entropy coded
+sequences and is slow; what in its decoder costs the time is not measured yet.
 
 ## Word model: WKdm-style 64-bit words
 
@@ -137,14 +227,15 @@ raw.
 
 ## Not evaluated yet
 
+* **Entropy coded sequences with static tables and a fast decoder.** The estimate above says about 25%
+  Σ zsmalloc cost. The next thing to build and time.
 * **Word model + a path for runs and long repeats.** Where the word model loses to `lz4` is exactly
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **`lz4` tuned for 4 KiB pages:** offsets limited to the page, word-aligned matches, a parser that
   does not get stuck. The `lzo-rle` route, the easiest merge.
 * **Per-page mode selection**, e.g. between a byte-oriented and a word-oriented coder. The shuffle
   result says a quarter of the pages would pick the word side.
-* **An entropy stage**, e.g. a small static Huffman or rANS stage for pages just above a size class
-  boundary (`PLAN.md` Phase 3, candidate 4). `zstd -1` shows what entropy coding buys, and what it
-  costs in latency.
+* **Entropy coded literals** on top, 1.5 points by the estimate, but `zstd 1` shows it costs a lot of
+  decode time. Maybe only for pages just above a size class boundary (`PLAN.md` Phase 3, candidate 4).
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently.

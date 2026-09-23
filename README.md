@@ -53,12 +53,25 @@ bootstrap that resamples pages, the same pages for both runs.
 of `PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
 
 For trying out designs, `tools/quick-bench.sh` is the fast benchmark: exact zsmalloc cost on the whole
-corpus without timing, and latency on a fixed sample of 20 000 pages, all compared with the first
-codec. 26s instead of 89s for six codecs; `docs/explored-designs.md` says when to run the full one.
+corpus without timing, and latency on a fixed sample of 20 000 pages in 5 separate processes, all
+compared with the first codec. `docs/explored-designs.md` says why, and when to run the full one.
+
+Fix the clock of the CPU the benchmarks run on first, cold latencies depend on it. On an AMD CPU with
+`amd-pstate`, for CPU 2 at 4.5 GHz:
+
+```sh
+echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
+sudo cpupower -c 2 frequency-set -g performance
+echo 4500000 | sudo tee /sys/devices/system/cpu/cpu2/cpufreq/scaling_max_freq
+echo 4500000 | sudo tee /sys/devices/system/cpu/cpu2/cpufreq/scaling_min_freq
+```
 
 ```sh
 tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd:-1,spike-slots
 ```
+
+`quetschn-lz-analysis --corpus <base>` estimates what `lz4hc`'s matches would cost with entropy coded
+sequences and literals, see `docs/explored-designs.md`.
 
 Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
 `quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on
