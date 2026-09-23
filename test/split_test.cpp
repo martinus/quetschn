@@ -159,3 +159,75 @@ TEST_CASE("split: an empty side is an error, before anything is written") {
     CHECK_FALSE(std::filesystem::exists(dir.path() / "train.pages"));
     CHECK_FALSE(std::filesystem::exists(dir.path() / "test.pages"));
 }
+
+TEST_CASE("split: a training corpus leaves out the pages of the test corpus") {
+    auto dir = temp_dir();
+    // Two dumps, a day apart: proc-0 to proc-9 in the first, proc-5 to proc-14 in the second. The
+    // pages of proc-5 to proc-9 are in both, like cold pages that stayed in zram.
+    auto write = [&](std::filesystem::path const& base, int first, int last) {
+        auto w = quetschn::corpus_writer(base, page_size);
+        for (auto i = first; i <= last; ++i) {
+            auto const name = "proc-" + std::to_string(i);
+            for (std::size_t n = 0; n < 8; ++n) {
+                w.write(100 + i, name, "[heap]", 0x1000 * (n + 1), page_for(name, n));
+            }
+        }
+    };
+    write(dir.path() / "monday", 0, 9);
+    write(dir.path() / "tuesday", 5, 14);
+
+    auto const r = quetschn::write_training_corpus(dir.path() / "monday", dir.path() / "tuesday", dir.path() / "train");
+    auto const train = names_in(quetschn::load_corpus(dir.path() / "train"));
+    // 6 of the 8 pages of a process carry its name, the other 2 are same-filled
+    CHECK(r.pages == 5 * 6);
+    CHECK(r.excluded == 5 * 6);
+    CHECK(r.same_filled_dropped == 10 * 2);
+    CHECK(train.size() == r.pages);
+    for (auto i = 0; i < 10; ++i) {
+        auto const name = "proc-" + std::to_string(i);
+        CAPTURE(name);
+        CHECK(train.count(name) == (i < 5 ? 6U : 0U));
+    }
+
+    // the TSV of the training side keeps where each page came from
+    auto tsv = std::ifstream(dir.path() / "train.tsv");
+    auto line = std::string();
+    std::getline(tsv, line);
+    std::getline(tsv, line);
+    std::getline(tsv, line);
+    CHECK(line.starts_with("0\t100\tproc-0\t"));
+}
+
+TEST_CASE("split: a training corpus needs the same page size as the test corpus") {
+    auto dir = temp_dir();
+    write_corpus(dir.path() / "a");
+    {
+        auto w = quetschn::corpus_writer(dir.path() / "b", 2 * page_size);
+    }
+    CHECK_THROWS_WITH_AS((void)quetschn::write_training_corpus(dir.path() / "a", dir.path() / "b", dir.path() / "train"),
+                         doctest::Contains("different page sizes"),
+                         std::runtime_error);
+    CHECK_THROWS_AS((void)quetschn::write_training_corpus(dir.path() / "a", dir.path() / "missing", dir.path() / "train"),
+                    std::runtime_error);
+}
+
+TEST_CASE("split: only a page with the same content is left out of the training corpus") {
+    auto dir = temp_dir();
+    auto const a = page_for("proc-1", 0);
+    auto last_byte = a;
+    last_byte.back() = std::byte{1};
+    {
+        auto w = quetschn::corpus_writer(dir.path() / "monday", page_size);
+        w.write(1, "x", "", 0x1000, a);
+        w.write(1, "x", "", 0x2000, last_byte);
+    }
+    {
+        auto w = quetschn::corpus_writer(dir.path() / "tuesday", page_size);
+        w.write(2, "y", "", 0x1000, a);
+    }
+    auto const r = quetschn::write_training_corpus(dir.path() / "monday", dir.path() / "tuesday", dir.path() / "train");
+    CHECK(r.excluded == 1);
+    REQUIRE(r.pages == 1);
+    auto const train = quetschn::load_corpus(dir.path() / "train");
+    CHECK(std::memcmp(train.page(0).data(), last_byte.data(), page_size) == 0);
+}

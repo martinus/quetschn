@@ -34,6 +34,21 @@ split_result split_corpus(std::filesystem::path const& base,
                           std::filesystem::path const& test_base,
                           split_options const& opts);
 
+struct training_result {
+    std::size_t pages = 0;               // written to the training side
+    std::size_t same_filled_dropped = 0; // left out, as in split_corpus
+    std::size_t excluded = 0;            // left out because exclude_base has a page with the same content
+};
+
+// Writes the pages of base to train_base, to train a dictionary that is measured on another corpus,
+// exclude_base. Pages whose content also is in exclude_base are left out: a cold page can sit in zram
+// through two dumps taken days apart, and a dictionary must not have seen the pages it is measured on.
+// Same-filled pages are left out like in split_corpus. Throws std::runtime_error when the corpora
+// cannot be read or have different page sizes.
+training_result write_training_corpus(std::filesystem::path const& base,
+                                      std::filesystem::path const& exclude_base,
+                                      std::filesystem::path const& train_base);
+
 // Which side a process name goes to: true for test. Exposed for tests.
 [[nodiscard]] bool is_test_name(std::string const& name, split_options const& opts);
 

@@ -430,7 +430,10 @@ Copy the shape of the lzo-rle commit message, because it worked:
   difference;
 - a **train/test split by workload**. Dictionaries for `lz4` and `zstd` are trained on some workloads
   and measured on the others; everything tuned for quetschn later (Phase 3) uses the same split. A
-  dictionary trained on the pages it is measured on overstates C4, and so does a tuned codec.
+  dictionary trained on the pages it is measured on overstates C4, and so does a tuned codec. A zram
+  dump has no process names, so there the split is by time: train on one dump, measure on a dump
+  taken days later, and leave the pages that are in both out of the training side
+  (`tools/bench-dict.sh`).
 
 *Gate (go/no-go): headroom cannot be measured on a codec that does not exist yet, so the gate uses
 a proxy. On the test corpus, does `zstd -1` without a dictionary need ≥ 12% less Σ zsmalloc cost than

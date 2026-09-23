@@ -73,7 +73,16 @@ sudo dd if=/dev/zram0 bs=1M iflag=direct status=progress |
 ./build/quetschn-import-raw --in ~/quetschn-corpus/zram0.raw --out ~/quetschn-corpus/zram0
 ```
 
-The dump has no process names, every page gets the name of the dump file.
+The dump has no process names, every page gets the name of the dump file. So a dump cannot be split
+by process name; take a second dump some days later instead, train on one and measure on the other.
+`tools/bench-dict.sh` does all of it: it trains a dictionary on the first dump without the pages
+that are also in the second, then runs every codec with and without the dictionary on the second
+dump and compares them with `quetschn-compare`:
+
+```sh
+CPU=2 tools/bench-dict.sh build ~/quetschn-corpus/zram0-mon ~/quetschn-corpus/zram0-thu \
+    ~/quetschn-corpus/dict-mon-thu
+```
 
 ## Licensing
 
