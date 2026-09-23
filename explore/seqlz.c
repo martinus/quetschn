@@ -473,7 +473,8 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
             len += value(&br, &t->ml, &e);
         }
         last = off;
-        if (off == 0 || off > (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
+        /* off - 1 wraps for 0 */
+        if (off - 1U >= (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
             return -1;
         copy_match(d, d_end, off, len);
         d += len;
