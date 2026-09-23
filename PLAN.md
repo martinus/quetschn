@@ -568,7 +568,8 @@ tools/collect/              corpus collectors (C++)
 tools/analyze/              page statistics (C++)
 bench/                      harness: per-page timing loop + kernel-sourced codecs
 bench/zsmalloc_cost.*       zsmalloc cost model (§3.1)
-bench/kernel_codecs/        lib/lzo, lib/lz4, lib/zstd, lib/842 built for userspace
+bench/kernel_codecs/        zram's calls into lib/lz4 and lib/lzo, and the headers to build them in userspace
+cmake/kernel_codecs.cmake   builds them from QUETSCHN_KERNEL_TREE with kernel flags; sources never copied
 test/                       doctest unit tests
 fuzz/                       AFL++ / libFuzzer targets
 kernel/                     backend_quetschn.c + Kconfig/Makefile fragments + patch generator
@@ -618,9 +619,28 @@ results/                    published measurements (no raw pages, ever)
    dump; the tests only use the kernel docs and hand arithmetic.
 5. The resident-memory collector is done: `quetschn-collect-resident`. Next in Phase 1 is the
    swap-device collector; collect a first small corpus in a VM.
-6. Stand up the harness with `lzo-rle`, `lz4` and `zstd -1` built from the local kernel tree with
-   kernel flags, and produce the first Σ cost and p99-latency table, on x86-64 and on the phone once
-   it is rooted. The resident corpus is enough to shake out the harness, not for the gate.
+6. The harness runs `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags:
+   `quetschn-bench-<codec> [--level n]`, one binary per codec. Still missing: `lz4` and `zstd` with a
+   trained dictionary, the arm64 flags from a real arm64 kernel build, the PMU cycle counter on arm64,
+   and the paired per-page comparison.
+
+   First run, only to shake out the harness: 60 034 resident pages of the development machine (the
+   biased collector 1; same-filled pages are excluded from the measurement), Ryzen 9 7950X pinned to one core, `powersave`
+   governor so the frequency was not fixed, median of 5 runs per page, TSC resolution about 10 ns:
+
+   | codec | Σ zsmalloc cost | stored uncompressed | workspace per CPU | decompress cold p50 / p99 |
+   | --- | --- | --- | --- | --- |
+   | `lz4` | 34.5% | 1536 pages | 16 416 B | 1810 / 2970 ns |
+   | `lzo-rle` | 32.5% | 1680 pages | 16 384 B | 1740 / 3150 ns |
+   | `lzo` | 31.7% | 1672 pages | 16 384 B | 2170 / 3850 ns |
+   | `zstd -1` | 26.6% | 1498 pages | 169 752 B | 3480 / 4850 ns |
+   | `zstd 1` | 24.5% | 1158 pages | 169 752 B | 4660 / 6690 ns |
+   | `zstd 3` (zram default) | 24.1% | 1154 pages | 186 136 B | 4350 / 6900 ns |
+
+   The Phase 2 gate proxy on these pages: `zstd -1` needs 18% less memory than `lzo-rle`, the better
+   of `lz4` and `lzo-rle`, above the 12% bar. It is not the gate yet: `lz4` with a dictionary is
+   missing, and the page population is the wrong one. Also, `lzo-rle` needs 2.5% more memory than
+   plain `lzo` here.
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.
