@@ -183,6 +183,18 @@ private:
             paged_out == MAP_FAILED || striped == MAP_FAILED) {
             ::_exit(1);
         }
+        // With transparent huge pages set to "always" (the GitHub runners), touching one page makes a
+        // whole 2 MB huge page resident, and the expected page counts below no longer hold.
+        auto const no_thp = [](void* p, std::size_t size) {
+            if (::madvise(p, size, MADV_NOHUGEPAGE) != 0) {
+                ::_exit(1);
+            }
+        };
+        no_thp(touched, touched_pages * m_page_size);
+        no_thp(untouched, untouched_pages * m_page_size);
+        no_thp(big, big_pages * m_page_size);
+        no_thp(paged_out, paged_out_pages * m_page_size);
+        no_thp(striped, striped_pages * m_page_size);
         for (std::size_t p = 0; p < touched_pages; ++p) {
             for (std::size_t i = 0; i < m_page_size; ++i) {
                 touched[p * m_page_size + i] = pattern(p, i);
