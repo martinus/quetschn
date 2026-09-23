@@ -25,7 +25,7 @@ of the Pareto frontier**:
 | C2 | Lower p99 decompression latency than `lz4`, cold cache, on x86-64 **and** an arm64 little core, 95% bootstrap confidence interval excluding 0. Latency statistic defined in §5.2 | decompression runs in the page-fault path (§3.2); on phones that often means a little core |
 | C3 | p99 compression latency within 1.2× of `lz4`, same statistic as C2 | zram compresses more often than it decompresses |
 | C4 | Beats `lz4` **with a trained dictionary**, not just bare `lz4` | zram supports dictionaries; Honor made dict-lz4 >50% faster in March 2026 (`f0f6f7871430`) |
-| C5 | Per-CPU workspace ≤ 4 KiB | `lz4` needs 16416 B/CPU, `lzo` 16384 B/CPU, `842` 61440 B/CPU (§3.3) |
+| C5 | Per-CPU workspace ≤ `lz4`'s 16416 B | `lz4` needs 16416 B/CPU, `lzo` 16384 B/CPU, `842` 61440 B/CPU (§3.3) |
 | C6 | Decompressor is fuzz-safe and bounded-time for arbitrary input | this is what killed the last new-codec attempt (§2.2) |
 
 C1 and C2 together are the merge argument: *strictly dominates the current default and the current
@@ -207,10 +207,13 @@ Design constraints that follow:
 | `lz4` | `LZ4_MEM_COMPRESS` = ((1<<11)+4) × 8 = **16416 B** |
 | `842` | `SW842_MEM_COMPRESS` = 0xf000 = **61440 B** |
 | `zstd` | `zstd_cctx_workspace_bound()`, `kvzalloc`'d — far larger |
-| **quetschn target** | **≤ 4096 B, ideally 0** |
+| **quetschn target** | **≤ 16416 B, less is a bonus** |
 
-On a 16-core phone this is 256 KiB saved versus lz4, permanently resident. Small, but it is a free
-line in the cover letter and it is the kind of thing Android vendors notice.
+On a 16-core phone every 4 KiB less than `lz4` saves 64 KiB, permanently resident. Small, but it is a
+free line in the cover letter and it is the kind of thing Android vendors notice. The target was 4 KiB
+at first. It is `lz4`'s 16 KiB since 23rd September 2026: 8 points less memory on the compressed pages
+are worth far more than a few KiB per CPU, and a 4 KiB budget costs speed or ratio in the matcher
+(`seqlz-fast` has an 8 KiB hash table, `docs/explored-designs.md`).
 
 ### 3.4 The integration surface is small
 
@@ -553,8 +556,8 @@ prototype, on the held-out test workloads, on x86-64 and the phone's in-order li
 
 This phase exists because of §2.2. Everything Biggers asked for, before the first patch.
 
-- `quetschn.c` / `quetschn.h`: C11, freestanding, no libc, no allocation, `≤ 4 KiB` scratch passed in
-  by the caller. Page size is a parameter, and every test runs with 4 KiB and 16 KiB pages (§3.5).
+- `quetschn.c` / `quetschn.h`: C11, freestanding, no libc, no allocation, scratch of at most `lz4`'s 16416 B
+  passed in by the caller. Page size is a parameter, and every test runs with 4 KiB and 16 KiB pages (§3.5).
 - **`FORMAT.md`**: byte-exact format specification, plus an independent, deliberately slow reference
   decoder written from the spec alone. Differential-test the fast decoder against it.
 - **Fuzzing** (AFL++ is already checked out at `~/gra/AFLplusplus`):
