@@ -66,6 +66,10 @@ extern const struct quetschn_codec quetschn_codec_lz4;
 extern const struct quetschn_codec quetschn_codec_lzo;
 extern const struct quetschn_codec quetschn_codec_lzo_rle;
 extern const struct quetschn_codec quetschn_codec_zstd;
+/* the Phase 2b decoder spike, spike/zram_spike.c */
+extern const struct quetschn_codec quetschn_codec_spike_switch;
+extern const struct quetschn_codec quetschn_codec_spike_branchless;
+extern const struct quetschn_codec quetschn_codec_spike_zeroskip;
 
 /*
  * Stands in for kzalloc/vzalloc/kvzalloc: zeroed, 64 byte aligned, NULL on failure. The size is added

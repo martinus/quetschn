@@ -463,6 +463,38 @@ page (§5.2) against kernel `lz4` on the test corpus, on x86-64 and on the phone
 p99 argument of §3.2 does not hold, and Phase 3 starts from the §8 fallback instead of from the word
 model.*
 
+**x86-64 half: done, at parity.** The spike is in `spike/`: 64-bit words, 2-bit tags (zero, exact
+match or high-32-bits match against a 16-entry table of recent words, literal), four sections whose
+lengths follow from the tags, so the decoder checks the length once and the loop has no bounds
+checks. Three decoders of the same format: a `switch` on the tag, a branchless one that selects with
+masks, and the `switch` with a fast path that writes a zero tag byte as 4 zero words at once. All are
+built with the kernel's flags and `-O3`, like `lz4`. On the 455 239 pages of the first zram dump,
+Ryzen 9 7950X pinned to one core, `powersave` governor, median of 5 runs per page, on the 344 955
+pages that both `lz4` and the spike store compressed:
+
+| decoder | cold p50 | cold p99 | cold p99.9 |
+| --- | --- | --- | --- |
+| `lz4` | 1860 ns | 2960 ns | 3450 ns |
+| spike, `switch` | 1730 ns | 2950 ns | 3470 ns |
+| spike, zero fast path | 1670 ns | 2940 ns | 3450 ns |
+| spike, branchless (earlier run) | 2810 ns | 3690 ns | 4330 ns |
+
+Paired over all pages, the zero fast path is 120 ns [110, 130] faster than `lz4` at cold p99. That is
+smaller than the drift between runs: `lz4`'s own cold p99 on the same pages was 2790 ns in a run an
+hour earlier. So the word decoder is not clearly slower, which keeps the word model as the start of
+Phase 3, but it does not show the p99 advantage that §3.2 bets on either. The split by size explains
+why. For pages that `lz4` compresses below 512 bytes, 73% zero words, `lz4` has cold p99 1520 ns and
+the spike 2610 ns: the spike walks all 512 words, `lz4` copies long matches. From 2 KiB up the spike
+is faster, 3280 against 3450 ns. The branchless decoder does the same work for every word and is
+slower everywhere, so data-independent control flow is not the win by itself.
+
+The spike is not a codec: 55.7% Σ zsmalloc cost against 34.5% for `lz4`, and 24% of the pages stored
+uncompressed. Three things follow for Phase 3. Pages with long zero runs or repeats need a path that
+costs per run, not per word. The latency comparison needs interleaved runs (one page, both codecs,
+alternating) and a fixed CPU frequency, because the drift between runs is as large as the effect.
+And the arm64 little core is now the half of this gate that decides, an in-order core may favor
+either design.
+
 ### Phase 3 — Page analysis and design exploration (12 weeks)
 
 Answer, with numbers from the corpus:

@@ -101,12 +101,18 @@ quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
     "${QUETSCHN_KERNEL_TREE}/lib/xxhash.c"
     bench/kernel_codecs/zram_zstd.c)
 
-foreach(codec lz4 lzo lzo_rle zstd)
+# The spike with the same flags as lz4, -O3 included, so the comparison is about the code
+quetschn_kernel_codec(quetschn_kernel_spike lib/lz4 -O3 spike/wk64.c spike/zram_spike.c)
+target_include_directories(quetschn_kernel_spike PRIVATE "${CMAKE_SOURCE_DIR}/spike")
+
+foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip)
     string(REPLACE "_" "-" name ${codec})
     if(codec STREQUAL "lz4")
         set(lib quetschn_kernel_lz4)
     elseif(codec STREQUAL "zstd")
         set(lib quetschn_kernel_zstd)
+    elseif(codec MATCHES "^spike")
+        set(lib quetschn_kernel_spike)
     else()
         set(lib quetschn_kernel_lzo)
     endif()

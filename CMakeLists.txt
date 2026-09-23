@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 cmake_minimum_required(VERSION 3.25)
-project(quetschn LANGUAGES CXX)
+project(quetschn LANGUAGES C CXX)
 
 # Tools and the benchmark harness are C++20. The codec core will be C11, see PLAN.md §4.
 set(CMAKE_CXX_STANDARD 20)
@@ -44,6 +44,12 @@ target_link_libraries(quetschn_bench PUBLIC quetschn_collect Threads::Threads PR
 add_executable(quetschn-compare bench/compare_main.cpp)
 target_link_libraries(quetschn-compare PRIVATE quetschn_bench quetschn_warnings)
 
+# Phase 2b decoder spike, see spike/wk64.h. Built here with our warnings for the tests, and in
+# cmake/kernel_codecs.cmake a second time with the kernel's flags for the benchmark.
+add_library(quetschn_spike STATIC spike/wk64.c spike/zram_spike.c)
+target_include_directories(quetschn_spike PUBLIC spike bench/kernel_codecs)
+target_link_libraries(quetschn_spike PRIVATE quetschn_warnings)
+
 include(cmake/kernel_codecs.cmake)
 
 include(CTest)
@@ -58,8 +64,9 @@ if(BUILD_TESTING)
 
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
                                  test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp
-                                 test/compare_test.cpp)
-    target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_warnings doctest::doctest)
+                                 test/compare_test.cpp test/spike_test.cpp)
+    target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_spike quetschn_warnings
+                                                doctest::doctest)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp)
         target_link_libraries(quetschn_test PRIVATE quetschn_kernel_lz4 quetschn_kernel_lzo quetschn_kernel_zstd)
