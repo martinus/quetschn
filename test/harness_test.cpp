@@ -36,39 +36,56 @@ unsigned int trimmed_length(void const* src, unsigned int len) {
     return len;
 }
 
-// Accepts levels 0 to 9, default 5, and asks for 100 bytes of workspace per level.
-std::size_t trim_workspace_size(int* level, unsigned int /*page_size*/) {
-    if (*level == QUETSCHN_LEVEL_DEFAULT) {
-        *level = 5;
-    }
-    if (*level < 0 || *level > 9) {
-        return 0;
-    }
-    return 100 * static_cast<std::size_t>(*level + 1);
-}
+// How often each part of the lifecycle ran, so the tests can check that the harness releases what it set up.
+struct lifecycle {
+    int setup = 0;
+    int release = 0;
+    int create = 0;
+    int destroy = 0;
+};
+lifecycle calls;
 
-// Checks what the harness promises about the stream: level resolved, workspace as large as asked for and
-// zeroed. The first byte is set, so compress can see that init ran.
-int trim_init(quetschn_stream* s, unsigned int /*page_size*/) {
-    auto const* ws = static_cast<unsigned char const*>(s->workspace);
-    if (s->workspace_size != 100 * static_cast<std::size_t>(s->level + 1)) {
+// Accepts levels 0 to 9, default 5. Pretends to hold 100 bytes per level per CPU, and the dictionary once
+// per device, so the tests can see the harness report both.
+int trim_setup_params(quetschn_params* p) {
+    ++calls.setup;
+    if (p->level == QUETSCHN_LEVEL_DEFAULT) {
+        p->level = 5;
+    }
+    if (p->level < 0 || p->level > 9) {
         return -1;
     }
-    for (std::size_t i = 0; i < s->workspace_size; ++i) {
-        if (ws[i] != 0) {
-            return -1;
-        }
-    }
-    s->state[0] = 1;
+    p->allocated = p->dict_size;
     return 0;
 }
 
-int failing_init(quetschn_stream*, unsigned int) {
+void trim_release_params(quetschn_params* p) {
+    ++calls.release;
+    p->allocated = 0;
+}
+
+// The stream remembers the level it was created for, so compress can check it got the same params.
+int trim_create(quetschn_params* p, quetschn_stream* s) {
+    ++calls.create;
+    s->allocated = 100 * static_cast<std::size_t>(p->level + 1);
+    s->context = &calls;
+    return 0;
+}
+
+int failing_create(quetschn_params*, quetschn_stream*) {
+    ++calls.create;
     return -1;
 }
 
-int trim_compress(quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
-    if (s->state[0] != 1) {
+void trim_destroy(quetschn_stream* s) {
+    ++calls.destroy;
+    s->allocated = 0;
+    s->context = nullptr;
+}
+
+int trim_compress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    if (s->context != &calls || s->allocated != 100 * static_cast<std::size_t>(p->level + 1)) {
         return -1;
     }
     auto const k = trimmed_length(src, src_len);
@@ -83,7 +100,8 @@ int trim_compress(quetschn_stream* s, void const* src, unsigned int src_len, voi
     return 0;
 }
 
-int trim_decompress(quetschn_stream* /*s*/, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int trim_decompress(
+    quetschn_params*, quetschn_stream*, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     auto const* s = static_cast<unsigned char const*>(src);
     auto const k = static_cast<unsigned int>(s[0] | (s[1] << 8));
     if (src_len != k + 2 || *dst_len < page_size) {
@@ -95,20 +113,25 @@ int trim_decompress(quetschn_stream* /*s*/, void const* src, unsigned int src_le
     return 0;
 }
 
-int broken_decompress(quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
-    auto ret = trim_decompress(s, src, src_len, dst, dst_len);
+int broken_decompress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    auto ret = trim_decompress(p, s, src, src_len, dst, dst_len);
     static_cast<unsigned char*>(dst)[7] ^= 1;
     return ret;
 }
 
-int failing_compress(quetschn_stream*, void const*, unsigned int, void*, unsigned int*) {
+int failing_compress(quetschn_params*, quetschn_stream*, void const*, unsigned int, void*, unsigned int*) {
     return -1;
 }
 
-quetschn_codec const trim_codec{"trim", trim_workspace_size, trim_init, trim_compress, trim_decompress};
-quetschn_codec const broken_codec{"broken", trim_workspace_size, trim_init, trim_compress, broken_decompress};
-quetschn_codec const failing_codec{"failing", trim_workspace_size, trim_init, failing_compress, trim_decompress};
-quetschn_codec const failing_init_codec{"failing-init", trim_workspace_size, failing_init, trim_compress, trim_decompress};
+quetschn_codec const trim_codec{
+    "trim", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, trim_decompress};
+quetschn_codec const broken_codec{
+    "broken", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, broken_decompress};
+quetschn_codec const failing_codec{
+    "failing", trim_setup_params, trim_release_params, trim_create, trim_destroy, failing_compress, trim_decompress};
+quetschn_codec const failing_create_codec{
+    "failing-create", trim_setup_params, trim_release_params, failing_create, trim_destroy, trim_compress, trim_decompress};
 
 // page with the first `nonzero` bytes set to non-zero values, the rest zero
 std::vector<std::byte> page_with_prefix(std::size_t nonzero) {
@@ -117,6 +140,15 @@ std::vector<std::byte> page_with_prefix(std::size_t nonzero) {
         p[i] = static_cast<std::byte>(i % 200 + 1);
     }
     return p;
+}
+
+// run_options without timing, and optionally a level and a dictionary
+run_options untimed(int level = QUETSCHN_LEVEL_DEFAULT, std::vector<std::byte> dict = {}) {
+    auto o = run_options{};
+    o.measure_time = false;
+    o.level = level;
+    o.dict = std::move(dict);
+    return o;
 }
 
 corpus make_corpus(std::vector<std::vector<std::byte>> const& pages) {
@@ -139,7 +171,7 @@ TEST_CASE("harness: sizes, costs and the uncompressed-page threshold come from t
         page_with_prefix(3000),                             // comp_len 3002
         page_with_prefix(model.huge_class_size() - 2),      // exactly at the threshold
     });
-    auto const r = run_codec(c, trim_codec, model, run_options{.measure_time = false});
+    auto const r = run_codec(c, trim_codec, model, untimed());
 
     CHECK(r.same_filled == 1);
     REQUIRE(r.pages.size() == 4);
@@ -174,39 +206,63 @@ TEST_CASE("harness: sizes, costs and the uncompressed-page threshold come from t
 TEST_CASE("harness: a codec that does not reproduce the page is an error, not a number") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100)});
-    CHECK_THROWS_WITH_AS((void)run_codec(c, broken_codec, model, run_options{.measure_time = false}),
-                         doctest::Contains("roundtrip"),
-                         std::runtime_error);
-    CHECK_THROWS_WITH_AS((void)run_codec(c, failing_codec, model, run_options{.measure_time = false}),
-                         doctest::Contains("compress failed"),
-                         std::runtime_error);
+    CHECK_THROWS_WITH_AS(
+        (void)run_codec(c, broken_codec, model, untimed()), doctest::Contains("roundtrip"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(
+        (void)run_codec(c, failing_codec, model, untimed()), doctest::Contains("compress failed"), std::runtime_error);
 }
 
-TEST_CASE("harness: the level decides the workspace, and zram's default applies when none is given") {
+TEST_CASE("harness: level and dictionary reach the codec, and its memory is reported") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100)});
 
-    auto const def = run_codec(c, trim_codec, model, run_options{.measure_time = false});
+    auto const def = run_codec(c, trim_codec, model, untimed());
     CHECK(def.level == 5);
-    CHECK(def.workspace_size == 600);
+    CHECK(def.stream_bytes == 600);
+    CHECK(def.params_bytes == 0);
 
-    auto const l2 = run_codec(c, trim_codec, model, run_options{.measure_time = false, .level = 2});
+    auto const l2 = run_codec(c, trim_codec, model, untimed(2, std::vector<std::byte>(1000)));
     CHECK(l2.level == 2);
-    CHECK(l2.workspace_size == 300);
+    CHECK(l2.stream_bytes == 300);
+    CHECK(l2.params_bytes == 1000);
     CHECK(l2.pages.size() == 1);
 
-    CHECK_THROWS_WITH_AS((void)run_codec(c, trim_codec, model, run_options{.measure_time = false, .level = 10}),
-                         doctest::Contains("rejects level 10"),
-                         std::invalid_argument);
-    CHECK_THROWS_WITH_AS((void)run_codec(c, failing_init_codec, model, run_options{.measure_time = false}),
-                         doctest::Contains("init failed"),
-                         std::runtime_error);
+    CHECK_THROWS_WITH_AS(
+        (void)run_codec(c, trim_codec, model, untimed(10)), doctest::Contains("zram rejects"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(
+        (void)run_codec(c, failing_create_codec, model, untimed()), doctest::Contains("create failed"), std::runtime_error);
+}
+
+TEST_CASE("harness: what was set up is released, also when the run fails") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100)});
+    for (auto const* codec : {&trim_codec, &broken_codec, &failing_codec, &failing_create_codec}) {
+        CAPTURE(codec->name);
+        calls = lifecycle{};
+        try {
+            (void)run_codec(c, *codec, model, untimed());
+        } catch (std::exception const&) {
+        }
+        CHECK(calls.setup == 1);
+        CHECK(calls.release == 1);
+        CHECK(calls.create == 1);
+        // a stream that could not be created is not destroyed, like in zram
+        CHECK(calls.destroy == (codec == &failing_create_codec ? 0 : 1));
+    }
+    // and nothing is created when the parameters are rejected
+    calls = lifecycle{};
+    CHECK_THROWS((void)run_codec(c, trim_codec, model, untimed(10)));
+    CHECK(calls.create == 0);
 }
 
 TEST_CASE("harness: every measured page gets a latency, stored-uncompressed pages included") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100), page_with_prefix(page_size)});
-    auto const r = run_codec(c, trim_codec, model, run_options{.repetitions = 3, .measure_time = true});
+    auto const r = run_codec(c, trim_codec, model, [] {
+        auto o = run_options{};
+        o.repetitions = 3;
+        return o;
+    }());
     REQUIRE(r.pages.size() == 2);
     for (auto const& p : r.pages) {
         CAPTURE(p.page);

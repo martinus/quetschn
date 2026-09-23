@@ -308,6 +308,11 @@ The corpus decides everything downstream. Two collectors, because they answer di
 2. **Swap-path capture (the better one).** Rodgman sampled *resident* memory; zram actually stores
    *cold, reclaimed* pages, which are a different distribution. Capture the real thing, cheapest method
    first:
+   - Read the zram device itself: `dd if=/dev/zram0 bs=4096`. zram decompresses every stored page on
+     read, so this returns exactly the pages that reclaim put there, and slots that are free read as
+     zeros, which the tools skip as same-filled anyway. Needs root, no kernel patch, no BPF, and works
+     the same on a rooted phone. Honor collected the data for f0f6f7871430 this way (their patch also
+     sets `huge_class_size` to 0, for some reason; reading does not need that).
    - Swap to a plain block device in the VM instead of zram, zero it before `mkswap`, drive the VM
      into memory pressure, then read the swap device from the host. It contains exactly the pages
      that reclaim chose. No kernel patch, no BPF. Caveats: slots freed during the run keep stale
@@ -617,30 +622,40 @@ results/                    published measurements (no raw pages, ever)
 4. The zsmalloc cost model is done: `bench/zsmalloc_cost.cpp`, with `PAGE_SIZE` as a
    parameter. What is still open is a check against a real `/sys/kernel/debug/zsmalloc/<pool>/classes`
    dump; the tests only use the kernel docs and hand arithmetic.
-5. The resident-memory collector is done: `quetschn-collect-resident`. Next in Phase 1 is the
-   swap-device collector; collect a first small corpus in a VM.
-6. The harness runs `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags:
-   `quetschn-bench-<codec> [--level n]`, one binary per codec. Still missing: `lz4` and `zstd` with a
-   trained dictionary, the arm64 flags from a real arm64 kernel build, the PMU cycle counter on arm64,
-   and the paired per-page comparison.
+5. The resident-memory collector is done: `quetschn-collect-resident`. Next in Phase 1: read the
+   zram device of this machine with `dd` for the first corpus of really swapped pages (313 000 of
+   them right now), then the scripted VM workloads.
+6. The harness runs `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags, with
+   and without dictionary: `quetschn-bench-<codec> [--level n] [--dict file]`, one binary per codec.
+   `quetschn-split-corpus` splits a corpus by process name, so a dictionary is trained on programs it
+   is not measured on (§5.3). Still missing: the arm64 flags from a real arm64 kernel build, the PMU
+   cycle counter on arm64, and the paired per-page comparison.
 
-   First run, only to shake out the harness: 60 034 resident pages of the development machine (the
-   biased collector 1; same-filled pages are excluded from the measurement), Ryzen 9 7950X pinned to one core, `powersave`
-   governor so the frequency was not fixed, median of 5 runs per page, TSC resolution about 10 ns:
+   First run with dictionaries, only to shake out the harness. 61 043 resident pages of the
+   development machine (the biased collector 1), split by process name: 72 names to train a 64 KiB
+   dictionary with `zstd --train -B4096 --maxdict=64KB` (Honor's settings), 32 other names with 8937
+   measured pages to test on. Ryzen 9 7950X pinned to one core, `powersave` governor so the frequency
+   was not fixed, median of 5 runs per page, TSC resolution about 10 ns:
 
-   | codec | Σ zsmalloc cost | stored uncompressed | workspace per CPU | decompress cold p50 / p99 |
+   | codec | Σ zsmalloc cost | per CPU | per device | decompress cold p50 / p99 |
    | --- | --- | --- | --- | --- |
-   | `lz4` | 34.5% | 1536 pages | 16 416 B | 1810 / 2970 ns |
-   | `lzo-rle` | 32.5% | 1680 pages | 16 384 B | 1740 / 3150 ns |
-   | `lzo` | 31.7% | 1672 pages | 16 384 B | 2170 / 3850 ns |
-   | `zstd -1` | 26.6% | 1498 pages | 169 752 B | 3480 / 4850 ns |
-   | `zstd 1` | 24.5% | 1158 pages | 169 752 B | 4660 / 6690 ns |
-   | `zstd 3` (zram default) | 24.1% | 1154 pages | 186 136 B | 4350 / 6900 ns |
+   | `lz4` | 38.2% | 16 440 B | 0 | 1840 / 2940 ns |
+   | `lz4` + dict | 36.6% | 16 472 B | 16 416 B | 1740 / 3010 ns |
+   | `lzo-rle` | 36.0% | 16 384 B | 0 | 1820 / 3480 ns |
+   | `lzo` | 35.2% | 16 384 B | 0 | 2240 / 3800 ns |
+   | `zstd -1` | 30.2% | 169 728 B | 75 112 B | 3490 / 5120 ns |
+   | `zstd -1` + dict | 29.5% | 153 344 B | 58 728 B | 3150 / 4820 ns |
+   | `zstd 3` (zram default) | 27.6% | 186 112 B | 91 496 B | 4260 / 6570 ns |
+   | `zstd 3` + dict | 27.3% | 186 112 B | 435 560 B | 4890 / 7820 ns |
 
-   The Phase 2 gate proxy on these pages: `zstd -1` needs 18% less memory than `lzo-rle`, the better
-   of `lz4` and `lzo-rle`, above the 12% bar. It is not the gate yet: `lz4` with a dictionary is
-   missing, and the page population is the wrong one. Also, `lzo-rle` needs 2.5% more memory than
-   plain `lzo` here.
+   The dictionary saves `lz4` 4% here, not enough to beat `lzo-rle`. The Phase 2 gate proxy:
+   `zstd -1` needs 16% less memory than `lzo-rle`, the better of `lz4` + dict and `lzo-rle`, above the
+   12% bar. Still not the gate: wrong page population, one run, unfixed frequency.
+
+   Two side findings. `backend_zstd.c` creates a cdict and a ddict also without a dictionary, which
+   costs 73 to 89 KiB per zram device for nothing. And the `zstd --train ... --split=4096` in the
+   f0f6f7871430 commit message is not an option zstd 1.5.7 accepts; `-B4096` cuts the samples into
+   pages.
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.

@@ -31,6 +31,8 @@ struct run_options {
     bool measure_time = true;
     // zram's algorithm_params level, QUETSCHN_LEVEL_DEFAULT for the codec's default
     int level = QUETSCHN_LEVEL_DEFAULT;
+    // zram's algorithm_params dict, empty for none. Codecs that do not use dictionaries ignore it, like zram.
+    std::vector<std::byte> dict;
 };
 
 struct page_result {
@@ -44,9 +46,10 @@ struct page_result {
 };
 
 struct run_result {
-    int level = 0;                  // after the codec applied its default
-    std::size_t workspace_size = 0; // what zram allocates per CPU for this codec and level
-    std::size_t same_filled = 0;    // skipped: zram stores these without a codec
+    int level = 0;                // after the codec applied its default
+    std::size_t stream_bytes = 0; // what the codec holds per CPU at the end of the run
+    std::size_t params_bytes = 0; // what it holds per zram device, e.g. a prepared dictionary
+    std::size_t same_filled = 0;  // skipped: zram stores these without a codec
     std::vector<page_result> pages;
 };
 

@@ -11,8 +11,10 @@
 
 #include <charconv>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -24,10 +26,12 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: %s --corpus <base> [--level <n>] [--repetitions <n>] [--cpu <n>] [--out <file.tsv>]\n"
+                 "usage: %s --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>] [--cpu <n>]\n"
+                 "          [--out <file.tsv>]\n"
                  "\n"
                  "Reads <base>.pages and <base>.tsv as written by quetschn-collect-resident.\n"
                  "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
+                 "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
                  "--out writes one line per page, for paired comparisons between codecs.\n",
                  QUETSCHN_CODEC.name);
@@ -66,6 +70,7 @@ void print_latency(char const* what, quetschn::latency_summary const& l) {
 int main(int argc, char** argv) {
     auto base = std::string();
     auto out_path = std::string();
+    auto dict_path = std::string();
     auto opts = quetschn::run_options{};
     int cpu = -1;
     for (int i = 1; i < argc; ++i) {
@@ -78,6 +83,8 @@ int main(int argc, char** argv) {
         } else if (arg == "--repetitions" && has_value && parse(argv[++i], opts.repetitions) && opts.repetitions > 0) {
         } else if (arg == "--cpu" && has_value && parse(argv[++i], cpu)) {
         } else if (arg == "--level" && has_value && parse(argv[++i], opts.level)) {
+        } else if (arg == "--dict" && has_value) {
+            dict_path = argv[++i];
         } else {
             usage();
             return 2;
@@ -99,6 +106,17 @@ int main(int argc, char** argv) {
             }
         }
         auto const c = quetschn::load_corpus(base);
+        if (!dict_path.empty()) {
+            auto in = std::ifstream(dict_path, std::ios::binary);
+            auto const raw = std::string(std::istreambuf_iterator<char>(in), {});
+            if ((!in && !in.eof()) || raw.empty()) {
+                // zram refuses an empty dictionary file as well
+                std::fprintf(stderr, "error: cannot read %s, or it is empty\n", dict_path.c_str());
+                return 1;
+            }
+            opts.dict.resize(raw.size());
+            std::memcpy(opts.dict.data(), raw.data(), raw.size());
+        }
         auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();
@@ -125,7 +143,11 @@ int main(int argc, char** argv) {
                     s.pages == 0 ? 0.0 : 100.0 * s.total_cost / s.total_uncompressed,
                     s.pages == 0 ? 0.0 : s.total_cost / static_cast<double>(s.pages));
         std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
-        std::printf("workspace per CPU      %zu bytes\n", r.workspace_size);
+        std::printf("memory per CPU         %zu bytes\n", r.stream_bytes);
+        std::printf("memory per device      %zu bytes (dictionary %s, %zu bytes)\n",
+                    r.params_bytes,
+                    dict_path.empty() ? "none" : dict_path.c_str(),
+                    opts.dict.size());
         std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
         print_latency("compress", s.compress);
         print_latency("decompress warm", s.decompress);

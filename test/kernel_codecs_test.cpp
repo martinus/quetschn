@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// The kernel's lz4 and lzo, built in userspace from QUETSCHN_KERNEL_TREE. Only compiled when that is set.
+// The kernel's lz4, lzo and zstd, built in userspace from QUETSCHN_KERNEL_TREE. Only compiled when that is set.
 
 #include "kernel_codecs/zram_codec.h"
 
 #include <doctest/doctest.h>
+
+#include <unistd.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -13,11 +15,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <system_error>
-
 #include <random>
 #include <string>
-#include <unistd.h>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -36,8 +36,8 @@ page random_page(std::uint64_t seed) {
 }
 
 // like a heap page: 64-bit words, many of them pointers into the same region, some small integers
-page pointer_page() {
-    auto rng = std::mt19937_64(7);
+page pointer_page(std::uint64_t seed = 7) {
+    auto rng = std::mt19937_64(seed);
     auto p = page(page_size);
     for (std::size_t i = 0; i < page_size; i += 8) {
         std::uint64_t w = 0;
@@ -60,9 +60,9 @@ page pointer_page() {
     return p;
 }
 
-page text_page() {
+page text_page(std::uint64_t seed = 3) {
     auto const words = std::vector<std::string>{"page ", "zram ", "compress ", "the ", "kernel ", "swap ", "memory "};
-    auto rng = std::mt19937_64(3);
+    auto rng = std::mt19937_64(seed);
     auto p = page();
     while (p.size() < page_size) {
         auto const& w = words[rng() % words.size()];
@@ -81,32 +81,62 @@ page zero_runs_page() {
     return p;
 }
 
+// Pages that share a structure but no bytes in the same place: a record layout with a fixed header and
+// varying fields. A dictionary built from some of them helps with the others.
+page record_page(std::uint64_t seed) {
+    auto rng = std::mt19937_64(seed);
+    auto p = page();
+    while (p.size() < page_size) {
+        auto const header = std::string("struct task_info { pid=");
+        p.insert(p.end(), header.begin(), header.end());
+        auto const n = std::to_string(rng() % 100000);
+        p.insert(p.end(), n.begin(), n.end());
+        auto const mid = std::string(", state=RUNNING, flags=0x");
+        p.insert(p.end(), mid.begin(), mid.end());
+        auto const f = std::to_string(rng() % 1000);
+        p.insert(p.end(), f.begin(), f.end());
+        auto const tail = std::string(" }\n");
+        p.insert(p.end(), tail.begin(), tail.end());
+    }
+    p.resize(page_size);
+    return p;
+}
+
 std::vector<page> test_pages() {
-    return {random_page(1), random_page(2), pointer_page(), text_page(), zero_runs_page()};
+    return {random_page(1), random_page(2), pointer_page(), text_page(), zero_runs_page(), record_page(1)};
 }
 
 std::vector<quetschn_codec const*> codecs() {
     return {&quetschn_codec_lz4, &quetschn_codec_lzo, &quetschn_codec_lzo_rle, &quetschn_codec_zstd};
 }
 
-// A zram stream: workspace allocated and zeroed once, then set up by the codec.
-class stream {
+// A zram device (params) with one per-CPU stream, set up the way zram does it.
+class device {
 public:
-    explicit stream(quetschn_codec const& codec, int level = QUETSCHN_LEVEL_DEFAULT)
-        : m_codec(codec) {
-        m_s.level = level;
-        m_s.workspace_size = codec.workspace_size(&m_s.level, page_size);
-        REQUIRE(m_s.workspace_size > 0);
-        m_workspace.resize(m_s.workspace_size + 64);
-        auto const p = reinterpret_cast<std::uintptr_t>(m_workspace.data());
-        m_s.workspace = m_workspace.data() + (64 - p % 64) % 64;
-        REQUIRE(codec.init(&m_s, page_size) == 0);
+    explicit device(quetschn_codec const& codec, int level = QUETSCHN_LEVEL_DEFAULT, page dict = {})
+        : m_codec(codec)
+        , m_dict(std::move(dict)) {
+        m_params.dict = m_dict.empty() ? nullptr : m_dict.data();
+        m_params.dict_size = m_dict.size();
+        m_params.level = level;
+        m_params.page_size = page_size;
+        REQUIRE(codec.setup_params(&m_params) == 0);
+        REQUIRE(codec.create(&m_params, &m_stream) == 0);
     }
+
+    ~device() {
+        m_codec.destroy(&m_stream);
+        m_codec.release_params(&m_params);
+    }
+
+    device(device const&) = delete;
+    device& operator=(device const&) = delete;
 
     page compress(page const& src) {
         auto dst = page(2 * page_size);
         auto len = static_cast<unsigned int>(dst.size());
-        REQUIRE(m_codec.compress(&m_s, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) == 0);
+        REQUIRE(m_codec.compress(&m_params, &m_stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) ==
+                0);
         dst.resize(len);
         return dst;
     }
@@ -115,31 +145,48 @@ public:
     int decompress(page const& src, page& out) {
         out.assign(page_size, 0);
         auto len = static_cast<unsigned int>(out.size());
-        auto const ret = m_codec.decompress(&m_s, src.data(), static_cast<unsigned int>(src.size()), out.data(), &len);
+        auto const ret =
+            m_codec.decompress(&m_params, &m_stream, src.data(), static_cast<unsigned int>(src.size()), out.data(), &len);
         out.resize(len);
         return ret;
     }
 
-    [[nodiscard]] quetschn_stream const& raw() const {
-        return m_s;
+    [[nodiscard]] quetschn_params const& params() const {
+        return m_params;
+    }
+    [[nodiscard]] quetschn_stream const& stream() const {
+        return m_stream;
     }
 
 private:
     quetschn_codec const& m_codec;
-    quetschn_stream m_s{};
-    std::vector<std::uint8_t> m_workspace;
+    page m_dict;
+    quetschn_params m_params{};
+    quetschn_stream m_stream{};
 };
 
 page compress(quetschn_codec const& codec, page const& src) {
-    return stream(codec).compress(src);
+    return device(codec).compress(src);
+}
+
+bool rejects(quetschn_codec const& codec, int level) {
+    auto p = quetschn_params{};
+    p.level = level;
+    p.page_size = page_size;
+    auto const failed = codec.setup_params(&p) != 0;
+    if (!failed) {
+        codec.release_params(&p);
+    }
+    return failed;
 }
 
 // LZ4 block format, decoded straight from the format description (lz4_Block_format.md): a token with
 // literal length (high nibble) and match length - 4 (low nibble), 15 meaning "more length bytes follow",
-// the literals, then a 2 byte little-endian offset. The last sequence has literals only. Independent of
-// the kernel's decoder, so it checks that the userspace build of the kernel's compressor writes real LZ4.
-page lz4_reference_decode(page const& in) {
-    auto out = page();
+// the literals, then a 2 byte little-endian offset. The last sequence has literals only. With a dictionary
+// the offsets may reach back into it, as if it came right before the output. Independent of the kernel's
+// decoder, so it checks that the userspace build of the kernel's compressor writes real LZ4.
+page lz4_reference_decode(page const& in, page const& dict = {}) {
+    auto out = dict;
     std::size_t pos = 0;
     auto length = [&](std::size_t n) {
         if (n == 15) {
@@ -169,41 +216,133 @@ page lz4_reference_decode(page const& in) {
             out.push_back(out[out.size() - offset]);
         }
     }
-    return out;
+    return page(out.begin() + static_cast<std::ptrdiff_t>(dict.size()), out.end());
+}
+
+// a raw content dictionary: the bytes of a few pages like the ones that are compressed later
+page record_dict() {
+    auto d = page();
+    for (std::uint64_t seed = 100; seed < 104; ++seed) {
+        auto const p = record_page(seed);
+        d.insert(d.end(), p.begin(), p.end());
+    }
+    return d;
+}
+
+std::filesystem::path temp_path(std::string const& name) {
+    return std::filesystem::temp_directory_path() / ("quetschn-" + std::to_string(::getpid()) + "-" + name);
+}
+
+void write_file(std::filesystem::path const& path, page const& data) {
+    auto f = std::ofstream(path, std::ios::binary);
+    f.write(reinterpret_cast<char const*>(data.data()), static_cast<std::streamsize>(data.size()));
+}
+
+page read_file(std::filesystem::path const& path) {
+    auto in = std::ifstream(path, std::ios::binary);
+    return page(std::istreambuf_iterator<char>(in), {});
+}
+
+bool have_zstd_cli() {
+    return std::system("zstd --version >/dev/null 2>&1") == 0;
+}
+
+// Runs the zstd command line tool on a frame. It is a separate process with its own libzstd, so it
+// checks the kernel's zstd built in userspace without sharing any code with it.
+bool zstd_cli_decompress(page const& frame, page& out, page const& dict = {}) {
+    auto const in_path = temp_path("frame.zst");
+    auto const out_path = temp_path("frame.out");
+    auto const dict_path = temp_path("frame.dict");
+    write_file(in_path, frame);
+    auto cmd = "zstd -q -d -f -o '" + out_path.string() + "' '" + in_path.string() + "'";
+    if (!dict.empty()) {
+        write_file(dict_path, dict);
+        cmd += " -D '" + dict_path.string() + "'";
+    }
+    cmd += " 2>/dev/null";
+    auto const rc = std::system(cmd.c_str());
+    out = read_file(out_path);
+    std::error_code ec;
+    for (auto const& p : {in_path, out_path, dict_path}) {
+        std::filesystem::remove(p, ec);
+    }
+    return rc == 0;
 }
 
 } // namespace
 
-TEST_CASE("kernel codecs: every page roundtrips through every codec") {
+TEST_CASE("kernel codecs: every page roundtrips through every codec, with and without dictionary") {
     for (auto const* codec : codecs()) {
-        auto pages = test_pages();
-        for (std::size_t i = 0; i < pages.size(); ++i) {
-            CAPTURE(codec->name);
-            CAPTURE(i);
-            auto s = stream(*codec);
-            auto const c = s.compress(pages[i]);
-            auto out = page();
-            REQUIRE(s.decompress(c, out) == 0);
-            CHECK(out == pages[i]);
+        for (auto const& dict : {page(), record_dict()}) {
+            auto pages = test_pages();
+            for (std::size_t i = 0; i < pages.size(); ++i) {
+                auto const name = std::string(codec->name);
+                CAPTURE(name);
+                CAPTURE(dict.size());
+                CAPTURE(i);
+                auto d = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict);
+                auto const c = d.compress(pages[i]);
+                auto out = page();
+                REQUIRE(d.decompress(c, out) == 0);
+                CHECK(out == pages[i]);
+            }
         }
     }
 }
 
 TEST_CASE("kernel codecs: lz4 output is valid LZ4 for an independent decoder") {
+    auto const dict = record_dict();
     for (auto const& p : test_pages()) {
         CHECK(lz4_reference_decode(compress(quetschn_codec_lz4, p)) == p);
+        CHECK(lz4_reference_decode(device(quetschn_codec_lz4, QUETSCHN_LEVEL_DEFAULT, dict).compress(p), dict) == p);
     }
 }
 
 TEST_CASE("kernel codecs: compressed sizes are plausible") {
     // random data does not compress, so every codec expands it a little, but stays within zram's buffer
     for (auto const* codec : codecs()) {
-        CAPTURE(codec->name);
+        auto const name = std::string(codec->name);
+        CAPTURE(name);
         auto const n = compress(*codec, random_page(1)).size();
         CHECK(n > page_size);
         CHECK(n < page_size + page_size / 16);
         CHECK(compress(*codec, zero_runs_page()).size() < 200);
         CHECK(compress(*codec, text_page()).size() < page_size / 2);
+    }
+}
+
+TEST_CASE("kernel codecs: a dictionary of similar pages makes lz4 and zstd output smaller") {
+    auto const dict = record_dict();
+    for (auto const* codec : {&quetschn_codec_lz4, &quetschn_codec_zstd}) {
+        auto const name = std::string(codec->name);
+        CAPTURE(name);
+        auto const p = record_page(1);
+        auto const without = device(*codec).compress(p).size();
+        auto const with = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p).size();
+        // 15% for lz4 and 9% for zstd on these pages; ignoring the dictionary gives 0%
+        CHECK(with < without * 95 / 100);
+    }
+}
+
+TEST_CASE("kernel codecs: every page is compressed on its own, also with a dictionary") {
+    // zram resets the stream per page (lz4: a copy of the dictionary template, zstd: the cdict). If
+    // history leaked from one page to the next, the second compression of the same page would differ,
+    // and zram could not decompress pages in any order.
+    auto const dict = record_dict();
+    for (auto const* codec : {&quetschn_codec_lz4, &quetschn_codec_zstd}) {
+        auto const name = std::string(codec->name);
+        CAPTURE(name);
+        auto d = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict);
+        auto const a = record_page(1);
+        auto const b = record_page(2);
+        auto const first = d.compress(a);
+        (void)d.compress(b);
+        CHECK(d.compress(a) == first);
+        // and decompression works in any order too
+        auto out = page();
+        REQUIRE(d.decompress(d.compress(b), out) == 0);
+        REQUIRE(d.decompress(first, out) == 0);
+        CHECK(out == a);
     }
 }
 
@@ -218,25 +357,68 @@ TEST_CASE("kernel codecs: lzo-rle writes the lzo-rle stream, lzo does not") {
     CHECK_FALSE((plain[0] == 17 && plain[1] == 1));
 }
 
-TEST_CASE("kernel codecs: workspace sizes match PLAN.md §3.3") {
-    auto size = [](quetschn_codec const& codec) {
-        return stream(codec).raw().workspace_size;
+TEST_CASE("kernel codecs: memory per CPU and per device") {
+    // PLAN.md §3.3: LZ4_MEM_COMPRESS = 16416, LZO1X_MEM_COMPRESS = 16384, zstd "far larger". On top,
+    // lz4 and zstd allocate a small context struct of pointers per stream.
+    auto per_cpu = [](quetschn_codec const& codec, page dict = {}) {
+        auto d = device(codec, QUETSCHN_LEVEL_DEFAULT, std::move(dict));
+        (void)d.compress(text_page()); // zstd allocates part of it lazily
+        return d.stream().allocated;
     };
-    CHECK(size(quetschn_codec_lz4) == 16416);
-    CHECK(size(quetschn_codec_lzo) == 16384);
-    CHECK(size(quetschn_codec_lzo_rle) == 16384);
-    // "far larger": a cctx and a dctx per stream
-    CHECK(size(quetschn_codec_zstd) > 4 * 16416);
+    CHECK(per_cpu(quetschn_codec_lzo) == 16384);
+    CHECK(per_cpu(quetschn_codec_lzo_rle) == 16384);
+    CHECK(per_cpu(quetschn_codec_lz4) >= 16416);
+    CHECK(per_cpu(quetschn_codec_lz4) < 16416 + 64);
+    CHECK(per_cpu(quetschn_codec_zstd) > 4 * 16416);
+
+    // With a dictionary lz4 holds a compression and a decompression stream per CPU instead of the
+    // workspace, and the prepared dictionary once per device.
+    auto const dict = record_dict();
+    CHECK(per_cpu(quetschn_codec_lz4, dict) >= 16416);
+    CHECK(device(quetschn_codec_lz4, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated == 16416);
+    CHECK(device(quetschn_codec_lz4).params().allocated == 0);
+    // zstd with a dictionary still has a cctx and a dctx per CPU, allocated by zstd itself, and about as
+    // large as the workspaces without one (186 112 bytes both at level 3 on the development machine)
+    CHECK(per_cpu(quetschn_codec_zstd, dict) > per_cpu(quetschn_codec_zstd) * 9 / 10);
+    CHECK(per_cpu(quetschn_codec_zstd, dict) < per_cpu(quetschn_codec_zstd) * 11 / 10);
+    CHECK(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated > 0);
+}
+
+TEST_CASE("kernel codecs: every allocation is released again") {
+    for (auto const* codec : codecs()) {
+        for (auto const& dict : {page(), record_dict()}) {
+            auto const name = std::string(codec->name);
+            CAPTURE(name);
+            CAPTURE(dict.size());
+            auto p = quetschn_params{};
+            p.dict = dict.empty() ? nullptr : dict.data();
+            p.dict_size = dict.size();
+            p.level = QUETSCHN_LEVEL_DEFAULT;
+            p.page_size = page_size;
+            REQUIRE(codec->setup_params(&p) == 0);
+            auto s = quetschn_stream{};
+            REQUIRE(codec->create(&p, &s) == 0);
+            auto dst = page(2 * page_size);
+            auto len = static_cast<unsigned int>(dst.size());
+            auto const src = text_page();
+            REQUIRE(codec->compress(&p, &s, src.data(), page_size, dst.data(), &len) == 0);
+            codec->destroy(&s);
+            codec->release_params(&p);
+            CHECK(s.allocated == 0);
+            CHECK(p.allocated == 0);
+        }
+    }
 }
 
 TEST_CASE("kernel codecs: truncated or corrupted input is rejected, not a crash") {
     for (auto const* codec : codecs()) {
-        CAPTURE(codec->name);
-        auto s = stream(*codec);
-        auto c = s.compress(text_page());
+        auto const name = std::string(codec->name);
+        CAPTURE(name);
+        auto d = device(*codec);
+        auto c = d.compress(text_page());
         c.resize(c.size() / 2);
         auto out = page();
-        auto const ret = s.decompress(c, out);
+        auto const ret = d.decompress(c, out);
         // either an error, or at least not a full page: the second half of the input is missing
         CHECK((ret != 0 || out.size() != page_size));
     }
@@ -267,88 +449,109 @@ TEST_CASE("kernel codecs: lz4 uses zram's default acceleration") {
     REQUIRE(direct(1) != direct(8));
     CHECK(compress(quetschn_codec_lz4, p) == direct(1));
     // and a configured level reaches LZ4_compress_fast() as the acceleration
-    CHECK(stream(quetschn_codec_lz4, 8).compress(p) == direct(8));
+    CHECK(device(quetschn_codec_lz4, 8).compress(p) == direct(8));
 }
 
 TEST_CASE("kernel codecs: levels zram rejects are rejected") {
     // lz4_setup_params(): below LZ4_ACCELERATION_DEFAULT. zstd_setup_params(): outside
     // [zstd_min_clevel(), zstd_max_clevel()], and the maximum is 22.
-    for (int level : {0, -1}) {
-        CAPTURE(level);
-        CHECK(quetschn_codec_lz4.workspace_size(&level, page_size) == 0);
-    }
-    for (int level : {23, 100}) {
-        CAPTURE(level);
-        CHECK(quetschn_codec_zstd.workspace_size(&level, page_size) == 0);
-    }
+    CHECK(rejects(quetschn_codec_lz4, 0));
+    CHECK(rejects(quetschn_codec_lz4, -1));
+    CHECK_FALSE(rejects(quetschn_codec_lz4, 1));
+    CHECK(rejects(quetschn_codec_zstd, 23));
+    CHECK(rejects(quetschn_codec_zstd, 100));
     for (int level : {-1, 1, 3, 22}) {
         CAPTURE(level);
-        auto l = level;
-        CHECK(quetschn_codec_zstd.workspace_size(&l, page_size) > 0);
-        CHECK(l == level);
+        CHECK_FALSE(rejects(quetschn_codec_zstd, level));
+        CHECK(device(quetschn_codec_zstd, level).params().level == level);
     }
 }
 
 TEST_CASE("kernel codecs: zstd defaults to level 3, and the level changes the output") {
     // ZSTD_CLEVEL_DEFAULT is 3, and zram uses zstd_default_clevel() when no level is configured
-    CHECK(stream(quetschn_codec_zstd).raw().level == 3);
+    CHECK(device(quetschn_codec_zstd).params().level == 3);
 
     auto const p = pointer_page();
-    auto const fast = stream(quetschn_codec_zstd, -1).compress(p);
-    auto const l3 = stream(quetschn_codec_zstd, 3).compress(p);
-    auto const l19 = stream(quetschn_codec_zstd, 19).compress(p);
+    auto const fast = device(quetschn_codec_zstd, -1).compress(p);
+    auto const l3 = device(quetschn_codec_zstd, 3).compress(p);
+    auto const l19 = device(quetschn_codec_zstd, 19).compress(p);
     CHECK(fast != l3);
     CHECK(l19.size() <= l3.size());
     CHECK(l3.size() < fast.size());
     for (auto const& c : {fast, l3, l19}) {
-        auto s = stream(quetschn_codec_zstd);
+        auto d = device(quetschn_codec_zstd);
         auto out = page();
-        REQUIRE(s.decompress(c, out) == 0);
+        REQUIRE(d.decompress(c, out) == 0);
         CHECK(out == p);
     }
 }
-
-namespace {
-
-// Runs the zstd command line tool on a frame. It is a separate process with its own libzstd, so it
-// checks the kernel's zstd built in userspace without sharing any code with it. Returns false if there
-// is no zstd binary.
-bool zstd_cli_decompress(page const& frame, page& out) {
-    auto const dir = std::filesystem::temp_directory_path();
-    auto const in_path = dir / ("quetschn-zstd-" + std::to_string(::getpid()) + ".zst");
-    auto const out_path = dir / ("quetschn-zstd-" + std::to_string(::getpid()) + ".out");
-    {
-        auto f = std::ofstream(in_path, std::ios::binary);
-        f.write(reinterpret_cast<char const*>(frame.data()), static_cast<std::streamsize>(frame.size()));
-    }
-    auto const cmd = "zstd -q -d -f -o '" + out_path.string() + "' '" + in_path.string() + "' 2>/dev/null";
-    auto const rc = std::system(cmd.c_str());
-    auto in = std::ifstream(out_path, std::ios::binary);
-    out.assign(std::istreambuf_iterator<char>(in), {});
-    std::error_code ec;
-    std::filesystem::remove(in_path, ec);
-    std::filesystem::remove(out_path, ec);
-    return rc == 0;
-}
-
-bool have_zstd_cli() {
-    return std::system("zstd --version >/dev/null 2>&1") == 0;
-}
-
-} // namespace
 
 TEST_CASE("kernel codecs: zstd output is a valid zstd frame for the zstd command line tool") {
     if (!have_zstd_cli()) {
         MESSAGE("no zstd command line tool, skipped");
         return;
     }
+    auto const dict = record_dict();
     for (int level : {-1, 1, 3}) {
-        auto s = stream(quetschn_codec_zstd, level);
+        auto plain = device(quetschn_codec_zstd, level);
+        auto with_dict = device(quetschn_codec_zstd, level, dict);
         for (auto const& p : test_pages()) {
             CAPTURE(level);
             auto out = page();
-            REQUIRE(zstd_cli_decompress(s.compress(p), out));
+            REQUIRE(zstd_cli_decompress(plain.compress(p), out));
+            CHECK(out == p);
+            REQUIRE(zstd_cli_decompress(with_dict.compress(p), out, dict));
             CHECK(out == p);
         }
     }
+}
+
+TEST_CASE("kernel codecs: a dictionary trained by zstd --train works for zstd and lz4") {
+    // What Honor's f0f6f7871430 does, and what zram's documentation suggests: train with the zstd tool,
+    // then use the same file for either codec. -B4096 cuts the samples into pages; the --split=4096 from
+    // that commit message is not an option zstd 1.5.7 knows. A trained dictionary has a zstd header and entropy
+    // tables, which lz4 treats as plain content, while zstd parses them.
+    if (!have_zstd_cli()) {
+        MESSAGE("no zstd command line tool, skipped");
+        return;
+    }
+    auto const samples = temp_path("samples");
+    auto const dict_path = temp_path("trained.dict");
+    {
+        auto all = page();
+        for (std::uint64_t seed = 1000; seed < 1200; ++seed) {
+            auto const p = record_page(seed);
+            all.insert(all.end(), p.begin(), p.end());
+        }
+        write_file(samples, all);
+    }
+    auto const cmd =
+        "zstd -q -f --train '" + samples.string() + "' -B4096 --maxdict=16KB -o '" + dict_path.string() + "' 2>/dev/null";
+    REQUIRE(std::system(cmd.c_str()) == 0);
+    auto const dict = read_file(dict_path);
+    std::error_code ec;
+    std::filesystem::remove(samples, ec);
+    std::filesystem::remove(dict_path, ec);
+
+    // zstd checks for its dictionary magic number, 0xEC30A437 little-endian
+    REQUIRE(dict.size() > 8);
+    CHECK(dict[0] == 0x37);
+    CHECK(dict[1] == 0xa4);
+    CHECK(dict[2] == 0x30);
+    CHECK(dict[3] == 0xec);
+
+    auto const p = record_page(5);
+    for (auto const* codec : {&quetschn_codec_lz4, &quetschn_codec_zstd}) {
+        auto const name = std::string(codec->name);
+        CAPTURE(name);
+        auto d = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict);
+        auto const c = d.compress(p);
+        CHECK(c.size() < device(*codec).compress(p).size());
+        auto out = page();
+        REQUIRE(d.decompress(c, out) == 0);
+        CHECK(out == p);
+    }
+    auto out = page();
+    REQUIRE(zstd_cli_decompress(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).compress(p), out, dict));
+    CHECK(out == p);
 }
