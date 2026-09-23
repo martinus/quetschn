@@ -547,6 +547,25 @@ extensions cost 20 instructions each, with branches 22 200 became 21 000 cycles.
 compiler: the encoder's state lives on the stack, the last sequence's path is merged into the loop, and
 the rarely used byte loop for literals became a vectorized one with alignment checks.
 
+**Token layouts, costed** (`quetschn-lz-analysis --codec seqlz`, token classes, on the 20 000 page
+sample): the 256 token values split into classes, each with fields for literal length and match length
+- 4, with or without an extension, and one kind of offset: the last one, the one before, 1 byte, near
+(k bits in the token and 1 byte, as `lzo`'s M2) or 2 bytes. A search from `bytelz`'s layout changes one
+field at a time and keeps what gets smaller, with each extension counted as w bytes more, because each
+is a branch in the decoder:
+
+| w | Σ zsmalloc cost | ll extensions | ml extensions | layout (ll / ml bits, e: with extension) |
+| --- | --- | --- | --- | --- |
+| `bytelz` | 29.33% | 8.0% | 25.0% | last, before, byte, word, each 3e / 3e |
+| 0 | 28.93% | 15.1% | 18.9% | last 2e/3e, before 2e/4e, byte 2e/4e, word 3e/3e, near3 1e/1e |
+| 0.5 | 28.96% | 8.4% | 19.4% | last 2/3e, before 2e/4e, byte 2/4e, word 3e/3e, near2 1e/2e |
+| 1 | 29.02% | 8.5% | 17.3% | last 3e/2, before 2e/4e, byte 2/4e, word 3e/3e, near2 1e/2e |
+| 2 | 29.07% | 8.0% | 16.2% | last 3e/2, before 1/5e, byte 2/4e, word 3e/3e, near2 1e/2e |
+
+So a better layout is worth at most 0.4 points of memory, and cuts the sequences with an extension from
+33% to about 24%; with `lz4`'s 4 bits 13% of the matches would still need one. `lzo`'s near matches
+help little here, because 49% of the offsets already fit into 1 byte.
+
 **Next, from `lzo`:** `lzo` (31.9%) beats `lz4` with its format, not its matcher: a match with an offset
 up to 2048, 3 to 8 bytes and up to 3 literals after it costs 2 bytes. 26% of `seqlz-fast`'s offsets are
 between 257 and 2048 and cost `bytelz` 2 bytes of offset. A token layout with fewer extensions and such
