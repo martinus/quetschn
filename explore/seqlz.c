@@ -26,7 +26,7 @@ struct value_table {
 
 struct token_table {
     u16 decode[1U << SEQLZ_TOKEN_BITS];
-    u32 enc[SEQLZ_TOKEN_SYMBOLS + 1];
+    u16 enc[SEQLZ_TOKEN_SYMBOLS + 1]; /* code | length << 12: 4 KiB in L1 next to the hash table */
 };
 
 struct seqlz_tables {
@@ -67,8 +67,14 @@ static u32 token_entry(unsigned int s) {
  * entries of entry(symbol) | code length. -1 if a length is longer than bits, or the codes are not a
  * complete prefix code: over-subscribed, with gaps, or none at all.
  */
-static int
-build(const u8* len, unsigned int n, unsigned int bits, u32 (*entry)(unsigned int), u32* enc, u32* decode32, u16* decode16) {
+static int build(const u8* len,
+                 unsigned int n,
+                 unsigned int bits,
+                 u32 (*entry)(unsigned int),
+                 u32* enc,
+                 u16* enc16,
+                 u32* decode32,
+                 u16* decode16) {
     unsigned int count[16] = {0}, next[17], c = 0, used = 0, s, l, k;
 
     if (bits > 15)
@@ -102,11 +108,17 @@ build(const u8* len, unsigned int n, unsigned int bits, u32 (*entry)(unsigned in
         unsigned int r;
 
         l = len[s];
-        enc[s] = 0;
+        if (enc)
+            enc[s] = 0;
+        else
+            enc16[s] = 0;
         if (l == 0)
             continue;
         r = reverse(next[l]++, l);
-        enc[s] = r | l << 16;
+        if (enc)
+            enc[s] = r | l << 16;
+        else
+            enc16[s] = (u16)(r | l << 12);
         for (k = r; k < (1U << bits); k += 1U << l) {
             if (decode32)
                 decode32[k] = entry(s) | l;
@@ -123,9 +135,9 @@ int seqlz_all_symbols(const struct seqlz_tables* t) {
 
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths) {
     __builtin_memset(t, 0, sizeof(*t)); /* also the encoder's entries behind the last symbol */
-    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, token_entry, t->token.enc, 0, t->token.decode) ||
-        build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, t->ll.decode, 0) ||
-        build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, t->ml.decode, 0))
+    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, token_entry, 0, t->token.enc, 0, t->token.decode) ||
+        build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, 0, t->ll.decode, 0) ||
+        build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, 0, t->ml.decode, 0))
         return -1;
     {
         /* every token has a code or the escape has one, every length value has one */
@@ -225,12 +237,12 @@ static ALWAYS_INLINE u32 token_code(const struct seqlz_tables* t, unsigned int t
     u32 te = t->token.enc[tok], ee;
 
     if (te != 0) {
-        *len = te >> 16 & 15U;
-        return te & 0xffffU;
+        *len = te >> 12;
+        return te & 0xfffU;
     }
     ee = t->token.enc[SEQLZ_ESCAPE];
-    *len = (ee >> 16 & 15U) + SEQLZ_ESCAPE_BITS;
-    return (ee & 0xffffU) | tok << (ee >> 16 & 15U);
+    *len = (ee >> 12) + SEQLZ_ESCAPE_BITS;
+    return (ee & 0xfffU) | tok << (ee >> 12);
 }
 
 /* one sequence: its literals from in, ml 0 for the last one */
