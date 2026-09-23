@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 #include "bdelta.h"
+#include "seqlz.h"
 #include "shuffle.h"
 
 #include <doctest/doctest.h>
@@ -7,6 +8,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -175,5 +177,175 @@ TEST_CASE("bdelta: any input of valid length is safe, and what it decodes to rou
         }
         auto const p = decompress(c);
         CHECK(decompress(compress(p)) == p);
+    }
+}
+
+namespace {
+
+struct seqlz_page {
+    std::vector<unsigned char> bytes;
+    std::vector<seqlz_sequence> sequences;
+    std::vector<unsigned char> literals;
+};
+
+// A page built from random sequences, so the sequences that describe it are known. kind picks what
+// dominates: 0 short offsets 1 to 7, 1 repeat offsets, 2 long runs, 3 anything.
+seqlz_page random_seqlz_page(std::mt19937_64& rng, int kind) {
+    auto p = seqlz_page{};
+    auto last = std::array<unsigned, 3>{1, 4, 8};
+    while (true) {
+        auto const room = 4096 - p.bytes.size();
+        auto lit = static_cast<unsigned>(rng() % (kind == 2 ? 3 : 20));
+        if (rng() % 16 == 0) {
+            lit += static_cast<unsigned>(rng() % 300);
+        }
+        if (p.bytes.empty() && lit == 0) {
+            lit = 1;
+        }
+        if (lit + 4 > room || rng() % 200 == 0) {
+            // the last sequence: literals up to the end of the page
+            auto s = seqlz_sequence{static_cast<unsigned short>(room), 0, 0};
+            for (std::size_t i = 0; i < room; ++i) {
+                auto const b = static_cast<unsigned char>(rng());
+                p.bytes.push_back(b);
+                p.literals.push_back(b);
+            }
+            p.sequences.push_back(s);
+            return p;
+        }
+        for (unsigned i = 0; i < lit; ++i) {
+            auto const b = static_cast<unsigned char>(rng() % 4 == 0 ? 0 : rng());
+            p.bytes.push_back(b);
+            p.literals.push_back(b);
+        }
+        auto const have = static_cast<unsigned>(p.bytes.size());
+        auto off = 0U;
+        switch (kind) {
+        case 0:
+            off = 1 + static_cast<unsigned>(rng() % 7);
+            break;
+        case 1:
+            off = last[rng() % 3];
+            break;
+        default:
+            off = 1 + static_cast<unsigned>(rng() % have);
+            break;
+        }
+        off = std::min(off, have);
+        auto const max_len = static_cast<unsigned>(4096 - p.bytes.size());
+        auto len = 4 + static_cast<unsigned>(rng() % (kind == 2 ? 3000 : 40));
+        len = std::min(len, max_len);
+        if (len < 4) {
+            continue;
+        }
+        for (unsigned i = 0; i < len; ++i) {
+            p.bytes.push_back(p.bytes[p.bytes.size() - off]);
+        }
+        last = {off, last[0], last[1]};
+        p.sequences.push_back(seqlz_sequence{
+            static_cast<unsigned short>(lit), static_cast<unsigned short>(len), static_cast<unsigned short>(off)});
+        if (p.bytes.size() == 4096) {
+            // ended with a match: an empty last sequence
+            p.sequences.push_back(seqlz_sequence{0, 0, 0});
+            return p;
+        }
+    }
+}
+
+std::unique_ptr<seqlz_tables, void (*)(seqlz_tables*)> default_tables() {
+    auto* t = static_cast<seqlz_tables*>(::operator new(seqlz_tables_size()));
+    REQUIRE(seqlz_tables_init(t, &seqlz_default_lz4) == 0);
+    return {t, [](seqlz_tables* p) {
+                ::operator delete(p);
+            }};
+}
+
+} // namespace
+
+TEST_CASE("seqlz: pages from random sequences come back, with every kind of copy") {
+    auto const t = default_tables();
+    auto rng = std::mt19937_64(31);
+    for (int round = 0; round < 800; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        REQUIRE(p.bytes.size() == 4096);
+        auto c = std::vector<unsigned char>(3 * 4096);
+        auto const len = seqlz_encode(t.get(),
+                                      p.sequences.data(),
+                                      static_cast<unsigned>(p.sequences.size()),
+                                      p.literals.data(),
+                                      static_cast<unsigned>(p.literals.size()),
+                                      c.data(),
+                                      static_cast<unsigned>(c.size()));
+        REQUIRE(len > 0);
+        // exactly sized, so ASan sees any read past the end
+        c.resize(len);
+        auto out = std::vector<unsigned char>(4096);
+        REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data()) == 0);
+        CHECK(out == p.bytes);
+        // and a byte less is not a valid page
+        CHECK(seqlz_decode(t.get(), c.data(), len - 1, out.data()) == -1);
+    }
+}
+
+TEST_CASE("seqlz: tables that are no prefix code are rejected") {
+    auto t = default_tables();
+    auto l = seqlz_default_lz4;
+    CHECK(seqlz_tables_init(t.get(), &l) == 0);
+    l.ll[0] = 11; // longer than SEQLZ_MAX_BITS
+    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    l = seqlz_default_lz4;
+    l.off[0] = 1; // together with the others more codes than fit: over-subscribed
+    l.off[1] = 1;
+    l.off[2] = 1;
+    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    l = seqlz_default_lz4;
+    std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
+    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+}
+
+TEST_CASE("seqlz: any input is safe for the decoder") {
+    auto const t = default_tables();
+    auto rng = std::mt19937_64(37);
+    auto out = std::vector<unsigned char>(4096);
+    for (int round = 0; round < 3000; ++round) {
+        CAPTURE(round);
+        std::vector<unsigned char> c;
+        if (round % 2 == 0) {
+            // random bytes with a plausible header
+            c.resize(8 + rng() % 3000);
+            for (auto& b : c) {
+                b = static_cast<unsigned char>(rng());
+            }
+            auto const n_lit = static_cast<unsigned>(rng() % (c.size() - 8));
+            c[0] = static_cast<unsigned char>(1 + rng() % 200);
+            c[1] = 0;
+            c[2] = static_cast<unsigned char>(n_lit);
+            c[3] = static_cast<unsigned char>(n_lit >> 8);
+            auto const rest = static_cast<unsigned>(c.size() - 8 - n_lit);
+            auto const a = rest == 0 ? 0U : static_cast<unsigned>(rng() % rest);
+            c[4] = static_cast<unsigned char>(a);
+            c[5] = static_cast<unsigned char>(a >> 8);
+            c[6] = static_cast<unsigned char>((rest - a) / 2);
+            c[7] = static_cast<unsigned char>(((rest - a) / 2) >> 8);
+        } else {
+            // a valid page with some bits flipped
+            auto const p = random_seqlz_page(rng, round % 4);
+            c.resize(3 * 4096);
+            auto const len = seqlz_encode(t.get(),
+                                          p.sequences.data(),
+                                          static_cast<unsigned>(p.sequences.size()),
+                                          p.literals.data(),
+                                          static_cast<unsigned>(p.literals.size()),
+                                          c.data(),
+                                          static_cast<unsigned>(c.size()));
+            REQUIRE(len > 0);
+            c.resize(len);
+            for (int f = 0; f < 3; ++f) {
+                c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
+            }
+        }
+        auto const ret = seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data());
+        CHECK((ret == 0 || ret == -1));
     }
 }

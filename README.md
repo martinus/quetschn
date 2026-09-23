@@ -71,7 +71,8 @@ tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd:-1,spike-slots
 ```
 
 `quetschn-lz-analysis --corpus <base>` estimates what `lz4hc`'s matches would cost with entropy coded
-sequences and literals, see `docs/explored-designs.md`.
+sequences and literals, see `docs/explored-designs.md`. `quetschn-seqlz-train` trains the tables of the
+seqlz prototype; `explore/seqlz_default_tables.c` says how the compiled-in ones were made.
 
 Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
 `quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on

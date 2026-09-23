@@ -54,7 +54,7 @@ target_include_directories(quetschn_spike PUBLIC spike bench/kernel_codecs)
 target_link_libraries(quetschn_spike PRIVATE quetschn_warnings)
 
 # Candidate designs, see docs/explored-designs.md. The parts that need no kernel code, for the tests.
-add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c)
+add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c explore/seqlz.c explore/seqlz_default_tables.c)
 target_include_directories(quetschn_explore PUBLIC explore)
 target_link_libraries(quetschn_explore PRIVATE quetschn_warnings)
 
@@ -79,7 +79,8 @@ if(BUILD_TESTING)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp test/lz_analysis_test.cpp bench/lz_analysis.cpp)
         target_link_libraries(quetschn_test PRIVATE quetschn_kernel_lz4 quetschn_kernel_lzo quetschn_kernel_zstd
-                                                    quetschn_kernel_explore quetschn_kernel_explore_zstd)
+                                                    quetschn_kernel_explore quetschn_kernel_explore_zstd
+                                                    quetschn_kernel_seqlz)
         target_compile_definitions(quetschn_test PRIVATE QUETSCHN_HAVE_KERNEL_CODECS)
     endif()
     add_test(NAME quetschn_test COMMAND quetschn_test)
