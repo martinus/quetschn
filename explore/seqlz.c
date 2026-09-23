@@ -377,6 +377,17 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
 
     if (src_len < SEQLZ_HEADER)
         return -1;
+    /* the whole compressed page at once, so that its cache misses overlap */
+    {
+        const u8* q;
+
+        u8* o;
+
+        for (q = s + 64; q < s_end; q += 64)
+            __builtin_prefetch(q);
+        for (o = d; o < d_end; o += 64)
+            __builtin_prefetch(o, 1);
+    }
     n = load16(s);
     n_lit = load16(s + 2);
     if (n == 0 || (u64)SEQLZ_HEADER + n_lit > src_len)
