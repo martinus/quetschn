@@ -29,6 +29,8 @@ struct run_options {
     // taken across pages afterwards, so they describe slow pages and not slow measurements.
     unsigned repetitions = 5;
     bool measure_time = true;
+    // zram's algorithm_params level, QUETSCHN_LEVEL_DEFAULT for the codec's default
+    int level = QUETSCHN_LEVEL_DEFAULT;
 };
 
 struct page_result {
@@ -42,14 +44,16 @@ struct page_result {
 };
 
 struct run_result {
-    std::size_t same_filled = 0; // skipped: zram stores these without a codec
+    int level = 0;                  // after the codec applied its default
+    std::size_t workspace_size = 0; // what zram allocates per CPU for this codec and level
+    std::size_t same_filled = 0;    // skipped: zram stores these without a codec
     std::vector<page_result> pages;
 };
 
 // Compresses every page that is not same-filled with the codec, checks that it decompresses to the
 // same bytes, and measures both directions. Buffer sizes are zram's: 2 * page_size for the compressed
 // output, page_size for the decompressed one. Throws std::runtime_error when the codec fails or the
-// roundtrip does not reproduce the page.
+// roundtrip does not reproduce the page, std::invalid_argument when zram would reject the level.
 [[nodiscard]] run_result
 run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& model, run_options const& opts);
 

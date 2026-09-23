@@ -138,19 +138,34 @@ run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_mode
     }
     auto const tick_ns = ns_per_tick();
 
-    // Separate allocations, aligned to cache lines like the kernel's page-sized buffers
-    auto workspace = std::vector<std::byte>(codec.workspace_size + cache_line);
+    auto result = run_result{};
+    result.level = opts.level;
+    result.workspace_size = codec.workspace_size(&result.level, static_cast<unsigned int>(page_size));
+    if (result.workspace_size == 0) {
+        throw std::invalid_argument(std::string(codec.name) + ": zram rejects level " + std::to_string(opts.level));
+    }
+
+    // Separate allocations, aligned to cache lines like the kernel's page-sized buffers. The workspace is
+    // zeroed, like zram's vzalloc.
+    auto workspace = std::vector<std::byte>(result.workspace_size + cache_line);
     auto compressed = std::vector<std::byte>(2 * page_size + cache_line);
     auto restored = std::vector<std::byte>(page_size + cache_line);
     auto align = [](std::vector<std::byte>& v) {
         auto p = reinterpret_cast<std::uintptr_t>(v.data());
         return v.data() + ((cache_line - p % cache_line) % cache_line);
     };
-    auto* ws = align(workspace);
     auto* dst = align(compressed);
     auto* out = align(restored);
 
-    auto result = run_result{};
+    // One stream for the whole run, like one zram stream per CPU
+    auto stream = quetschn_stream{};
+    stream.level = result.level;
+    stream.workspace = align(workspace);
+    stream.workspace_size = result.workspace_size;
+    if (codec.init(&stream, static_cast<unsigned int>(page_size)) != 0) {
+        throw std::runtime_error(std::string(codec.name) + ": init failed");
+    }
+
     for (std::size_t i = 0; i < c.size(); ++i) {
         auto const src = c.page(i);
         if (analyze_page(src).same_filled) {
@@ -160,7 +175,7 @@ run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_mode
 
         auto compress_once = [&]() -> unsigned int {
             auto len = static_cast<unsigned int>(2 * page_size);
-            if (codec.compress(src.data(), static_cast<unsigned int>(page_size), dst, &len, ws) != 0) {
+            if (codec.compress(&stream, src.data(), static_cast<unsigned int>(page_size), dst, &len) != 0) {
                 fail(codec, i, "compress failed");
             }
             return len;
@@ -174,7 +189,7 @@ run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_mode
 
         // Roundtrip check, also for pages that zram would store raw: the codec must still be correct.
         auto out_len = static_cast<unsigned int>(page_size);
-        if (codec.decompress(dst, r.comp_len, out, &out_len) != 0) {
+        if (codec.decompress(&stream, dst, r.comp_len, out, &out_len) != 0) {
             fail(codec, i, "decompress failed");
         }
         if (out_len != page_size || std::memcmp(out, src.data(), page_size) != 0) {
@@ -195,7 +210,7 @@ run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_mode
                     return;
                 }
                 auto len = static_cast<unsigned int>(page_size);
-                (void)codec.decompress(dst, r.comp_len, out, &len);
+                (void)codec.decompress(&stream, dst, r.comp_len, out, &len);
             };
             auto const* read_src = r.huge ? static_cast<void const*>(src.data()) : dst;
             auto const read_len = r.huge ? page_size : r.comp_len;

@@ -5,7 +5,7 @@
 # lib/lzo is GPL-2.0-only. The quetschn-bench-* binaries link them and are therefore GPL-2.0 works;
 # they are measurement tools and not distributed.
 #
-# Flags: from `make V=1 lib/lz4/lz4_compress.o` with Fedora's config for 7.1.8 on x86-64 (kernel
+# Flags: from `make V=1 lib/lz4/lz4_compress.o lib/zstd/compress/zstd_compress.o` with Fedora's config for 7.1.8 on x86-64 (kernel
 # 986c24e0fe44, gcc 16). Everything that changes code generation and works in userspace is kept.
 # Left out, each for a reason:
 # - -mcmodel=kernel, -mstack-protector-guard-*, -fno-PIE: the kernel's address space, not ours.
@@ -60,10 +60,10 @@ endforeach()
 execute_process(COMMAND ${CMAKE_C_COMPILER} -print-file-name=include
                 OUTPUT_VARIABLE quetschn_cc_include OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-# lz4.h and lzo.h are copied into the build tree, so that the include path does not also expose the
+# The public headers are copied into the build tree, so that the include path does not also expose the
 # rest of the kernel's include/ (which would pull in the real kernel headers instead of compat/).
 set(quetschn_kernel_include "${CMAKE_BINARY_DIR}/kernel_include")
-foreach(h lz4.h lzo.h)
+foreach(h lz4.h lzo.h zstd.h zstd_lib.h zstd_errors.h xxhash.h)
     configure_file("${QUETSCHN_KERNEL_TREE}/include/linux/${h}" "${quetschn_kernel_include}/linux/${h}" COPYONLY)
 endforeach()
 
@@ -91,10 +91,20 @@ quetschn_kernel_codec(quetschn_kernel_lzo lib/lzo ""
     "${QUETSCHN_KERNEL_TREE}/lib/lzo/lzo1x_decompress_safe.c"
     bench/kernel_codecs/zram_lzo.c)
 
-foreach(codec lz4 lzo lzo_rle)
+# lib/zstd/Makefile builds these three modules; zstd needs lib/xxhash.c as well. No extra flags: the
+# V=1 line for lib/zstd has exactly the same flags as lib/lz4 minus -O3.
+file(GLOB_RECURSE quetschn_zstd_sources "${QUETSCHN_KERNEL_TREE}/lib/zstd/*.c")
+quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
+    ${quetschn_zstd_sources}
+    "${QUETSCHN_KERNEL_TREE}/lib/xxhash.c"
+    bench/kernel_codecs/zram_zstd.c)
+
+foreach(codec lz4 lzo lzo_rle zstd)
     string(REPLACE "_" "-" name ${codec})
     if(codec STREQUAL "lz4")
         set(lib quetschn_kernel_lz4)
+    elseif(codec STREQUAL "zstd")
+        set(lib quetschn_kernel_zstd)
     else()
         set(lib quetschn_kernel_lzo)
     endif()

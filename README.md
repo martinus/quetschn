@@ -16,14 +16,18 @@ cmake --build build
 
 ## Benchmarking the kernel's codecs
 
-The harness builds zram's `lz4`, `lzo` and `lzo-rle` from a Linux source tree, with the kernel's
-compiler flags. The kernel sources are compiled in place and not copied into this repository.
+The harness builds zram's `lz4`, `lzo`, `lzo-rle` and `zstd` from a Linux source tree, with the
+kernel's compiler flags. The kernel sources are compiled in place and not copied into this repository.
 
 ```sh
 cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
 cmake --build build
 ./build/quetschn-bench-lz4 --corpus corpus/desktop --cpu 2 --out lz4.tsv
+./build/quetschn-bench-zstd --corpus corpus/desktop --cpu 2 --level -1
 ```
+
+`--level` is zram's `algorithm_params` level: the acceleration for `lz4`, the level for `zstd`. Without
+it each codec uses zram's default.
 
 `--out` writes one line per page for paired comparisons. The `quetschn-bench-*` binaries contain
 GPL-2.0-only kernel code, so they are GPL-2.0 works; they are for measuring, not for distribution.

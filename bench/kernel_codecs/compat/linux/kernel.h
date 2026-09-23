@@ -21,4 +21,7 @@
 #define min_t(type, a, b) min((type)(a), (type)(b))
 #define max_t(type, a, b) max((type)(a), (type)(b))
 
+/* Only reachable from zstd's assert() at DEBUGLEVEL >= 1, which the kernel does not build. */
+#define WARN_ON(cond) ((void)(cond))
+
 #endif

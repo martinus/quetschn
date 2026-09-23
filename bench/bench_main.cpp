@@ -24,9 +24,10 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: %s --corpus <base> [--repetitions <n>] [--cpu <n>] [--out <file.tsv>]\n"
+                 "usage: %s --corpus <base> [--level <n>] [--repetitions <n>] [--cpu <n>] [--out <file.tsv>]\n"
                  "\n"
                  "Reads <base>.pages and <base>.tsv as written by quetschn-collect-resident.\n"
+                 "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
                  "--out writes one line per page, for paired comparisons between codecs.\n",
                  QUETSCHN_CODEC.name);
@@ -76,6 +77,7 @@ int main(int argc, char** argv) {
             out_path = argv[++i];
         } else if (arg == "--repetitions" && has_value && parse(argv[++i], opts.repetitions) && opts.repetitions > 0) {
         } else if (arg == "--cpu" && has_value && parse(argv[++i], cpu)) {
+        } else if (arg == "--level" && has_value && parse(argv[++i], opts.level)) {
         } else {
             usage();
             return 2;
@@ -100,7 +102,6 @@ int main(int argc, char** argv) {
         auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();
-        std::printf("codec      %s\n", QUETSCHN_CODEC.name);
         std::printf("corpus     %s, %zu pages of %zu bytes\n", base.c_str(), c.size(), c.page_size);
         std::printf(
             "cpu        %s, pinned: %s, governor: %s\n",
@@ -111,6 +112,11 @@ int main(int argc, char** argv) {
 
         auto const r = quetschn::run_codec(c, QUETSCHN_CODEC, model, opts);
         auto const s = quetschn::summarize(r, c.page_size);
+        if (r.level == QUETSCHN_LEVEL_DEFAULT) {
+            std::printf("codec      %s, no level (zram ignores it for this codec)\n", QUETSCHN_CODEC.name);
+        } else {
+            std::printf("codec      %s, level %d\n", QUETSCHN_CODEC.name, r.level);
+        }
 
         std::printf("\n");
         std::printf("pages                  %zu measured, %zu same-filled skipped\n", s.pages, s.same_filled);
@@ -119,7 +125,7 @@ int main(int argc, char** argv) {
                     s.pages == 0 ? 0.0 : 100.0 * s.total_cost / s.total_uncompressed,
                     s.pages == 0 ? 0.0 : s.total_cost / static_cast<double>(s.pages));
         std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
-        std::printf("workspace per CPU      %zu bytes\n", QUETSCHN_CODEC.workspace_size);
+        std::printf("workspace per CPU      %zu bytes\n", r.workspace_size);
         std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
         print_latency("compress", s.compress);
         print_latency("decompress warm", s.decompress);

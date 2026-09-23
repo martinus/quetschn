@@ -8,9 +8,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <system_error>
+
 #include <random>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -79,16 +86,52 @@ std::vector<page> test_pages() {
 }
 
 std::vector<quetschn_codec const*> codecs() {
-    return {&quetschn_codec_lz4, &quetschn_codec_lzo, &quetschn_codec_lzo_rle};
+    return {&quetschn_codec_lz4, &quetschn_codec_lzo, &quetschn_codec_lzo_rle, &quetschn_codec_zstd};
 }
 
+// A zram stream: workspace allocated and zeroed once, then set up by the codec.
+class stream {
+public:
+    explicit stream(quetschn_codec const& codec, int level = QUETSCHN_LEVEL_DEFAULT)
+        : m_codec(codec) {
+        m_s.level = level;
+        m_s.workspace_size = codec.workspace_size(&m_s.level, page_size);
+        REQUIRE(m_s.workspace_size > 0);
+        m_workspace.resize(m_s.workspace_size + 64);
+        auto const p = reinterpret_cast<std::uintptr_t>(m_workspace.data());
+        m_s.workspace = m_workspace.data() + (64 - p % 64) % 64;
+        REQUIRE(codec.init(&m_s, page_size) == 0);
+    }
+
+    page compress(page const& src) {
+        auto dst = page(2 * page_size);
+        auto len = static_cast<unsigned int>(dst.size());
+        REQUIRE(m_codec.compress(&m_s, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) == 0);
+        dst.resize(len);
+        return dst;
+    }
+
+    // returns the codec's result, out holds the decompressed bytes
+    int decompress(page const& src, page& out) {
+        out.assign(page_size, 0);
+        auto len = static_cast<unsigned int>(out.size());
+        auto const ret = m_codec.decompress(&m_s, src.data(), static_cast<unsigned int>(src.size()), out.data(), &len);
+        out.resize(len);
+        return ret;
+    }
+
+    [[nodiscard]] quetschn_stream const& raw() const {
+        return m_s;
+    }
+
+private:
+    quetschn_codec const& m_codec;
+    quetschn_stream m_s{};
+    std::vector<std::uint8_t> m_workspace;
+};
+
 page compress(quetschn_codec const& codec, page const& src) {
-    auto workspace = std::vector<std::uint8_t>(codec.workspace_size);
-    auto dst = page(2 * page_size);
-    auto len = static_cast<unsigned int>(dst.size());
-    REQUIRE(codec.compress(src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len, workspace.data()) == 0);
-    dst.resize(len);
-    return dst;
+    return stream(codec).compress(src);
 }
 
 // LZ4 block format, decoded straight from the format description (lz4_Block_format.md): a token with
@@ -137,11 +180,10 @@ TEST_CASE("kernel codecs: every page roundtrips through every codec") {
         for (std::size_t i = 0; i < pages.size(); ++i) {
             CAPTURE(codec->name);
             CAPTURE(i);
-            auto const c = compress(*codec, pages[i]);
-            auto out = page(page_size);
-            auto len = static_cast<unsigned int>(page_size);
-            REQUIRE(codec->decompress(c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) == 0);
-            CHECK(len == page_size);
+            auto s = stream(*codec);
+            auto const c = s.compress(pages[i]);
+            auto out = page();
+            REQUIRE(s.decompress(c, out) == 0);
             CHECK(out == pages[i]);
         }
     }
@@ -177,21 +219,26 @@ TEST_CASE("kernel codecs: lzo-rle writes the lzo-rle stream, lzo does not") {
 }
 
 TEST_CASE("kernel codecs: workspace sizes match PLAN.md §3.3") {
-    CHECK(quetschn_codec_lz4.workspace_size == 16416);
-    CHECK(quetschn_codec_lzo.workspace_size == 16384);
-    CHECK(quetschn_codec_lzo_rle.workspace_size == 16384);
+    auto size = [](quetschn_codec const& codec) {
+        return stream(codec).raw().workspace_size;
+    };
+    CHECK(size(quetschn_codec_lz4) == 16416);
+    CHECK(size(quetschn_codec_lzo) == 16384);
+    CHECK(size(quetschn_codec_lzo_rle) == 16384);
+    // "far larger": a cctx and a dctx per stream
+    CHECK(size(quetschn_codec_zstd) > 4 * 16416);
 }
 
 TEST_CASE("kernel codecs: truncated or corrupted input is rejected, not a crash") {
     for (auto const* codec : codecs()) {
         CAPTURE(codec->name);
-        auto c = compress(*codec, text_page());
+        auto s = stream(*codec);
+        auto c = s.compress(text_page());
         c.resize(c.size() / 2);
-        auto out = page(page_size);
-        auto len = static_cast<unsigned int>(page_size);
-        auto const ret = codec->decompress(c.data(), static_cast<unsigned int>(c.size()), out.data(), &len);
+        auto out = page();
+        auto const ret = s.decompress(c, out);
         // either an error, or at least not a full page: the second half of the input is missing
-        CHECK((ret != 0 || len != page_size));
+        CHECK((ret != 0 || out.size() != page_size));
     }
 }
 
@@ -204,7 +251,7 @@ TEST_CASE("kernel codecs: lz4 uses zram's default acceleration") {
     // is faster and compresses worse, so it would make lz4 look better on speed and worse on size.
     auto const p = pointer_page();
     auto direct = [&](int acceleration) {
-        auto workspace = std::vector<std::uint8_t>(quetschn_codec_lz4.workspace_size);
+        auto workspace = std::vector<std::uint8_t>(16416);
         auto dst = page(2 * page_size);
         auto const n = LZ4_compress_fast(reinterpret_cast<char const*>(p.data()),
                                          reinterpret_cast<char*>(dst.data()),
@@ -219,4 +266,89 @@ TEST_CASE("kernel codecs: lz4 uses zram's default acceleration") {
     // the page has to tell the two apart, otherwise this test proves nothing
     REQUIRE(direct(1) != direct(8));
     CHECK(compress(quetschn_codec_lz4, p) == direct(1));
+    // and a configured level reaches LZ4_compress_fast() as the acceleration
+    CHECK(stream(quetschn_codec_lz4, 8).compress(p) == direct(8));
+}
+
+TEST_CASE("kernel codecs: levels zram rejects are rejected") {
+    // lz4_setup_params(): below LZ4_ACCELERATION_DEFAULT. zstd_setup_params(): outside
+    // [zstd_min_clevel(), zstd_max_clevel()], and the maximum is 22.
+    for (int level : {0, -1}) {
+        CAPTURE(level);
+        CHECK(quetschn_codec_lz4.workspace_size(&level, page_size) == 0);
+    }
+    for (int level : {23, 100}) {
+        CAPTURE(level);
+        CHECK(quetschn_codec_zstd.workspace_size(&level, page_size) == 0);
+    }
+    for (int level : {-1, 1, 3, 22}) {
+        CAPTURE(level);
+        auto l = level;
+        CHECK(quetschn_codec_zstd.workspace_size(&l, page_size) > 0);
+        CHECK(l == level);
+    }
+}
+
+TEST_CASE("kernel codecs: zstd defaults to level 3, and the level changes the output") {
+    // ZSTD_CLEVEL_DEFAULT is 3, and zram uses zstd_default_clevel() when no level is configured
+    CHECK(stream(quetschn_codec_zstd).raw().level == 3);
+
+    auto const p = pointer_page();
+    auto const fast = stream(quetschn_codec_zstd, -1).compress(p);
+    auto const l3 = stream(quetschn_codec_zstd, 3).compress(p);
+    auto const l19 = stream(quetschn_codec_zstd, 19).compress(p);
+    CHECK(fast != l3);
+    CHECK(l19.size() <= l3.size());
+    CHECK(l3.size() < fast.size());
+    for (auto const& c : {fast, l3, l19}) {
+        auto s = stream(quetschn_codec_zstd);
+        auto out = page();
+        REQUIRE(s.decompress(c, out) == 0);
+        CHECK(out == p);
+    }
+}
+
+namespace {
+
+// Runs the zstd command line tool on a frame. It is a separate process with its own libzstd, so it
+// checks the kernel's zstd built in userspace without sharing any code with it. Returns false if there
+// is no zstd binary.
+bool zstd_cli_decompress(page const& frame, page& out) {
+    auto const dir = std::filesystem::temp_directory_path();
+    auto const in_path = dir / ("quetschn-zstd-" + std::to_string(::getpid()) + ".zst");
+    auto const out_path = dir / ("quetschn-zstd-" + std::to_string(::getpid()) + ".out");
+    {
+        auto f = std::ofstream(in_path, std::ios::binary);
+        f.write(reinterpret_cast<char const*>(frame.data()), static_cast<std::streamsize>(frame.size()));
+    }
+    auto const cmd = "zstd -q -d -f -o '" + out_path.string() + "' '" + in_path.string() + "' 2>/dev/null";
+    auto const rc = std::system(cmd.c_str());
+    auto in = std::ifstream(out_path, std::ios::binary);
+    out.assign(std::istreambuf_iterator<char>(in), {});
+    std::error_code ec;
+    std::filesystem::remove(in_path, ec);
+    std::filesystem::remove(out_path, ec);
+    return rc == 0;
+}
+
+bool have_zstd_cli() {
+    return std::system("zstd --version >/dev/null 2>&1") == 0;
+}
+
+} // namespace
+
+TEST_CASE("kernel codecs: zstd output is a valid zstd frame for the zstd command line tool") {
+    if (!have_zstd_cli()) {
+        MESSAGE("no zstd command line tool, skipped");
+        return;
+    }
+    for (int level : {-1, 1, 3}) {
+        auto s = stream(quetschn_codec_zstd, level);
+        for (auto const& p : test_pages()) {
+            CAPTURE(level);
+            auto out = page();
+            REQUIRE(zstd_cli_decompress(s.compress(p), out));
+            CHECK(out == p);
+        }
+    }
 }

@@ -36,7 +36,41 @@ unsigned int trimmed_length(void const* src, unsigned int len) {
     return len;
 }
 
-int trim_compress(void const* src, unsigned int src_len, void* dst, unsigned int* dst_len, void* /*workspace*/) {
+// Accepts levels 0 to 9, default 5, and asks for 100 bytes of workspace per level.
+std::size_t trim_workspace_size(int* level, unsigned int /*page_size*/) {
+    if (*level == QUETSCHN_LEVEL_DEFAULT) {
+        *level = 5;
+    }
+    if (*level < 0 || *level > 9) {
+        return 0;
+    }
+    return 100 * static_cast<std::size_t>(*level + 1);
+}
+
+// Checks what the harness promises about the stream: level resolved, workspace as large as asked for and
+// zeroed. The first byte is set, so compress can see that init ran.
+int trim_init(quetschn_stream* s, unsigned int /*page_size*/) {
+    auto const* ws = static_cast<unsigned char const*>(s->workspace);
+    if (s->workspace_size != 100 * static_cast<std::size_t>(s->level + 1)) {
+        return -1;
+    }
+    for (std::size_t i = 0; i < s->workspace_size; ++i) {
+        if (ws[i] != 0) {
+            return -1;
+        }
+    }
+    s->state[0] = 1;
+    return 0;
+}
+
+int failing_init(quetschn_stream*, unsigned int) {
+    return -1;
+}
+
+int trim_compress(quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    if (s->state[0] != 1) {
+        return -1;
+    }
     auto const k = trimmed_length(src, src_len);
     if (k + 2 > *dst_len) {
         return -1;
@@ -49,7 +83,7 @@ int trim_compress(void const* src, unsigned int src_len, void* dst, unsigned int
     return 0;
 }
 
-int trim_decompress(void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int trim_decompress(quetschn_stream* /*s*/, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     auto const* s = static_cast<unsigned char const*>(src);
     auto const k = static_cast<unsigned int>(s[0] | (s[1] << 8));
     if (src_len != k + 2 || *dst_len < page_size) {
@@ -61,19 +95,20 @@ int trim_decompress(void const* src, unsigned int src_len, void* dst, unsigned i
     return 0;
 }
 
-int broken_decompress(void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
-    auto ret = trim_decompress(src, src_len, dst, dst_len);
+int broken_decompress(quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    auto ret = trim_decompress(s, src, src_len, dst, dst_len);
     static_cast<unsigned char*>(dst)[7] ^= 1;
     return ret;
 }
 
-int failing_compress(void const*, unsigned int, void*, unsigned int*, void*) {
+int failing_compress(quetschn_stream*, void const*, unsigned int, void*, unsigned int*) {
     return -1;
 }
 
-quetschn_codec const trim_codec{"trim", 0, trim_compress, trim_decompress};
-quetschn_codec const broken_codec{"broken", 0, trim_compress, broken_decompress};
-quetschn_codec const failing_codec{"failing", 0, failing_compress, trim_decompress};
+quetschn_codec const trim_codec{"trim", trim_workspace_size, trim_init, trim_compress, trim_decompress};
+quetschn_codec const broken_codec{"broken", trim_workspace_size, trim_init, trim_compress, broken_decompress};
+quetschn_codec const failing_codec{"failing", trim_workspace_size, trim_init, failing_compress, trim_decompress};
+quetschn_codec const failing_init_codec{"failing-init", trim_workspace_size, failing_init, trim_compress, trim_decompress};
 
 // page with the first `nonzero` bytes set to non-zero values, the rest zero
 std::vector<std::byte> page_with_prefix(std::size_t nonzero) {
@@ -144,6 +179,27 @@ TEST_CASE("harness: a codec that does not reproduce the page is an error, not a 
                          std::runtime_error);
     CHECK_THROWS_WITH_AS((void)run_codec(c, failing_codec, model, run_options{.measure_time = false}),
                          doctest::Contains("compress failed"),
+                         std::runtime_error);
+}
+
+TEST_CASE("harness: the level decides the workspace, and zram's default applies when none is given") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100)});
+
+    auto const def = run_codec(c, trim_codec, model, run_options{.measure_time = false});
+    CHECK(def.level == 5);
+    CHECK(def.workspace_size == 600);
+
+    auto const l2 = run_codec(c, trim_codec, model, run_options{.measure_time = false, .level = 2});
+    CHECK(l2.level == 2);
+    CHECK(l2.workspace_size == 300);
+    CHECK(l2.pages.size() == 1);
+
+    CHECK_THROWS_WITH_AS((void)run_codec(c, trim_codec, model, run_options{.measure_time = false, .level = 10}),
+                         doctest::Contains("rejects level 10"),
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS((void)run_codec(c, failing_init_codec, model, run_options{.measure_time = false}),
+                         doctest::Contains("init failed"),
                          std::runtime_error);
 }
 

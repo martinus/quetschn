@@ -29,10 +29,14 @@
 #    define __q_le16(x) (x)
 #    define __q_le32(x) (x)
 #    define __q_le64(x) (x)
+#    define __q_be32(x) __builtin_bswap32(x)
+#    define __q_be64(x) __builtin_bswap64(x)
 #else
 #    define __q_le16(x) __builtin_bswap16(x)
 #    define __q_le32(x) __builtin_bswap32(x)
 #    define __q_le64(x) __builtin_bswap64(x)
+#    define __q_be32(x) (x)
+#    define __q_be64(x) (x)
 #endif
 
 static __always_inline u16 get_unaligned_le16(const void* p) {
@@ -53,6 +57,26 @@ static __always_inline void put_unaligned_le16(u16 val, void* p) {
 
 static __always_inline void put_unaligned_le32(u32 val, void* p) {
     __put_unaligned_t(u32, __q_le32(val), p);
+}
+
+static __always_inline void put_unaligned_le64(u64 val, void* p) {
+    __put_unaligned_t(u64, __q_le64(val), p);
+}
+
+static __always_inline u32 get_unaligned_be32(const void* p) {
+    return __q_be32(__get_unaligned_t(u32, p));
+}
+
+static __always_inline u64 get_unaligned_be64(const void* p) {
+    return __q_be64(__get_unaligned_t(u64, p));
+}
+
+static __always_inline void put_unaligned_be32(u32 val, void* p) {
+    __put_unaligned_t(u32, __q_be32(val), p);
+}
+
+static __always_inline void put_unaligned_be64(u64 val, void* p) {
+    __put_unaligned_t(u64, __q_be64(val), p);
 }
 
 #endif
