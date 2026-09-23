@@ -14,6 +14,20 @@ cmake --build build
 
 `-DQUETSCHN_SANITIZE=ON` builds with ASan and UBSan. Formatting is checked with clang-format 21.
 
+## Benchmarking the kernel's codecs
+
+The harness builds zram's `lz4`, `lzo` and `lzo-rle` from a Linux source tree, with the kernel's
+compiler flags. The kernel sources are compiled in place and not copied into this repository.
+
+```sh
+cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
+cmake --build build
+./build/quetschn-bench-lz4 --corpus corpus/desktop --cpu 2 --out lz4.tsv
+```
+
+`--out` writes one line per page for paired comparisons. The `quetschn-bench-*` binaries contain
+GPL-2.0-only kernel code, so they are GPL-2.0 works; they are for measuring, not for distribution.
+
 ## Collecting pages
 
 ```sh

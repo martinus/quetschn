@@ -14,6 +14,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  KERNEL_COMMIT: 986c24e0fe44f844b44d365b71ce831947f50298
+
 # The default shell has no pipefail, which would hide a failing test behind `tee`.
 defaults:
   run:
@@ -44,8 +47,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      # Only the files the kernel codecs need, from the commit PLAN.md was verified against. About 3s.
+      - name: fetch kernel lz4 and lzo sources
+        run: |
+          git init -q kernel && cd kernel
+          git remote add origin https://github.com/torvalds/linux.git
+          git sparse-checkout set --no-cone /lib/lz4/ /lib/lzo/ /include/linux/lz4.h /include/linux/lzo.h
+          git fetch -q --depth 1 --filter=blob:none origin ${{ env.KERNEL_COMMIT }}
+          git checkout -q FETCH_HEAD
       - run: >
           cmake -S . -B build -G Ninja
+          -DQUETSCHN_KERNEL_TREE=${{ github.workspace }}/kernel
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DQUETSCHN_WERROR=ON

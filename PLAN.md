@@ -568,7 +568,8 @@ tools/collect/              corpus collectors (C++)
 tools/analyze/              page statistics (C++)
 bench/                      harness: per-page timing loop + kernel-sourced codecs
 bench/zsmalloc_cost.*       zsmalloc cost model (§3.1)
-bench/kernel_codecs/        lib/lzo, lib/lz4, lib/zstd, lib/842 built for userspace
+bench/kernel_codecs/        zram's calls into lib/lz4 and lib/lzo, and the headers to build them in userspace
+cmake/kernel_codecs.cmake   builds them from QUETSCHN_KERNEL_TREE with kernel flags; sources never copied
 test/                       doctest unit tests
 fuzz/                       AFL++ / libFuzzer targets
 kernel/                     backend_quetschn.c + Kconfig/Makefile fragments + patch generator
@@ -618,9 +619,23 @@ results/                    published measurements (no raw pages, ever)
    dump; the tests only use the kernel docs and hand arithmetic.
 5. The resident-memory collector is done: `quetschn-collect-resident`. Next in Phase 1 is the
    swap-device collector; collect a first small corpus in a VM.
-6. Stand up the harness with `lzo-rle`, `lz4` and `zstd -1` built from the local kernel tree with
-   kernel flags, and produce the first Σ cost and p99-latency table, on x86-64 and on the phone once
-   it is rooted. The resident corpus is enough to shake out the harness, not for the gate.
+6. The harness runs `lz4`, `lzo` and `lzo-rle` from the kernel tree with kernel flags:
+   `quetschn-bench-<codec>`, one binary per codec. Still missing: `zstd -1`, the arm64 flags from a
+   real arm64 kernel build, the PMU cycle counter on arm64, and the paired per-page comparison.
+
+   First run, only to shake out the harness: 47 884 resident pages of the development machine (the
+   biased collector 1), Ryzen 9 7950X pinned to one core, `powersave` governor so the frequency was
+   not fixed, median of 5 runs per page, TSC resolution about 10 ns:
+
+   | codec | Σ zsmalloc cost | stored uncompressed | decompress cold p50 / p99 / p99.9 |
+   | --- | --- | --- | --- |
+   | `lz4` | 34.8% | 1266 pages | 1850 / 2990 / 3510 ns |
+   | `lzo-rle` | 32.7% | 1384 pages | 1790 / 3090 / 4860 ns |
+   | `lzo` | 31.8% | 1374 pages | 2210 / 3930 / 6480 ns |
+
+   On these pages `lzo-rle`, the zram default, needs 2.8% more memory than plain `lzo`, and `lz4`
+   6.4% more than `lzo-rle`. Not evidence for any gate yet: wrong page population, one run,
+   unfixed frequency.
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.
