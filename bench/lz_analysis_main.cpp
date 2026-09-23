@@ -163,6 +163,80 @@ double byte_format_bytes(parsed_page const& pg, byte_format f, std::array<double
     return bytes;
 }
 
+// A joint token for seqlz: min(ll, ll_cap), min(ml - 4, ml_cap) and a class of the offset in one
+// Huffman symbol, so the decoder needs one table lookup per sequence and not two. Class 0 is the last
+// offset; class c >= 1 holds the offsets whose bit width - 1 is in [lo_c, hi_c], sent raw after the
+// token: hi_c bits if lo_c == hi_c (the top bit is known), else hi_c + 1 bits. Lengths at or above the
+// cap follow as seqlz's length values (a bucket symbol and extra bits) from their own model.
+struct joint_format {
+    unsigned ll_cap;
+    unsigned ml_cap;
+    std::vector<std::pair<unsigned, unsigned>> classes; // [lo, hi] of the bucket for class 1, 2, ...
+    char const* name;
+    bool separate = false; // the class as its own symbol after the token, as seqlz does
+};
+
+struct joint_model {
+    std::vector<double> token;
+    std::array<double, 64> ll{};
+    std::array<double, 64> ml{};
+    std::array<double, 64> off{}; // the class, if separate
+};
+
+// bits of one page, counting (count = true) or costing; ll_ext, ml_ext count the sequences with one
+double joint_walk(parsed_page const& pg, joint_format const& f, joint_model& m, bool count, double* ll_ext, double* ml_ext) {
+    auto bits = 0.0;
+    auto last = 1U;
+    auto const n_ll = f.ll_cap + 1, n_ml = f.ml_cap + 1;
+    auto add = [&](std::array<double, 64>& table, std::uint32_t v) {
+        auto const s = length_symbol(v);
+        if (count) {
+            table[s.code] += 1;
+        } else {
+            bits += -std::log2(table[s.code]) + s.extra_bits;
+        }
+    };
+    for (auto const& s : pg.sequences) {
+        auto const ll = std::min(s.literals, f.ll_cap);
+        auto ml = 0U, cls = 0U;
+        if (s.literals >= f.ll_cap) {
+            add(m.ll, s.literals - f.ll_cap);
+            *ll_ext += count ? 0 : 1;
+        }
+        if (s.match != 0) {
+            ml = std::min(s.match - 4, f.ml_cap);
+            if (s.match - 4 >= f.ml_cap) {
+                add(m.ml, s.match - 4 - f.ml_cap);
+                *ml_ext += count ? 0 : 1;
+            }
+            if (s.offset != last) {
+                auto const b = static_cast<unsigned>(std::bit_width(s.offset) - 1);
+                cls = 1;
+                while (cls <= f.classes.size() && b > f.classes[cls - 1].second) {
+                    ++cls;
+                }
+                auto const [lo, hi] = f.classes[cls - 1];
+                bits += count ? 0.0 : (lo == hi ? hi : hi + 1);
+            }
+            last = s.offset;
+        }
+        auto const sym = ll + n_ll * (ml + n_ml * (f.separate ? 0U : cls));
+        if (count) {
+            m.token[sym] += 1;
+        } else {
+            bits += -std::log2(m.token[sym]);
+        }
+        if (f.separate && s.match != 0) {
+            if (count) {
+                m.off[cls] += 1;
+            } else {
+                bits += -std::log2(m.off[cls]);
+            }
+        }
+    }
+    return bits;
+}
+
 void normalize(auto& table) {
     auto total = 0.0;
     for (auto v : table) {
@@ -334,6 +408,58 @@ int main(int argc, char** argv) {
             }
             print(f.name, s);
         }
+        {
+            // seqlz itself and joint tokens, with the same static model (optimistic, trained on the
+            // pages it is measured on); header 4 bytes
+            auto buckets = [](unsigned from, unsigned to) {
+                auto v = std::vector<std::pair<unsigned, unsigned>>();
+                for (auto b = from; b <= to; ++b) {
+                    v.emplace_back(b, b);
+                }
+                return v;
+            };
+            using cls = std::vector<std::pair<unsigned, unsigned>>;
+            std::printf("\n%-58s %6s %7s %7s\n", "joint token: ll cap / ml cap / offset classes", "", "ll ext", "ml ext");
+            for (auto const& f :
+                 {joint_format{15, 31, buckets(0, 11), "seqlz: 15 / 31, last + 12 buckets as own symbol", true},
+                  joint_format{7, 7, buckets(0, 11), "7 / 7 / last + 12 buckets"},
+                  joint_format{
+                      7, 7, cls{{0, 3}, {4, 5}, {6, 7}, {8, 8}, {9, 9}, {10, 10}, {11, 11}}, "7 / 7 / last + 7 classes"},
+                  joint_format{7, 15, cls{{0, 4}, {5, 7}, {8, 9}, {10, 11}}, "7 / 15 / last + 4 classes"},
+                  joint_format{
+                      3, 15, cls{{0, 3}, {4, 5}, {6, 7}, {8, 8}, {9, 9}, {10, 10}, {11, 11}}, "3 / 15 / last + 7 classes"},
+                  joint_format{
+                      7, 15, cls{{0, 3}, {4, 5}, {6, 7}, {8, 8}, {9, 9}, {10, 10}, {11, 11}}, "7 / 15 / last + 7 classes"},
+                  joint_format{15, 15, cls{{0, 4}, {5, 7}, {8, 9}, {10, 11}}, "15 / 15 / last + 4 classes"},
+                  joint_format{7, 31, cls{{0, 4}, {5, 7}, {8, 9}, {10, 11}}, "7 / 31 / last + 4 classes"},
+                  joint_format{15, 31, cls{{0, 7}, {8, 11}}, "15 / 31 / last + 2 classes"},
+                  joint_format{7, 31, cls{{0, 7}, {8, 11}}, "7 / 31 / last + 2 classes"},
+                  joint_format{15, 31, cls{{0, 11}}, "15 / 31 / last + 1 class of 12 bits"}}) {
+                auto m = joint_model{};
+                auto const n_ll = f.ll_cap + 1, n_ml = f.ml_cap + 1;
+                m.token.assign(n_ll * n_ml * (f.separate ? 1 : f.classes.size() + 1), 0.0);
+                auto dummy = 0.0;
+                for (auto const& p : pages) {
+                    (void)joint_walk(p, f, m, true, &dummy, &dummy);
+                }
+                normalize(m.token);
+                normalize(m.ll);
+                normalize(m.ml);
+                normalize(m.off);
+                auto s = 0.0, lle = 0.0, mle = 0.0, n_seq = 0.0;
+                for (auto const& p : pages) {
+                    s += cost(static_cast<double>(p.literals.size()) + (joint_walk(p, f, m, false, &lle, &mle) + 32.0) / 8.0);
+                    n_seq += static_cast<double>(p.sequences.size());
+                }
+                std::printf("%-58s %5.1f%% %6.1f%% %6.1f%%  %zu symbols\n",
+                            f.name,
+                            100.0 * s / total,
+                            100.0 * lle / n_seq,
+                            100.0 * mle / n_seq,
+                            m.token.size());
+            }
+        }
+
         for (auto const f : {byte_format{4, 4, "4 / 4 / 0, token byte entropy coded"},
                              byte_format{3, 3, "3 / 3 / 2, token byte entropy coded"}}) {
             auto tokens = std::array<double, 256>{};

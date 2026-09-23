@@ -7,9 +7,10 @@ _Static_assert(PAGE_LZ_PAGE == SEQLZ_PAGE && PAGE_LZ_HASH_BITS == SEQLZ_HASH_BIT
 
 /*
  * Decode table entries, 0 for bits that start no code.
- * Length and offset tables: bits 0-3 the code length, bits 4-7 the number of extra bits, bits 8-23 the
- * base value, bit 24 set for a repeat offset (the base is its index). A value is base + extra bits.
- * Token table: bits 0-3 the code length, bits 4-7 min(ll, 15), bits 8-12 min(ml - 4, 31).
+ * Length tables: bits 0-3 the code length, bits 4-7 the number of extra bits, bits 8-23 the base
+ * value. A value is base + extra bits.
+ * Token table: bits 0-3 the code length, bits 4-7 min(ll, 15), bits 8-12 min(ml - 4, 31), bits 13-14
+ * the class of the offset.
  */
 /*
  * The encoder's arrays have a power of 2 entries and its indices and shifts are masked: the kernel
@@ -30,7 +31,7 @@ struct token_table {
 
 struct seqlz_tables {
     struct token_table token;
-    struct value_table ll, ml, off;
+    struct value_table ll, ml;
     u8 all_symbols; /* every symbol has a code, which the encoder needs; the decoder does not */
 };
 
@@ -53,16 +54,10 @@ static u32 length_entry(unsigned int s) {
     return ((1U << (s - 12U)) << 8) | ((s - 12U) << 4);
 }
 
-/* the same for an offset symbol */
-static u32 offset_entry(unsigned int s) {
-    if (s == 0)
-        return 1U << 24;
-    return ((1U << (s - 1U)) << 8) | ((s - 1U) << 4);
-}
-
-/* ll and ml - 4 of a token symbol */
+/* ll, ml - 4 and the offset class of a token symbol */
 static u32 token_entry(unsigned int s) {
-    return ((s & 15U) << 4) | ((s >> 4) << 8);
+    return ((s & SEQLZ_LL_CAP) << 4) | (((s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP) << 8) |
+           ((s >> (SEQLZ_LL_BITS + SEQLZ_ML_BITS)) << 13);
 }
 
 /*
@@ -128,8 +123,7 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
     __builtin_memset(t, 0, sizeof(*t)); /* also the encoder's entries behind the last symbol */
     if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS, SEQLZ_TOKEN_BITS, token_entry, t->token.enc, 0, t->token.decode) ||
         build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, t->ll.decode, 0) ||
-        build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, t->ml.decode, 0) ||
-        build(lengths->off, SEQLZ_OFF_SYMBOLS, SEQLZ_MAX_BITS, offset_entry, t->off.enc, t->off.decode, 0))
+        build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, t->ml.decode, 0))
         return -1;
     {
         const u8* l = (const u8*)lengths;
@@ -174,12 +168,12 @@ unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_se
  * One encoder for both entry points. Literals go to the front of dst, right after the header; the
  * bitstream goes behind the room of a page of literals and is moved in behind the literals at the end.
  * dst has two pages, and that is always enough: the most bits per page byte are a sequence of 4 bytes
- * without literals, an 11-bit token and a 20-bit offset, so at most 1024 * 31 + 31 bits, 3972 bytes;
+ * without literals, an 11-bit token and a 12-bit offset, so at most 1024 * 23 + 31 bits, 2948 bytes;
  * behind 4 + 4096 + 16 bytes of header, literals and room for their 16-byte copies there are 4076. The
  * code lengths are capped at 11 and 9 bits, so this holds for any tables.
  * The bit writer is a 64-bit accumulator, stored 8 bytes at a time and advanced by the whole bytes. It
- * holds at most 7 bits after a flush, so one flush per sequence is enough: 7 + 11 bits of token, 20 of
- * a match length value and 20 of offset are 58. Only a literal length value, another 20, needs its
+ * holds at most 7 bits after a flush, so one flush per sequence is enough: 7 + 11 bits of token, 12 of
+ * offset and 20 of a match length value are 50. Only a literal length value, another 20, needs its
  * own flush.
  */
 struct encoder {
@@ -224,7 +218,7 @@ static ALWAYS_INLINE void put_len_value(struct encoder* e, const struct value_ta
 static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, unsigned int off) {
     struct encoder* e = ctx;
     const struct seqlz_tables* t = e->t;
-    unsigned int tok = seqlz_token(ll, ml) & (SEQLZ_TOKEN_SYMBOLS - 1U), k = 0;
+    unsigned int k = 0;
 
     /* the literals, the first 16 bytes without a loop to mispredict; dst has room behind them */
     if ((unsigned int)(e->src_end - in) >= 16U) {
@@ -240,36 +234,27 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
 
     if (ml == 0) {
         /* the last sequence */
-        enc_put_code(e, t->token.enc[tok], 0, 0);
+        enc_put_code(e, t->token.enc[seqlz_token(ll, 0, 0)], 0, 0);
         if (ll >= SEQLZ_LL_CAP)
             put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
         enc_flush(e);
         return;
     }
     {
-        /* The last offset or a new one, without a branch: the symbol and the extra bits of a new offset
-         * are computed anyway and used with a mask. */
-        unsigned int is_new = (off == e->last) - 1U, b = (31U - (unsigned int)__builtin_clz(off)) & 15U;
-        unsigned int sym = ((1U + b) & is_new) & (ENC_LEN_SYMBOLS - 1U), n_extra = b & is_new;
-        u32 oe = t->off.enc[sym], te = t->token.enc[tok];
-        unsigned int olen = oe >> 16 & 15U, tlen = te >> 16 & 15U;
-        /* token and offset in one put, unless there are length values between them */
-        u64 v = (oe & 0xffffU) | (u64)(off & ~(~0U << n_extra)) << olen;
-        unsigned int n = olen + n_extra;
+        /* The class of the offset without a branch: 0 the last offset, 1 below 256 in 8 bits, 2 in 12.
+         * Token and offset in one put, the length values after them. */
+        unsigned int is_new = (off == e->last) - 1U, big = off >= 256U;
+        unsigned int cls = (1U + big) & is_new, raw_bits = (8U + 4U * big) & is_new;
+        u32 te = t->token.enc[seqlz_token(ll, ml, cls)];
+        unsigned int tlen = te >> 16 & 15U;
 
-        if (ll >= SEQLZ_LL_CAP || ml - 4 >= SEQLZ_ML_CAP) {
-            enc_put(e, te & 0xffffU, tlen);
-            if (ll >= SEQLZ_LL_CAP) {
-                put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
-                enc_flush(e);
-            }
-            if (ml - 4 >= SEQLZ_ML_CAP)
-                put_len_value(e, &t->ml, ml - 4 - SEQLZ_ML_CAP);
-        } else {
-            v = v << tlen | (te & 0xffffU);
-            n += tlen;
+        enc_put(e, (te & 0xffffU) | (u64)(off & ((1U << raw_bits) - 1U)) << tlen, tlen + raw_bits);
+        if (ll >= SEQLZ_LL_CAP) {
+            put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
+            enc_flush(e);
         }
-        enc_put(e, v, n);
+        if (ml - 4 >= SEQLZ_ML_CAP)
+            put_len_value(e, &t->ml, ml - 4 - SEQLZ_ML_CAP);
         enc_flush(e);
         e->last = off;
     }
@@ -401,15 +386,23 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     br = (struct bit_reader){lit_end, s_end, 0, 0};
 
     for (i = 0;; i++) {
-        unsigned int tok, nl, len, off, v;
+        unsigned int tok, nl, len, off;
         u32 e;
 
-        /* One refill per sequence: token, literal length value and offset need at most 11 + 21 + 20 =
-         * 52 of the at least 56 bits a refill leaves. Only after a match length value, up to 21 more
-         * bits, the offset needs another one. */
+        /* One refill per sequence: token, offset and literal length value need at most 11 + 12 + 21 =
+         * 44 of the at least 56 bits a refill leaves. Only a match length value, up to 21 more bits,
+         * needs another one. The token's entry has the class of the offset, so its raw bits are
+         * known without a second lookup, and the next token's lookup waits for one load, not two. */
         refill(&br);
         tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
-        drop(&br, tok & 15U);
+        {
+            unsigned int cls = tok >> 13, raw_bits = (cls + (cls != 0)) << 2, n_tok = tok & 15U;
+            unsigned int is_new = 0U - (cls != 0);
+            unsigned int raw = (unsigned int)(br.bits >> n_tok) & ((1U << raw_bits) - 1U);
+
+            drop(&br, n_tok + raw_bits);
+            off = (raw & is_new) | (last & ~is_new);
+        }
         nl = (tok >> 4) & 15U;
         len = ((tok >> 8) & 31U) + 4U;
         if (nl == SEQLZ_LL_CAP) {
@@ -424,19 +417,10 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
             break;
 
         if (len == SEQLZ_ML_CAP + 4U) {
-            /* no refill before: token and literal length value used at most 32 of the 56 bits */
-            len += value(&br, &t->ml, &e);
             refill(&br);
+            len += value(&br, &t->ml, &e);
         }
-        v = value(&br, &t->off, &e);
-        {
-            /* the last offset or the new one, with a mask: three repeat offsets and their move to front
-             * made decoding 17% slower */
-            unsigned int is_last = 0U - ((e >> 24) & 1U);
-
-            off = (last & is_last) | (v & ~is_last);
-            last = off;
-        }
+        last = off;
         if (off == 0 || off > (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
             return -1;
         copy_match(d, d_end, off, len);

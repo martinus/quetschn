@@ -4,7 +4,7 @@
  * "seqlz" and "seqlz-hc" take the matches from the kernel's lz4 or lz4hc at level 3 instead: compress
  * with it into a per-CPU buffer, split that into sequences, code them with seqlz; they are the
  * reference for what a better matcher is worth. zram's dictionary parameter, if it is exactly a struct
- * seqlz_lengths (575 bytes), carries other code lengths instead of the ones compiled in.
+ * seqlz_lengths (1586 bytes), carries other code lengths instead of the ones compiled in.
  */
 #include <linux/lz4.h>
 
