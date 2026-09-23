@@ -443,8 +443,7 @@ std::vector<unsigned char> literals_of(std::vector<unsigned char> const& bytes, 
 } // namespace
 
 TEST_CASE("seqlz: the compressor's pages come back, with a state shared over many pages") {
-    // One state for all pages: its hash table keeps entries of earlier pages, which point anywhere into
-    // the page, also behind the current position; they must only ever cost a failed comparison.
+    // One state for all pages, as zram has one per CPU: nothing of one page may change the next.
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(43);
@@ -481,6 +480,29 @@ TEST_CASE("seqlz: the compressor writes what seqlz_encode writes for seqlz_find'
         REQUIRE(elen > 0);
         REQUIRE(glen == elen);
         CHECK(std::equal(got.begin(), got.begin() + glen, expected.begin()));
+    }
+}
+
+TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
+    // Random bytes, and bytes 1 to 1 + len again at 62, with other bytes around both copies. Within the
+    // first 64 bytes, where the matcher looks at every position.
+    auto state = std::make_unique<seqlz_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto rng = std::mt19937_64(67);
+    for (unsigned len = 4; len <= 56; ++len) {
+        CAPTURE(len);
+        auto bytes = std::vector<unsigned char>(4096);
+        for (auto& b : bytes) {
+            b = static_cast<unsigned char>(rng());
+        }
+        std::copy_n(bytes.begin() + 1, len, bytes.begin() + 62);
+        bytes[61] = static_cast<unsigned char>(bytes[0] + 1);
+        bytes[62 + len] = static_cast<unsigned char>(bytes[1 + len] + 1);
+        auto const n = seqlz_find(state.get(), bytes.data(), seq.data());
+        REQUIRE(n == 2);
+        CHECK(seq[0].literals == 62);
+        CHECK(seq[0].match == len);
+        CHECK(seq[0].offset == 61);
     }
 }
 
