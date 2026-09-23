@@ -708,7 +708,8 @@ results/                    published measurements (no raw pages, ever)
    Without a dictionary the same chain happens too, but it breaks after 72 bytes. Rotating the page
    shows that it is the dictionary: without one, all 32 rotations compress to 36 to 49 bytes, with the
    8-byte dictionary 8 of 32 rotations go to about 1540 bytes. On the zram dump only 107 pages got
-   more than twice as large, 0.01%, so it does not change the table.
+   more than twice as large, 0.01%, so it does not change the table. Reported upstream as
+   [lz4/lz4#1805](https://github.com/lz4/lz4/issues/1805).
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.
