@@ -109,17 +109,20 @@ corpus load_corpus(std::filesystem::path const& base) {
     }
     c.page_size = std::stoul(line.substr(prefix.size()));
 
-    auto in = std::ifstream(pages_path, std::ios::binary);
+    // one read straight into the buffer; istreambuf_iterator took a minute for a 1.9 GB corpus
+    auto in = std::ifstream(pages_path, std::ios::binary | std::ios::ate);
     if (!in) {
         throw std::runtime_error("load_corpus: cannot read " + pages_path.string());
     }
-    auto const raw = std::string(std::istreambuf_iterator<char>(in), {});
-    if (c.page_size == 0 || raw.size() % c.page_size != 0) {
+    auto const size = static_cast<std::size_t>(in.tellg());
+    if (c.page_size == 0 || size % c.page_size != 0) {
         throw std::runtime_error("load_corpus: " + pages_path.string() + " is not a whole number of pages");
     }
-    // not memcpy: for an empty corpus data() is null, and memcpy with null is undefined even for 0 bytes
-    auto const* first = reinterpret_cast<std::byte const*>(raw.data());
-    c.data.assign(first, first + raw.size());
+    c.data.resize(size);
+    in.seekg(0);
+    if (size > 0 && !in.read(reinterpret_cast<char*>(c.data.data()), static_cast<std::streamsize>(size))) {
+        throw std::runtime_error("load_corpus: cannot read " + pages_path.string());
+    }
     return c;
 }
 
@@ -136,8 +139,8 @@ class codec_instance {
 public:
     codec_instance(quetschn_codec const& codec, std::size_t page_size, run_options const& opts)
         : m_codec(codec)
-        , m_compressed(2 * page_size + cache_line)
-        , m_restored(page_size + cache_line) {
+        , m_compressed(2 * page_size + 2 * page_size)
+        , m_restored(2 * page_size) {
         m_params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
         m_params.dict_size = opts.dict.size();
         m_params.level = opts.level;
@@ -154,9 +157,11 @@ public:
             throw std::runtime_error(std::string(codec.name) + ": create failed");
         }
         m_have_stream = true;
-        // Separate allocations, aligned to cache lines like the kernel's page-sized buffers
-        dst = align(m_compressed);
-        out = align(m_restored);
+        // Separate allocations. The output is page aligned like the page zram decompresses into. The
+        // compressed data moves, see set_page.
+        m_compressed_base = align(m_compressed, page_size);
+        dst = m_compressed_base;
+        out = align(m_restored, page_size);
     }
 
     ~codec_instance() {
@@ -173,6 +178,14 @@ public:
 
     [[nodiscard]] quetschn_codec const& codec() const {
         return m_codec;
+    }
+
+    // zsmalloc objects start at many different offsets within a page, and the offset changes which
+    // loads and stores alias in the low 12 address bits. So the compressed data of page i starts at an
+    // offset that depends on i, a multiple of 16 like zsmalloc's size classes, and the same for all
+    // codecs: every codec sees the same mix of offsets, and every run the same.
+    void set_page(std::size_t i) {
+        dst = m_compressed_base + (i * 2704U) % 4096U / 16U * 16U;
     }
 
     int compress(std::span<std::byte const> src, unsigned int& len) {
@@ -198,9 +211,9 @@ public:
     std::byte* out = nullptr;
 
 private:
-    static std::byte* align(std::vector<std::byte>& v) {
+    static std::byte* align(std::vector<std::byte>& v, std::size_t alignment) {
         auto p = reinterpret_cast<std::uintptr_t>(v.data());
-        return v.data() + ((cache_line - p % cache_line) % cache_line);
+        return v.data() + ((alignment - p % alignment) % alignment);
     }
 
     quetschn_codec const& m_codec;
@@ -209,6 +222,7 @@ private:
     bool m_have_params = false;
     bool m_have_stream = false;
     std::vector<std::byte> m_compressed;
+    std::byte* m_compressed_base = nullptr;
     std::vector<std::byte> m_restored;
 };
 
@@ -224,9 +238,17 @@ std::vector<run_result> run_interleaved(corpus const& c,
     }
     auto const tick_ns = ns_per_tick();
 
+    if (!opts.levels.empty() && opts.levels.size() != codecs.size()) {
+        throw std::invalid_argument("run_interleaved: " + std::to_string(opts.levels.size()) + " levels for " +
+                                    std::to_string(codecs.size()) + " codecs");
+    }
     auto instances = std::vector<std::unique_ptr<codec_instance>>();
-    for (auto const* codec : codecs) {
-        instances.push_back(std::make_unique<codec_instance>(*codec, page_size, opts));
+    for (std::size_t k = 0; k < codecs.size(); ++k) {
+        auto codec_opts = opts;
+        if (!opts.levels.empty()) {
+            codec_opts.level = opts.levels[k];
+        }
+        instances.push_back(std::make_unique<codec_instance>(*codecs[k], page_size, codec_opts));
     }
     auto results = std::vector<run_result>(codecs.size());
     for (std::size_t k = 0; k < codecs.size(); ++k) {
@@ -258,6 +280,7 @@ std::vector<run_result> run_interleaved(corpus const& c,
 
         for (std::size_t k = 0; k < n; ++k) {
             auto& inst = *instances[k];
+            inst.set_page(i);
             auto& r = pages[k];
             r = page_result{};
             r.page = i;

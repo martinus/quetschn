@@ -4,8 +4,10 @@
 #include "page_stats.h"
 #include "resident.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <random>
 #include <set>
 #include <span>
 #include <stdexcept>
@@ -184,6 +186,31 @@ training_result write_training_corpus(std::filesystem::path const& base,
     }
     result.pages = train.pages_written();
     return result;
+}
+
+std::size_t sample_corpus(std::filesystem::path const& base,
+                          std::filesystem::path const& sample_base,
+                          std::size_t pages,
+                          std::uint64_t seed) {
+    auto in = open_corpus(base);
+    auto const n = in.rows.size();
+    // Floyd's algorithm: exactly min(pages, n) distinct indices, uniform, without shuffling all of n
+    auto chosen = std::vector<bool>(n);
+    auto rng = std::mt19937_64(seed);
+    for (auto j = n - std::min(pages, n); j < n; ++j) {
+        auto const t = static_cast<std::size_t>(rng() % (j + 1));
+        chosen[chosen[t] ? j : t] = true;
+    }
+    auto out = corpus_writer(sample_base, in.page_size);
+    auto buf = std::vector<std::byte>(in.page_size);
+    for (std::size_t i = 0; i < n; ++i) {
+        in.read(buf);
+        if (chosen[i]) {
+            auto const& r = in.rows[i];
+            out.write(r.pid, r.comm, r.mapping, r.address, buf);
+        }
+    }
+    return out.pages_written();
 }
 
 } // namespace quetschn

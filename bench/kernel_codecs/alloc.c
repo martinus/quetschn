@@ -4,27 +4,36 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The size is kept in front of the block, which keeps the returned pointer 64 byte aligned. */
-#define QUETSCHN_ALLOC_HEADER 64
+/*
+ * Blocks of a page or more are page aligned, like vmalloc and kmalloc of a page in the kernel; smaller
+ * ones are 64 byte aligned. The alignment decides which loads and stores alias in the low 12 address
+ * bits, which changes timings, so it has to be the same in every run. The size is kept in the header
+ * in front of the block, and the header is as large as the alignment.
+ */
+static size_t alignment(size_t size) {
+    return size >= 4096 ? 4096 : 64;
+}
 
 void* quetschn_zalloc(size_t size, size_t* counter) {
-    unsigned char* p = aligned_alloc(QUETSCHN_ALLOC_HEADER, QUETSCHN_ALLOC_HEADER + ((size + 63) & ~(size_t)63));
+    size_t const a = alignment(size);
+    unsigned char* p = aligned_alloc(a, a + ((size + a - 1) & ~(a - 1)));
     if (p == NULL) {
         return NULL;
     }
-    memset(p, 0, QUETSCHN_ALLOC_HEADER + size);
-    memcpy(p, &size, sizeof(size));
+    memset(p, 0, a + size);
+    memcpy(p + a - 64, &size, sizeof(size));
     *counter += size;
-    return p + QUETSCHN_ALLOC_HEADER;
+    return p + a;
 }
 
 void quetschn_free(void* p, size_t* counter) {
     if (p == NULL) {
         return;
     }
-    unsigned char* block = (unsigned char*)p - QUETSCHN_ALLOC_HEADER;
+    /* the size, and so the alignment, is in the last 64 bytes in front of the block */
     size_t size = 0;
-    memcpy(&size, block, sizeof(size));
+    memcpy(&size, (unsigned char*)p - 64, sizeof(size));
+    unsigned char* block = (unsigned char*)p - alignment(size);
     *counter -= size;
     free(block);
 }

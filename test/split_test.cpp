@@ -13,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -230,4 +231,44 @@ TEST_CASE("split: only a page with the same content is left out of the training 
     REQUIRE(r.pages == 1);
     auto const train = quetschn::load_corpus(dir.path() / "train");
     CHECK(std::memcmp(train.page(0).data(), last_byte.data(), page_size) == 0);
+}
+
+TEST_CASE("split: a sample has the requested size, no page twice, and depends on the seed only") {
+    auto dir = temp_dir();
+    write_corpus(dir.path() / "all"); // 20 names x 8 pages
+    auto sample = [&](std::size_t pages, std::uint64_t seed, char const* name) {
+        CHECK(quetschn::sample_corpus(dir.path() / "all", dir.path() / name, pages, seed) ==
+              std::min<std::size_t>(pages, 160));
+        auto const c = quetschn::load_corpus(dir.path() / name);
+        auto contents = std::vector<std::string>();
+        for (std::size_t i = 0; i < c.size(); ++i) {
+            auto const p = c.page(i);
+            contents.emplace_back(reinterpret_cast<char const*>(p.data()), p.size());
+        }
+        return contents;
+    };
+    auto const a = sample(50, 1, "a");
+    auto const b = sample(50, 1, "b");
+    auto const other = sample(50, 2, "c");
+    CHECK(a.size() == 50);
+    CHECK(a == b);
+    CHECK(a != other);
+    // distinct pages, except the same-filled ones, which are all the same
+    auto unique = std::set<std::string>();
+    auto same_filled = 0;
+    for (auto const& p : a) {
+        auto const is_same = quetschn::analyze_page(std::as_bytes(std::span(p.data(), p.size()))).same_filled;
+        same_filled += is_same ? 1 : 0;
+        if (!is_same) {
+            CHECK(unique.insert(p).second);
+        }
+    }
+    CHECK(unique.size() + static_cast<std::size_t>(same_filled) == 50);
+    // asking for more than there is gives everything, in order
+    auto const all = sample(1000, 1, "d");
+    auto const full = quetschn::load_corpus(dir.path() / "all");
+    REQUIRE(all.size() == full.size());
+    for (std::size_t i = 0; i < full.size(); ++i) {
+        CHECK(std::memcmp(all[i].data(), full.page(i).data(), page_size) == 0);
+    }
 }

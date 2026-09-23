@@ -105,7 +105,12 @@ quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
 quetschn_kernel_codec(quetschn_kernel_spike lib/lz4 -O3 spike/wk64.c spike/zram_spike.c)
 target_include_directories(quetschn_kernel_spike PRIVATE "${CMAKE_SOURCE_DIR}/spike")
 
-foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots)
+# The candidates, with lz4's flags as well
+quetschn_kernel_codec(quetschn_kernel_explore lib/lz4 -O3 explore/shuffle.c explore/bdelta.c explore/zram_explore.c)
+target_include_directories(quetschn_kernel_explore PRIVATE "${CMAKE_SOURCE_DIR}/explore")
+target_link_libraries(quetschn_kernel_explore PUBLIC quetschn_kernel_lz4)
+
+foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots shuffle_lz4 bdelta)
     string(REPLACE "_" "-" name ${codec})
     if(codec STREQUAL "lz4")
         set(lib quetschn_kernel_lz4)
@@ -113,6 +118,8 @@ foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip 
         set(lib quetschn_kernel_zstd)
     elseif(codec MATCHES "^spike")
         set(lib quetschn_kernel_spike)
+    elseif(codec MATCHES "shuffle_lz4|bdelta")
+        set(lib quetschn_kernel_explore)
     else()
         set(lib quetschn_kernel_lzo)
     endif()
@@ -125,6 +132,7 @@ endforeach()
 add_executable(quetschn-bench-interleaved bench/bench_main.cpp)
 target_compile_definitions(quetschn-bench-interleaved PRIVATE QUETSCHN_INTERLEAVED)
 target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_lzo
-                                                         quetschn_kernel_zstd quetschn_kernel_spike quetschn_warnings)
+                                                         quetschn_kernel_zstd quetschn_kernel_spike
+                                                         quetschn_kernel_explore quetschn_warnings)
 
 set(QUETSCHN_HAVE_KERNEL_CODECS ON)

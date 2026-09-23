@@ -509,6 +509,9 @@ an in-order core may weigh the dependency chain differently.
 
 ### Phase 3 — Page analysis and design exploration (12 weeks)
 
+Every design that has been measured, with its numbers and why it was kept or dropped, is in
+[`docs/explored-designs.md`](docs/explored-designs.md). Add to it before trying something new.
+
 Answer, with numbers from the corpus:
 
 - What fraction of pages is genuinely incompressible (already-compressed data, encrypted buffers)?

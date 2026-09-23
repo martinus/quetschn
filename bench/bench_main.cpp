@@ -32,14 +32,16 @@ namespace {
 // All codecs in one binary, for comparisons that must not suffer from drift between separate runs.
 // The price: the code layout of one codec can shift another's numbers, which one binary per codec
 // avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
-auto const all_codecs = std::array<quetschn_codec const*, 8>{&quetschn_codec_lz4,
-                                                             &quetschn_codec_lzo,
-                                                             &quetschn_codec_lzo_rle,
-                                                             &quetschn_codec_zstd,
-                                                             &quetschn_codec_spike_switch,
-                                                             &quetschn_codec_spike_branchless,
-                                                             &quetschn_codec_spike_zeroskip,
-                                                             &quetschn_codec_spike_slots};
+auto const all_codecs = std::array<quetschn_codec const*, 10>{&quetschn_codec_lz4,
+                                                              &quetschn_codec_lzo,
+                                                              &quetschn_codec_lzo_rle,
+                                                              &quetschn_codec_zstd,
+                                                              &quetschn_codec_spike_switch,
+                                                              &quetschn_codec_spike_branchless,
+                                                              &quetschn_codec_spike_zeroskip,
+                                                              &quetschn_codec_spike_slots,
+                                                              &quetschn_codec_shuffle_lz4,
+                                                              &quetschn_codec_bdelta};
 auto const* const program = "quetschn-bench-interleaved";
 #else
 auto const* const program = QUETSCHN_CODEC.name;
@@ -48,11 +50,12 @@ auto const* const program = QUETSCHN_CODEC.name;
 void usage() {
     std::fprintf(stderr,
 #ifdef QUETSCHN_INTERLEAVED
-                 "usage: %s --codecs <a,b,...> --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>]\n"
+                 "usage: %s --codecs <a[:level],b,...> --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>]\n"
                  "          [--cpu <n>] [--out <dir>]\n"
                  "\n"
                  "Runs all codecs on every page, with the timing interleaved: each repetition runs each codec\n"
-                 "once, starting with another codec each time. --out writes <dir>/<codec>.tsv.\n"
+                 "once, starting with another codec each time. --out writes <dir>/<codec>.tsv, or\n"
+                 "<dir>/<codec>-level<n>.tsv for a codec with its own level, e.g. zstd:-1.\n"
 #else
                  "usage: %s --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>] [--cpu <n>]\n"
                  "          [--out <file.tsv>]\n"
@@ -62,7 +65,8 @@ void usage() {
                  "Reads <base>.pages and <base>.tsv as written by quetschn-collect-resident.\n"
                  "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
                  "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
-                 "--cpu pins the process to one CPU; set a fixed frequency yourself.\n",
+                 "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
+                 "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n",
                  program);
 }
 
@@ -103,6 +107,7 @@ int main(int argc, char** argv) {
     auto opts = quetschn::run_options{};
     int cpu = -1;
     auto codecs = std::vector<quetschn_codec const*>();
+    auto codec_levels = std::vector<int>();
 #ifndef QUETSCHN_INTERLEAVED
     codecs.push_back(&QUETSCHN_CODEC);
 #endif
@@ -113,8 +118,16 @@ int main(int argc, char** argv) {
         if (arg == "--codecs" && has_value) {
             auto names = std::string_view(argv[++i]);
             while (!names.empty()) {
-                auto const name = names.substr(0, names.find(','));
-                names.remove_prefix(std::min(names.size(), name.size() + 1));
+                auto const spec = names.substr(0, names.find(','));
+                names.remove_prefix(std::min(names.size(), spec.size() + 1));
+                // name or name:level
+                auto const name = spec.substr(0, spec.find(':'));
+                auto level = QUETSCHN_LEVEL_DEFAULT;
+                if (name.size() < spec.size() && !parse(spec.substr(name.size() + 1), level)) {
+                    usage();
+                    return 2;
+                }
+                codec_levels.push_back(level);
                 auto const it = std::find_if(all_codecs.begin(), all_codecs.end(), [&](auto const* codec) {
                     return name == codec->name;
                 });
@@ -131,6 +144,8 @@ int main(int argc, char** argv) {
             base = argv[++i];
         } else if (arg == "--out" && has_value) {
             out_path = argv[++i];
+        } else if (arg == "--no-timing") {
+            opts.measure_time = false;
         } else if (arg == "--repetitions" && has_value && parse(argv[++i], opts.repetitions) && opts.repetitions > 0) {
         } else if (arg == "--cpu" && has_value && parse(argv[++i], cpu)) {
         } else if (arg == "--level" && has_value && parse(argv[++i], opts.level)) {
@@ -144,6 +159,15 @@ int main(int argc, char** argv) {
     if (base.empty() || codecs.empty()) {
         usage();
         return 2;
+    }
+    // a codec without :level gets --level
+    if (std::any_of(codec_levels.begin(), codec_levels.end(), [](int l) {
+            return l != QUETSCHN_LEVEL_DEFAULT;
+        })) {
+        for (auto& l : codec_levels) {
+            l = l == QUETSCHN_LEVEL_DEFAULT ? opts.level : l;
+        }
+        opts.levels = codec_levels;
     }
 
     try {
@@ -177,7 +201,11 @@ int main(int argc, char** argv) {
             cpu_model().c_str(),
             cpu >= 0 ? std::to_string(cpu).c_str() : "no",
             first_line("/sys/devices/system/cpu/cpu" + std::to_string(governor_cpu) + "/cpufreq/scaling_governor").c_str());
-        std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
+        if (opts.measure_time) {
+            std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
+        } else {
+            std::printf("method     no timing, sizes only\n");
+        }
 
         auto const results = quetschn::run_interleaved(c, codecs, model, opts);
         for (std::size_t k = 0; k < codecs.size(); ++k) {
@@ -201,14 +229,20 @@ int main(int argc, char** argv) {
                         r.params_bytes,
                         dict_path.empty() ? "none" : dict_path.c_str(),
                         opts.dict.size());
-            std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
-            print_latency("compress", s.compress);
-            print_latency("decompress warm", s.decompress);
-            print_latency("decompress cold", s.decompress_cold);
+            if (opts.measure_time) {
+                std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
+                print_latency("compress", s.compress);
+                print_latency("decompress warm", s.decompress);
+                print_latency("decompress cold", s.decompress_cold);
+            }
 
             if (!out_path.empty()) {
 #ifdef QUETSCHN_INTERLEAVED
-                auto const path = out_path + "/" + codec->name + ".tsv";
+                auto const path = out_path + "/" + codec->name +
+                                  (opts.levels.empty() || opts.levels[k] == QUETSCHN_LEVEL_DEFAULT
+                                       ? std::string()
+                                       : "-level" + std::to_string(opts.levels[k])) +
+                                  ".tsv";
 #else
                 auto const& path = out_path;
 #endif

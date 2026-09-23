@@ -49,6 +49,16 @@ training_result write_training_corpus(std::filesystem::path const& base,
                                       std::filesystem::path const& exclude_base,
                                       std::filesystem::path const& train_base);
 
+// Writes a uniform random sample of `pages` pages of base to sample_base, in their original order, the
+// same sample for the same seed. For latency measurements that need to be fast: the percentiles of a
+// sample of 20 000 pages are close to those of the whole corpus, see docs/explored-designs.md.
+// Same-filled pages are sampled like any other, the harness skips them. Returns the pages written,
+// fewer than `pages` only if the corpus is smaller.
+std::size_t sample_corpus(std::filesystem::path const& base,
+                          std::filesystem::path const& sample_base,
+                          std::size_t pages,
+                          std::uint64_t seed);
+
 // Which side a process name goes to: true for test. Exposed for tests.
 [[nodiscard]] bool is_test_name(std::string const& name, split_options const& opts);
 
