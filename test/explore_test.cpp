@@ -553,9 +553,9 @@ TEST_CASE("seqlz: the most bits per page fit into two pages, less than two pages
 
 TEST_CASE("seqlz: the compressor needs a code for every symbol") {
     // a complete code where one offset symbol has none: fine for the decoder, not for the encoder
-    // two offset codes of 3 bits and twelve of 4: 2/8 + 12/16 = 1, and symbol 14 has none
+    // two offset codes of 2 bits, six of 4 and four of 5: 2/4 + 6/16 + 4/32 = 1, and symbol 12 has none
     auto l = seqlz_default_own;
-    unsigned char const off[SEQLZ_OFF_SYMBOLS] = {3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0};
+    unsigned char const off[SEQLZ_OFF_SYMBOLS] = {2, 2, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 0};
     std::memcpy(l.off, off, sizeof(off));
     auto* t = static_cast<seqlz_tables*>(::operator new(seqlz_tables_size()));
     auto const init = seqlz_tables_init(t, &l);
@@ -623,7 +623,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         put(code[12 + b], len[12 + b]);
         put(v - (1U << b), b);
     };
-    auto rep = std::vector<unsigned>{1, 4, 8};
+    auto last_offset = 1U;
     for (std::size_t i = 0; i < seq.size(); ++i) {
         auto const last = i + 1 == seq.size();
         auto const l = static_cast<unsigned>(seq[i].literals);
@@ -640,18 +640,14 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
             value(ml, lengths.ml, m - 4 - 31);
         }
         auto const o = static_cast<unsigned>(seq[i].offset);
-        auto const it = std::find(rep.begin(), rep.end(), o);
-        if (it != rep.end()) {
-            auto const r = static_cast<unsigned>(it - rep.begin());
-            put(off[r], lengths.off[r]);
-            rep.erase(it); // moves it to the front
+        if (o == last_offset) {
+            put(off[0], lengths.off[0]);
         } else {
             auto const b = static_cast<unsigned>(std::bit_width(o) - 1);
-            put(off[3 + b], lengths.off[3 + b]);
+            put(off[1 + b], lengths.off[1 + b]);
             put(o - (1U << b), b);
-            rep.pop_back();
         }
-        rep.insert(rep.begin(), o);
+        last_offset = o;
     }
     auto out = std::vector<unsigned char>{static_cast<unsigned char>(seq.size()),
                                           static_cast<unsigned char>(seq.size() >> 8),

@@ -17,9 +17,10 @@
  *   ll >= 15:           ll - 15 follows as a length value; ml - 4 >= 31: ml - 4 - 31
  *   length value v:     v < 16 is the symbol itself; otherwise b = bit_width(v) - 1, the symbol is 12 +
  *                       b, and the b low bits of v follow as extra bits
- *   offset:             symbols 0 to 2 repeat the first, second or third of the last three offsets
- *                       (initially 1, 4, 8), which moves it to the front; otherwise b = bit_width(off)
- *                       - 1, the symbol is 3 + b, and the b low bits of off follow
+ *   offset:             symbol 0 repeats the last offset (initially 1); otherwise b = bit_width(off)
+ *                       - 1, the symbol is 1 + b, and the b low bits of off follow. One repeat offset
+ *                       and not three: the other two were 11% of seqlz-fast's matches, 0.2 points of
+ *                       memory, and their move to front made decoding 17% slower.
  * The length values of ll and of ml and the offsets have Huffman tables of at most SEQLZ_MAX_BITS
  * bits. Everything goes into one bitstream, read least significant bit first: per sequence the token,
  * the length values if any, then the offset, each symbol followed by its extra bits. One token and not
@@ -45,11 +46,11 @@ extern "C" {
 #define SEQLZ_LL_CAP 15U      /* in the token, larger literal lengths follow as a value */
 #define SEQLZ_ML_CAP 31U      /* the same for ml - 4 */
 #define SEQLZ_LEN_SYMBOLS 25U /* 16 direct values, then buckets 4 to 12 */
-#define SEQLZ_OFF_SYMBOLS 15U /* 3 repeats, then buckets 0 to 11 */
+#define SEQLZ_OFF_SYMBOLS 13U /* the last offset, then buckets 0 to 11 */
 #define SEQLZ_HEADER 4U
 
 /* The code lengths of the four tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 577 bytes. */
+ * produces and what zram's dictionary parameter can carry: 575 bytes. */
 struct seqlz_lengths {
     unsigned char token[SEQLZ_TOKEN_SYMBOLS];
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
@@ -74,7 +75,7 @@ static inline unsigned int seqlz_off_bucket(unsigned int off, unsigned int* extr
     unsigned int b = 31U - (unsigned int)__builtin_clz(off);
 
     *extra_bits = b;
-    return 3U + b;
+    return 1U + b;
 }
 
 /* A sequence as the matcher found it. */

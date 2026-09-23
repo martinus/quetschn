@@ -3,7 +3,7 @@
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
 // lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 577 bytes that zram's dictionary parameter can carry.
+// 575 bytes that zram's dictionary parameter can carry.
 
 #include "harness.h"
 #include "kernel_codecs/zram_codec.h"
@@ -167,8 +167,8 @@ int main(int argc, char** argv) {
                 }
                 sequences = quetschn::parse_lz4(dst.data(), len).sequences;
             }
-            // the same symbols and the same repeat offsets as seqlz_encode()
-            auto rep = std::array<unsigned, 3>{1, 4, 8};
+            // the same symbols and the same repeat offset as seqlz_encode()
+            auto last = 1U;
             auto extra = 0U;
             for (auto const& s : sequences) {
                 token[seqlz_token(s.literals, s.match)] += 1;
@@ -181,21 +181,8 @@ int main(int argc, char** argv) {
                 if (s.match - 4 >= SEQLZ_ML_CAP) {
                     ml[seqlz_len_symbol(s.match - 4 - SEQLZ_ML_CAP, &extra)] += 1;
                 }
-                auto r = 0U;
-                while (r < 3 && rep[r] != s.offset) {
-                    ++r;
-                }
-                if (r < 3) {
-                    off[r] += 1;
-                    for (; r > 0; --r) {
-                        rep[r] = rep[r - 1];
-                    }
-                } else {
-                    off[seqlz_off_bucket(s.offset, &extra)] += 1;
-                    rep[2] = rep[1];
-                    rep[1] = rep[0];
-                }
-                rep[0] = s.offset;
+                off[s.offset == last ? 0U : seqlz_off_bucket(s.offset, &extra)] += 1;
+                last = s.offset;
             }
         }
         codec->destroy(&stream);

@@ -55,9 +55,9 @@ static u32 length_entry(unsigned int s) {
 
 /* the same for an offset symbol */
 static u32 offset_entry(unsigned int s) {
-    if (s < 3)
-        return (s << 8) | (1U << 24);
-    return ((1U << (s - 3U)) << 8) | ((s - 3U) << 4);
+    if (s == 0)
+        return 1U << 24;
+    return ((1U << (s - 1U)) << 8) | ((s - 1U) << 4);
 }
 
 /* ll and ml - 4 of a token symbol */
@@ -144,20 +144,6 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
 
 /* ---- shared by matcher, encoder and decoder ---- */
 
-/*
- * The move to front of the repeat offsets, for the decoder; the encoder does the same in registers,
- * see encode_emit(). idx 0 to 2 picked a repeat offset, 3 is a new one. The old first becomes second unless it was picked, the
- * old second becomes third if the second, third or a new one was picked. Two loads with computed indices, no branch: as
- * ?: the compiler made branches of it, 28% of all mispredictions of the decoder.
- */
-static ALWAYS_INLINE void rep_update(unsigned int* rep, unsigned int idx, unsigned int off) {
-    unsigned int r1 = rep[idx == 0], r2 = rep[2U - (idx >= 2)];
-
-    rep[0] = off;
-    rep[1] = r1;
-    rep[2] = r2;
-}
-
 /* ---- matcher, see page_lz.h ---- */
 
 struct find_ctx {
@@ -200,10 +186,10 @@ struct encoder {
     const struct seqlz_tables* t;
     u64 acc;
     unsigned int cnt;
-    u8* p;                         /* bitstream */
-    u8* lit;                       /* literals */
-    const u8* src_end;             /* the 16-byte literal copies may read up to here */
-    unsigned int rep0, rep1, rep2; /* not an array: with computed indices it would live in memory */
+    u8* p;             /* bitstream */
+    u8* lit;           /* literals */
+    const u8* src_end; /* the 16-byte literal copies may read up to here */
+    unsigned int last; /* the last offset */
     unsigned int n;
 };
 
@@ -261,12 +247,10 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         return;
     }
     {
-        /* Which repeat offset, without branches: the ?: chain was 11% of the encoder's mispredictions.
-         * The three repeat offsets are always different, so at most one compares equal. The symbol and
-         * the extra bits of a new offset are computed anyway and used with a mask. */
-        unsigned int e0 = off == e->rep0, e1 = off == e->rep1, e2 = off == e->rep2;
-        unsigned int is_new = (e0 | e1 | e2) - 1U, b = (31U - (unsigned int)__builtin_clz(off)) & 15U;
-        unsigned int sym = (((3U + b) & is_new) + e1 + 2U * e2) & (ENC_LEN_SYMBOLS - 1U), n_extra = b & is_new;
+        /* The last offset or a new one, without a branch: the symbol and the extra bits of a new offset
+         * are computed anyway and used with a mask. */
+        unsigned int is_new = (off == e->last) - 1U, b = (31U - (unsigned int)__builtin_clz(off)) & 15U;
+        unsigned int sym = ((1U + b) & is_new) & (ENC_LEN_SYMBOLS - 1U), n_extra = b & is_new;
         u32 oe = t->off.enc[sym], te = t->token.enc[tok];
         unsigned int olen = oe >> 16 & 15U, tlen = te >> 16 & 15U;
         /* token and offset in one put, unless there are length values between them */
@@ -287,15 +271,12 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         }
         enc_put(e, v, n);
         enc_flush(e);
-        /* the move to front of rep_update() */
-        e->rep2 = (e->rep2 & (0U - (e0 | e1))) | (e->rep1 & ((e0 | e1) - 1U));
-        e->rep1 = (e->rep1 & (0U - e0)) | (e->rep0 & (e0 - 1U));
-        e->rep0 = off;
+        e->last = off;
     }
 }
 
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
-    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, 4, 8, 0};
+    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, 0};
 }
 
 /* the last bits, the header, and the bitstream moved in behind the literals */
@@ -407,7 +388,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end;
     struct bit_reader br;
-    unsigned int n, n_lit, i, rep[4] = {1, 4, 8, 0};
+    unsigned int n, n_lit, i, last = 1;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
@@ -448,15 +429,13 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
             refill(&br);
         }
         v = value(&br, &t->off, &e);
-        /* Repeat offsets without branches, through an array: rep[3] is the new offset, idx picks the
-         * offset. */
         {
-            unsigned int is_rep = (e >> 24) & 1U, idx = v & (0U - is_rep);
+            /* the last offset or the new one, with a mask: three repeat offsets and their move to front
+             * made decoding 17% slower */
+            unsigned int is_last = 0U - ((e >> 24) & 1U);
 
-            idx |= 3U & (0U - (is_rep ^ 1U));
-            rep[3] = v;
-            off = rep[idx];
-            rep_update(rep, idx, off);
+            off = (last & is_last) | (v & ~is_last);
+            last = off;
         }
         if (off == 0 || off > (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
             return -1;
