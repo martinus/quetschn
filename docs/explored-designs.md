@@ -382,8 +382,8 @@ sequence.
   next position do not wait for the branch of this one. Two positions per round save branches but
   need more instructions. On an in-order Cortex-A55 both could look different; not measured.
 * **Byte oriented formats** are costed exactly by `quetschn-lz-analysis --codec seqlz` on
-  `seqlz-fast`'s matches: a token byte with 2 bits of literal length, 4 of match length and 2 for the
-  offset (the last, the one before, 1 byte, 2 bytes) is the best at 29.4%, with a Huffman coded token
+  `seqlz-fast`'s matches: a token byte with 3 bits of literal length, 3 of match length and 2 for the
+  offset (the last, the one before, 1 byte, 2 bytes) is the best at 29.4%, tied with 2 / 4 / 2, with a Huffman coded token
   byte 28.0%, `lz4`'s own layout 34.2%. The encoder of the 29.4% format has 43 300 instructions per page
   instead of 55 000, but 356 mispredictions instead of 279, from the offset mode and the varints. It is
   1% faster for 3 points more memory.
@@ -408,7 +408,7 @@ not quite, but even a free encoder would leave `seqlz-fast` at `lz4`'s speed and
 
 ## bytelz: `seqlz-fast`'s matcher, a byte oriented format
 
-*Open. Warm decode is at `lz4`'s speed, cold decode and compression are not yet.* Code:
+*Open. Close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
 `explore/bytelz.c`, format in `explore/bytelz.h`, codec `bytelz`. The matcher and the literal and match
 copies are shared with `seqlz` in `explore/page_lz.h`.
 
@@ -416,31 +416,58 @@ The question: `PLAN.md`'s goal is `lz4`'s speed in both directions at `zstd`'s r
 ratio, but its Huffman codes cost in both directions. The third compressor round costed byte oriented
 formats on `seqlz-fast`'s matches, and the best one gets 29.4%: a token byte with 3 bits of literal
 length, 3 bits of match length and 2 bits for the offset (the last one, the one before, 1 byte, 2
-bytes), extensions as 7-bit varints, literals inline, no header. Does it decode like `lz4`?
+bytes), extensions as 7-bit varints, literals inline, no header. Does it decode like `lz4`? C1 asks for
+8% less than the better of `lz4` and `lzo-rle` (32.4%), so at most 29.8%: `bytelz` just makes it.
 
 | codec | Σ zsmalloc cost | decompress cold p50 / p99 | warm p99 | compress p99, cold loop |
 | --- | --- | --- | --- | --- |
-| `lz4` | 34.5% | 1770 / 3430 ns | 2370 ns | 7530 ns |
-| `seqlz-fast` | 26.4% | 2830 / 5720 ns | 3300 ns | 10 010 ns |
-| `bytelz` | 29.4% | 2330 / 4870 ns | 2490 ns | 10 630 ns |
+| `lz4` | 34.5% | 1770 / 3430 ns | 2370 ns | 7540 ns |
+| `seqlz-fast` | 26.4% | 2840 / 5720 ns | 3310 ns | 10 010 ns |
+| `bytelz`, first version | 29.4% | 2330 / 4870 ns | 2490 ns | 10 630 ns |
+| `bytelz` | 29.4% | 2160 / 4560 ns | 2430 ns | 9560 ns |
 
 Decompression with `tools/quick-bench.sh`, compression with `--decode-loop 11 --compress`. Per page
-with `perf stat`: decoding `lz4` 5161 cycles and 12 400 instructions, `bytelz` 7671 and 28 400,
-`seqlz-fast` 10 600 and 38 300; compressing `lz4` 17 200, `bytelz` 22 200 and 61 400 instructions,
-`seqlz-fast` 21 600.
+with `perf stat`, decoding: `lz4` 5135 cycles, 12 400 instructions, 94 mispredictions; `bytelz` first
+7671, 28 400, 141; now 7155, 23 100, 145. Compressing: `lz4` 17 200 cycles and 30 300 instructions,
+`bytelz` first 22 200 and 61 400, now 21 000 and 51 200 at 307 mispredictions, `seqlz-fast` 21 600.
 
-* **Warm, `bytelz` decodes at `lz4`'s speed, cold it is 1.42 times as slow.** That the gap grows from
-  120 to 1450 ns at p99 when the caches are cold is not explained yet. The code is 2564 bytes against
-  1840 of `LZ4_decompress_safe`, not enough for that alone; a branch predictor that forgot the
-  decoder's 15 branches per sequence is the next suspect.
-* **Tried in the decoder, both slower:** an `lz4`-like short path for sequences without extensions,
-  8935 cycles instead of 7671: the branch into it failed for a quarter of the sequences and
-  mispredicted. The same with the extensions read without a branch: 17 409 cycles, the position of the
-  next token then waits for up to 4 loads per sequence, where a predicted branch does not wait. The
-  offset with masks instead of a small array: 8192.
-* **The encoder is not faster than `seqlz`'s yet:** writing both extensions without branches costs
-  about 20 instructions each, and the state lives on the stack like `seqlz`'s. A quick version with
-  branches needed 43 300 instructions.
+**Why decoding is slower than `lz4`:**
+
+* **Mispredictions, 145 against 94 per page.** From the branch stack: 29% whether the match length
+  has an extension, 26% the branch into the general match copy, 16% the end of its loop, 10% whether
+  the literal length has one. With 3 bits for ml - 4, 25% of the matches have an extension, with
+  `lz4`'s 4 bits 13% would: of `seqlz-fast`'s matches 59% are 4 to 7 bytes, 16% 8 to 10, 12% 11 to 18
+  and 13% longer. Of the literal runs 82% are shorter than 3, 11% 3 to 6.
+* **Instructions, 23 100 against 12 400**: two repeat offsets, offsets of 0, 1 or 2 bytes, extensions
+  of 1 to 3 bytes, and the checks for the end of input and page.
+* **Not the code size:** in the loop with 2 MiB of other data between the pages, both miss the
+  instruction cache 5 times per page. The harness's cold decode only flushes the compressed page and the
+  output, with a warm decoder, and there the gap is 380 ns larger than warm: not explained yet.
+
+**What helped the decoder:** far from the end of input and page, the same steps without bounds checks,
+16 bytes of literals copied without a loop, and matches of up to 16 bytes with an offset of at least 8
+in two 8-byte copies (the second after the first is stored, it may read what the first wrote): 7671 to
+7155 cycles. **What did not:**
+
+* an `lz4`-like short path only for sequences without extensions: 8935 cycles, its entry branch
+  mispredicts for a quarter of the sequences;
+* extensions read without a branch: 17 409 cycles with both, 8844 with only the one of ml, although
+  mispredictions fell to 97 and 118. The position of the next token then waits for the loads of the
+  extension, where a predicted branch does not wait;
+* the offset selected with masks instead of a small array: 8192.
+
+**Why compressing is slower than `lz4`:** the matcher alone costs as much as all of `lz4`, and the
+encoder adds 84 instructions per sequence where `lz4` needs about 25. Written without branches, the
+extensions cost 20 instructions each, with branches 22 200 became 21 000 cycles. The rest is the
+compiler: the encoder's state lives on the stack, the last sequence's path is merged into the loop, and
+the rarely used byte loop for literals became a vectorized one with alignment checks.
+
+**Next, from `lzo`:** `lzo` (31.9%) beats `lz4` with its format, not its matcher: a match with an offset
+up to 2048, 3 to 8 bytes and up to 3 literals after it costs 2 bytes. 26% of `seqlz-fast`'s offsets are
+between 257 and 2048 and cost `bytelz` 2 bytes of offset. A token layout with fewer extensions and such
+near matches, decoded through a 256-entry table from token to lengths and offset bytes, should cut
+both the mispredictions and the memory; `quetschn-lz-analysis` can cost the layouts exactly before
+any of it is written.
 
 ## Word model: WKdm-style 64-bit words
 

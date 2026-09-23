@@ -14,18 +14,19 @@ struct encoder {
     unsigned int last, before;
 };
 
-/* An extension of v when need is 1: always 3 bytes written, as many kept as v needs. dst has room. */
-static ALWAYS_INLINE u8* put_extension(u8* op, unsigned int v, unsigned int need) {
+/* An extension of v: always 3 bytes written, as many kept as v needs. dst has room. */
+static ALWAYS_INLINE u8* put_extension(u8* op, unsigned int v) {
     unsigned int two = v >= 128U, three = v >= 16384U;
 
     op[0] = (u8)((v & 127U) | two << 7);
     op[1] = (u8)(((v >> 7) & 127U) | three << 7);
     op[2] = (u8)(v >> 14);
-    return op + ((1U + two + three) & (0U - need));
+    return op + 1U + two + three;
 }
 
-/* One sequence, without branches except for literals longer than 16 bytes: the extensions and the
- * offset bytes are always written and op moves by as many as count. */
+/* One sequence. The extensions with a branch, like lz4: written without one, they needed 20
+ * instructions each, for the 8% and 25% of the sequences that have one. The offset bytes are always
+ * written and op moves by as many as count. */
 static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, unsigned int off) {
     struct encoder* e = ctx;
     u8* op = e->op;
@@ -39,7 +40,8 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         mode = 0;
     }
     *op++ = (u8)(llc | mlc << 3 | mode << 6);
-    op = put_extension(op, ll - 7U, ll >= 7U);
+    if (ll >= 7U)
+        op = put_extension(op, ll - 7U);
     if ((unsigned int)(e->src_end - in) >= 16U)
         __builtin_memcpy(op, in, 16);
     else
@@ -53,7 +55,8 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         /* one byte for offset - 1 up to 256, two for the offset */
         store16(op, off - small);
         op += is_new * (2U - small);
-        op = put_extension(op, ml - 11U, ml >= 11U);
+        if (ml >= 11U)
+            op = put_extension(op, ml - 11U);
         e->before = e0 ? e->before : e->last;
         e->last = off;
     }
@@ -101,6 +104,70 @@ int bytelz_decode(const void* src, unsigned int src_len, void* dst) {
     for (;;) {
         unsigned int tok, nl, len, mode, n_off, raw, v, off;
 
+        /* Far from the end of input and page: the same steps without bounds checks, and literals and
+         * matches of up to 16 bytes copied without a loop. An extension of ll is read with a branch,
+         * like lz4 does: without one, the next token's position waits for the extension's loads. Up
+         * to 1 + 3 + 16 + 2 + 3 bytes are read, 6 + 16 written before the match is checked. Longer
+         * literals take the careful way below. */
+        if ((unsigned int)(s_end - s) >= 32U && (unsigned int)(d_end - d) >= 32U && (s[0] & 7U) != 7U) {
+            u64 a, b;
+
+            tok = *s++;
+            nl = tok & 7U;
+            __builtin_memcpy(&a, s, 8);
+            __builtin_memcpy(&b, s + 8, 8);
+            __builtin_memcpy(d, &a, 8);
+            __builtin_memcpy(d + 8, &b, 8);
+            d += nl;
+            s += nl;
+            mode = tok >> 6;
+            n_off = (0x2100U >> (mode * 4U)) & 3U;
+            raw = load16(s);
+            s += n_off;
+            {
+                unsigned int one = mode == 2U, reps[4];
+
+                reps[0] = last;
+                reps[1] = before;
+                reps[2] = (raw & (0xffffU >> (8U * one))) + one;
+                reps[3] = reps[2];
+                off = reps[mode];
+                before = mode == 0 ? before : last;
+                last = off;
+            }
+            len = ((tok >> 3) & 7U) + 4U;
+            if (len == 11U) {
+                unsigned int b0 = s[0], b1 = s[1], b2 = s[2];
+
+                v = b0 & 127U;
+                s++;
+                if (b0 & 128U) {
+                    v |= (b1 & 127U) << 7;
+                    s++;
+                    if (b1 & 128U) {
+                        if (b2 & 128U)
+                            return -1;
+                        v |= b2 << 14;
+                        s++;
+                    }
+                }
+                len += v;
+            }
+            /* off - 1 wraps for 0 */
+            if (off - 1U >= (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
+                return -1;
+            /* for 8 <= off < 16 the second 8 bytes read what the first 8 wrote, which is right */
+            if (off >= 8U && len <= 16U) {
+                __builtin_memcpy(&a, d - off, 8);
+                __builtin_memcpy(d, &a, 8);
+                __builtin_memcpy(&b, d - off + 8, 8);
+                __builtin_memcpy(d + 8, &b, 8);
+            } else {
+                copy_match(d, d_end, off, len);
+            }
+            d += len;
+            continue;
+        }
         if (s == s_end)
             return -1;
         tok = *s++;
