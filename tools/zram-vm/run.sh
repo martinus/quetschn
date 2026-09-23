@@ -26,7 +26,7 @@ cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../explore/seqlz.c"
 sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\tNULL|' "$z/zcomp.c"
 printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o\nCFLAGS_seqlz.o += -O3\n' >>"$z/Makefile"
 make -C "$work/src" O="$work/build" defconfig >/dev/null
-"$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 \
+"$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD \
     --enable DEVTMPFS --enable BLK_DEV_INITRD
 make -C "$work/src" O="$work/build" olddefconfig >/dev/null
 make -C "$work/src" O="$work/build" -j"$(nproc)" bzImage >/dev/null

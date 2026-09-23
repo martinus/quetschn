@@ -602,6 +602,20 @@ memory. Read latency p50 / p90 / p99 in ns:
 In the real read path `seqlz` is 550 to 600 ns slower per page than `lz4`, warm or cold, with the
 prefetch in both: the difference of the decoders' work, about 0.6 µs, and not of the caches.
 
+**All four in the kernel** (`ALGOS=lz4,lzo-rle,zstd,seqlz`, `zstd` at zram's default level), the
+20 000 sample pages, compressed data flushed, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | read, prefetch of the compressed data | read, no prefetch |
+| --- | --- | --- | --- |
+| `lz4` | 29 007 872 | 2220 / 3960 | 2480 / 4490 |
+| `lzo-rle` | 27 222 016 | 2270 / 3860 | 2651 / 4880 |
+| `zstd` | 20 246 528 | 5431 / 9970 | 6141 / 11 309 |
+| `seqlz` | 22 679 552 | 2820 / 4470 | 3271 / 5530 |
+
+`seqlz` needs 17% less memory than `lzo-rle`, zram's default, which is C1, and reads about 600 ns
+slower than `lz4` and `lzo-rle`, half as long as `zstd`, which needs 11% less memory. The prefetch
+helps all four.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
