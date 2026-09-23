@@ -43,6 +43,18 @@ This samples resident anonymous memory of all processes you may read into `corpu
 and `corpus/desktop.tsv`. The pages contain whatever was in memory, including keys and passwords.
 `corpus/` is in `.gitignore`; never commit or publish these files.
 
+The pages zram really holds, the ones reclaim swapped out, come from the zram device itself. zram
+decompresses every page on read; the second `dd` runs as you and leaves free slots as holes:
+
+```sh
+mkdir -m 700 -p ~/quetschn-corpus
+sudo dd if=/dev/zram0 bs=1M iflag=direct status=progress |
+    dd of=$HOME/quetschn-corpus/zram0.raw bs=4096 iflag=fullblock conv=sparse
+./build/quetschn-import-raw --in ~/quetschn-corpus/zram0.raw --out ~/quetschn-corpus/zram0
+```
+
+The dump has no process names, every page gets the name of the dump file.
+
 ## Licensing
 
 quetschn is dual licensed under **`MIT OR GPL-2.0-only`**. You may use it under
