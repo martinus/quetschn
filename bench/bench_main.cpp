@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -75,7 +76,8 @@ void usage() {
                  "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
                  "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
-                 "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n",
+                 "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n"
+                 "--decode-loop <n> decodes every page n times and nothing else, for perf.\n",
                  program);
 }
 
@@ -107,6 +109,52 @@ void print_latency(char const* what, quetschn::latency_summary const& l) {
     std::printf("%-22s %9.0f %9.0f %9.0f %9.0f %9.0f\n", what, l.p50, l.p90, l.p99, l.p999, l.max);
 }
 
+// For perf: compresses every page once, then decompresses all of them loops times and nothing else,
+// so that a profile or perf stat shows only the decoder. No timing, no output but a checksum.
+int decode_loop(quetschn::corpus const& c, quetschn_codec const& codec, quetschn::run_options const& opts, unsigned loops) {
+    auto params = quetschn_params{};
+    params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
+    params.dict_size = opts.dict.size();
+    params.level = opts.levels.empty() ? opts.level : opts.levels.front();
+    params.page_size = static_cast<unsigned int>(c.page_size);
+    auto stream = quetschn_stream{};
+    if (codec.setup_params(&params) != 0 || codec.create(&params, &stream) != 0) {
+        std::fprintf(stderr, "error: %s: setup failed\n", codec.name);
+        return 1;
+    }
+    auto compressed = std::vector<std::vector<std::byte>>();
+    auto buf = std::vector<std::byte>(2 * c.page_size);
+    for (std::size_t i = 0; i < c.size(); ++i) {
+        auto len = static_cast<unsigned int>(buf.size());
+        if (codec.compress(&params, &stream, c.page(i).data(), static_cast<unsigned int>(c.page_size), buf.data(), &len) !=
+            0) {
+            std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
+            return 1;
+        }
+        compressed.emplace_back(buf.begin(), buf.begin() + len);
+    }
+    auto out = std::vector<std::byte>(c.page_size);
+    auto sum = std::uint64_t{0};
+    for (unsigned l = 0; l < loops; ++l) {
+        for (auto const& p : compressed) {
+            auto len = static_cast<unsigned int>(out.size());
+            if (codec.decompress(&params, &stream, p.data(), static_cast<unsigned int>(p.size()), out.data(), &len) != 0) {
+                std::fprintf(stderr, "error: %s: decompress failed\n", codec.name);
+                return 1;
+            }
+            sum += static_cast<std::uint64_t>(out[len / 3]);
+        }
+    }
+    codec.destroy(&stream);
+    codec.release_params(&params);
+    std::printf("%s: %zu pages decoded %u times, checksum %llu\n",
+                codec.name,
+                compressed.size(),
+                loops,
+                static_cast<unsigned long long>(sum));
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -115,6 +163,7 @@ int main(int argc, char** argv) {
     auto dict_path = std::string();
     auto opts = quetschn::run_options{};
     int cpu = -1;
+    unsigned decode_loops = 0;
     auto codecs = std::vector<quetschn_codec const*>();
     auto codec_levels = std::vector<int>();
 #ifndef QUETSCHN_INTERLEAVED
@@ -153,6 +202,7 @@ int main(int argc, char** argv) {
             base = argv[++i];
         } else if (arg == "--out" && has_value) {
             out_path = argv[++i];
+        } else if (arg == "--decode-loop" && has_value && parse(argv[++i], decode_loops) && decode_loops > 0) {
         } else if (arg == "--no-timing") {
             opts.measure_time = false;
         } else if (arg == "--repetitions" && has_value && parse(argv[++i], opts.repetitions) && opts.repetitions > 0) {
@@ -202,6 +252,9 @@ int main(int argc, char** argv) {
             std::memcpy(opts.dict.data(), raw.data(), raw.size());
         }
         auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
+        if (decode_loops > 0) {
+            return decode_loop(c, *codecs.front(), opts, decode_loops);
+        }
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();
         std::printf("corpus     %s, %zu pages of %zu bytes\n", base.c_str(), c.size(), c.page_size);

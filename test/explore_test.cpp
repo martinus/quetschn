@@ -288,6 +288,44 @@ TEST_CASE("seqlz: pages from random sequences come back, with every kind of copy
     }
 }
 
+TEST_CASE("seqlz: the token holds both lengths up to 15, the last sequence has match length 0") {
+    CHECK(seqlz_token(0, 4) == 0);
+    CHECK(seqlz_token(3, 9) == 3 + 16 * 5);
+    CHECK(seqlz_token(14, 18) == 14 + 16 * 14);
+    CHECK(seqlz_token(15, 19) == 15 + 16 * 15);
+    CHECK(seqlz_token(4000, 3000) == 15 + 16 * 15);
+    CHECK(seqlz_token(7, 0) == 7);
+    CHECK(seqlz_token(20, 0) == 15);
+}
+
+TEST_CASE("seqlz: a sequence with long lengths and a large offset needs more bits than one refill") {
+    // 1100 literals (value 1085, 10 extra bits), a match of 2100 (value 2081, 11 extra bits) at offset
+    // 1050 (10 extra bits), then 896 literals: token, three codes and 31 extra bits in one sequence
+    auto const t = default_tables();
+    auto rng = std::mt19937_64(41);
+    auto p = seqlz_page{};
+    for (int i = 0; i < 1100; ++i) {
+        p.bytes.push_back(static_cast<unsigned char>(rng()));
+    }
+    p.literals = p.bytes;
+    for (int i = 0; i < 2100; ++i) {
+        p.bytes.push_back(p.bytes[p.bytes.size() - 1050]);
+    }
+    for (int i = 0; i < 896; ++i) {
+        auto const b = static_cast<unsigned char>(rng());
+        p.bytes.push_back(b);
+        p.literals.push_back(b);
+    }
+    p.sequences = {{1100, 2100, 1050}, {896, 0, 0}};
+    auto c = std::vector<unsigned char>(3 * 4096);
+    auto const len = seqlz_encode(t.get(), p.sequences.data(), 2, p.literals.data(), 1996, c.data(), 3 * 4096);
+    REQUIRE(len > 0);
+    c.resize(len);
+    auto out = std::vector<unsigned char>(4096);
+    REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data()) == 0);
+    CHECK(out == p.bytes);
+}
+
 TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     auto t = default_tables();
     auto l = seqlz_default_lz4;
@@ -301,6 +339,11 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     l = seqlz_default_lz4;
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
+    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    l = seqlz_default_lz4;
+    l.token[0] = 11; // tokens may have 11 bits, one more than the others
+    CHECK(seqlz_tables_init(t.get(), &l) == 0);
+    l.token[0] = 12;
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
 }
 

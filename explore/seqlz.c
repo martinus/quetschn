@@ -7,18 +7,26 @@ typedef unsigned short u16;
 typedef unsigned char u8;
 
 /*
- * Decode table entry, 0 for an unused code, otherwise: bits 0-3 the code length, bits 4-7 the number
- * of extra bits, bits 8-23 the base value, bit 24 set for a repeat offset (the base is its index).
- * A value is then base + the extra bits, in one step.
+ * Decode table entries, 0 for bits that start no code.
+ * Length and offset tables: bits 0-3 the code length, bits 4-7 the number of extra bits, bits 8-23 the
+ * base value, bit 24 set for a repeat offset (the base is its index). A value is base + extra bits.
+ * Token table: bits 0-3 the code length, bits 4-7 min(ll, 15), bits 8-11 min(ml - 4, 15).
  */
-struct code_table {
+struct value_table {
     u32 decode[1U << SEQLZ_MAX_BITS];
     u16 code[SEQLZ_LEN_SYMBOLS]; /* bit reversed, so it can be written least significant bit first */
     u8 len[SEQLZ_LEN_SYMBOLS];
 };
 
+struct token_table {
+    u16 decode[1U << SEQLZ_TOKEN_BITS];
+    u16 code[SEQLZ_TOKEN_SYMBOLS];
+    u8 len[SEQLZ_TOKEN_SYMBOLS];
+};
+
 struct seqlz_tables {
-    struct code_table ll, ml, off;
+    struct token_table token;
+    struct value_table ll, ml, off;
 };
 
 __SIZE_TYPE__ seqlz_tables_size(void) {
@@ -33,7 +41,7 @@ static unsigned int reverse(unsigned int code, unsigned int len) {
     return r;
 }
 
-/* base and extra bits of a length symbol, see seqlz.h */
+/* base and extra bits of a length value symbol, see seqlz.h */
 static u32 length_entry(unsigned int s) {
     if (s < 16)
         return s << 8;
@@ -47,48 +55,84 @@ static u32 offset_entry(unsigned int s) {
     return ((1U << (s - 3U)) << 8) | ((s - 3U) << 4);
 }
 
-/* canonical Huffman codes from the lengths, then the decode table */
-static int build(struct code_table* t, const u8* len, unsigned int n, u32 (*entry)(unsigned int)) {
-    unsigned int count[SEQLZ_MAX_BITS + 1] = {0}, next[SEQLZ_MAX_BITS + 2], code = 0, used = 0, s, l, k;
+/* ll and ml - 4 of a token symbol */
+static u32 token_entry(unsigned int s) {
+    return ((s & 15U) << 4) | ((s >> 4) << 8);
+}
 
-    __builtin_memset(t, 0, sizeof(*t));
+/*
+ * Canonical Huffman codes from the code lengths, bit reversed, and the decode table with 1 << bits
+ * entries of entry(symbol) | code length. -1 if a length is longer than bits, the codes are
+ * over-subscribed, or there is no code at all.
+ */
+static int build(const u8* len,
+                 unsigned int n,
+                 unsigned int bits,
+                 u32 (*entry)(unsigned int),
+                 u16* code,
+                 u8* out_len,
+                 u32* decode32,
+                 u16* decode16) {
+    unsigned int count[16] = {0}, next[17], c = 0, used = 0, s, l, k;
+
+    if (bits > 15)
+        return -1;
     for (s = 0; s < n; s++) {
-        if (len[s] > SEQLZ_MAX_BITS)
+        if (len[s] > bits)
             return -1;
         count[len[s]]++;
         used += len[s] != 0;
     }
     if (used == 0)
         return -1;
-    /* Kraft: the codes must fit into SEQLZ_MAX_BITS bits */
-    for (l = 1, k = 0; l <= SEQLZ_MAX_BITS; l++)
-        k += count[l] << (SEQLZ_MAX_BITS - l);
-    if (k > (1U << SEQLZ_MAX_BITS))
+    /* Kraft: the codes must fit into bits bits */
+    for (l = 1, k = 0; l <= bits; l++)
+        k += count[l] << (bits - l);
+    if (k > (1U << bits))
         return -1;
     count[0] = 0;
-    for (l = 1; l <= SEQLZ_MAX_BITS; l++) {
-        code = (code + count[l - 1]) << 1;
-        next[l] = code;
+    for (l = 1; l <= bits; l++) {
+        c = (c + count[l - 1]) << 1;
+        next[l] = c;
+    }
+    for (k = 0; k < (1U << bits); k++) {
+        if (decode32)
+            decode32[k] = 0;
+        else
+            decode16[k] = 0;
     }
     for (s = 0; s < n; s++) {
         unsigned int r;
 
         l = len[s];
-        t->len[s] = (u8)l;
+        out_len[s] = (u8)l;
+        code[s] = 0;
         if (l == 0)
             continue;
         r = reverse(next[l]++, l);
-        t->code[s] = (u16)r;
-        for (k = r; k < (1U << SEQLZ_MAX_BITS); k += 1U << l)
-            t->decode[k] = entry(s) | l;
+        code[s] = (u16)r;
+        for (k = r; k < (1U << bits); k += 1U << l) {
+            if (decode32)
+                decode32[k] = entry(s) | l;
+            else
+                decode16[k] = (u16)(entry(s) | l);
+        }
     }
     return 0;
 }
 
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths) {
-    if (build(&t->ll, lengths->ll, SEQLZ_LEN_SYMBOLS, length_entry) ||
-        build(&t->ml, lengths->ml, SEQLZ_LEN_SYMBOLS, length_entry) ||
-        build(&t->off, lengths->off, SEQLZ_OFF_SYMBOLS, offset_entry))
+    if (build(lengths->token,
+              SEQLZ_TOKEN_SYMBOLS,
+              SEQLZ_TOKEN_BITS,
+              token_entry,
+              t->token.code,
+              t->token.len,
+              0,
+              t->token.decode) ||
+        build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.code, t->ll.len, t->ll.decode, 0) ||
+        build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.code, t->ml.len, t->ml.decode, 0) ||
+        build(lengths->off, SEQLZ_OFF_SYMBOLS, SEQLZ_MAX_BITS, offset_entry, t->off.code, t->off.len, t->off.decode, 0))
         return -1;
     return 0;
 }
@@ -127,10 +171,20 @@ static unsigned int finish(struct bit_writer* w, u8* start) {
     return (unsigned int)(w->p - start);
 }
 
-static int put_symbol(struct bit_writer* w, const struct code_table* t, unsigned int s) {
-    if (t->len[s] == 0)
+/* a symbol with its code from code/len, -1 if the tables have no code for it */
+static int put_code(struct bit_writer* w, const u16* code, const u8* len, unsigned int s) {
+    if (len[s] == 0)
         return -1;
-    put(w, t->code[s], t->len[s]);
+    put(w, code[s], len[s]);
+    return 0;
+}
+
+static int put_length(struct bit_writer* w, const struct value_table* t, unsigned int v) {
+    unsigned int extra, s = seqlz_len_symbol(v, &extra);
+
+    if (put_code(w, t->code, t->len, s))
+        return -1;
+    put(w, v & ((1U << extra) - 1U), extra);
     return 0;
 }
 
@@ -148,7 +202,7 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
                           unsigned int dst_cap) {
     u8* d = dst;
     struct bit_writer w;
-    unsigned int rep[3] = {1, 4, 8}, i, ll_bytes, ml_bytes, off_bytes, extra, s;
+    unsigned int rep[3] = {1, 4, 8}, i, bytes, extra, s;
     u8* start;
 
     if (dst_cap < SEQLZ_HEADER + n_literals || n > 0xffff)
@@ -157,46 +211,31 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
     store16(d + 2, n_literals);
     __builtin_memcpy(d + SEQLZ_HEADER, literals, n_literals);
 
-    /* ll stream */
     start = d + SEQLZ_HEADER + n_literals;
     w = (struct bit_writer){start, d + dst_cap, 0, 0, 0};
     for (i = 0; i < n; i++) {
-        s = seqlz_len_symbol(seq[i].literals, &extra);
-        if (put_symbol(&w, &t->ll, s))
+        unsigned int ll = seq[i].literals, last = i + 1 == n, ml = last ? 0 : seq[i].match, off, r;
+
+        if (put_code(&w, t->token.code, t->token.len, seqlz_token(ll, ml)))
             return 0;
-        put(&w, seq[i].literals & ((1U << extra) - 1U), extra);
-    }
-    ll_bytes = finish(&w, start);
-
-    /* ml stream, one symbol less: the last sequence has no match */
-    start += ll_bytes;
-    w = (struct bit_writer){start, d + dst_cap, 0, 0, w.overflow};
-    for (i = 0; i + 1 < n; i++) {
-        unsigned int v = seq[i].match - 4U;
-
-        s = seqlz_len_symbol(v, &extra);
-        if (put_symbol(&w, &t->ml, s))
+        if (ll >= 15 && put_length(&w, &t->ll, ll - 15))
             return 0;
-        put(&w, v & ((1U << extra) - 1U), extra);
-    }
-    ml_bytes = finish(&w, start);
+        if (last)
+            break;
+        if (ml - 4 >= 15 && put_length(&w, &t->ml, ml - 4 - 15))
+            return 0;
 
-    /* offset stream */
-    start += ml_bytes;
-    w = (struct bit_writer){start, d + dst_cap, 0, 0, w.overflow};
-    for (i = 0; i + 1 < n; i++) {
-        unsigned int off = seq[i].offset, r;
-
+        off = seq[i].offset;
         for (r = 0; r < 3 && rep[r] != off; r++) {
         }
         if (r < 3) {
-            if (put_symbol(&w, &t->off, r))
+            if (put_code(&w, t->off.code, t->off.len, r))
                 return 0;
             for (; r > 0; r--)
                 rep[r] = rep[r - 1];
         } else {
             s = seqlz_off_bucket(off, &extra);
-            if (put_symbol(&w, &t->off, s))
+            if (put_code(&w, t->off.code, t->off.len, s))
                 return 0;
             put(&w, off & ((1U << extra) - 1U), extra);
             rep[2] = rep[1];
@@ -204,12 +243,10 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
         }
         rep[0] = off;
     }
-    off_bytes = finish(&w, start);
-    if (w.overflow || ll_bytes > 0xffff || ml_bytes > 0xffff)
+    bytes = finish(&w, start);
+    if (w.overflow)
         return 0;
-    store16(d + 4, ll_bytes);
-    store16(d + 6, ml_bytes);
-    return SEQLZ_HEADER + n_literals + ll_bytes + ml_bytes + off_bytes;
+    return SEQLZ_HEADER + n_literals + bytes;
 }
 
 /* ---- decoder ---- */
@@ -217,44 +254,47 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
 /*
  * Least significant bit first. Refill loads 8 bytes at once while at least 8 are left in the stream,
  * and byte by byte at the end, so it never reads past the stream. Past the end it shifts in zeros and
- * notes it; memory safety does not depend on the bits, every length and offset is checked where it
- * is used.
+ * count goes negative; memory safety does not depend on the bits, every length and offset is checked
+ * where it is used.
  */
 struct bit_reader {
     const u8* p;
     const u8* end;
     u64 bits;
-    unsigned int count;
-    unsigned int past_end; /* set once a value used bits beyond the end: the page is not valid */
+    int count; /* negative once more bits were used than the stream has: the page is not valid */
 };
 
 static inline void refill(struct bit_reader* r) {
     if (r->end - r->p >= 8) {
         u64 v;
 
+        /* count is at least 0 here: it only goes negative at the end of the stream */
         __builtin_memcpy(&v, r->p, 8);
         r->bits |= v << r->count;
-        r->p += (63U - r->count) >> 3;
-        r->count |= 56U;
+        r->p += (63 - r->count) >> 3;
+        r->count |= 56;
     } else {
-        while (r->count <= 56U && r->p < r->end) {
+        while (r->count >= 0 && r->count <= 56 && r->p < r->end) {
             r->bits |= (u64)*r->p++ << r->count;
             r->count += 8;
         }
     }
 }
 
+static inline void drop(struct bit_reader* r, unsigned int n) {
+    r->bits >>= n;
+    r->count -= (int)n;
+}
+
 /* One value: the table entry of the next code, then base + extra bits, in one step. Needs 10 + 12
  * bits, refilled before. The entry is 0 for bits that start no code. */
-static inline unsigned int value(struct bit_reader* r, const struct code_table* t, u32* entry) {
+static inline unsigned int value(struct bit_reader* r, const struct value_table* t, u32* entry) {
     u32 e = t->decode[r->bits & ((1U << SEQLZ_MAX_BITS) - 1U)];
-    unsigned int n = e & 15U, x = (e >> 4) & 15U, used = n + x;
+    unsigned int n = e & 15U, x = (e >> 4) & 15U;
     unsigned int v = ((e >> 8) & 0xffffU) + (unsigned int)((r->bits >> n) & ((1ULL << x) - 1ULL));
 
     *entry = e;
-    r->bits >>= used;
-    r->past_end |= r->count < used;
-    r->count = r->count < used ? 0 : r->count - used;
+    drop(r, n + x);
     return v;
 }
 
@@ -269,30 +309,37 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     u8* d = dst;
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end;
-    struct bit_reader ll, ml, of;
-    unsigned int n, n_lit, ll_bytes, ml_bytes, i, rep0 = 1, rep1 = 4, rep2 = 8;
+    struct bit_reader br;
+    unsigned int n, n_lit, i, rep0 = 1, rep1 = 4, rep2 = 8, bad = 0;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
     n = load16(s);
     n_lit = load16(s + 2);
-    ll_bytes = load16(s + 4);
-    ml_bytes = load16(s + 6);
-    if (n == 0 || (u64)SEQLZ_HEADER + n_lit + ll_bytes + ml_bytes > src_len)
+    if (n == 0 || (u64)SEQLZ_HEADER + n_lit > src_len)
         return -1;
     lit = s + SEQLZ_HEADER;
     lit_end = lit + n_lit;
-    ll = (struct bit_reader){lit_end, lit_end + ll_bytes, 0, 0, 0};
-    ml = (struct bit_reader){ll.end, ll.end + ml_bytes, 0, 0, 0};
-    of = (struct bit_reader){ml.end, s_end, 0, 0, 0};
+    br = (struct bit_reader){lit_end, s_end, 0, 0};
 
     for (i = 0;; i++) {
-        unsigned int nl, len, off, v, k;
-        u32 e_ll, e_ml, e_of;
+        unsigned int tok, nl, len, off, v, k;
+        u32 e;
 
-        refill(&ll);
-        nl = value(&ll, &t->ll, &e_ll);
-        if (e_ll == 0 || nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
+        /* One refill per sequence: token, literal length value and offset need at most 11 + 22 + 21 =
+         * 54 of the at least 56 bits a refill leaves. Only after a match length value, up to 22 more
+         * bits, the offset needs another one. */
+        refill(&br);
+        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
+        bad |= tok == 0;
+        drop(&br, tok & 15U);
+        nl = (tok >> 4) & 15U;
+        len = ((tok >> 8) & 15U) + 4U;
+        if (nl == 15) {
+            nl += value(&br, &t->ll, &e);
+            bad |= e == 0;
+        }
+        if (nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
             return -1;
         /* 16 bytes at a time while there are 16 bytes of room behind, in the page and in the input;
          * may write and read past nl, which is overwritten or ignored. The rest one by one, at most 15
@@ -324,17 +371,19 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         if (i + 1 == n)
             break;
 
-        refill(&ml);
-        refill(&of);
-        len = value(&ml, &t->ml, &e_ml) + 4U;
-        v = value(&of, &t->off, &e_of);
-        if (e_ml == 0 || e_of == 0)
-            return -1;
+        if (len == 19) {
+            /* no refill before: token and literal length value used at most 33 of the 56 bits */
+            len += value(&br, &t->ml, &e);
+            bad |= e == 0;
+            refill(&br);
+        }
+        v = value(&br, &t->off, &e);
+        bad |= e == 0;
         /* Repeat offsets without branches: the new first is always this offset, the second is the old
          * first unless this was the old first, the third the old second if this was the old second
          * or third or new, the old third otherwise. */
         {
-            unsigned int is_rep = (e_of >> 24) & 1U, idx = is_rep ? v : 3U;
+            unsigned int is_rep = (e >> 24) & 1U, idx = is_rep ? v : 3U;
 
             off = idx == 0 ? rep0 : idx == 1 ? rep1 : idx == 2 ? rep2 : v;
             rep2 = idx >= 2 ? rep1 : rep2;
@@ -379,7 +428,9 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         }
         d += len;
     }
-    if (d != d_end || lit != lit_end || ll.past_end || ml.past_end || of.past_end)
+    /* An invalid code gives length 0 and uses no bits, and every copy above is checked, so it is safe
+     * to find out only here that the page was not valid. */
+    if (bad || d != d_end || lit != lit_end || br.count < 0)
         return -1;
     return 0;
 }

@@ -3,7 +3,7 @@
  * seqlz (explore/seqlz.h) as a zram backend would call it. The matches come from the kernel's lz4
  * ("seqlz") or lz4hc at level 3 ("seqlz-hc"): compress with it into a per-CPU buffer, split that into
  * sequences, code them with seqlz. zram's dictionary parameter, if it is exactly a struct
- * seqlz_lengths (65 bytes), carries other code lengths instead of the ones compiled in.
+ * seqlz_lengths (321 bytes), carries other code lengths instead of the ones compiled in.
  */
 #include <linux/lz4.h>
 

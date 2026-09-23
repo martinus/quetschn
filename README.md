@@ -74,6 +74,10 @@ tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd:-1,spike-slots
 sequences and literals, see `docs/explored-designs.md`. `quetschn-seqlz-train` trains the tables of the
 seqlz prototype; `explore/seqlz_default_tables.c` says how the compiled-in ones were made.
 
+For `perf`, `quetschn-bench-interleaved --codecs <codec> --corpus <base> --decode-loop <n>` compresses
+every page once and then only decodes, n times. The difference of two runs with different n, e.g. with
+`perf stat -e cycles,instructions,branch-misses`, is the decoder alone.
+
 Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
 `quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on
 the same page, in rotating order. `--out` is a directory then:

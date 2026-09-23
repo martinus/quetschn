@@ -3,7 +3,7 @@
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
 // lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 65 bytes that zram's dictionary parameter can carry.
+// 321 bytes that zram's dictionary parameter can carry.
 
 #include "harness.h"
 #include "kernel_codecs/zram_codec.h"
@@ -129,6 +129,7 @@ int main(int argc, char** argv) {
         }
 
         // start at 1: a symbol that never occurs here must still get a code
+        auto token = std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 1.0);
         auto ll = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto ml = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto off = std::vector<double>(SEQLZ_OFF_SYMBOLS, 1.0);
@@ -149,11 +150,16 @@ int main(int argc, char** argv) {
             auto rep = std::array<unsigned, 3>{1, 4, 8};
             auto extra = 0U;
             for (auto const& s : parsed.sequences) {
-                ll[seqlz_len_symbol(s.literals, &extra)] += 1;
+                token[seqlz_token(s.literals, s.match)] += 1;
+                if (s.literals >= 15) {
+                    ll[seqlz_len_symbol(s.literals - 15, &extra)] += 1;
+                }
                 if (s.match == 0) {
                     continue;
                 }
-                ml[seqlz_len_symbol(s.match - 4, &extra)] += 1;
+                if (s.match - 4 >= 15) {
+                    ml[seqlz_len_symbol(s.match - 4 - 15, &extra)] += 1;
+                }
                 auto r = 0U;
                 while (r < 3 && rep[r] != s.offset) {
                     ++r;
@@ -175,9 +181,11 @@ int main(int argc, char** argv) {
         codec->release_params(&params);
 
         auto lengths = seqlz_lengths{};
+        auto const l_token = code_lengths(token, SEQLZ_TOKEN_BITS);
         auto const l_ll = code_lengths(ll, SEQLZ_MAX_BITS);
         auto const l_ml = code_lengths(ml, SEQLZ_MAX_BITS);
         auto const l_off = code_lengths(off, SEQLZ_MAX_BITS);
+        std::copy(l_token.begin(), l_token.end(), lengths.token);
         std::copy(l_ll.begin(), l_ll.end(), lengths.ll);
         std::copy(l_ml.begin(), l_ml.end(), lengths.ml);
         std::copy(l_off.begin(), l_off.end(), lengths.off);
@@ -200,6 +208,7 @@ int main(int argc, char** argv) {
             std::printf("},\n");
         };
         std::printf("/* trained on %zu pages of %s, %s level %d */\n{\n", pages, base.c_str(), codec->name, params.level);
+        print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);
         print("off", lengths.off, SEQLZ_OFF_SYMBOLS);
