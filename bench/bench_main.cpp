@@ -84,7 +84,7 @@ void usage() {
                  "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n"
                  "--decode-loop <n> decodes every page n times and nothing else, for perf; --cold reads 2 MiB of\n"
                  "other data and flushes the compressed page and the output before each decode; --compress times\n"
-                 "the compression instead.\n",
+                 "the compression instead; --out <file.tsv> writes the median time and compressed length per page.\n",
                  program);
 }
 
@@ -136,13 +136,15 @@ void flush_lines(void const* p, std::size_t n) {
 // once before. The pages are done one after the other, so a page comes from memory unless the corpus
 // fits into the caches. Prints the percentiles of the median time per page, with steady_clock: coarse
 // for one page, but the median over the loops and the percentiles over the pages show where the tail
-// goes.
+// goes. With out_file, also writes the median time and the compressed length of each page, to see which
+// pages make the tail.
 int decode_loop(quetschn::corpus const& c,
                 quetschn_codec const& codec,
                 quetschn::run_options const& opts,
                 unsigned loops,
                 bool cold,
-                bool time_compress) {
+                bool time_compress,
+                std::string const& out_file) {
     auto params = quetschn_params{};
     params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
     params.dict_size = opts.dict.size();
@@ -159,15 +161,17 @@ int decode_loop(quetschn::corpus const& c,
         return codec.compress(&params, &stream, c.page(i).data(), static_cast<unsigned int>(c.page_size), buf.data(), &len);
     };
     auto compressed = std::vector<std::vector<std::byte>>();
-    if (!time_compress) {
-        for (std::size_t i = 0; i < c.size(); ++i) {
-            auto len = 0U;
-            if (compress(i, len) != 0) {
-                std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
-                return 1;
-            }
+    auto lengths = std::vector<unsigned int>(c.size());
+    for (std::size_t i = 0; i < c.size(); ++i) {
+        auto len = 0U;
+        if (compress(i, len) != 0) {
+            std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
+            return 1;
+        }
+        if (!time_compress) {
             compressed.emplace_back(buf.begin(), buf.begin() + len);
         }
+        lengths[i] = len;
     }
     auto out = std::vector<std::byte>(c.page_size);
     auto sum = std::uint64_t{0};
@@ -231,6 +235,18 @@ int decode_loop(quetschn::corpus const& c,
                 lat.p99,
                 lat.p999);
     std::printf("%s: %zu pages, %u loops, checksum %llu\n", codec.name, pages, loops, static_cast<unsigned long long>(sum));
+    if (!out_file.empty()) {
+        auto* f = std::fopen(out_file.c_str(), "w");
+        if (f == nullptr) {
+            std::fprintf(stderr, "error: cannot write %s\n", out_file.c_str());
+            return 1;
+        }
+        std::fprintf(f, "page\tns\tbytes\n");
+        for (std::size_t i = 0; i < pages; ++i) {
+            std::fprintf(f, "%zu\t%.0f\t%u\n", i, medians[i], lengths[i]);
+        }
+        std::fclose(f);
+    }
     return 0;
 }
 
@@ -342,7 +358,7 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (decode_loops > 0) {
-            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold, loop_compress);
+            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold, loop_compress, out_path);
         }
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();

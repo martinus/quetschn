@@ -158,7 +158,8 @@ target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn
 
 # Where the ratio of zstd comes from: lz4hc's matches, costed with entropy coding
 add_executable(quetschn-lz-analysis bench/lz_analysis_main.cpp bench/lz_analysis.cpp)
-target_link_libraries(quetschn-lz-analysis PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_warnings)
+target_include_directories(quetschn-lz-analysis PRIVATE explore)
+target_link_libraries(quetschn-lz-analysis PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_seqlz quetschn_warnings)
 
 # memlz from a checkout, for docs/explored-designs.md: plain userspace C, not kernel flags
 set(QUETSCHN_MEMLZ_DIR "" CACHE PATH "Checkout of https://github.com/rrrlasse/memlz, optional")
