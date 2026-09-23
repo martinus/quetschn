@@ -554,6 +554,39 @@ near matches, decoded through a 256-entry table from token to lengths and offset
 both the mispredictions and the memory; `quetschn-lz-analysis` can cost the layouts exactly before
 any of it is written.
 
+## zram: prefetch the compressed data before decompression
+
+*A zram change for every codec, not a format. In the kernel, with cold compressed data, `lz4`'s p99 read
+latency is 30% lower.* Code: `tools/zram-vm/`, `run.sh <linux tree> <corpus>`.
+
+In the userspace harness, prefetching the output page for writing made both `seqlz-fast` and `lz4`
+much faster when the compressed page and the output were flushed (seqlz's third decoder round). Does
+that hold in the kernel? `tools/zram-vm/run.sh` builds a kernel with `zram-prefetch.patch`: a module
+parameter prefetches, in `read_compressed_page()` before `zcomp_decompress()`, the 64 lines of the
+destination for writing (1), all lines of the compressed object (2), or both (3), and another one
+flushes the compressed object from the cache first, to stand for data that was not read for a long
+time. In a VM on CPU 2 at a fixed 4.5 GHz, `/init` writes the 20 000 sample pages to `/dev/zram0`
+with `lz4`, and reads each back with `O_DIRECT`, so zram decompresses straight into the program's
+page; the prefetch alternates from page to page, the median of 3 runs per page. p50 / p90 / p99 in ns:
+
+| condition | none | destination | compressed data | both |
+| --- | --- | --- | --- | --- |
+| warm | 1880 / 2460 / 3531 | 1910 / 2490 / 3560 | 1890 / 2470 / 3600 | 1911 / 2491 / 3600 |
+| destination flushed | 2061 / 2631 / 3680 | 2080 / 2661 / 3680 | 2060 / 2650 / 3660 | 2080 / 2670 / 3689 |
+| compressed data flushed | 2320 / 3849 / 5600 | 2340 / 3770 / 5461 | 2190 / 2811 / 3891 | 2210 / 2840 / 3939 |
+| both flushed | 2440 / 3840 / 5470 | 2520 / 3810 / 5480 | 2360 / 2960 / 4040 | 2450 / 3040 / 4070 |
+
+* **In the kernel the compressed data matters, not the destination:** prefetching its lines first
+  took p99 from 5600 to 3891 ns when it was cold, and cost nothing when it was warm. `lz4` reads its
+  input front to back, and on the pages with the most compressed bytes the hardware prefetcher comes
+  too late; all lines at once, their misses overlap.
+* **The destination:** flushing it cost only 140 to 180 ns, and prefetching it did not help. In the
+  userspace harness it was the other way round, which is not explained; the kernel's numbers are the
+  ones that count.
+* **Not known yet:** how often the compressed data is really cold at a page fault, and how an arm64
+  little core behaves. The flush happens inside the timed part, for all four variants alike. zram
+  gives the codec a copy in `local_copy` when an object spans two pages; that copy is warm anyway.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
