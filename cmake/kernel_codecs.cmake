@@ -87,7 +87,9 @@ target_include_directories(quetschn_kernel_runtime PUBLIC bench/kernel_codecs)
 quetschn_kernel_codec(quetschn_kernel_lz4 lib/lz4 -O3
     "${QUETSCHN_KERNEL_TREE}/lib/lz4/lz4_compress.c"
     "${QUETSCHN_KERNEL_TREE}/lib/lz4/lz4_decompress.c"
-    bench/kernel_codecs/zram_lz4.c)
+    "${QUETSCHN_KERNEL_TREE}/lib/lz4/lz4hc_compress.c"
+    bench/kernel_codecs/zram_lz4.c
+    bench/kernel_codecs/zram_lz4hc.c)
 quetschn_kernel_codec(quetschn_kernel_lzo lib/lzo ""
     "${QUETSCHN_KERNEL_TREE}/lib/lzo/lzo1x_compress.c"
     "${QUETSCHN_KERNEL_TREE}/lib/lzo/lzo1x_decompress_safe.c"
@@ -109,10 +111,14 @@ target_include_directories(quetschn_kernel_spike PRIVATE "${CMAKE_SOURCE_DIR}/sp
 quetschn_kernel_codec(quetschn_kernel_explore lib/lz4 -O3 explore/shuffle.c explore/bdelta.c explore/zram_explore.c)
 target_include_directories(quetschn_kernel_explore PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 target_link_libraries(quetschn_kernel_explore PUBLIC quetschn_kernel_lz4)
+# zstd without Huffman coded literals, with lib/zstd's flags (no -O3)
+quetschn_kernel_codec(quetschn_kernel_explore_zstd lib/zstd "" explore/zstd_nolit.c)
+target_link_libraries(quetschn_kernel_explore_zstd PUBLIC quetschn_kernel_zstd)
 
-foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots shuffle_lz4 bdelta)
+foreach(codec lz4 lz4hc lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots shuffle_lz4 bdelta
+              zstd_nolit)
     string(REPLACE "_" "-" name ${codec})
-    if(codec STREQUAL "lz4")
+    if(codec MATCHES "^lz4")
         set(lib quetschn_kernel_lz4)
     elseif(codec STREQUAL "zstd")
         set(lib quetschn_kernel_zstd)
@@ -120,6 +126,8 @@ foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip 
         set(lib quetschn_kernel_spike)
     elseif(codec MATCHES "shuffle_lz4|bdelta")
         set(lib quetschn_kernel_explore)
+    elseif(codec STREQUAL "zstd_nolit")
+        set(lib quetschn_kernel_explore_zstd)
     else()
         set(lib quetschn_kernel_lzo)
     endif()
@@ -133,6 +141,11 @@ add_executable(quetschn-bench-interleaved bench/bench_main.cpp)
 target_compile_definitions(quetschn-bench-interleaved PRIVATE QUETSCHN_INTERLEAVED)
 target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_lzo
                                                          quetschn_kernel_zstd quetschn_kernel_spike
-                                                         quetschn_kernel_explore quetschn_warnings)
+                                                         quetschn_kernel_explore quetschn_kernel_explore_zstd
+                                                         quetschn_warnings)
+
+# Where the ratio of zstd comes from: lz4hc's matches, costed with entropy coding
+add_executable(quetschn-lz-analysis bench/lz_analysis_main.cpp bench/lz_analysis.cpp)
+target_link_libraries(quetschn-lz-analysis PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_warnings)
 
 set(QUETSCHN_HAVE_KERNEL_CODECS ON)

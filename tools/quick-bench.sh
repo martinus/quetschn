@@ -53,12 +53,15 @@ baseline=$(file "${specs[0]}")
 printf '%-16s %8s %9s %22s %22s\n' codec "Σ cost" "raw" "cold p50 / p99 ns" "Δ cold p99 ns [95% CI]"
 for spec in "${specs[@]}"; do
     name=$(file "$spec")
-    cost=$(awk -v c="${spec%%:*}" '$1 == "codec" { cur = $2; sub(",", "", cur) } $1 == "zsmalloc" && cur == c { print $5 }' \
-        "$out/sizes/summary.txt" | head -1)
-    raw=$(awk -v c="${spec%%:*}" '$1 == "codec" { cur = $2; sub(",", "", cur) } $1 == "stored" && cur == c { print $3 }' \
-        "$out/sizes/summary.txt" | head -1)
-    cold=$(awk -v c="${spec%%:*}" '$1 == "codec" { cur = $2; sub(",", "", cur) } $1 == "decompress" && $2 == "cold" && cur == c { print $3 " / " $5 }' \
-        "$out/latency/summary.txt" | head -1)
+    # the block of this codec in a summary: its name, and its level if it has one
+    block() {
+        awk -v c="${spec%%:*}" -v l="${spec#*:}" -v has_level="$([[ $spec == *:* ]] && echo 1)" '
+            $1 == "codec" { cur = $2; sub(",", "", cur); lvl = $4; on = cur == c && (has_level != 1 || lvl == l) && !done }
+            on { print } on && $1 == "decompress" && $2 == "cold" { done = 1 }' "$1"
+    }
+    cost=$(block "$out/sizes/summary.txt" | awk '$1 == "zsmalloc" { print $5; exit }')
+    raw=$(block "$out/sizes/summary.txt" | awk '$1 == "stored" { print $3; exit }')
+    cold=$(block "$out/latency/summary.txt" | awk '$1 == "decompress" && $2 == "cold" { print $3 " / " $5; exit }')
     delta=""
     if [[ $name != "$baseline" ]]; then
         delta=$("$build/quetschn-compare" --baseline "$out/latency/$baseline.tsv" --candidate "$out/latency/$name.tsv" |

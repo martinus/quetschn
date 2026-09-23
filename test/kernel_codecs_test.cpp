@@ -109,11 +109,13 @@ std::vector<page> test_pages() {
 
 std::vector<quetschn_codec const*> codecs() {
     return {&quetschn_codec_lz4,
+            &quetschn_codec_lz4hc,
             &quetschn_codec_lzo,
             &quetschn_codec_lzo_rle,
             &quetschn_codec_zstd,
             &quetschn_codec_shuffle_lz4,
-            &quetschn_codec_bdelta};
+            &quetschn_codec_bdelta,
+            &quetschn_codec_zstd_nolit};
 }
 
 // A zram device (params) with one per-CPU stream, set up the way zram does it.
@@ -484,6 +486,44 @@ TEST_CASE("kernel codecs: lz4 uses zram's default acceleration") {
     CHECK(compress(quetschn_codec_lz4, p) == direct(1));
     // and a configured level reaches LZ4_compress_fast() as the acceleration
     CHECK(device(quetschn_codec_lz4, 8).compress(p) == direct(8));
+}
+
+TEST_CASE("kernel codecs: lz4hc writes lz4, defaults to level 9, and zram's level range") {
+    // lz4hc_setup_params(): LZ4HC_DEFAULT_CLEVEL (9) unless set, levels 1 to LZ4HC_MAX_CLEVEL (16)
+    auto const dict = record_dict();
+    for (auto const& p : test_pages()) {
+        CHECK(lz4_reference_decode(compress(quetschn_codec_lz4hc, p)) == p);
+        CHECK(lz4_reference_decode(device(quetschn_codec_lz4hc, QUETSCHN_LEVEL_DEFAULT, dict).compress(p), dict) == p);
+    }
+    CHECK(device(quetschn_codec_lz4hc).params().level == 9);
+    CHECK(rejects(quetschn_codec_lz4hc, 0));
+    CHECK(rejects(quetschn_codec_lz4hc, 17));
+    CHECK_FALSE(rejects(quetschn_codec_lz4hc, 1));
+    CHECK_FALSE(rejects(quetschn_codec_lz4hc, 16));
+    // the level reaches the compressor: on the text page, level 1 is larger than 9, and 9 is smaller than lz4
+    auto const t = text_page();
+    auto const hc1 = device(quetschn_codec_lz4hc, 1).compress(t).size();
+    auto const hc9 = compress(quetschn_codec_lz4hc, t).size();
+    CHECK(hc9 < hc1);
+    CHECK(hc9 < compress(quetschn_codec_lz4, t).size());
+}
+
+TEST_CASE("kernel codecs: zstd-nolit is zstd without Huffman coded literals") {
+    // 16 different bytes in random order: few matches, and 4 bits of entropy per literal byte, so
+    // Huffman coding the literals nearly halves them
+    auto rng = std::mt19937_64(17);
+    auto p = page(page_size);
+    for (auto& b : p) {
+        b = static_cast<std::uint8_t>('a' + rng() % 16);
+    }
+    auto const with = device(quetschn_codec_zstd, 3).compress(p).size();
+    auto const without = device(quetschn_codec_zstd_nolit, 3).compress(p).size();
+    CHECK(with < 2600);
+    CHECK(without > 3900);
+    // zstd itself never Huffman codes literals at negative levels, so there both are the same
+    CHECK(device(quetschn_codec_zstd_nolit, -1).compress(p) == device(quetschn_codec_zstd, -1).compress(p));
+    CHECK(device(quetschn_codec_zstd_nolit).params().level == 3);
+    CHECK(rejects(quetschn_codec_zstd_nolit, 23));
 }
 
 TEST_CASE("kernel codecs: levels zram rejects are rejected") {

@@ -60,6 +60,9 @@ codec. 26s instead of 89s for six codecs; `docs/explored-designs.md` says when t
 tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd:-1,spike-slots
 ```
 
+`quetschn-lz-analysis --corpus <base>` estimates what `lz4hc`'s matches would cost with entropy coded
+sequences and literals, see `docs/explored-designs.md`.
+
 Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
 `quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on
 the same page, in rotating order. `--out` is a directory then:
