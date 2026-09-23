@@ -556,8 +556,9 @@ prototype, on the held-out test workloads, on x86-64 and the phone's in-order li
 
 This phase exists because of §2.2. Everything Biggers asked for, before the first patch.
 
-- `quetschn.c` / `quetschn.h`: C11, freestanding, no libc, no allocation, scratch of at most `lz4`'s 16416 B
-  passed in by the caller. Page size is a parameter, and every test runs with 4 KiB and 16 KiB pages (§3.5).
+- `quetschn.c` / `quetschn.h`: C11, freestanding, no libc, no allocation, scratch of at most `lz4`'s
+  16416 B passed in by the caller. Page size is a parameter, and every test runs with 4 KiB and 16 KiB
+  pages (§3.5).
 - **`FORMAT.md`**: byte-exact format specification, plus an independent, deliberately slow reference
   decoder written from the spec alone. Differential-test the fast decoder against it.
 - **Fuzzing** (AFL++ is already checked out at `~/gra/AFLplusplus`):
