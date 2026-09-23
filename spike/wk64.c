@@ -232,6 +232,57 @@ int wk64_decompress_zeroskip(const void* src, unsigned int src_len, void* dst) {
     return 0;
 }
 
+int wk64_decompress_slots(const void* src, unsigned int src_len, void* dst) {
+    const u8* s = src;
+    u8* d = dst;
+    u64 table[16] = {0};
+    struct sections sec;
+    const u8 *low, *full;
+    unsigned int i, ii = 0;
+
+    if (parse(s, src_len, &sec))
+        return -1;
+    low = sec.low;
+    full = sec.full;
+    for (i = 0; i < WK64_WORDS; i++) {
+        unsigned int slot;
+        u64 w;
+
+        if ((i & 3) == 0 && s[i >> 2] == 0) {
+            __builtin_memset(d + 8 * i, 0, 32);
+            table[0] = 0;
+            i += 3;
+            continue;
+        }
+        /* The slot to update comes from the stream, not from the decoded word, so its address does
+         * not wait for the table load. For EXACT the entry is already there. */
+        switch (tag_at(s, i)) {
+        case WK_ZERO:
+            w = 0;
+            table[0] = 0;
+            break;
+        case WK_EXACT:
+            w = table[(sec.idx[ii >> 1] >> ((ii & 1) * 4)) & 15];
+            ii++;
+            break;
+        case WK_PARTIAL:
+            slot = (sec.idx[ii >> 1] >> ((ii & 1) * 4)) & 15;
+            w = (table[slot] & HIGH32) | load32(low);
+            table[slot] = w;
+            ii++;
+            low += 4;
+            break;
+        default:
+            w = load64(full);
+            table[slot_of(w)] = w;
+            full += 8;
+            break;
+        }
+        store64(d + 8 * i, w);
+    }
+    return 0;
+}
+
 int wk64_decompress_branchless(const void* src, unsigned int src_len, void* dst) {
     /* stands in for an empty section, so that the clamped reads below always have a target */
     static const u8 zeros[8];

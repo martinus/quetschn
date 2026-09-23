@@ -105,7 +105,7 @@ quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
 quetschn_kernel_codec(quetschn_kernel_spike lib/lz4 -O3 spike/wk64.c spike/zram_spike.c)
 target_include_directories(quetschn_kernel_spike PRIVATE "${CMAKE_SOURCE_DIR}/spike")
 
-foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip)
+foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots)
     string(REPLACE "_" "-" name ${codec})
     if(codec STREQUAL "lz4")
         set(lib quetschn_kernel_lz4)
@@ -120,5 +120,11 @@ foreach(codec lz4 lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip)
     target_compile_definitions(quetschn-bench-${name} PRIVATE QUETSCHN_CODEC=quetschn_codec_${codec})
     target_link_libraries(quetschn-bench-${name} PRIVATE quetschn_bench ${lib} quetschn_warnings)
 endforeach()
+
+# All codecs in one binary, timing interleaved per page, see bench_main.cpp
+add_executable(quetschn-bench-interleaved bench/bench_main.cpp)
+target_compile_definitions(quetschn-bench-interleaved PRIVATE QUETSCHN_INTERLEAVED)
+target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_lzo
+                                                         quetschn_kernel_zstd quetschn_kernel_spike quetschn_warnings)
 
 set(QUETSCHN_HAVE_KERNEL_CODECS ON)

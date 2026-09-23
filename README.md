@@ -49,8 +49,17 @@ It prints how much Σ zsmalloc cost the candidate saves, how many pages get chea
 and the difference of the latency percentiles. Every number has a 95% confidence interval from a
 bootstrap that resamples pages, the same pages for both runs.
 
-`quetschn-bench-spike-switch`, `-branchless` and `-zeroskip` run the decoder latency spike of
-`PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
+`quetschn-bench-spike-switch`, `-branchless`, `-zeroskip` and `-slots` run the decoder latency spike
+of `PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
+
+Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
+`quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on
+the same page, in rotating order. `--out` is a directory then:
+
+```sh
+./build/quetschn-bench-interleaved --codecs lz4,spike-slots --corpus corpus/test --cpu 2 --out results
+./build/quetschn-compare --baseline results/lz4.tsv --candidate results/spike-slots.tsv
+```
 
 The `quetschn-bench-*` binaries contain GPL-2.0-only kernel code, so they are GPL-2.0 works; they are
 for measuring, not for distribution.

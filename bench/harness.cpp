@@ -4,11 +4,13 @@
 #include "page_stats.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -78,17 +80,6 @@ double ns_per_tick() {
     return factor;
 }
 
-template <typename F>
-double median_ns(unsigned repetitions, F&& op) {
-    auto samples = std::vector<double>();
-    samples.reserve(repetitions);
-    for (unsigned r = 0; r < repetitions; ++r) {
-        samples.push_back(op());
-    }
-    std::nth_element(samples.begin(), samples.begin() + static_cast<std::ptrdiff_t>(samples.size() / 2), samples.end());
-    return samples[samples.size() / 2];
-}
-
 [[noreturn]] void fail(quetschn_codec const& codec, std::size_t page, char const* what) {
     throw std::runtime_error(std::string(codec.name) + ": page " + std::to_string(page) + ": " + what);
 }
@@ -133,123 +124,207 @@ corpus load_corpus(std::filesystem::path const& base) {
 }
 
 run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& model, run_options const& opts) {
+    auto const codecs = std::array<quetschn_codec const*, 1>{&codec};
+    return std::move(run_interleaved(c, codecs, model, opts)[0]);
+}
+
+namespace {
+
+// One codec as zram sets it up: setup_params once per device, create once per CPU. Both are released
+// again in the destructor, also when a run fails halfway.
+class codec_instance {
+public:
+    codec_instance(quetschn_codec const& codec, std::size_t page_size, run_options const& opts)
+        : m_codec(codec)
+        , m_compressed(2 * page_size + cache_line)
+        , m_restored(page_size + cache_line) {
+        m_params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
+        m_params.dict_size = opts.dict.size();
+        m_params.level = opts.level;
+        m_params.page_size = static_cast<unsigned int>(page_size);
+        if (codec.setup_params(&m_params) != 0) {
+            throw std::invalid_argument(std::string(codec.name) + ": zram rejects these parameters (level " +
+                                        std::to_string(opts.level) + ", dictionary of " + std::to_string(opts.dict.size()) +
+                                        " bytes)");
+        }
+        m_have_params = true;
+        if (codec.create(&m_params, &m_stream) != 0) {
+            // the destructor does not run for an object whose constructor throws
+            codec.release_params(&m_params);
+            throw std::runtime_error(std::string(codec.name) + ": create failed");
+        }
+        m_have_stream = true;
+        // Separate allocations, aligned to cache lines like the kernel's page-sized buffers
+        dst = align(m_compressed);
+        out = align(m_restored);
+    }
+
+    ~codec_instance() {
+        if (m_have_stream) {
+            m_codec.destroy(&m_stream);
+        }
+        if (m_have_params) {
+            m_codec.release_params(&m_params);
+        }
+    }
+
+    codec_instance(codec_instance const&) = delete;
+    codec_instance& operator=(codec_instance const&) = delete;
+
+    [[nodiscard]] quetschn_codec const& codec() const {
+        return m_codec;
+    }
+
+    int compress(std::span<std::byte const> src, unsigned int& len) {
+        len = static_cast<unsigned int>(2 * src.size());
+        return m_codec.compress(&m_params, &m_stream, src.data(), static_cast<unsigned int>(src.size()), dst, &len);
+    }
+
+    int decompress(unsigned int comp_len, unsigned int& len) {
+        return m_codec.decompress(&m_params, &m_stream, dst, comp_len, out, &len);
+    }
+
+    [[nodiscard]] int level() const {
+        return m_params.level;
+    }
+    [[nodiscard]] std::size_t params_bytes() const {
+        return m_params.allocated;
+    }
+    [[nodiscard]] std::size_t stream_bytes() const {
+        return m_stream.allocated;
+    }
+
+    std::byte* dst = nullptr;
+    std::byte* out = nullptr;
+
+private:
+    static std::byte* align(std::vector<std::byte>& v) {
+        auto p = reinterpret_cast<std::uintptr_t>(v.data());
+        return v.data() + ((cache_line - p % cache_line) % cache_line);
+    }
+
+    quetschn_codec const& m_codec;
+    quetschn_params m_params{};
+    quetschn_stream m_stream{};
+    bool m_have_params = false;
+    bool m_have_stream = false;
+    std::vector<std::byte> m_compressed;
+    std::vector<std::byte> m_restored;
+};
+
+} // namespace
+
+std::vector<run_result> run_interleaved(corpus const& c,
+                                        std::span<quetschn_codec const* const> codecs,
+                                        zsmalloc_model const& model,
+                                        run_options const& opts) {
     auto const page_size = c.page_size;
     if (page_size != model.config().page_size) {
         throw std::invalid_argument("run_codec: corpus and zsmalloc model have different page sizes");
     }
     auto const tick_ns = ns_per_tick();
 
-    // zram's order: setup_params once per device, create once per CPU. Both are released on every exit.
-    auto params = quetschn_params{};
-    params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
-    params.dict_size = opts.dict.size();
-    params.level = opts.level;
-    params.page_size = static_cast<unsigned int>(page_size);
-    if (codec.setup_params(&params) != 0) {
-        throw std::invalid_argument(std::string(codec.name) + ": zram rejects these parameters (level " +
-                                    std::to_string(opts.level) + ", dictionary of " + std::to_string(opts.dict.size()) +
-                                    " bytes)");
+    auto instances = std::vector<std::unique_ptr<codec_instance>>();
+    for (auto const* codec : codecs) {
+        instances.push_back(std::make_unique<codec_instance>(*codec, page_size, opts));
     }
-    struct params_guard {
-        quetschn_codec const& codec;
-        quetschn_params& p;
-        ~params_guard() {
-            codec.release_params(&p);
-        }
-    } const release_params{codec, params};
-
-    auto stream = quetschn_stream{};
-    if (codec.create(&params, &stream) != 0) {
-        throw std::runtime_error(std::string(codec.name) + ": create failed");
+    auto results = std::vector<run_result>(codecs.size());
+    for (std::size_t k = 0; k < codecs.size(); ++k) {
+        results[k].level = instances[k]->level();
     }
-    struct stream_guard {
-        quetschn_codec const& codec;
-        quetschn_stream& s;
-        ~stream_guard() {
-            codec.destroy(&s);
+
+    auto const n = codecs.size();
+    auto const reps = opts.measure_time ? opts.repetitions : 0U;
+    auto samples = std::vector<std::array<std::vector<double>, 3>>(n);
+    for (auto& s : samples) {
+        for (auto& v : s) {
+            v.resize(reps);
         }
-    } const destroy_stream{codec, stream};
-
-    auto result = run_result{};
-    result.level = params.level;
-
-    // Separate allocations, aligned to cache lines like the kernel's page-sized buffers
-    auto compressed = std::vector<std::byte>(2 * page_size + cache_line);
-    auto restored = std::vector<std::byte>(page_size + cache_line);
-    auto align = [](std::vector<std::byte>& v) {
-        auto p = reinterpret_cast<std::uintptr_t>(v.data());
-        return v.data() + ((cache_line - p % cache_line) % cache_line);
+    }
+    auto median = [](std::vector<double>& v) {
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
+        return v[v.size() / 2];
     };
-    auto* dst = align(compressed);
-    auto* out = align(restored);
 
+    auto pages = std::vector<page_result>(n);
     for (std::size_t i = 0; i < c.size(); ++i) {
         auto const src = c.page(i);
         if (analyze_page(src).same_filled) {
-            ++result.same_filled;
+            for (auto& r : results) {
+                ++r.same_filled;
+            }
             continue;
         }
 
-        auto compress_once = [&]() -> unsigned int {
-            auto len = static_cast<unsigned int>(2 * page_size);
-            if (codec.compress(&params, &stream, src.data(), static_cast<unsigned int>(page_size), dst, &len) != 0) {
-                fail(codec, i, "compress failed");
+        for (std::size_t k = 0; k < n; ++k) {
+            auto& inst = *instances[k];
+            auto& r = pages[k];
+            r = page_result{};
+            r.page = i;
+            if (inst.compress(src, r.comp_len) != 0) {
+                fail(inst.codec(), i, "compress failed");
             }
-            return len;
-        };
+            r.huge = r.comp_len >= model.huge_class_size();
+            r.cost = model.cost(r.comp_len);
 
-        auto r = page_result{};
-        r.page = i;
-        r.comp_len = compress_once();
-        r.huge = r.comp_len >= model.huge_class_size();
-        r.cost = model.cost(r.comp_len);
-
-        // Roundtrip check, also for pages that zram would store raw: the codec must still be correct.
-        auto out_len = static_cast<unsigned int>(page_size);
-        if (codec.decompress(&params, &stream, dst, r.comp_len, out, &out_len) != 0) {
-            fail(codec, i, "decompress failed");
-        }
-        if (out_len != page_size || std::memcmp(out, src.data(), page_size) != 0) {
-            fail(codec, i, "roundtrip does not reproduce the page");
+            // Roundtrip check, also for pages that zram would store raw: the codec must still be correct.
+            auto out_len = static_cast<unsigned int>(page_size);
+            if (inst.decompress(r.comp_len, out_len) != 0) {
+                fail(inst.codec(), i, "decompress failed");
+            }
+            if (out_len != page_size || std::memcmp(inst.out, src.data(), page_size) != 0) {
+                fail(inst.codec(), i, "roundtrip does not reproduce the page");
+            }
         }
 
-        if (opts.measure_time) {
-            r.compress_ns = median_ns(opts.repetitions, [&] {
-                auto const t0 = ticks();
-                (void)compress_once();
-                return static_cast<double>(ticks() - t0) * tick_ns;
-            });
+        // Every repetition runs every codec once, starting with another codec each time, so that a
+        // change of CPU frequency or temperature during the run hits all codecs alike.
+        for (unsigned rep = 0; rep < reps; ++rep) {
+            for (std::size_t o = 0; o < n; ++o) {
+                auto const k = (o + rep) % n;
+                auto& inst = *instances[k];
+                auto const& r = pages[k];
 
-            // What zram_read_from_zspool() does: memcpy for pages stored raw, decompress otherwise
-            auto read_once = [&] {
-                if (r.huge) {
-                    std::memcpy(out, src.data(), page_size);
-                    return;
-                }
-                auto len = static_cast<unsigned int>(page_size);
-                (void)codec.decompress(&params, &stream, dst, r.comp_len, out, &len);
-            };
-            auto const* read_src = r.huge ? static_cast<void const*>(src.data()) : dst;
-            auto const read_len = r.huge ? page_size : r.comp_len;
-            r.decompress_ns = median_ns(opts.repetitions, [&] {
-                auto const t0 = ticks();
+                auto t0 = ticks();
+                auto len = 0U;
+                (void)inst.compress(src, len);
+                samples[k][0][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+
+                // What zram_read_from_zspool() does: memcpy for pages stored raw, decompress otherwise
+                auto read_once = [&] {
+                    if (r.huge) {
+                        std::memcpy(inst.out, src.data(), page_size);
+                        return;
+                    }
+                    auto out_len = static_cast<unsigned int>(page_size);
+                    (void)inst.decompress(r.comp_len, out_len);
+                };
+                t0 = ticks();
                 read_once();
-                return static_cast<double>(ticks() - t0) * tick_ns;
-            });
-            r.decompress_cold_ns = median_ns(opts.repetitions, [&] {
-                flush(read_src, read_len);
-                flush(out, page_size);
-                auto const t0 = ticks();
+                samples[k][1][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+
+                flush(r.huge ? static_cast<void const*>(src.data()) : inst.dst, r.huge ? page_size : r.comp_len);
+                flush(inst.out, page_size);
+                t0 = ticks();
                 read_once();
-                return static_cast<double>(ticks() - t0) * tick_ns;
-            });
+                samples[k][2][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+            }
         }
-        result.pages.push_back(r);
+        for (std::size_t k = 0; k < n; ++k) {
+            if (reps > 0) {
+                pages[k].compress_ns = median(samples[k][0]);
+                pages[k].decompress_ns = median(samples[k][1]);
+                pages[k].decompress_cold_ns = median(samples[k][2]);
+            }
+            results[k].pages.push_back(pages[k]);
+        }
     }
     // zstd allocates some of its per-stream memory lazily during the first compression
-    result.stream_bytes = stream.allocated;
-    result.params_bytes = params.allocated;
-    return result;
+    for (std::size_t k = 0; k < n; ++k) {
+        results[k].stream_bytes = instances[k]->stream_bytes();
+        results[k].params_bytes = instances[k]->params_bytes();
+    }
+    return results;
 }
 
 double percentile(std::vector<double> values, double p) {

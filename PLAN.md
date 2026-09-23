@@ -463,37 +463,49 @@ page (§5.2) against kernel `lz4` on the test corpus, on x86-64 and on the phone
 p99 argument of §3.2 does not hold, and Phase 3 starts from the §8 fallback instead of from the word
 model.*
 
-**x86-64 half: done, at parity.** The spike is in `spike/`: 64-bit words, 2-bit tags (zero, exact
-match or high-32-bits match against a 16-entry table of recent words, literal), four sections whose
-lengths follow from the tags, so the decoder checks the length once and the loop has no bounds
-checks. Three decoders of the same format: a `switch` on the tag, a branchless one that selects with
-masks, and the `switch` with a fast path that writes a zero tag byte as 4 zero words at once. All are
-built with the kernel's flags and `-O3`, like `lz4`. On the 455 239 pages of the first zram dump,
-Ryzen 9 7950X pinned to one core, `powersave` governor, median of 5 runs per page, on the 344 955
-pages that both `lz4` and the spike store compressed:
+**x86-64 half: passed.** The spike is in `spike/`: 64-bit words, 2-bit tags (zero, exact match or
+high-32-bits match against a 16-entry table of recent words, literal), four sections whose lengths
+follow from the tags, so the decoder checks the length once and the loop has no bounds checks. All
+decoders are built with the kernel's flags and `-O3`, like `lz4`, and decode the same format.
 
-| decoder | cold p50 | cold p99 | cold p99.9 |
-| --- | --- | --- | --- |
-| `lz4` | 1860 ns | 2960 ns | 3450 ns |
-| spike, `switch` | 1730 ns | 2950 ns | 3470 ns |
-| spike, zero fast path | 1670 ns | 2940 ns | 3450 ns |
-| spike, branchless (earlier run) | 2810 ns | 3690 ns | 4330 ns |
+The first three decoders were at parity with `lz4`: a `switch` on the tag, a branchless one that
+selects with masks, and the `switch` with a fast path that writes a zero tag byte as 4 zero words at
+once. What made the difference is the table update. Those decoders write each word to the table slot
+of its hash, `slot_of(w)`, so the address of the store is only known after the table load that
+produced `w`, and the next word's table load has to wait or guess. `spike-slots` takes the slot from
+the stream instead: the stored index for exact and partial words, which the encoder wrote from the
+same hash, and the hash of the stored word for literals. No store address then depends on a table
+load, and an exact match needs no store at all.
 
-Paired over all pages, the zero fast path is 120 ns [110, 130] faster than `lz4` at cold p99. That is
-smaller than the drift between runs: `lz4`'s own cold p99 on the same pages was 2790 ns in a run an
-hour earlier. So the word decoder is not clearly slower, which keeps the word model as the start of
-Phase 3, but it does not show the p99 advantage that §3.2 bets on either. The split by size explains
-why. For pages that `lz4` compresses below 512 bytes, 73% zero words, `lz4` has cold p99 1520 ns and
-the spike 2610 ns: the spike walks all 512 words, `lz4` copies long matches. From 2 KiB up the spike
-is faster, 3280 against 3450 ns. The branchless decoder does the same work for every word and is
-slower everywhere, so data-independent control flow is not the win by itself.
+`quetschn-bench-interleaved` runs several codecs in one process, each repetition runs every codec
+once on the same page, so a drift of the CPU frequency hits all of them alike. On the 455 239 pages of
+the first zram dump, Ryzen 9 7950X pinned to one core, `powersave` governor, median of 5 runs per page,
+percentiles over the 344 955 pages that both store compressed:
 
-The spike is not a codec: 55.7% Σ zsmalloc cost against 34.5% for `lz4`, and 24% of the pages stored
-uncompressed. Three things follow for Phase 3. Pages with long zero runs or repeats need a path that
-costs per run, not per word. The latency comparison needs interleaved runs (one page, both codecs,
-alternating) and a fixed CPU frequency, because the drift between runs is as large as the effect.
-And the arm64 little core is now the half of this gate that decides, an in-order core may favor
-either design.
+| run | decoder | warm p99 | cold p50 | cold p99 | cold p99.9 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `lz4` | 2030 ns | 1360 ns | 2450 ns | 3180 ns |
+| 1 | spike, `switch` | 1850 ns | 1630 ns | 2720 ns | 2970 ns |
+| 1 | spike, zero fast path | 1820 ns | 1610 ns | 2810 ns | 3060 ns |
+| 1 | `spike-slots` | 720 ns | 1390 ns | 1970 ns | 2160 ns |
+| 2 | `spike-slots` | 710 ns | 1380 ns | 2160 ns | 2460 ns |
+| 2 | `lz4` | 2030 ns | 1670 ns | 2890 ns | 3440 ns |
+
+Run 2 has the order of run 1 reversed, because in one binary the code layout of one codec can shift
+another. Paired over all pages, `spike-slots` is faster than `lz4` at cold p99 by 480 ns [470, 500]
+in run 1 and 820 ns [810, 830] in run 2, and at warm p99 by 1270 and 1280 ns. The absolute numbers
+of `lz4` move between the two runs, the advantage does not change sign. A branchless decoder in an
+earlier, separate run was slower everywhere (cold p99 3690 ns), so data-independent control flow
+alone is not what §3.2 hoped for; the win comes from a short dependency chain per word.
+
+Where `lz4` is still better: pages that it compresses below 512 bytes, 73% zero words, cold p50 780
+against 840 ns in run 1. There `lz4` copies long matches while the spike still visits every tag.
+
+The spike is not a codec: 55.7% Σ zsmalloc cost against 34.5% for `lz4`, 24% of the pages stored
+uncompressed. For Phase 3 this means: keep the store address of the table update independent of the
+table load, give runs of zeros and repeats a path that costs per run and not per word, and measure
+latency only interleaved. The arm64 little core is the other half of this gate and is still open;
+an in-order core may weigh the dependency chain differently.
 
 ### Phase 3 — Page analysis and design exploration (12 weeks)
 
