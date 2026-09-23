@@ -88,6 +88,49 @@ std::vector<unsigned char> code_lengths(std::vector<double> const& counts, unsig
     return lengths;
 }
 
+// The token lengths with an escape: only the k most frequent tokens get a code, the others the escape's
+// code and SEQLZ_ESCAPE_BITS bits. k as it gives the fewest bits, with an escape of at most 8 bits
+// (seqlz_tables_init() checks that).
+std::vector<unsigned char> token_lengths(std::vector<double> const& counts) {
+    auto order = std::vector<std::size_t>(counts.size());
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        order[i] = i;
+    }
+    std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {
+        return counts[a] > counts[b];
+    });
+    auto best = std::vector<unsigned char>();
+    auto best_bits = 0.0;
+    for (auto k = std::size_t{64}; k <= counts.size(); k += 64) {
+        auto kept = std::vector<double>();
+        auto escaped = 1.0;
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            if (i < k) {
+                kept.push_back(counts[order[i]]);
+            } else {
+                escaped += counts[order[i]];
+            }
+        }
+        kept.push_back(escaped);
+        auto const l = code_lengths(kept, SEQLZ_TOKEN_BITS);
+        if (l.back() > 31U - 12U - SEQLZ_ESCAPE_BITS) {
+            continue;
+        }
+        auto bits = (escaped - 1.0) * (l.back() + SEQLZ_ESCAPE_BITS);
+        auto lengths = std::vector<unsigned char>(counts.size() + 1, 0);
+        for (std::size_t i = 0; i < k; ++i) {
+            bits += counts[order[i]] * l[i];
+            lengths[order[i]] = l[i];
+        }
+        lengths.back() = l.back();
+        if (best.empty() || bits < best_bits) {
+            best = lengths;
+            best_bits = bits;
+        }
+    }
+    return best;
+}
+
 void usage() {
     std::fprintf(stderr,
                  "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>] [--blob <file>]\n"
@@ -206,7 +249,7 @@ int main(int argc, char** argv) {
         codec->release_params(&params);
 
         auto lengths = seqlz_lengths{};
-        auto const l_token = code_lengths(token, SEQLZ_TOKEN_BITS);
+        auto const l_token = token_lengths(token);
         auto const l_ll = code_lengths(ll, SEQLZ_MAX_BITS);
         auto const l_ml = code_lengths(ml, SEQLZ_MAX_BITS);
         std::copy(l_token.begin(), l_token.end(), lengths.token);
@@ -230,7 +273,7 @@ int main(int argc, char** argv) {
             std::printf("},\n");
         };
         std::printf("/* trained on %zu pages of %s, %s */\n{\n", pages, base.c_str(), matcher.c_str());
-        print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS);
+        print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);
         std::printf("}\n");

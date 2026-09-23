@@ -26,7 +26,7 @@ struct value_table {
 
 struct token_table {
     u16 decode[1U << SEQLZ_TOKEN_BITS];
-    u32 enc[SEQLZ_TOKEN_SYMBOLS];
+    u32 enc[SEQLZ_TOKEN_SYMBOLS + 1];
 };
 
 struct seqlz_tables {
@@ -54,8 +54,10 @@ static u32 length_entry(unsigned int s) {
     return ((1U << (s - 12U)) << 8) | ((s - 12U) << 4);
 }
 
-/* ll, ml - 4 and the offset class of a token symbol */
+/* ll, ml - 4 and the offset class of a token symbol, bit 15 for the escape */
 static u32 token_entry(unsigned int s) {
+    if (s == SEQLZ_ESCAPE)
+        return 1U << 15;
     return ((s & SEQLZ_LL_CAP) << 4) | (((s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP) << 8) |
            ((s >> (SEQLZ_LL_BITS + SEQLZ_ML_BITS)) << 13);
 }
@@ -121,16 +123,20 @@ int seqlz_all_symbols(const struct seqlz_tables* t) {
 
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths) {
     __builtin_memset(t, 0, sizeof(*t)); /* also the encoder's entries behind the last symbol */
-    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS, SEQLZ_TOKEN_BITS, token_entry, t->token.enc, 0, t->token.decode) ||
+    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, token_entry, t->token.enc, 0, t->token.decode) ||
         build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, t->ll.decode, 0) ||
         build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, t->ml.decode, 0))
         return -1;
     {
-        const u8* l = (const u8*)lengths;
+        /* every token has a code or the escape has one, every length value has one */
         unsigned int k, all = 1;
 
-        for (k = 0; k < sizeof(*lengths); k++)
-            all &= l[k] != 0;
+        for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
+            all &= lengths->token[k] != 0 || lengths->token[SEQLZ_ESCAPE] != 0;
+        /* an escaped token and a 12-bit offset in at most 31 bits, the encoder's bound */
+        all &= lengths->token[SEQLZ_ESCAPE] <= 31U - 12U - SEQLZ_ESCAPE_BITS;
+        for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
+            all &= lengths->ll[k] != 0 && lengths->ml[k] != 0;
         t->all_symbols = (u8)all;
     }
     return 0;
@@ -214,6 +220,19 @@ static ALWAYS_INLINE void put_len_value(struct encoder* e, const struct value_ta
     enc_put_code(e, t->enc[s], v, extra);
 }
 
+/* the code of a token and its length; the escape and the token for a token without a code */
+static ALWAYS_INLINE u32 token_code(const struct seqlz_tables* t, unsigned int tok, unsigned int* len) {
+    u32 te = t->token.enc[tok], ee;
+
+    if (te != 0) {
+        *len = te >> 16 & 15U;
+        return te & 0xffffU;
+    }
+    ee = t->token.enc[SEQLZ_ESCAPE];
+    *len = (ee >> 16 & 15U) + SEQLZ_ESCAPE_BITS;
+    return (ee & 0xffffU) | tok << (ee >> 16 & 15U);
+}
+
 /* one sequence: its literals from in, ml 0 for the last one */
 static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, unsigned int off) {
     struct encoder* e = ctx;
@@ -234,7 +253,10 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
 
     if (ml == 0) {
         /* the last sequence */
-        enc_put_code(e, t->token.enc[seqlz_token(ll, 0, 0)], 0, 0);
+        unsigned int tlen;
+        u32 code = token_code(t, seqlz_token(ll, 0, 0), &tlen);
+
+        enc_put(e, code, tlen);
         if (ll >= SEQLZ_LL_CAP)
             put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
         enc_flush(e);
@@ -245,10 +267,10 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
          * Token and offset in one put, the length values after them. */
         unsigned int is_new = (off == e->last) - 1U, big = off >= 256U;
         unsigned int cls = (1U + big) & is_new, raw_bits = (8U + 4U * big) & is_new;
-        u32 te = t->token.enc[seqlz_token(ll, ml, cls)];
-        unsigned int tlen = te >> 16 & 15U;
+        unsigned int tlen;
+        u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
 
-        enc_put(e, (te & 0xffffU) | (u64)(off & ((1U << raw_bits) - 1U)) << tlen, tlen + raw_bits);
+        enc_put(e, code | (u64)(off & ((1U << raw_bits) - 1U)) << tlen, tlen + raw_bits);
         if (ll >= SEQLZ_LL_CAP) {
             put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
             enc_flush(e);
@@ -406,6 +428,17 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
          * known without a second lookup, and the next token's lookup waits for one load, not two. */
         refill(&br);
         tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
+        if (tok >> 15) {
+            /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
+            unsigned int idx;
+
+            drop(&br, tok & 15U);
+            idx = (unsigned int)br.bits & ((1U << SEQLZ_ESCAPE_BITS) - 1U);
+            drop(&br, SEQLZ_ESCAPE_BITS);
+            if (idx >= SEQLZ_TOKEN_SYMBOLS)
+                return -1;
+            tok = token_entry(idx);
+        }
         {
             unsigned int cls = tok >> 13, raw_bits = (cls + (cls != 0)) << 2, n_tok = tok & 15U;
             unsigned int is_new = 0U - (cls != 0);

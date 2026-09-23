@@ -49,6 +49,11 @@ extern "C" {
 #define SEQLZ_LL_BITS 4U /* of the token for ll, at most 4 */
 #define SEQLZ_ML_BITS 5U /* for ml - 4, at most 5 */
 #define SEQLZ_TOKEN_SYMBOLS (3U << (SEQLZ_LL_BITS + SEQLZ_ML_BITS))
+/* A token without a code is sent as the escape's code and SEQLZ_ESCAPE_BITS raw bits of the token.
+ * With 1536 tokens and codes of at most 11 bits, a code for each needed 75% of the code space for the
+ * shortest codes alone: only the frequent ones get a code. */
+#define SEQLZ_ESCAPE SEQLZ_TOKEN_SYMBOLS
+#define SEQLZ_ESCAPE_BITS 11U
 #define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U) /* in the token, larger literal lengths follow as a value */
 #define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U) /* the same for ml - 4 */
 #define SEQLZ_LEN_SYMBOLS 25U                     /* 16 direct values, then buckets 4 to 12 */
@@ -57,7 +62,7 @@ extern "C" {
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
  * produces and what zram's dictionary parameter can carry: 1586 bytes. */
 struct seqlz_lengths {
-    unsigned char token[SEQLZ_TOKEN_SYMBOLS];
+    unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
     unsigned char ml[SEQLZ_LEN_SYMBOLS];
 };

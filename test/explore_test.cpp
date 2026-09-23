@@ -359,20 +359,20 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     l = seqlz_default_lz4;
     auto complete = [&] {
         std::memset(l.token, 11, sizeof(l.token));
-        auto units = SEQLZ_TOKEN_SYMBOLS;
+        auto units = static_cast<unsigned>(sizeof(l.token)); // the tokens and the escape
         for (unsigned bits = 10; units < 2048; --bits) {
-            for (unsigned i = 0; i < SEQLZ_TOKEN_SYMBOLS && units < 2048; ++i) {
+            for (unsigned i = 0; i < sizeof(l.token) && units < 2048; ++i) {
                 units += 1U << (10 - bits);
                 l.token[i] = static_cast<unsigned char>(bits);
             }
         }
     };
     auto with_bits = [&](unsigned char bits, unsigned nth) {
-        auto* p = std::find(l.token, l.token + SEQLZ_TOKEN_SYMBOLS, bits);
+        auto* p = std::find(l.token, l.token + sizeof(l.token), bits);
         for (unsigned k = 0; k < nth; ++k) {
-            p = std::find(p + 1, l.token + SEQLZ_TOKEN_SYMBOLS, bits);
+            p = std::find(p + 1, l.token + sizeof(l.token), bits);
         }
-        REQUIRE(p != l.token + SEQLZ_TOKEN_SYMBOLS);
+        REQUIRE(p != l.token + sizeof(l.token));
         return static_cast<std::size_t>(p - l.token);
     };
     complete();
@@ -621,7 +621,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         }
         return out;
     };
-    auto const token = codes(lengths.token, SEQLZ_TOKEN_SYMBOLS);
+    auto const token = codes(lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
     auto const ll = codes(lengths.ll, SEQLZ_LEN_SYMBOLS);
     auto const ml = codes(lengths.ml, SEQLZ_LEN_SYMBOLS);
 
@@ -650,7 +650,13 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         auto const cls = last || o == last_offset ? 0U : o < 256 ? 1U : 2U;
         auto const tok = std::min(l, SEQLZ_LL_CAP) + ((m == 0 ? 0U : std::min(m - 4U, SEQLZ_ML_CAP)) << SEQLZ_LL_BITS) +
                          (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
-        put(token[tok], lengths.token[tok]);
+        if (lengths.token[tok] != 0) {
+            put(token[tok], lengths.token[tok]);
+        } else {
+            // no code: the escape, then the token in 11 bits
+            put(token[SEQLZ_ESCAPE], lengths.token[SEQLZ_ESCAPE]);
+            put(tok, SEQLZ_ESCAPE_BITS);
+        }
         put(o, cls == 0 ? 0U : cls == 1 ? 8U : 12U);
         if (l >= SEQLZ_LL_CAP) {
             value(ll, lengths.ll, l - SEQLZ_LL_CAP);
