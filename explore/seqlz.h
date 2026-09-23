@@ -10,14 +10,15 @@
  * A sequence is a literal length ll, a match length ml and an offset; the last sequence of a page has
  * no match. Like lz4's token, ll and ml - 4 share one symbol, capped at 15 and 31, and with them the
  * class of the offset:
- *   token:              min(ll, 15) + 16 * min(ml - 4, 31) + 512 * class, 1536 symbols, Huffman coded
- *                       with at most SEQLZ_TOKEN_BITS bits. Class 0 repeats the last offset (initially
- *                       1), class 1 is an offset below 256, class 2 one below 4096. 31 and not 15 for
+ *   token:              min(ll, 15) + 16 * min(ml - 4, 31) + 512 * class, 2048 symbols, Huffman coded
+ *                       with at most SEQLZ_TOKEN_BITS bits, rare ones escaped (SEQLZ_ESCAPE). Class 0
+ *                       repeats the last offset (initially 1), class c >= 1 is an offset below 1 << 4c,
+ *                       sent in 4c raw bits: below 16, 256 or 4096. 31 and not 15 for
  *                       the match length, because with 15 every fifth match needed a length value, and
  *                       that branch mispredicted. 11 and not 12 bits, because the decode table of 12
  *                       bits, 8 KiB, made the cold decode slower: the tables of the decoder have to stay
  *                       in L1.
- *   offset:             class 1: 8 bits, class 2: 12 bits, raw, right after the token. So the decoder
+ *   offset:             4 * class raw bits, right after the token. So the decoder
  *                       needs one table lookup per sequence and not two: a Huffman coded offset
  *                       bucket cost 0.3 points less memory, but its lookup was a second step on the
  *                       chain from one sequence to the next. One repeat offset and not three: the other
@@ -48,10 +49,10 @@ extern "C" {
 #define SEQLZ_TOKEN_BITS 11U
 #define SEQLZ_LL_BITS 4U /* of the token for ll, at most 4 */
 #define SEQLZ_ML_BITS 5U /* for ml - 4, at most 5 */
-#define SEQLZ_TOKEN_SYMBOLS (3U << (SEQLZ_LL_BITS + SEQLZ_ML_BITS))
+#define SEQLZ_TOKEN_SYMBOLS (4U << (SEQLZ_LL_BITS + SEQLZ_ML_BITS))
 /* A token without a code is sent as the escape's code and SEQLZ_ESCAPE_BITS raw bits of the token.
  * With 1536 tokens and codes of at most 11 bits, a code for each needed 75% of the code space for the
- * shortest codes alone: only the frequent ones get a code. */
+ * shortest codes alone, and 2048 do not fit at all: only the frequent ones get a code. */
 #define SEQLZ_ESCAPE SEQLZ_TOKEN_SYMBOLS
 #define SEQLZ_ESCAPE_BITS 11U
 #define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U) /* in the token, larger literal lengths follow as a value */
@@ -60,7 +61,7 @@ extern "C" {
 #define SEQLZ_HEADER 4U
 
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 1586 bytes. */
+ * produces and what zram's dictionary parameter can carry: 2099 bytes. */
 struct seqlz_lengths {
     unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
@@ -82,9 +83,9 @@ static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_
 
 /* the class of an offset and its raw bits, see above; offsets are below 4096 */
 static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last, unsigned int* raw_bits) {
-    unsigned int cls = off == last ? 0U : off < 256 ? 1U : 2U;
+    unsigned int cls = off == last ? 0U : off < 16 ? 1U : off < 256 ? 2U : 3U;
 
-    *raw_bits = cls == 0 ? 0U : cls == 1 ? 8U : 12U;
+    *raw_bits = 4U * cls;
     return cls;
 }
 

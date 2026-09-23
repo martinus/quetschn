@@ -3,7 +3,7 @@
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
 // lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 1586 bytes that zram's dictionary parameter can carry.
+// 2099 bytes that zram's dictionary parameter can carry.
 
 #include "harness.h"
 #include "kernel_codecs/zram_codec.h"
@@ -101,7 +101,9 @@ std::vector<unsigned char> token_lengths(std::vector<double> const& counts) {
     });
     auto best = std::vector<unsigned char>();
     auto best_bits = 0.0;
-    for (auto k = std::size_t{64}; k <= counts.size(); k += 64) {
+    // at most 1 << SEQLZ_TOKEN_BITS codes fit, the escape is one of them
+    auto const most = std::min(counts.size(), (std::size_t{1} << SEQLZ_TOKEN_BITS) - 1);
+    for (auto k = std::size_t{64}; k <= most; k = k + 64 <= most || k == most ? k + 64 : most) {
         auto kept = std::vector<double>();
         auto escaped = 1.0;
         for (std::size_t i = 0; i < order.size(); ++i) {

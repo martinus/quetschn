@@ -305,11 +305,14 @@ TEST_CASE("seqlz: the token holds ll and ml - 4 up to their caps and the offset 
     CHECK(seqlz_off_class(9, 9, &bits) == 0);
     CHECK(bits == 0);
     CHECK(seqlz_off_class(1, 9, &bits) == 1);
+    CHECK(bits == 4);
+    CHECK(seqlz_off_class(15, 9, &bits) == 1);
+    CHECK(seqlz_off_class(16, 9, &bits) == 2);
     CHECK(bits == 8);
-    CHECK(seqlz_off_class(255, 9, &bits) == 1);
-    CHECK(seqlz_off_class(256, 9, &bits) == 2);
+    CHECK(seqlz_off_class(255, 9, &bits) == 2);
+    CHECK(seqlz_off_class(256, 9, &bits) == 3);
     CHECK(bits == 12);
-    CHECK(seqlz_off_class(4095, 9, &bits) == 2);
+    CHECK(seqlz_off_class(4095, 9, &bits) == 3);
 }
 
 TEST_CASE("seqlz: a sequence with long lengths and a large offset needs more bits than one refill") {
@@ -354,14 +357,16 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     l = seqlz_default_lz4;
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
-    // A complete code: all tokens with 11 bits, then the first ones 10 bits, then 9, until they fill
+    // A complete code: the tokens with 11 bits, then the first ones 10 bits, then 9, until they fill
     // the 11-bit table exactly.
     l = seqlz_default_lz4;
     auto complete = [&] {
+        // three tokens without a code, they take the escape; not all 2049 fit into 11 bits
         std::memset(l.token, 11, sizeof(l.token));
-        auto units = static_cast<unsigned>(sizeof(l.token)); // the tokens and the escape
+        std::memset(l.token, 0, 3);
+        auto units = static_cast<unsigned>(sizeof(l.token)) - 3; // the tokens and the escape
         for (unsigned bits = 10; units < 2048; --bits) {
-            for (unsigned i = 0; i < sizeof(l.token) && units < 2048; ++i) {
+            for (unsigned i = 3; i < sizeof(l.token) && units < 2048; ++i) {
                 units += 1U << (10 - bits);
                 l.token[i] = static_cast<unsigned char>(bits);
             }
@@ -647,7 +652,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         auto const m = last ? 0U : static_cast<unsigned>(seq[i].match);
         auto const o = static_cast<unsigned>(seq[i].offset);
         // class 0: the last offset, 1: below 256 in 8 raw bits, 2: in 12
-        auto const cls = last || o == last_offset ? 0U : o < 256 ? 1U : 2U;
+        auto const cls = last || o == last_offset ? 0U : o < 16 ? 1U : o < 256 ? 2U : 3U;
         auto const tok = std::min(l, SEQLZ_LL_CAP) + ((m == 0 ? 0U : std::min(m - 4U, SEQLZ_ML_CAP)) << SEQLZ_LL_BITS) +
                          (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
         if (lengths.token[tok] != 0) {
@@ -657,7 +662,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
             put(token[SEQLZ_ESCAPE], lengths.token[SEQLZ_ESCAPE]);
             put(tok, SEQLZ_ESCAPE_BITS);
         }
-        put(o, cls == 0 ? 0U : cls == 1 ? 8U : 12U);
+        put(o, 4U * cls);
         if (l >= SEQLZ_LL_CAP) {
             value(ll, lengths.ll, l - SEQLZ_LL_CAP);
         }
