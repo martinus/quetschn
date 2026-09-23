@@ -45,7 +45,7 @@ extern "C" {
 #endif
 
 #define SEQLZ_PAGE 4096U
-#define SEQLZ_MAX_BITS 9U /* for length values; tables of 2 KiB each */
+#define SEQLZ_MAX_BITS 8U /* for length values; tables of 1 KiB each, 9 bits were 80 ns slower when cold */
 #define SEQLZ_TOKEN_BITS 11U
 #define SEQLZ_LL_BITS 4U /* of the token for ll, at most 4 */
 #define SEQLZ_ML_BITS 5U /* for ml - 4, at most 5 */
