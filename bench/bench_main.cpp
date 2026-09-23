@@ -32,20 +32,25 @@ namespace {
 // All codecs in one binary, for comparisons that must not suffer from drift between separate runs.
 // The price: the code layout of one codec can shift another's numbers, which one binary per codec
 // avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
-auto const all_codecs = std::array<quetschn_codec const*, 14>{&quetschn_codec_lz4,
-                                                              &quetschn_codec_lz4hc,
-                                                              &quetschn_codec_lzo,
-                                                              &quetschn_codec_lzo_rle,
-                                                              &quetschn_codec_zstd,
-                                                              &quetschn_codec_spike_switch,
-                                                              &quetschn_codec_spike_branchless,
-                                                              &quetschn_codec_spike_zeroskip,
-                                                              &quetschn_codec_spike_slots,
-                                                              &quetschn_codec_shuffle_lz4,
-                                                              &quetschn_codec_bdelta,
-                                                              &quetschn_codec_zstd_nolit,
-                                                              &quetschn_codec_seqlz,
-                                                              &quetschn_codec_seqlz_hc};
+auto const all_codecs = std::to_array<quetschn_codec const*>({
+    &quetschn_codec_lz4,
+    &quetschn_codec_lz4hc,
+    &quetschn_codec_lzo,
+    &quetschn_codec_lzo_rle,
+    &quetschn_codec_zstd,
+    &quetschn_codec_spike_switch,
+    &quetschn_codec_spike_branchless,
+    &quetschn_codec_spike_zeroskip,
+    &quetschn_codec_spike_slots,
+    &quetschn_codec_shuffle_lz4,
+    &quetschn_codec_bdelta,
+    &quetschn_codec_zstd_nolit,
+    &quetschn_codec_seqlz,
+    &quetschn_codec_seqlz_hc,
+#    ifdef QUETSCHN_HAVE_MEMLZ
+    &quetschn_codec_memlz,
+#    endif
+});
 auto const* const program = "quetschn-bench-interleaved";
 #else
 auto const* const program = QUETSCHN_CODEC.name;

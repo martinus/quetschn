@@ -267,6 +267,29 @@ raw.
   real pages mix. It is cheaper than `lz4` on only 9163 pages. Taking the cheaper of `lz4`,
   `shuffle-lz4` and `bdelta` per page gives 32.1%, the same as without `bdelta`.
 
+## memlz
+
+*Dropped.* Code: `explore/zram_memlz.c`, built only with `-DQUETSCHN_MEMLZ_DIR=<checkout>`, measured at
+[rrrlasse/memlz](https://github.com/rrrlasse/memlz) commit 3b28cc5.
+
+memlz is an 8-byte word version of the Chameleon algorithm: each word is either found through a
+16-bit hash in a table of recent words, then 2 bytes are written, or stored whole; runs of equal bytes
+are coded separately. It is built for streams of megabytes, and for those it is very fast. Its state
+is two tables of 65 536 entries, 768 KiB, and the decoder rebuilds them from the data like the
+encoder, so for independent 4 KiB pages both sides reset them for every page.
+
+| | Σ zsmalloc cost | stored raw | per CPU | cold p50 / p99 | compress p50 / p99 |
+| --- | --- | --- | --- | --- | --- |
+| `memlz` | 63.6% | 60 449 | 1.5 MB | 9710 / 10 190 ns | 12.8 / 13.4 µs |
+
+* Worse on memory than the word model spike (55.7%): a word only compresses when it came before
+  exactly, there are no partial matches.
+* The latency is almost the same at p50 and p99 because nearly all of it is the 768 KiB reset before
+  every page, in both directions. For pages its tables would have to be a hundred times smaller, and
+  then it is the spike's design again.
+* In the same run the 768 KiB resets made the cold decodes of the other codecs slower too (`lz4` cold
+  p99 3480 instead of about 2700 ns), so a codec with a large working area needs its own run.
+
 ## `lz4` with a dictionary
 
 *A baseline, not a candidate. Kept in the comparison because zram supports it.* Details in
@@ -286,8 +309,6 @@ raw.
   to `lz4`'s speed.
 * **A matcher for seqlz** that is cheap like `lz4`'s and finds matches like `lz4hc` level 3's: that is
   2 points of Σ zsmalloc cost, 27.6% against 25.6%.
-* **memlz** (https://github.com/rrrlasse/memlz), an 8-byte word version of the Chameleon algorithm,
-  in the word model family.
 * **Word model + a path for runs and long repeats.** Where the word model loses to `lz4` is exactly
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **`lz4` tuned for 4 KiB pages:** offsets limited to the page, word-aligned matches, a parser that

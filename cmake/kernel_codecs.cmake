@@ -159,4 +159,14 @@ target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn
 add_executable(quetschn-lz-analysis bench/lz_analysis_main.cpp bench/lz_analysis.cpp)
 target_link_libraries(quetschn-lz-analysis PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_warnings)
 
+# memlz from a checkout, for docs/explored-designs.md: plain userspace C, not kernel flags
+set(QUETSCHN_MEMLZ_DIR "" CACHE PATH "Checkout of https://github.com/rrrlasse/memlz, optional")
+if(QUETSCHN_MEMLZ_DIR)
+    add_library(quetschn_memlz STATIC explore/zram_memlz.c)
+    target_include_directories(quetschn_memlz PRIVATE "${QUETSCHN_MEMLZ_DIR}" bench/kernel_codecs)
+    target_link_libraries(quetschn_memlz PUBLIC quetschn_kernel_runtime)
+    target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_memlz)
+    target_compile_definitions(quetschn-bench-interleaved PRIVATE QUETSCHN_HAVE_MEMLZ)
+endif()
+
 set(QUETSCHN_HAVE_KERNEL_CODECS ON)
