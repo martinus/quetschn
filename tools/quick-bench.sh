@@ -13,8 +13,12 @@ usage() {
 usage: tools/quick-bench.sh <build dir> <corpus> <out dir> <codec[:level],...>
 
 The first codec is the baseline. Environment: CPU (default 2) to pin to, SAMPLE (default 20000) pages
-for the latency sample, REPETITIONS (default 5) runs per page. The sample is written once, next to the
-corpus, as <corpus>-sample<SAMPLE>, and reused.
+for the latency sample, REPETITIONS (default 5) runs per page, RUNS (default 5) separate processes for
+the latency. The sample is written once, next to the corpus, as <corpus>-sample<SAMPLE>, and reused.
+
+Cold latency changes between processes by more than the confidence interval of one run says, e.g.
+with the physical pages the buffers get. So the latency runs RUNS times, and the table shows the
+median of the runs and the smallest and largest difference to the baseline.
 EOF2
     exit 2
 }
@@ -27,9 +31,10 @@ codecs=$4
 cpu=${CPU:-2}
 sample_pages=${SAMPLE:-20000}
 repetitions=${REPETITIONS:-5}
+runs=${RUNS:-5}
 sample=$corpus-sample$sample_pages
 
-mkdir -p "$out/sizes" "$out/latency"
+mkdir -p "$out/sizes"
 chmod 700 "$out"
 if [[ ! -e $sample.pages ]]; then
     "$build/quetschn-sample-corpus" --corpus "$corpus" --out "$sample" --pages "$sample_pages" >/dev/null
@@ -38,8 +43,16 @@ fi
 start=$SECONDS
 "$build/quetschn-bench-interleaved" --codecs "$codecs" --corpus "$corpus" --no-timing --out "$out/sizes" \
     >"$out/sizes/summary.txt"
-"$build/quetschn-bench-interleaved" --codecs "$codecs" --corpus "$sample" --cpu "$cpu" \
-    --repetitions "$repetitions" --out "$out/latency" >"$out/latency/summary.txt"
+for ((r = 1; r <= runs; r++)); do
+    mkdir -p "$out/latency$r"
+    "$build/quetschn-bench-interleaved" --codecs "$codecs" --corpus "$sample" --cpu "$cpu" \
+        --repetitions "$repetitions" --out "$out/latency$r" >"$out/latency$r/summary.txt"
+done
+
+# median of the numbers on stdin, one per line
+median() {
+    sort -n | awk '{ v[NR] = $1 } END { if (NR) print v[int((NR + 1) / 2)] }'
+}
 
 # file name of a codec spec, as quetschn-bench-interleaved writes it: zstd:-1 -> zstd-level-1
 file() {
@@ -50,7 +63,7 @@ file() {
 
 IFS=, read -r -a specs <<<"$codecs"
 baseline=$(file "${specs[0]}")
-printf '%-16s %8s %9s %22s %22s\n' codec "Σ cost" "raw" "cold p50 / p99 ns" "Δ cold p99 ns [95% CI]"
+printf '%-16s %8s %9s %20s %14s %20s\n' codec "Σ cost" "raw" "cold p50 / p99 ns" "warm p99 ns" "Δ cold p99 [min, max]"
 for spec in "${specs[@]}"; do
     name=$(file "$spec")
     # the block of this codec in a summary: its name, and its level if it has one
@@ -61,12 +74,23 @@ for spec in "${specs[@]}"; do
     }
     cost=$(block "$out/sizes/summary.txt" | awk '$1 == "zsmalloc" { print $5; exit }')
     raw=$(block "$out/sizes/summary.txt" | awk '$1 == "stored" { print $3; exit }')
-    cold=$(block "$out/latency/summary.txt" | awk '$1 == "decompress" && $2 == "cold" { print $3 " / " $5; exit }')
+    cold_p50=$(for ((r = 1; r <= runs; r++)); do
+        block "$out/latency$r/summary.txt" | awk '$1 == "decompress" && $2 == "cold" { print $3; exit }'
+    done | median)
+    cold_p99=$(for ((r = 1; r <= runs; r++)); do
+        block "$out/latency$r/summary.txt" | awk '$1 == "decompress" && $2 == "cold" { print $5; exit }'
+    done | median)
+    warm_p99=$(for ((r = 1; r <= runs; r++)); do
+        block "$out/latency$r/summary.txt" | awk '$1 == "decompress" && $2 == "warm" { print $5; exit }'
+    done | median)
     delta=""
     if [[ $name != "$baseline" ]]; then
-        delta=$("$build/quetschn-compare" --baseline "$out/latency/$baseline.tsv" --candidate "$out/latency/$name.tsv" |
-            awk '$1 == "decompress" && $2 == "cold" && $3 == "p99" { print $4 "   " $5 " " $6 }')
+        deltas=$(for ((r = 1; r <= runs; r++)); do
+            "$build/quetschn-compare" --baseline "$out/latency$r/$baseline.tsv" --candidate "$out/latency$r/$name.tsv" |
+                awk '$1 == "decompress" && $2 == "cold" && $3 == "p99" { print $4 + 0 }'
+        done)
+        delta="$(median <<<"$deltas") [$(sort -n <<<"$deltas" | head -1), $(sort -n <<<"$deltas" | tail -1)]"
     fi
-    printf '%-16s %8s %9s %22s %22s\n' "$spec" "$cost" "$raw" "$cold" "$delta"
+    printf '%-16s %8s %9s %20s %14s %20s\n' "$spec" "$cost" "$raw" "$cold_p50 / $cold_p99" "$warm_p99" "$delta"
 done
-echo "$((SECONDS - start))s, latency on $sample_pages sampled pages, Δ against ${specs[0]}"
+echo "$((SECONDS - start))s, latency: median of $runs runs on $sample_pages sampled pages, Δ against ${specs[0]}"

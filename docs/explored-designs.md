@@ -20,9 +20,10 @@ the kernel's compiler flags (`cmake/kernel_codecs.cmake`), the candidates with `
 
 Two benchmarks, and a few rules that came from getting it wrong first:
 
-* **Fast:** `tools/quick-bench.sh build <corpus> <out> lz4,<candidates>`, 26s for six codecs. The
+* **Fast:** `tools/quick-bench.sh build <corpus> <out> lz4,<candidates>`, 91s for five codecs. The
   zsmalloc cost comes from the whole corpus without timing (`--no-timing`), so it is exact. Latency
-  comes from a fixed random sample of 20 000 pages (`quetschn-sample-corpus`), interleaved.
+  comes from a fixed random sample of 20 000 pages (`quetschn-sample-corpus`), interleaved, in 5
+  separate processes.
 * **Full:** `quetschn-bench-interleaved` on the whole corpus, 89s for six codecs. Only to confirm a
   result that goes into this file or `PLAN.md`. The fast one agreed with it within 2% to 4% for five
   of six codecs; for `spike-slots` the fast one said 1800 ns cold p99, the full one 2000 ns. So a
@@ -38,17 +39,28 @@ Two benchmarks, and a few rules that came from getting it wrong first:
   between two builds that only differed in how the corpus was allocated.
 * **Nothing else runs on the machine while a benchmark times.** A build or a test run during a
   benchmark gave numbers that the next clean run did not reproduce.
-* **Cold latency is not reproducible below a few hundred ns, warm latency is.** Adding `lz4hc` to a
-  run moved `lzo-rle` against `lz4` at cold p99 from +40 to -390 ns, and `zstd -1` ranged from +1410
-  to +2350 ns over five runs. The clock is not the reason: warm p99 was the same in all these runs
-  within 1.5% (`lz4` 1990 to 2000 ns), and so was the cycle count (APERF via `rdpru`, `lz4` 10 595 to
-  10 631 cycles), the core ran at about 5.3 GHz every time. In cycles the cold numbers scatter even
-  more (`zstd -1` +7542 to +12 750 cycles against `lz4`), because the time spent waiting for DRAM
-  grows with the clock. What changes between runs is how long the flushed lines take to come back
-  from memory, which depends on the state of DRAM and the fabric, and neither timer controls that.
-  So decoders are compared by warm cycles, and the cold penalty is mostly the number of bytes read:
-  the output page is the same 4 KiB for every codec, the input is `comp_len`. Every benchmark prints
-  the frequency range and boost state anyway.
+* **Fixed clock, compressions apart from decompressions, and several processes.** Cold latency was
+  the hard part; warm latency and compression time were always stable to 1% or 2%. Three causes,
+  found one after the other:
+  * The clock. With boost on, warm decoding ran at 5.3 GHz every time, but the cold numbers of two
+    identical runs differed by up to 520 ns. With CPU 2 fixed at 4.5 GHz and boost off, identical
+    runs agreed within 10 to 80 ns. Counting cycles (APERF via `rdpru`) instead of time did not help:
+    the time spent waiting for DRAM counts more cycles at a higher clock.
+  * The other codecs in the run. With `lz4hc` in a run, `lzo-rle` against `lz4` moved from -100 to
+    +200 ns. `lz4hc` touches a 256 KiB workspace when it compresses, and that ran right before the
+    next codec's decompression. Now every repetition first times all compressions, then all
+    decompressions; `lzo-rle` against `lz4` was then -50 to -110 ns with and without `lz4hc`.
+  * The process. Five identical runs gave `zstd -1` against `lz4` +2390, +4620, +2300, +1800 and
+    +2490 ns, while each run's own confidence interval was about ±80 ns. It only covers which pages
+    were sampled, not e.g. which physical pages the buffers got. So `tools/quick-bench.sh` runs the
+    latency in 5 processes and shows the median and the smallest and largest difference.
+
+  Every benchmark prints the frequency range and boost state, a table needs min equal to max and
+  boost off. The commands for that are in `README.md`.
+
+The latencies in the sections on the word model, byte shuffle and base + delta were measured before
+these three fixes, with boost on and one process. Their differences to `lz4` can be off by a few
+hundred ns; the Σ zsmalloc cost is exact in every section.
 
 ## Baselines
 
@@ -110,16 +122,21 @@ entropy coded. A page has 636 literal bytes and 182 sequences on average: `lz4` 
 every token and two on every offset, where 4 KiB of page need 12 bits of offset at most, and
 usually fewer.
 
-Latency, preliminary: the cold numbers changed by up to about 900 ns between runs (see the rules
-above). What held in all five runs, cold p99 against `lz4`:
+Latency with the clock fixed at 4.5 GHz, the median of 5 runs of `tools/quick-bench.sh`, and in
+brackets the smallest and largest difference to `lz4` at cold p99:
 
-* `zstd -1`: +1410 to +2350 ns.
-* `zstd 1`, the same plus Huffman coded literals: another +1150 to +1860 ns on top of `zstd -1`, for
-  3 points of Σ zsmalloc cost.
-* `lz4hc` level 9 decodes with `lz4`'s decoder; against `lz4` it was +310 ns in one run and -490 ns
-  in another, so no result yet.
-* Compression, p50 and p99: `lz4` 1.9 and 3.6 µs, `lz4hc` level 3 8.2 and 11 µs, level 9 19 and
-  81 µs. `PLAN.md` C3 allows 1.2 times `lz4`, `lz4hc` is far outside at any level.
+| codec | cold p50 / p99 | Δ cold p99 | warm p99 | compress p50 / p99 |
+| --- | --- | --- | --- | --- |
+| `lz4` | 1130 / 2770 ns | | 2370 ns | 2.3 / 4.2 µs |
+| `lzo-rle` | 1010 / 2570 ns | -200 [-320, -10] | 2290 ns | 2.0 / 4.7 µs |
+| `lz4hc` level 9 | 840 / 2370 ns | -400 [-440, -200] | 2180 ns | 23 / 97 µs |
+| `zstd -1` | 2530 / 4560 ns | +1830 [+1730, +1880] | 3970 ns | 5.2 / 10.4 µs |
+| `zstd 1` | 3640 / 6600 ns | +3850 [+3770, +4010] | 5480 ns | 8.3 / 14.9 µs |
+
+* `lz4hc` decodes faster than `lz4`: the same decoder, and fewer, longer sequences. But it
+  compresses 10 to 23 times slower, `PLAN.md` C3 allows 1.2 times `lz4`.
+* Huffman coded literals, `zstd 1` over `zstd -1`, cost another 2000 ns at cold p99 for 3 points of
+  Σ zsmalloc cost.
 
 For the design this means: an LZ whose sequences are entropy coded with static tables, and literals
 raw, is worth about 25% Σ zsmalloc cost by this estimate, better than `zstd -1`, and the matcher can

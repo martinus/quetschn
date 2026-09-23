@@ -301,17 +301,22 @@ std::vector<run_result> run_interleaved(corpus const& c,
         }
 
         // Every repetition runs every codec once, starting with another codec each time, so that a
-        // change of CPU frequency or temperature during the run hits all codecs alike.
+        // change of CPU frequency or temperature during the run hits all codecs alike. First all
+        // compressions, then all decompressions: a compressor with a large workspace, like lz4hc's
+        // 256 KiB, evicts what the next codec's cold decompression would otherwise still find in the
+        // cache, and with it the set of codecs in a run changed the others' cold latency by 300 ns.
         for (unsigned rep = 0; rep < reps; ++rep) {
+            for (std::size_t o = 0; o < n; ++o) {
+                auto const k = (o + rep) % n;
+                auto const t0 = ticks();
+                auto len = 0U;
+                (void)instances[k]->compress(src, len);
+                samples[k][0][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+            }
             for (std::size_t o = 0; o < n; ++o) {
                 auto const k = (o + rep) % n;
                 auto& inst = *instances[k];
                 auto const& r = pages[k];
-
-                auto t0 = ticks();
-                auto len = 0U;
-                (void)inst.compress(src, len);
-                samples[k][0][rep] = static_cast<double>(ticks() - t0) * tick_ns;
 
                 // What zram_read_from_zspool() does: memcpy for pages stored raw, decompress otherwise
                 auto read_once = [&] {
@@ -322,7 +327,9 @@ std::vector<run_result> run_interleaved(corpus const& c,
                     auto out_len = static_cast<unsigned int>(page_size);
                     (void)inst.decompress(r.comp_len, out_len);
                 };
-                t0 = ticks();
+                // warm: the data is in the cache after one read, whatever ran before
+                read_once();
+                auto t0 = ticks();
                 read_once();
                 samples[k][1][rep] = static_cast<double>(ticks() - t0) * tick_ns;
 
