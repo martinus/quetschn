@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -421,4 +422,108 @@ TEST_CASE("seqlz: any input is safe for the decoder") {
         auto const ret = seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data());
         CHECK((ret == 0 || ret == -1));
     }
+}
+
+namespace {
+
+std::unique_ptr<seqlz_tables, void (*)(seqlz_tables*)> own_tables() {
+    auto* t = static_cast<seqlz_tables*>(::operator new(seqlz_tables_size()));
+    REQUIRE(seqlz_tables_init(t, &seqlz_default_own) == 0);
+    return {t, [](seqlz_tables* p) {
+                ::operator delete(p);
+            }};
+}
+
+// the literals of a page for its sequences
+std::vector<unsigned char> literals_of(std::vector<unsigned char> const& bytes, seqlz_sequence const* seq, unsigned n) {
+    auto out = std::vector<unsigned char>();
+    std::size_t pos = 0;
+    for (unsigned i = 0; i < n; ++i) {
+        out.insert(out.end(),
+                   bytes.begin() + static_cast<std::ptrdiff_t>(pos),
+                   bytes.begin() + static_cast<std::ptrdiff_t>(pos + seq[i].literals));
+        pos += seq[i].literals + seq[i].match;
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("seqlz: the compressor's pages come back, with a state shared over many pages") {
+    // One state for all pages: its hash table keeps entries of earlier pages, which point anywhere into
+    // the page, also behind the current position; they must only ever cost a failed comparison.
+    auto const t = own_tables();
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(43);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    auto out = std::vector<unsigned char>(4096);
+    for (int round = 0; round < 800; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        auto const len = seqlz_compress(t.get(), st.get(), p.bytes.data(), c.data(), static_cast<unsigned>(c.size()));
+        REQUIRE(len > 0);
+        auto exact = std::vector<unsigned char>(c.begin(), c.begin() + len);
+        REQUIRE(seqlz_decode(t.get(), exact.data(), len, out.data()) == 0);
+        CHECK(out == p.bytes);
+    }
+}
+
+TEST_CASE("seqlz: the compressor writes what seqlz_encode writes for seqlz_find's sequences") {
+    auto const t = own_tables();
+    // two states with the same history, one for each side
+    auto a = std::make_unique<seqlz_state>();
+    auto b = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(47);
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    for (int round = 0; round < 300; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        auto const n = seqlz_find(a.get(), p.bytes.data(), seq.data());
+        auto const lits = literals_of(p.bytes, seq.data(), n);
+        auto expected = std::vector<unsigned char>(2 * 4096);
+        auto const elen =
+            seqlz_encode(t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), expected.data(), 2 * 4096);
+        auto got = std::vector<unsigned char>(2 * 4096);
+        auto const glen = seqlz_compress(t.get(), b.get(), p.bytes.data(), got.data(), 2 * 4096);
+        REQUIRE(elen > 0);
+        REQUIRE(glen == elen);
+        CHECK(std::equal(got.begin(), got.begin() + glen, expected.begin()));
+    }
+}
+
+TEST_CASE("seqlz: a bitstream that does not fit makes a raw page, a too small buffer an error") {
+    auto const t = own_tables();
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(53);
+    auto const p = random_seqlz_page(rng, 0); // many short matches, a long bitstream
+    // the back half of dst has room for only a few bytes of bitstream
+    auto small = std::vector<unsigned char>(SEQLZ_HEADER + 4096 + 64 + 40);
+    auto const len = seqlz_compress(t.get(), st.get(), p.bytes.data(), small.data(), static_cast<unsigned>(small.size()));
+    REQUIRE(len > 4096);
+    CHECK(len < 4096 + 16);
+    small.resize(len);
+    auto out = std::vector<unsigned char>(4096);
+    REQUIRE(seqlz_decode(t.get(), small.data(), len, out.data()) == 0);
+    CHECK(out == p.bytes);
+    auto tiny = std::vector<unsigned char>(SEQLZ_HEADER + 4096 + 63);
+    CHECK(seqlz_compress(t.get(), st.get(), p.bytes.data(), tiny.data(), static_cast<unsigned>(tiny.size())) == 0);
+}
+
+TEST_CASE("seqlz: the compressor needs a code for every symbol") {
+    // a complete code where one offset symbol has none: fine for the decoder, not for the encoder
+    // two offset codes of 3 bits and twelve of 4: 2/8 + 12/16 = 1, and symbol 14 has none
+    auto l = seqlz_default_own;
+    unsigned char const off[SEQLZ_OFF_SYMBOLS] = {3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0};
+    std::memcpy(l.off, off, sizeof(off));
+    auto* t = static_cast<seqlz_tables*>(::operator new(seqlz_tables_size()));
+    auto const init = seqlz_tables_init(t, &l);
+    if (init == 0) {
+        auto st = std::make_unique<seqlz_state>();
+        auto bytes = std::vector<unsigned char>(4096, 7);
+        bytes[100] = 1;
+        auto c = std::vector<unsigned char>(2 * 4096);
+        CHECK(seqlz_compress(t, st.get(), bytes.data(), c.data(), 2 * 4096) == 0);
+    }
+    ::operator delete(t);
+    CHECK(init == 0); // the lengths above are still a complete code, otherwise this test tests nothing
 }

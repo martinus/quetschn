@@ -118,14 +118,15 @@ target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/ex
 target_link_libraries(quetschn_kernel_seqlz PUBLIC quetschn_kernel_lz4)
 add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp bench/lz_analysis.cpp)
 target_include_directories(quetschn-seqlz-train PRIVATE explore)
-target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_warnings)
+target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_seqlz
+                                                  quetschn_warnings)
 
 # zstd without Huffman coded literals, with lib/zstd's flags (no -O3)
 quetschn_kernel_codec(quetschn_kernel_explore_zstd lib/zstd "" explore/zstd_nolit.c)
 target_link_libraries(quetschn_kernel_explore_zstd PUBLIC quetschn_kernel_zstd)
 
 foreach(codec lz4 lz4hc lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots shuffle_lz4 bdelta
-              zstd_nolit seqlz seqlz_hc)
+              zstd_nolit seqlz seqlz_hc seqlz_fast)
     string(REPLACE "_" "-" name ${codec})
     if(codec MATCHES "^lz4")
         set(lib quetschn_kernel_lz4)

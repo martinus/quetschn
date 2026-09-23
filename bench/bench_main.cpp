@@ -52,6 +52,7 @@ auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_zstd_nolit,
     &quetschn_codec_seqlz,
     &quetschn_codec_seqlz_hc,
+    &quetschn_codec_seqlz_fast,
 #    ifdef QUETSCHN_HAVE_MEMLZ
     &quetschn_codec_memlz,
 #    endif
@@ -82,7 +83,8 @@ void usage() {
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
                  "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n"
                  "--decode-loop <n> decodes every page n times and nothing else, for perf; --cold reads 2 MiB of\n"
-                 "other data and flushes the compressed page and the output before each decode.\n",
+                 "other data and flushes the compressed page and the output before each decode; --compress times\n"
+                 "the compression instead.\n",
                  program);
 }
 
@@ -131,8 +133,12 @@ void flush_lines(void const* p, std::size_t n) {
 #endif
 }
 
-int decode_loop(
-    quetschn::corpus const& c, quetschn_codec const& codec, quetschn::run_options const& opts, unsigned loops, bool cold) {
+int decode_loop(quetschn::corpus const& c,
+                quetschn_codec const& codec,
+                quetschn::run_options const& opts,
+                unsigned loops,
+                bool cold,
+                bool time_compress) {
     auto params = quetschn_params{};
     params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
     params.dict_size = opts.dict.size();
@@ -144,6 +150,7 @@ int decode_loop(
         return 1;
     }
     auto compressed = std::vector<std::vector<std::byte>>();
+    auto pages = std::vector<std::size_t>();
     auto buf = std::vector<std::byte>(2 * c.page_size);
     for (std::size_t i = 0; i < c.size(); ++i) {
         auto len = static_cast<unsigned int>(buf.size());
@@ -153,8 +160,10 @@ int decode_loop(
             return 1;
         }
         compressed.emplace_back(buf.begin(), buf.begin() + len);
+        pages.push_back(i);
     }
     auto out = std::vector<std::byte>(c.page_size);
+    auto cbuf = std::vector<std::byte>(2 * c.page_size);
     auto sum = std::uint64_t{0};
     // warm decode time of every page in every loop, with steady_clock: coarse for one page, but the
     // median over the loops and the percentiles over the pages show where the tail goes
@@ -164,6 +173,20 @@ int decode_loop(
     for (unsigned l = 0; l < loops; ++l) {
         for (std::size_t i = 0; i < compressed.size(); ++i) {
             auto const& p = compressed[i];
+            if (time_compress) {
+                auto clen = static_cast<unsigned int>(cbuf.size());
+                auto const src = c.page(pages[i]);
+                auto const t0 = std::chrono::steady_clock::now();
+                auto const ret =
+                    codec.compress(&params, &stream, src.data(), static_cast<unsigned int>(c.page_size), cbuf.data(), &clen);
+                ns[i][l] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+                if (ret != 0) {
+                    std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
+                    return 1;
+                }
+                sum += clen;
+                continue;
+            }
             auto len = static_cast<unsigned int>(out.size());
             if (cold) {
                 // Other work between two page faults: 2 MiB read evicts L1 and L2 (1 MiB per core on
@@ -193,9 +216,11 @@ int decode_loop(
         medians.push_back(v[v.size() / 2]);
     }
     auto const lat = quetschn::summarize_latency(medians);
-    std::printf("%s: %s decode per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f ns\n",
+    std::printf("%s: %s per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f ns\n",
                 codec.name,
-                cold ? "cold" : "warm",
+                time_compress ? "compress"
+                : cold        ? "cold decode"
+                              : "warm decode",
                 loops,
                 lat.p50,
                 lat.p90,
@@ -221,6 +246,7 @@ int main(int argc, char** argv) {
     int cpu = -1;
     unsigned decode_loops = 0;
     bool decode_cold = false;
+    bool loop_compress = false;
     auto codecs = std::vector<quetschn_codec const*>();
     auto codec_levels = std::vector<int>();
 #ifndef QUETSCHN_INTERLEAVED
@@ -262,6 +288,8 @@ int main(int argc, char** argv) {
         } else if (arg == "--decode-loop" && has_value && parse(argv[++i], decode_loops) && decode_loops > 0) {
         } else if (arg == "--cold") {
             decode_cold = true;
+        } else if (arg == "--compress") {
+            loop_compress = true;
         } else if (arg == "--no-timing") {
             opts.measure_time = false;
         } else if (arg == "--repetitions" && has_value && parse(argv[++i], opts.repetitions) && opts.repetitions > 0) {
@@ -312,7 +340,7 @@ int main(int argc, char** argv) {
         }
         auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
         if (decode_loops > 0) {
-            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold);
+            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold, loop_compress);
         }
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();

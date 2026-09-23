@@ -20,6 +20,7 @@
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -71,9 +72,10 @@ std::vector<unsigned char> code_lengths(std::vector<double> counts, unsigned max
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc] [--level <n>] [--blob <file>]\n"
+                 "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>] [--blob <file>]\n"
                  "\n"
-                 "Counts seqlz's symbols over the matches of --codec (default lz4) on every page. Prints the\n"
+                 "Counts seqlz's symbols over the matches of --codec (default lz4; seqlz is its own matcher) on\n"
+                 "every page. Prints the\n"
                  "code lengths as a C initializer, or writes them to --blob for zram's dictionary parameter.\n");
 }
 
@@ -83,6 +85,7 @@ int main(int argc, char** argv) {
     auto base = std::string();
     auto blob = std::string();
     auto const* codec = &quetschn_codec_lz4;
+    auto own_matcher = false;
     int level = QUETSCHN_LEVEL_DEFAULT;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
@@ -93,7 +96,9 @@ int main(int argc, char** argv) {
             blob = argv[++i];
         } else if (arg == "--codec" && has_value) {
             auto const name = std::string_view(argv[++i]);
-            if (name == "lz4hc") {
+            if (name == "seqlz") {
+                own_matcher = true;
+            } else if (name == "lz4hc") {
                 codec = &quetschn_codec_lz4hc;
             } else if (name != "lz4") {
                 usage();
@@ -134,18 +139,30 @@ int main(int argc, char** argv) {
         auto ml = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto off = std::vector<double>(SEQLZ_OFF_SYMBOLS, 1.0);
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
+        auto state = std::make_unique<seqlz_state>();
+        auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         auto pages = std::size_t{0};
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const src = c.page(i);
             if (quetschn::analyze_page(src).same_filled) {
                 continue;
             }
-            auto len = static_cast<unsigned int>(dst.size());
-            if (codec->compress(&params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) != 0) {
-                throw std::runtime_error(std::string(codec->name) + ": compress failed");
-            }
             ++pages;
-            auto const parsed = quetschn::parse_lz4(dst.data(), len);
+            auto parsed = quetschn::parsed_page{};
+            if (own_matcher) {
+                // seqlz's own matcher, as seqlz-fast uses it
+                auto const n = seqlz_find(state.get(), src.data(), seqs.data());
+                for (unsigned k = 0; k < n; ++k) {
+                    parsed.sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});
+                }
+            } else {
+                auto len = static_cast<unsigned int>(dst.size());
+                if (codec->compress(&params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) !=
+                    0) {
+                    throw std::runtime_error(std::string(codec->name) + ": compress failed");
+                }
+                parsed = quetschn::parse_lz4(dst.data(), len);
+            }
             // the same symbols and the same repeat offsets as seqlz_encode()
             auto rep = std::array<unsigned, 3>{1, 4, 8};
             auto extra = 0U;
@@ -196,8 +213,12 @@ int main(int argc, char** argv) {
             if (!out) {
                 throw std::runtime_error("cannot write " + blob);
             }
-            std::printf(
-                "%zu pages, %s level %d, %zu bytes to %s\n", pages, codec->name, params.level, sizeof(lengths), blob.c_str());
+            std::printf("%zu pages, %s level %d, %zu bytes to %s\n",
+                        pages,
+                        own_matcher ? "seqlz" : codec->name,
+                        params.level,
+                        sizeof(lengths),
+                        blob.c_str());
             return 0;
         }
         auto print = [](char const* name, unsigned char const* l, unsigned n) {
@@ -207,7 +228,11 @@ int main(int argc, char** argv) {
             }
             std::printf("},\n");
         };
-        std::printf("/* trained on %zu pages of %s, %s level %d */\n{\n", pages, base.c_str(), codec->name, params.level);
+        std::printf("/* trained on %zu pages of %s, %s level %d */\n{\n",
+                    pages,
+                    base.c_str(),
+                    own_matcher ? "seqlz" : codec->name,
+                    params.level);
         print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);

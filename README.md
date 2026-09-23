@@ -76,7 +76,8 @@ seqlz prototype; `explore/seqlz_default_tables.c` says how the compiled-in ones 
 
 For `perf`, `quetschn-bench-interleaved --codecs <codec> --corpus <base> --decode-loop <n>` compresses
 every page once and then only decodes, n times, and prints warm decode percentiles per page; with
-`--cold`, 2 MiB of other data are read and the page is flushed before each decode. The difference of
+`--cold`, 2 MiB of other data are read and the page is flushed before each decode; with `--compress`
+it times the compression instead, every page one after the other, so each comes from memory. The difference of
 two runs with different n, e.g. with `perf stat -e cycles,instructions,branch-misses`, is the decoder
 alone. `perf record -j any,u -e branch-misses` shows the mispredicted branches on Zen 4.
 

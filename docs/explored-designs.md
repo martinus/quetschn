@@ -253,8 +253,53 @@ for the mispredicted branches per source line, and the decode loop for p99:
   mispredictions, but more cycles, the load after four single-byte stores waits for them. Building
   the first 8 bytes in a register and storing them once is a little faster, and kept.
 
-Next for the decoder: find out why the harness and the decode loop disagree on cold p99, and a
-matcher of its own, cheap like `lz4`'s and as good as `lz4hc` level 3's.
+Next for the decoder: find out why the harness and the decode loop disagree on cold p99.
+
+### The compressor: seqlz-fast
+
+*Kept, but still 1.5 to 1.9 times as slow as `lz4`; `PLAN.md` C3 allows 1.2.* Code: `seqlz_find` and
+`seqlz_compress` in `explore/seqlz.c`, codec `seqlz-fast`.
+
+Until here the prototype took `lz4`'s or `lz4hc`'s output apart and coded it again. `seqlz-fast` has
+its own matcher, greedy like `lz4`'s fast mode: at every position the last offset and one candidate
+from a hash of 4 bytes, the step growing with the distance to the last match. The hash table has
+16-bit positions and is never cleared: an entry from an earlier page only costs a comparison that
+fails. Each sequence is coded as soon as it is found; literals go to the front of the buffer, the
+bitstream behind the room of a page of literals and is moved in at the end. Its own tables are
+trained on its own matches. Per CPU: 8 KiB hash table and 6 KiB for sequences, `lz4` has 16 KiB.
+
+| codec | Σ zsmalloc cost | compress p50 / p99, page in cache | compress p50 / p99, page cold |
+| --- | --- | --- | --- |
+| `lz4` | 34.5% | 2240 / 4190 ns | 3900 / 7520 ns |
+| `seqlz-fast` | 26.4% | 3790 / 8090 ns | 6010 / 11 590 ns |
+| `zstd -1` | 26.9% | 5220 / 10 370 ns | 7560 / 12 280 ns |
+| `seqlz` (`lz4`'s matches, coded again) | 27.0% | | 8320 / 15 220 ns |
+| `seqlz-hc` (`lz4hc` 3's matches) | 25.2% | 11 040 / 16 130 ns | |
+
+"Page in cache" is the harness, which compresses right after reading the page; "page cold" is the
+compress loop (`--decode-loop 11 --compress`), 20 000 pages one after the other, so each page comes
+from memory. For zram, reclaim swaps out pages nobody used for a while, so the cold column is probably
+closer, but that is not measured.
+
+* **Memory:** 26.4%, less than `zstd -1`. Checking the last offset first is worth 0.5 points, tables
+  trained on its own matches 0.1.
+* **The matcher alone cost more than all of `lz4`:** 22 000 cycles per page without the encoding,
+  before the change below, `lz4` 17 200 with everything. After it, the encoding is about 40% of the
+  time.
+* **Three branches per position mispredicted almost twice as often as `lz4`'s one.** Reading both
+  candidates and deciding with one branch (the last offset and a table entry from an earlier page
+  always point into the page, so both may be read): mispredictions 539 to 329 per page, p99 of the
+  cold loop 15.4 to 12.6 µs. With the page in cache the extra reads cost 7%.
+* **One pass instead of three** (matcher, literals, bits): 27 700 to 26 300 cycles per page.
+* **Tried and dropped:** looking only at every 2nd, 4th or 8th position, aligned or not: 28.2% to
+  41.1% memory, the unaligned matches matter. A faster growing step: 4% faster at 0.7 points more
+  memory. Without the last-offset check or without extending matches backwards: no faster, more
+  memory.
+* The slowest pages are not the incompressible ones, those go by at 670 ns. They are pages of 1.5 to 3
+  KiB output with many sequences: `seqlz-fast` needs about 118 cycles per sequence, `lz4` 73.
+
+Next for the compressor: cheaper per sequence, in the encoder and in extending a match, and a
+second look at the page in cache against cold.
 
 ## Word model: WKdm-style 64-bit words
 
@@ -365,8 +410,8 @@ encoder, so for independent 4 KiB pages both sides reset them for every page.
 
 * **A faster decoder for seqlz**, see its section. The format has the memory, the decoder has to get
   to `lz4`'s speed.
-* **A matcher for seqlz** that is cheap like `lz4`'s and finds matches like `lz4hc` level 3's: that is
-  2 points of Σ zsmalloc cost, 27.0% against 25.2%.
+* **A better matcher for seqlz-fast**: `lz4hc` level 3's matches give 25.2% against 26.4%, but it
+  must not get slower.
 * **Word model + a path for runs and long repeats.** Where the word model loses to `lz4` is exactly
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **`lz4` tuned for 4 KiB pages:** offsets limited to the page, word-aligned matches, a parser that

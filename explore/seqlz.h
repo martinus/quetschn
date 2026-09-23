@@ -115,9 +115,32 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml) {
     return a + 16U * b;
 }
 
+/*
+ * The compressor: its own matcher, and the sequences coded straight into dst, the literals copied from
+ * the page. The state is per CPU, the hash table in it is never cleared: an entry from an earlier page
+ * only costs a comparison that fails, every match is checked against the bytes.
+ */
+#define SEQLZ_HASH_BITS 12U
+#define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
+
+struct seqlz_state {
+    unsigned short table[1U << SEQLZ_HASH_BITS];
+    struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
+};
+
+/* The sequences of a page as seqlz's matcher finds them, the last one without a match. Returns their
+ * number. The literals are the bytes of the page that no match covers. */
+unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_sequence* seq);
+
+/* Compresses one page with seqlz_find and the tables. Returns the length, or 0 if dst_cap is too small.
+ * The same bytes as seqlz_encode() for the same sequences. */
+unsigned int
+seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
+
 /* The tables compiled in, trained on resident pages (explore/seqlz_default_tables.c). */
 extern const struct seqlz_lengths seqlz_default_lz4;
 extern const struct seqlz_lengths seqlz_default_lz4hc;
+extern const struct seqlz_lengths seqlz_default_own; /* for seqlz_compress, its own matcher */
 
 #ifdef __cplusplus
 }

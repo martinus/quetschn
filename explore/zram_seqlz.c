@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz (explore/seqlz.h) as a zram backend would call it. The matches come from the kernel's lz4
- * ("seqlz") or lz4hc at level 3 ("seqlz-hc"): compress with it into a per-CPU buffer, split that into
- * sequences, code them with seqlz. zram's dictionary parameter, if it is exactly a struct
+ * seqlz (explore/seqlz.h) as a zram backend would call it. "seqlz-fast" is seqlz's own compressor.
+ * "seqlz" and "seqlz-hc" take the matches from the kernel's lz4 or lz4hc at level 3 instead: compress
+ * with it into a per-CPU buffer, split that into sequences, code them with seqlz; they are the
+ * reference for what a better matcher is worth. zram's dictionary parameter, if it is exactly a struct
  * seqlz_lengths (577 bytes), carries other code lengths instead of the ones compiled in.
  */
 #include <linux/lz4.h>
@@ -200,6 +201,48 @@ static int decompress(struct quetschn_params* p,
     *dst_len = SEQLZ_PAGE;
     return 0;
 }
+
+static void fast_destroy(struct quetschn_stream* s) {
+    quetschn_free(s->context, &s->allocated);
+    s->context = NULL;
+}
+
+static int fast_create(struct quetschn_params* p, struct quetschn_stream* s) {
+    (void)p;
+    s->context = quetschn_zalloc(sizeof(struct seqlz_state), &s->allocated);
+    return s->context ? 0 : -1;
+}
+
+static int fast_compress(struct quetschn_params* p,
+                         struct quetschn_stream* s,
+                         const void* src,
+                         unsigned int src_len,
+                         void* dst,
+                         unsigned int* dst_len) {
+    unsigned int len;
+
+    if (src_len != SEQLZ_PAGE)
+        return -1;
+    len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len);
+    if (!len)
+        return -1;
+    *dst_len = len;
+    return 0;
+}
+
+static int setup_own(struct quetschn_params* p) {
+    return setup(p, &seqlz_default_own);
+}
+
+const struct quetschn_codec quetschn_codec_seqlz_fast = {
+    "seqlz-fast",
+    setup_own,
+    release,
+    fast_create,
+    fast_destroy,
+    fast_compress,
+    decompress,
+};
 
 const struct quetschn_codec quetschn_codec_seqlz = {
     "seqlz",
