@@ -17,9 +17,14 @@ void usage() {
     std::fprintf(stderr,
                  "usage: quetschn-split-corpus --corpus <base> --train <base> --test <base> [--test-fraction <f>]\n"
                  "                             [--seed <n>]\n"
+                 "       quetschn-split-corpus --corpus <base> --train <base> --exclude <base>\n"
                  "\n"
-                 "All pages of a process name go to the same side. --test-fraction is the share of process\n"
-                 "names on the test side, default 0.3. Output files are created with mode 0600.\n"
+                 "With --test: all pages of a process name go to the same side. --test-fraction is the share\n"
+                 "of process names on the test side, default 0.3.\n"
+                 "With --exclude: the test side is another corpus, e.g. a zram dump from another day. All\n"
+                 "pages go to the training side, except those with the same content as a page in --exclude.\n"
+                 "\n"
+                 "Same-filled pages never go to the training side. Output files are created with mode 0600.\n"
                  "\n"
                  "A dictionary for zram, like Honor's in kernel commit f0f6f7871430, from the training side:\n"
                  "  zstd --train <train>.pages -B4096 --maxdict=64KB -o dict\n");
@@ -31,6 +36,7 @@ int main(int argc, char** argv) {
     auto base = std::string();
     auto train = std::string();
     auto test = std::string();
+    auto exclude = std::string();
     auto opts = quetschn::split_options{};
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
@@ -41,6 +47,8 @@ int main(int argc, char** argv) {
             train = argv[++i];
         } else if (arg == "--test" && has_value) {
             test = argv[++i];
+        } else if (arg == "--exclude" && has_value) {
+            exclude = argv[++i];
         } else if (arg == "--test-fraction" && has_value) {
             auto const v = std::string_view(argv[++i]);
             auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), opts.test_fraction);
@@ -60,11 +68,20 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (base.empty() || train.empty() || test.empty()) {
+    if (base.empty() || train.empty() || test.empty() == exclude.empty()) {
         usage();
         return 2;
     }
     try {
+        if (!exclude.empty()) {
+            auto const r = quetschn::write_training_corpus(base, exclude, train);
+            std::printf("train: %zu pages (%zu same-filled and %zu also in %s left out)\n",
+                        r.pages,
+                        r.same_filled_dropped,
+                        r.excluded,
+                        exclude.c_str());
+            return 0;
+        }
         auto const r = quetschn::split_corpus(base, train, test, opts);
         std::printf("train: %zu pages from %zu process names (%zu same-filled pages left out)\n",
                     r.train_pages,
