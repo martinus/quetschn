@@ -257,31 +257,31 @@ Next for the decoder: find out why the harness and the decode loop disagree on c
 
 ### The compressor: seqlz-fast
 
-*Kept, but still 1.5 to 1.9 times as slow as `lz4`; `PLAN.md` C3 allows 1.2.* Code: `seqlz_find` and
+*Kept, but still 1.3 to 1.5 times as slow as `lz4`; `PLAN.md` C3 allows 1.2.* Code: `seqlz_find` and
 `seqlz_compress` in `explore/seqlz.c`, codec `seqlz-fast`.
 
 Until here the prototype took `lz4`'s or `lz4hc`'s output apart and coded it again. `seqlz-fast` has
 its own matcher, greedy like `lz4`'s fast mode: at every position the last offset and one candidate
 from a hash of 4 bytes, the step growing with the distance to the last match. The hash table has
-16-bit positions and is never cleared: an entry from an earlier page only costs a comparison that
-fails. Each sequence is coded as soon as it is found; literals go to the front of the buffer, the
-bitstream behind the room of a page of literals and is moved in at the end. zram's buffer has two
-pages, and that is always enough: at most 31 bits per 4 bytes of page, so at most 3972 bytes of
-bitstream, and 4076 fit behind the literals, for any tables. Its own tables are trained on its own
-matches. Per CPU: an 8 KiB hash table, `lz4` has 16 KiB.
+16-bit positions and is cleared for each page. Each sequence is coded as soon as it is found; literals
+go to the front of the buffer, the bitstream behind the room of a page of literals and is moved in at
+the end. zram's buffer has two pages, and that is always enough: at most 31 bits per 4 bytes of page,
+so at most 3972 bytes of bitstream, and 4076 fit behind the literals, for any tables. Its own tables
+are trained on its own matches. Per CPU: an 8 KiB hash table, `lz4` has 16 KiB.
 
 | codec | Σ zsmalloc cost | compress p50 / p99, page in cache | compress p50 / p99, page cold |
 | --- | --- | --- | --- |
-| `lz4` | 34.5% | 2240 / 4190 ns | 3900 / 7520 ns |
-| `seqlz-fast` | 26.4% | 3790 / 8090 ns | 6010 / 11 590 ns |
-| `zstd -1` | 26.9% | 5220 / 10 370 ns | 7560 / 12 280 ns |
-| `seqlz` (`lz4`'s matches, coded again) | 27.0% | | 8320 / 15 220 ns |
-| `seqlz-hc` (`lz4hc` 3's matches) | 25.2% | 11 040 / 16 130 ns | |
+| `lz4` | 34.5% | 2260 / 4190 ns | 3930 / 7540 ns |
+| `seqlz-fast` | 26.4% | 3070 / 6390 ns | 4950 / 10 030 ns |
+| `zstd -1` | 26.9% | 5300 / 10 380 ns | 7590 / 12 370 ns |
+| `seqlz` (`lz4`'s matches, coded again) | 27.0% | 4850 / 9150 ns | 7550 / 13 810 ns |
+| `seqlz-hc` (`lz4hc` 3's matches) | 25.2% | 11 290 / 16 770 ns | 17 490 / 29 950 ns |
 
-"Page in cache" is the harness, which compresses right after reading the page; "page cold" is the
-compress loop (`--decode-loop 11 --compress`), 20 000 pages one after the other, so each page comes
-from memory. For zram, reclaim swaps out pages nobody used for a while, so the cold column is probably
-closer, but that is not measured.
+"Page in cache" is the full benchmark on the whole corpus, which compresses right after reading the
+page; "page cold" is the compress loop (`--decode-loop 11 --compress`), 20 000 pages one after the
+other, so each page comes from memory. For zram, reclaim swaps out pages nobody used for a while, so
+the cold column is probably closer, but that is not measured. The first round got `seqlz-fast` to
+3790 / 8090 and 6010 / 11 590 ns, the second round (next section) to the numbers in the table.
 
 * **Memory:** 26.4%, less than `zstd -1`. Checking the last offset first is worth 0.5 points, tables
   trained on its own matches 0.1.
@@ -289,19 +289,69 @@ closer, but that is not measured.
   before the change below, `lz4` 17 200 with everything. After it, the encoding is about 40% of the
   time.
 * **Three branches per position mispredicted almost twice as often as `lz4`'s one.** Reading both
-  candidates and deciding with one branch (the last offset and a table entry from an earlier page
-  always point into the page, so both may be read): mispredictions 539 to 329 per page, p99 of the
-  cold loop 15.4 to 12.6 µs. With the page in cache the extra reads cost 7%.
+  candidates and deciding with one branch (the last offset and a table entry always point into the
+  page, so both may be read): mispredictions 539 to 329 per page, p99 of the cold loop 15.4 to 12.6 µs.
+  With the page in cache the extra reads cost 7%.
 * **One pass instead of three** (matcher, literals, bits): 27 700 to 26 300 cycles per page.
 * **Tried and dropped:** looking only at every 2nd, 4th or 8th position, aligned or not: 28.2% to
   41.1% memory, the unaligned matches matter. A faster growing step: 4% faster at 0.7 points more
   memory. Without the last-offset check or without extending matches backwards: no faster, more
   memory.
 * The slowest pages are not the incompressible ones, those go by at 670 ns. They are pages of 1.5 to 3
-  KiB output with many sequences: `seqlz-fast` needs about 118 cycles per sequence, `lz4` 73.
+  KiB output with many sequences: `seqlz-fast` needed about 118 cycles per sequence, `lz4` 73.
 
-Next for the compressor: cheaper per sequence, in the encoder and in extending a match, and a
-second look at the page in cache against cold.
+### The compressor, second round: fewer instructions
+
+Measured with `perf stat` on CPU 2 at a fixed 4.5 GHz, as the difference of 22 and 11 loops of
+`--decode-loop --compress` over the 20 000 pages, so per page and without the setup. At the start
+`seqlz-fast` needed 25 594 cycles and 70 135 instructions per page, `lz4` 17 203 and 30 266. The IPC
+was 2.74 against 1.76, so it is the number of instructions, not stalls. Now it is 21 300 to 21 450
+cycles and 61 500 instructions, 1.24 times `lz4`. Each step, in the order it was done:
+
+* **Repeat offsets in three variables instead of an array:** 25 594 to 25 225. With computed indices
+  the array has to live in memory.
+* **Encoder arrays of a power of 2 entries, indices and shifts masked:** 25 225 to 25 064, 4.7% fewer
+  instructions. The kernel builds with `-fsanitize=bounds-strict` and `-fsanitize=shift`, and each
+  check the compiler cannot prove away is a compare and a branch.
+* **The hash table cleared for each page:** 25 064 to 23 327, 7%. An 8 KiB `memset` is cheaper than
+  checking at every position whether the entry is before it; `lz4` in the kernel clears its 16 KiB for
+  each page too. The output got a bit smaller, 491 809 373 bytes instead of 491 913 153.
+* **Code and length in one `u32` per symbol, one flush per sequence:** 23 327 to 22 848. After a flush
+  the accumulator holds at most 7 bits, token, match length value and offset add at most 51.
+* **The first 16 bytes of a match compared without a branch:** 22 848 to 21 916, mispredictions 293
+  to 280 per page. Of the mispredictions, 66% were the decision whether a position matches, which is
+  the nature of the method, and 29% the loop in `count`: 76% of the matches are shorter than 12 bytes,
+  13% are 20 bytes or longer. Now only those take a branch.
+* **Positions instead of pointers in the matcher:** 21 916 to 21 786. The end is a constant.
+* **Token and offset in one put, unless there are length values between them:** 21 786 to 21 233.
+
+The matcher alone, with the encoder replaced by a sum, needs 17 300 to 17 900 cycles, as much as all
+of `lz4`. It finds 226 matches per page in 763 positions, `lz4` writes 232 sequences. The encoder adds
+about 4000 cycles, even though matcher and encoder in one loop leave the encoder no registers: all its
+state lives on the stack.
+
+Tried and dropped:
+
+* **Two passes**, the matcher into an array and then the encoder: 24 257 instead of 22 848 cycles.
+  Mispredictions went from 293 to 319 per page: the branches of the encoder lose the history of the
+  matcher's branches, which predicted them.
+* **Second and third repeat offset packed into one register, the first from the matcher:** 21 757
+  instead of 21 300, more instructions than the spills it saves.
+* **A hash of 5 bytes:** 20 746 cycles, 2.6% faster, but 26.9% instead of 26.4%.
+* **Hash table of 11 bits:** the same speed and 0.2% more bytes. 13 bits: 1.2% slower, 0.1% fewer
+  bytes.
+* **8 bytes of literals copied without a check** (in the page they never reach the end): fewer
+  instructions, but 21 644 cycles, the branch for longer literals mispredicts.
+* **Telling the compiler that a match has at least 4 bytes**, so the checks for the last sequence drop
+  out: 2% fewer instructions, 3.7% more cycles. `__builtin_expect` on the length values: no change.
+  Small changes like these move the register allocation, and with it the result by 2 to 3%, which
+  makes small steps hard to measure.
+* **Not tried:** dropping the second and third repeat offset. They are 11% of the matches, which would
+  cost about 30 bytes per page, 0.7 points. Checking the last offset only right after a match: 41.6 of
+  its 50.2 hits per page are 1 or 2 bytes behind a match, but it would save 1.5% at most.
+
+Next for the compressor: with the page in cache p99 is still 1.53 times `lz4`, cold 1.33. The matcher
+alone is as expensive as all of `lz4`, so that is where the rest has to come from.
 
 ## Word model: WKdm-style 64-bit words
 
