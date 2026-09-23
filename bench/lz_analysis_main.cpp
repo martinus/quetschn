@@ -210,9 +210,9 @@ int main(int argc, char** argv) {
 
         // 2 bytes per page for a header, e.g. the number of sequences
         constexpr double header_bits = 16;
-        for (auto const [repeat, literals, what] : {std::tuple{false, false, "entropy coded sequences, raw literals"},
-                                                    std::tuple{true, false, "... with repeat offsets"},
-                                                    std::tuple{true, true, "... and entropy coded literals"}}) {
+        for (auto const& [repeat, literals, what] : {std::tuple{false, false, "entropy coded sequences, raw literals"},
+                                                     std::tuple{true, false, "... with repeat offsets"},
+                                                     std::tuple{true, true, "... and entropy coded literals"}}) {
             auto m = model{};
             for (auto const& p : pages) {
                 (void)walk(p, m, true, repeat, literals);
