@@ -76,6 +76,10 @@ extern const struct quetschn_codec quetschn_codec_spike_slots;
 extern const struct quetschn_codec quetschn_codec_shuffle_lz4;
 extern const struct quetschn_codec quetschn_codec_bdelta;
 extern const struct quetschn_codec quetschn_codec_zstd_nolit;
+extern const struct quetschn_codec quetschn_codec_seqlz;
+extern const struct quetschn_codec quetschn_codec_seqlz_hc;
+/* optional, explore/zram_memlz.c with QUETSCHN_MEMLZ_DIR */
+extern const struct quetschn_codec quetschn_codec_memlz;
 
 /*
  * Stands in for kzalloc/vzalloc/kvzalloc: zeroed, 64 byte aligned, NULL on failure. The size is added

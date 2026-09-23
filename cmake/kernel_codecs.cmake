@@ -111,12 +111,21 @@ target_include_directories(quetschn_kernel_spike PRIVATE "${CMAKE_SOURCE_DIR}/sp
 quetschn_kernel_codec(quetschn_kernel_explore lib/lz4 -O3 explore/shuffle.c explore/bdelta.c explore/zram_explore.c)
 target_include_directories(quetschn_kernel_explore PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 target_link_libraries(quetschn_kernel_explore PUBLIC quetschn_kernel_lz4)
+# seqlz: lz4's or lz4hc's matches, Huffman coded sequences with static tables
+quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 explore/seqlz.c explore/seqlz_default_tables.c
+                      explore/zram_seqlz.c)
+target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/explore")
+target_link_libraries(quetschn_kernel_seqlz PUBLIC quetschn_kernel_lz4)
+add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp bench/lz_analysis.cpp)
+target_include_directories(quetschn-seqlz-train PRIVATE explore)
+target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_warnings)
+
 # zstd without Huffman coded literals, with lib/zstd's flags (no -O3)
 quetschn_kernel_codec(quetschn_kernel_explore_zstd lib/zstd "" explore/zstd_nolit.c)
 target_link_libraries(quetschn_kernel_explore_zstd PUBLIC quetschn_kernel_zstd)
 
 foreach(codec lz4 lz4hc lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots shuffle_lz4 bdelta
-              zstd_nolit)
+              zstd_nolit seqlz seqlz_hc)
     string(REPLACE "_" "-" name ${codec})
     if(codec MATCHES "^lz4")
         set(lib quetschn_kernel_lz4)
@@ -128,6 +137,8 @@ foreach(codec lz4 lz4hc lzo lzo_rle zstd spike_switch spike_branchless spike_zer
         set(lib quetschn_kernel_explore)
     elseif(codec STREQUAL "zstd_nolit")
         set(lib quetschn_kernel_explore_zstd)
+    elseif(codec MATCHES "^seqlz")
+        set(lib quetschn_kernel_seqlz)
     else()
         set(lib quetschn_kernel_lzo)
     endif()
@@ -142,10 +153,20 @@ target_compile_definitions(quetschn-bench-interleaved PRIVATE QUETSCHN_INTERLEAV
 target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_lzo
                                                          quetschn_kernel_zstd quetschn_kernel_spike
                                                          quetschn_kernel_explore quetschn_kernel_explore_zstd
-                                                         quetschn_warnings)
+                                                         quetschn_kernel_seqlz quetschn_warnings)
 
 # Where the ratio of zstd comes from: lz4hc's matches, costed with entropy coding
 add_executable(quetschn-lz-analysis bench/lz_analysis_main.cpp bench/lz_analysis.cpp)
 target_link_libraries(quetschn-lz-analysis PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_warnings)
+
+# memlz from a checkout, for docs/explored-designs.md: plain userspace C, not kernel flags
+set(QUETSCHN_MEMLZ_DIR "" CACHE PATH "Checkout of https://github.com/rrrlasse/memlz, optional")
+if(QUETSCHN_MEMLZ_DIR)
+    add_library(quetschn_memlz STATIC explore/zram_memlz.c)
+    target_include_directories(quetschn_memlz PRIVATE "${QUETSCHN_MEMLZ_DIR}" bench/kernel_codecs)
+    target_link_libraries(quetschn_memlz PUBLIC quetschn_kernel_runtime)
+    target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_memlz)
+    target_compile_definitions(quetschn-bench-interleaved PRIVATE QUETSCHN_HAVE_MEMLZ)
+endif()
 
 set(QUETSCHN_HAVE_KERNEL_CODECS ON)

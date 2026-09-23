@@ -118,18 +118,30 @@ void normalize(auto& table) {
 }
 
 void usage() {
-    std::fprintf(stderr, "usage: quetschn-lz-analysis --corpus <base> [--level <lz4hc level, default 9>]\n");
+    std::fprintf(stderr,
+                 "usage: quetschn-lz-analysis --corpus <base> [--codec lz4|lz4hc] [--level <n>]\n"
+                 "\n"
+                 "The matches come from --codec, default lz4hc, at zram's default level unless --level.\n");
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     auto base = std::string();
-    int level = 9;
+    int level = QUETSCHN_LEVEL_DEFAULT;
+    auto const* codec = &quetschn_codec_lz4hc;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         if (arg == "--corpus" && i + 1 < argc) {
             base = argv[++i];
+        } else if (arg == "--codec" && i + 1 < argc) {
+            auto const name = std::string_view(argv[++i]);
+            if (name == "lz4") {
+                codec = &quetschn_codec_lz4;
+            } else if (name != "lz4hc") {
+                usage();
+                return 2;
+            }
         } else if (arg == "--level" && i + 1 < argc) {
             auto const v = std::string_view(argv[++i]);
             auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), level);
@@ -153,12 +165,12 @@ int main(int argc, char** argv) {
         auto params = quetschn_params{};
         params.level = level;
         params.page_size = static_cast<unsigned int>(c.page_size);
-        if (quetschn_codec_lz4hc.setup_params(&params) != 0) {
-            throw std::invalid_argument("lz4hc rejects level " + std::to_string(level));
+        if (codec->setup_params(&params) != 0) {
+            throw std::invalid_argument(std::string(codec->name) + " rejects level " + std::to_string(level));
         }
         auto stream = quetschn_stream{};
-        if (quetschn_codec_lz4hc.create(&params, &stream) != 0) {
-            throw std::runtime_error("lz4hc: create failed");
+        if (codec->create(&params, &stream) != 0) {
+            throw std::runtime_error(std::string(codec->name) + ": create failed");
         }
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto pages = std::vector<parsed_page>();
@@ -168,9 +180,8 @@ int main(int argc, char** argv) {
                 continue;
             }
             auto len = static_cast<unsigned int>(dst.size());
-            if (quetschn_codec_lz4hc.compress(
-                    &params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) != 0) {
-                throw std::runtime_error("lz4hc: compress failed");
+            if (codec->compress(&params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) != 0) {
+                throw std::runtime_error(std::string(codec->name) + ": compress failed");
             }
             auto parsed = parse_lz4(dst.data(), len);
             // the estimate is only as good as the parse, so every page must come back from it
@@ -180,8 +191,8 @@ int main(int argc, char** argv) {
             }
             pages.push_back(std::move(parsed));
         }
-        quetschn_codec_lz4hc.destroy(&stream);
-        quetschn_codec_lz4hc.release_params(&params);
+        codec->destroy(&stream);
+        codec->release_params(&params);
 
         // cost of a page of the given size, zram stores it raw at huge_class_size and above
         auto cost = [&](double bytes) {
@@ -201,12 +212,12 @@ int main(int argc, char** argv) {
             literal_bytes += static_cast<double>(p.literals.size());
             sequences += static_cast<double>(p.sequences.size());
         }
-        std::printf("corpus %s, %zu pages, lz4hc level %d\n", base.c_str(), pages.size(), level);
+        std::printf("corpus %s, %zu pages, %s level %d\n", base.c_str(), pages.size(), codec->name, params.level);
         std::printf("%.1f literal bytes and %.1f sequences per page\n\n",
                     literal_bytes / static_cast<double>(pages.size()),
                     sequences / static_cast<double>(pages.size()));
-        std::printf("%-58s %6s\n", "Σ zsmalloc cost of the same lz4hc matches, coded as", "");
-        print("lz4 format (what lz4hc writes)", sum);
+        std::printf("%-58s %6s\n", "Σ zsmalloc cost of the same matches, coded as", "");
+        print("lz4 format (what the codec writes)", sum);
 
         // 2 bytes per page for a header, e.g. the number of sequences
         constexpr double header_bits = 16;

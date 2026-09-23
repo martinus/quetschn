@@ -6,10 +6,12 @@ cost (§3.1) and cold-cache p99 per page (§5.2). Add an entry for everything th
 and especially for what did not work.
 
 Short version so far: the gap between `lz4` and `zstd -1` is mostly how the sequences are coded, see
-[Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from). Nothing built here beats
-`lzo-rle` on memory yet. Two decoders beat `lz4` on cold p99, but only with formats that need 55.7%
-and 70.5% of the uncompressed size, against 34.5% for `lz4`. The ratio has to come from repeats across
-the whole page; local tricks on 8 or 64 bytes do not get there.
+[Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from). A format built on that,
+[seqlz](#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables), needs less memory than
+`zstd -1`, 25.2% against 26.9%, and decodes faster than it, but is still 1.4 µs slower than `lz4` at
+cold p99. Two decoders beat `lz4` on cold p99, but only with formats that need 55.7% and 70.5% of the
+uncompressed size, against 34.5% for `lz4`. The ratio has to come from repeats across the whole page;
+local tricks on 8 or 64 bytes do not get there.
 
 ## How the numbers are measured
 
@@ -143,6 +145,73 @@ raw, is worth about 25% Σ zsmalloc cost by this estimate, better than `zstd -1`
 be cheap. Whether its decoder is fast is the open question. `zstd -1` also decodes entropy coded
 sequences and is slow; what in its decoder costs the time is not measured yet.
 
+## seqlz: `lz4`'s matches, Huffman coded sequences with static tables
+
+*Kept, the most promising format so far: less memory than `zstd -1` and faster to decode than it. Still
+1.4 µs slower than `lz4` at cold p99.* Code: `explore/seqlz.{h,c}`, `explore/zram_seqlz.c`,
+`bench/seqlz_train_main.cpp`.
+
+The estimate above, built. The matches come from the kernel's `lz4` (`seqlz`) or `lz4hc` level 3
+(`seqlz-hc`); the prototype takes their output apart and codes it again, so its compression time
+says nothing about a real encoder yet. Like `lz4`'s token, literal length and match length share one
+symbol, each capped at 15, Huffman coded with at most 11 bits; longer lengths add a value from a
+second table, offsets are symbols with extra bits and three repeat offsets like `zstd`'s. Everything
+goes into one bitstream, read least significant bit first. Literals stay raw. The tables are compiled
+in, 321 bytes of code lengths, trained on the resident pages and not on the zram dump.
+
+Full run on all pages, CPU 2 at 4.5 GHz, one process:
+
+| codec | Σ zsmalloc cost | cold p50 / p99 | Δ cold p99 | warm p99 | compress p50 / p99 |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 34.5% | 1160 / 2740 ns | | 2350 ns | 2.3 / 4.2 µs |
+| `lzo-rle` | 32.4% | 1160 / 2790 ns | +50 [+30, +60] | 2290 ns | 2.0 / 4.6 µs |
+| `zstd -1` | 26.9% | 2680 / 4790 ns | +2050 [+2030, +2070] | 3910 ns | 5.2 / 10.4 µs |
+| `seqlz` | 27.0% | 2230 / 4290 ns | +1550 [+1540, +1570] | 3090 ns | 4.5 / 8.1 µs |
+| `seqlz-hc` | 25.2% | 1970 / 4110 ns | +1370 [+1360, +1390] | 3020 ns | 11.0 / 16.0 µs |
+
+* **Memory better than estimated.** The estimate with separate symbols said 27.3% and 25.4%; with the
+  token, which also sees how the two lengths go together, it is 27.0% and 25.2%.
+* **The tables carry over.** Tables trained on the zram dump itself gave the same sizes as the ones
+  trained on resident pages (measured with the earlier three-symbol format).
+* **Decoding.** Per page, decoding only (`--decode-loop`, `perf stat`): `lz4` 4760 cycles and 11 700
+  instructions, `zstd -1` 11 500 and 39 600, `seqlz-hc` 9800 and 32 200. `seqlz` decodes at 3.3 to 3.7
+  instructions per cycle, `lz4` at 2.5; it is bound by the chain of dependent steps per sequence
+  (lookup, shift, next lookup) and by 156 mispredicted branches per page, `lz4` has 94.
+
+How the decoder got there. The first rows are warm p99 of the quick benchmark, the later ones cycles per
+page of the decode loop, measured with `perf stat` and AMD's IBS sampling per source line:
+
+| change | warm p99 | cycles per page (`seqlz`) |
+| --- | --- | --- |
+| first version: a symbol, then its extra bits; byte loops for matches, `memcpy` for literals | 5590 ns | |
+| 8 and 16 byte copies, with a pattern step for offsets below 8 | 5550 ns | |
+| one table entry gives code length, extra bits and base; repeat offsets with conditional moves | 5570 ns | |
+| fast copies up to 8 or 16 bytes before the page end, not only where the whole run fits | 4780 ns | |
+| the first 16 bytes of literals and matches copied without a loop, like `lz4` | 4560 ns | 14 160 |
+| decoding 32 sequences, then copying them (dropped) | 6110 ns | |
+| one bitstream instead of three | | 15 610 |
+| a signed bit count, no clamping and no flag per value | | 14 010 |
+| one token for both lengths, like `lz4`'s; 321 instead of 65 bytes of tables | 3420 ns | 10 930 |
+| one refill per sequence, invalid codes checked after the loop | 3110 ns | 10 880 |
+
+* A run to the end of the page went byte by byte, and with offset 1 every byte waited for the store
+  before it. The slowest 1% of pages took 5700 ns there, where `lz4` took 500.
+* Decoding in batches made it worse; the stack arrays and the second loop cost more than the overlap
+  gains.
+* The kernel flags have `-fsanitize=shift` and `-fsanitize=bounds-strict`; the decoder had 65 of these
+  checks, `lz4`'s 18. Without them the instruction count was the same, they are not in the hot path.
+* One stream instead of three was meant to take load off the registers: three bit readers are 15
+  values, and the profile showed them loaded and stored on the stack. It did not change the
+  instruction count and cost 10% of cycles, so the three streams apparently overlapped. It stays for
+  the token, which needs the lengths and the offset in one order anyway.
+* The token was the step that mattered: two table lookups per sequence instead of three, 22% fewer
+  cycles, and it saved memory.
+* The kernel flags compile for the x86-64 baseline without BMI2, so every variable shift has to go
+  through register `cl`.
+
+Next for the decoder: fewer mispredicted branches, e.g. for literal runs of more than 16 bytes and for
+the escapes, and a matcher of its own, cheap like `lz4`'s and as good as `lz4hc` level 3's.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
@@ -212,6 +281,29 @@ raw.
   real pages mix. It is cheaper than `lz4` on only 9163 pages. Taking the cheaper of `lz4`,
   `shuffle-lz4` and `bdelta` per page gives 32.1%, the same as without `bdelta`.
 
+## memlz
+
+*Dropped.* Code: `explore/zram_memlz.c`, built only with `-DQUETSCHN_MEMLZ_DIR=<checkout>`, measured at
+[rrrlasse/memlz](https://github.com/rrrlasse/memlz) commit 3b28cc5.
+
+memlz is an 8-byte word version of the Chameleon algorithm: each word is either found through a
+16-bit hash in a table of recent words, then 2 bytes are written, or stored whole; runs of equal bytes
+are coded separately. It is built for streams of megabytes, and for those it is very fast. Its state
+is two tables of 65 536 entries, 768 KiB, and the decoder rebuilds them from the data like the
+encoder, so for independent 4 KiB pages both sides reset them for every page.
+
+| | Σ zsmalloc cost | stored raw | per CPU | cold p50 / p99 | compress p50 / p99 |
+| --- | --- | --- | --- | --- | --- |
+| `memlz` | 63.6% | 60 449 | 1.5 MB | 9710 / 10 190 ns | 12.8 / 13.4 µs |
+
+* Worse on memory than the word model spike (55.7%): a word only compresses when it came before
+  exactly, there are no partial matches.
+* The latency is almost the same at p50 and p99 because nearly all of it is the 768 KiB reset before
+  every page, in both directions. For pages its tables would have to be a hundred times smaller, and
+  then it is the spike's design again.
+* In the same run the 768 KiB resets made the cold decodes of the other codecs slower too (`lz4` cold
+  p99 3480 instead of about 2700 ns), so a codec with a large working area needs its own run.
+
 ## `lz4` with a dictionary
 
 *A baseline, not a candidate. Kept in the comparison because zram supports it.* Details in
@@ -227,8 +319,10 @@ raw.
 
 ## Not evaluated yet
 
-* **Entropy coded sequences with static tables and a fast decoder.** The estimate above says about 25%
-  Σ zsmalloc cost. The next thing to build and time.
+* **A faster decoder for seqlz**, see its section. The format has the memory, the decoder has to get
+  to `lz4`'s speed.
+* **A matcher for seqlz** that is cheap like `lz4`'s and finds matches like `lz4hc` level 3's: that is
+  2 points of Σ zsmalloc cost, 27.0% against 25.2%.
 * **Word model + a path for runs and long repeats.** Where the word model loses to `lz4` is exactly
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **`lz4` tuned for 4 KiB pages:** offsets limited to the page, word-aligned matches, a parser that
