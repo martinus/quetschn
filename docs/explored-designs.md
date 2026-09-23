@@ -616,6 +616,11 @@ prefetch in both: the difference of the decoders' work, about 0.6 µs, and not o
 slower than `lz4` and `lzo-rle`, half as long as `zstd`, which needs 11% less memory. The prefetch
 helps all four.
 
+Writing each page again, timed, compression and zsmalloc together, p50 / p90 / p99 in ns: `lz4` 5311 /
+7360 / 9209, `lzo-rle` 5040 / 7230 / 9520, `zstd` 13 760 / 18 880 / 23 580, `seqlz` 6280 / 9010 /
+11 620. So `seqlz` writes 1.26 times as long as `lz4` at p99, C3 allows 1.2; in the harness, which times
+the codec alone, it was 1.55: zram's own work on a write makes the difference smaller.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.

@@ -3,7 +3,8 @@
 // line; writes /pages to each and reads each page back with O_DIRECT, timed, so that zram decompresses
 // straight into this program's page. Per page all algorithms and both prefetches of zram-prefetch.patch
 // (0 none, 2 the compressed data) in turn, warm and with the compressed data or also the destination
-// flushed from the cache first. Prints p50 / p90 / p99 over the pages of the median of 3 runs per page.
+// flushed from the cache first; before that, the writes of each page, timed. Prints p50 / p90 / p99 over
+// the pages of the median of 3 runs per page.
 #define _GNU_SOURCE
 #include <fcntl.h>
 #include <stdio.h>
@@ -86,6 +87,33 @@ int main(void) {
 
     char* buf;
     posix_memalign((void**)&buf, 4096, 4096);
+    {
+        /* writes: each page again to every device, in turn, timed: compression and zsmalloc */
+        long long* w = malloc(sizeof(long long) * n * REPS * (size_t)n_algos);
+        for (int r = 0; r < REPS; r++)
+            for (size_t i = 0; i < n; i++)
+                for (int k = 0; k < n_algos; k++) {
+                    int a = (int)((i + (size_t)r + (size_t)k) % (size_t)n_algos);
+                    long long t0 = now();
+                    pwrite(fds[a], pages + i * 4096, 4096, (off_t)(i * 4096));
+                    w[((size_t)a * REPS + (size_t)r) * n + i] = now() - t0;
+                }
+        for (int a = 0; a < n_algos; a++) {
+            long long* med = malloc(sizeof(long long) * n);
+            for (size_t i = 0; i < n; i++) {
+                long long v[REPS];
+                for (int r = 0; r < REPS; r++)
+                    v[r] = w[((size_t)a * REPS + (size_t)r) * n + i];
+                qsort(v, REPS, sizeof v[0], cmp);
+                med[i] = v[REPS / 2];
+            }
+            qsort(med, n, sizeof med[0], cmp);
+            printf("RESULT %-8s write                                : p50 %lld p90 %lld p99 %lld ns\n", algos[a],
+                   med[n / 2], med[n * 9 / 10], med[n * 99 / 100]);
+            free(med);
+        }
+        free(w);
+    }
     size_t per = (size_t)n_algos * 2;
     long long* t = malloc(sizeof(long long) * n * REPS * per);
     for (int c = 0; c < 3; c++) {
