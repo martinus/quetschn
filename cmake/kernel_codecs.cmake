@@ -75,10 +75,12 @@ function(quetschn_kernel_codec target libdir extra_flags)
         "${CMAKE_SOURCE_DIR}/bench/kernel_codecs/compat" "${quetschn_kernel_include}"
         "${QUETSCHN_KERNEL_TREE}/${libdir}" "${CMAKE_SOURCE_DIR}/bench/kernel_codecs")
     target_include_directories(${target} SYSTEM PRIVATE "${quetschn_cc_include}")
-    target_link_libraries(${target} PUBLIC quetschn_ubsan_stubs)
+    target_link_libraries(${target} PUBLIC quetschn_kernel_runtime)
 endfunction()
 
-add_library(quetschn_ubsan_stubs STATIC bench/kernel_codecs/ubsan_stubs.c)
+# Built normally, with libc: the UBSAN handlers, and the allocator that stands in for kzalloc/vzalloc
+add_library(quetschn_kernel_runtime STATIC bench/kernel_codecs/ubsan_stubs.c bench/kernel_codecs/alloc.c)
+target_include_directories(quetschn_kernel_runtime PUBLIC bench/kernel_codecs)
 
 # lib/lz4/Makefile adds -O3. Target options come after CMake's CMAKE_C_FLAGS_<CONFIG>, so the last -O on
 # the command line is always ours: -O3 for lz4, -O2 for lzo, whatever the build type.

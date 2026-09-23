@@ -22,12 +22,15 @@ if(QUETSCHN_SANITIZE)
 endif()
 
 # Page corpus collectors, see PLAN.md Phase 1. Linux only, they read /proc.
-add_library(quetschn_collect STATIC tools/collect/page_stats.cpp tools/collect/resident.cpp)
+add_library(quetschn_collect STATIC tools/collect/page_stats.cpp tools/collect/resident.cpp tools/collect/split.cpp)
 target_include_directories(quetschn_collect PUBLIC tools/collect)
 target_link_libraries(quetschn_collect PRIVATE quetschn_warnings)
 
 add_executable(quetschn-collect-resident tools/collect/collect_resident_main.cpp)
 target_link_libraries(quetschn-collect-resident PRIVATE quetschn_collect quetschn_warnings)
+
+add_executable(quetschn-split-corpus tools/collect/split_main.cpp)
+target_link_libraries(quetschn-split-corpus PRIVATE quetschn_collect quetschn_warnings)
 
 add_library(quetschn_bench STATIC bench/zsmalloc_cost.cpp bench/harness.cpp)
 target_include_directories(quetschn_bench PUBLIC bench)
@@ -46,7 +49,7 @@ if(BUILD_TESTING)
     FetchContent_MakeAvailable(doctest)
 
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
-                                 test/harness_test.cpp)
+                                 test/harness_test.cpp test/split_test.cpp)
     target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_warnings doctest::doctest)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp)

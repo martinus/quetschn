@@ -4,11 +4,9 @@
 
 /*
  * One compressor as zram uses it. Each implementation makes exactly the calls of the matching
- * drivers/block/zram/backend_*.c, without the zram plumbing around them.
- *
- * Like zram's zcomp, a codec works on a stream: memory allocated once per CPU, set up once, then used for
- * every page. The level is zram's algorithm_params level: acceleration for lz4, ignored by lzo, the
- * compression level for zstd.
+ * drivers/block/zram/backend_*.c, without the zram plumbing around them, and the same split as zram's
+ * zcomp: per-device params (level, dictionary, what the codec prepares from them), and a per-CPU stream
+ * that is created once and then used for every page.
  *
  * Plain C, and no libc types, because the implementations are compiled like kernel code (-nostdinc).
  */
@@ -20,34 +18,62 @@ extern "C" {
 /* zram's ZCOMP_PARAM_NOT_SET: use the codec's default level */
 #define QUETSCHN_LEVEL_DEFAULT (-(1 << 30))
 
+/* struct zcomp_params: one per zram device and algorithm */
+struct quetschn_params {
+    const void* dict;
+    __SIZE_TYPE__ dict_size;
+    int level;          /* zram's algorithm_params level; setup_params() replaces QUETSCHN_LEVEL_DEFAULT */
+    unsigned page_size; /* PAGE_SIZE */
+    void* drv_data;
+    __SIZE_TYPE__ allocated; /* bytes the codec allocated for these params, e.g. a prepared dictionary */
+};
+
+/* struct zcomp_ctx: one per CPU */
 struct quetschn_stream {
-    int level;
-    void* workspace; /* workspace_size() bytes, cache line aligned, zeroed like vzalloc */
-    __SIZE_TYPE__ workspace_size;
-    unsigned long long state[16]; /* the codec's own pointers and parameters; C and C++ agree on its layout */
+    void* context;
+    __SIZE_TYPE__ allocated; /* bytes the codec allocated for this stream */
 };
 
 struct quetschn_codec {
     const char* name;
 
-    /* Bytes zram allocates per CPU for one stream at this level, 0 if zram rejects the level. The
-     * resolved level (default applied) is written back to *level. */
-    __SIZE_TYPE__ (*workspace_size)(int* level, unsigned int page_size);
+    /* 0 on success, non-zero where zram's setup_params fails, e.g. for a level it rejects */
+    int (*setup_params)(struct quetschn_params* p);
+    void (*release_params)(struct quetschn_params* p);
 
-    /* Sets up a stream whose level and workspace are filled in. 0 on success. */
-    int (*init)(struct quetschn_stream* s, unsigned int page_size);
+    /* 0 on success */
+    int (*create)(struct quetschn_params* p, struct quetschn_stream* s);
+    void (*destroy)(struct quetschn_stream* s);
 
     /* *dst_len is the capacity on input and the compressed length on output. 0 on success. */
-    int (*compress)(struct quetschn_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len);
+    int (*compress)(struct quetschn_params* p,
+                    struct quetschn_stream* s,
+                    const void* src,
+                    unsigned int src_len,
+                    void* dst,
+                    unsigned int* dst_len);
 
     /* *dst_len is the capacity on input and the decompressed length on output. 0 on success. */
-    int (*decompress)(struct quetschn_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len);
+    int (*decompress)(struct quetschn_params* p,
+                      struct quetschn_stream* s,
+                      const void* src,
+                      unsigned int src_len,
+                      void* dst,
+                      unsigned int* dst_len);
 };
 
 extern const struct quetschn_codec quetschn_codec_lz4;
 extern const struct quetschn_codec quetschn_codec_lzo;
 extern const struct quetschn_codec quetschn_codec_lzo_rle;
 extern const struct quetschn_codec quetschn_codec_zstd;
+
+/*
+ * Stands in for kzalloc/vzalloc/kvzalloc: zeroed, 64 byte aligned, NULL on failure. The size is added
+ * to *counter, and subtracted again by quetschn_free(), so the harness can report how much memory a
+ * codec holds per device and per CPU. Implemented in alloc.c with libc.
+ */
+void* quetschn_zalloc(__SIZE_TYPE__ size, __SIZE_TYPE__* counter);
+void quetschn_free(void* p, __SIZE_TYPE__* counter);
 
 #ifdef __cplusplus
 }

@@ -29,6 +29,14 @@ cmake --build build
 `--level` is zram's `algorithm_params` level: the acceleration for `lz4`, the level for `zstd`. Without
 it each codec uses zram's default.
 
+With a dictionary, trained on other programs than the ones it is measured on:
+
+```sh
+./build/quetschn-split-corpus --corpus corpus/desktop --train corpus/train --test corpus/test
+zstd --train corpus/train.pages -B4096 --maxdict=64KB -o corpus/dict
+./build/quetschn-bench-lz4 --corpus corpus/test --dict corpus/dict
+```
+
 `--out` writes one line per page for paired comparisons. The `quetschn-bench-*` binaries contain
 GPL-2.0-only kernel code, so they are GPL-2.0 works; they are for measuring, not for distribution.
 
