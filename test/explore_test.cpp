@@ -674,9 +674,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         }
         last_offset = o;
     }
-    auto out = std::vector<unsigned char>{static_cast<unsigned char>(seq.size()),
-                                          static_cast<unsigned char>(seq.size() >> 8),
-                                          static_cast<unsigned char>(literals.size()),
+    auto out = std::vector<unsigned char>{static_cast<unsigned char>(literals.size()),
                                           static_cast<unsigned char>(literals.size() >> 8)};
     out.insert(out.end(), literals.begin(), literals.end());
     for (std::size_t i = 0; i < bits.size(); i += 8) {

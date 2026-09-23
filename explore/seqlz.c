@@ -202,7 +202,6 @@ struct encoder {
     u8* lit;           /* literals */
     const u8* src_end; /* the 16-byte literal copies may read up to here */
     unsigned int last; /* the last offset */
-    unsigned int n;
 };
 
 /* v has n bits, n < 64 - cnt */
@@ -261,7 +260,6 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
     for (; k < ll; k++)
         e->lit[k] = in[k];
     e->lit += ll;
-    e->n++;
 
     if (ml == 0) {
         /* the last sequence */
@@ -295,7 +293,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
 }
 
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
-    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, 0};
+    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1};
 }
 
 /* the last bits, the header, and the bitstream moved in behind the literals */
@@ -308,8 +306,7 @@ static unsigned int encoder_finish(struct encoder* e, u8* d) {
         e->p++;
     }
     bytes = (unsigned int)(e->p - bits);
-    store16(d, e->n);
-    store16(d + 2, n_lit);
+    store16(d, n_lit);
     __builtin_memmove(e->lit, bits, bytes);
     return SEQLZ_HEADER + n_lit + bytes;
 }
@@ -407,7 +404,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end;
     struct bit_reader br;
-    unsigned int n, n_lit, i, last = 1;
+    unsigned int n_lit, last = 1;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
@@ -422,15 +419,14 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         for (q = (const u8*)t->ml.decode; q < (const u8*)(t->ml.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
             __builtin_prefetch(q);
     }
-    n = load16(s);
-    n_lit = load16(s + 2);
-    if (n == 0 || (u64)SEQLZ_HEADER + n_lit > src_len)
+    n_lit = load16(s);
+    if ((u64)SEQLZ_HEADER + n_lit > src_len)
         return -1;
     lit = s + SEQLZ_HEADER;
     lit_end = lit + n_lit;
     br = (struct bit_reader){lit_end, s_end, 0, 0};
 
-    for (i = 0;; i++) {
+    for (;;) {
         unsigned int tok, nl, len, off;
         u32 e;
 
@@ -469,8 +465,8 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         copy_literals(d, d_end, lit, s_end, nl);
         d += nl;
         lit += nl;
-        if (i + 1 == n)
-            break;
+        if (d == d_end)
+            break; /* the last sequence */
 
         if (len == SEQLZ_ML_CAP + 4U) {
             refill(&br);

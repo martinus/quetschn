@@ -34,7 +34,9 @@
  * last sequence's token has ml - 4 = 0 and class 0.
  *
  * Page layout, all little endian:
- *   u16 sequences, u16 literal bytes, literals, the bitstream (the rest)
+ *   u16 literal bytes, literals, the bitstream (the rest)
+ * No count of the sequences: the last one is the one whose literals fill the page, every other one
+ * has a match behind its literals.
  *
  * The prototype does not find matches itself: it takes them from the kernel's lz4 or lz4hc. So its
  * compression time says nothing yet; its size and its decode time do.
@@ -58,7 +60,7 @@ extern "C" {
 #define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U) /* in the token, larger literal lengths follow as a value */
 #define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U) /* the same for ml - 4 */
 #define SEQLZ_LEN_SYMBOLS 25U                     /* 16 direct values, then buckets 4 to 12 */
-#define SEQLZ_HEADER 4U
+#define SEQLZ_HEADER 2U
 
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
  * produces and what zram's dictionary parameter can carry: 2099 bytes. */
