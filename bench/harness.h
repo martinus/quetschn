@@ -63,6 +63,9 @@ run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& mo
 // Nearest-rank percentile, p in [0, 100]. values must not be empty.
 [[nodiscard]] double percentile(std::vector<double> values, double p);
 
+// The 1-based rank that percentile() picks from n sorted values, n > 0.
+[[nodiscard]] std::size_t nearest_rank(double p, std::size_t n);
+
 struct latency_summary {
     double p50 = 0.0;
     double p90 = 0.0;

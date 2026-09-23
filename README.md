@@ -37,8 +37,20 @@ zstd --train corpus/train.pages -B4096 --maxdict=64KB -o corpus/dict
 ./build/quetschn-bench-lz4 --corpus corpus/test --dict corpus/dict
 ```
 
-`--out` writes one line per page for paired comparisons. The `quetschn-bench-*` binaries contain
-GPL-2.0-only kernel code, so they are GPL-2.0 works; they are for measuring, not for distribution.
+`--out` writes one line per page. `quetschn-compare` pairs two such files from the same corpus:
+
+```sh
+./build/quetschn-bench-lzo-rle --corpus corpus/test --cpu 2 --out lzo-rle.tsv
+./build/quetschn-bench-zstd --corpus corpus/test --cpu 2 --level -1 --out zstd-1.tsv
+./build/quetschn-compare --baseline lzo-rle.tsv --candidate zstd-1.tsv
+```
+
+It prints how much Σ zsmalloc cost the candidate saves, how many pages get cheaper or more expensive,
+and the difference of the latency percentiles. Every number has a 95% confidence interval from a
+bootstrap that resamples pages, the same pages for both runs.
+
+The `quetschn-bench-*` binaries contain GPL-2.0-only kernel code, so they are GPL-2.0 works; they are
+for measuring, not for distribution.
 
 ## Collecting pages
 

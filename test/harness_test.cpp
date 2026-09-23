@@ -285,6 +285,14 @@ TEST_CASE("harness: nearest-rank percentile") {
     CHECK(percentile(v, 0) == 1);
     CHECK(percentile({7.0}, 99) == 7.0);
     CHECK(percentile({1.0, 2.0, 3.0}, 50) == 2.0);
+
+    // 99.9 / 100 * 2000 is 1998.0000000000002 in doubles, the rank is still 1998
+    auto w = std::vector<double>();
+    for (int i = 1; i <= 2000; ++i) {
+        w.push_back(i);
+    }
+    CHECK(percentile(w, 99.9) == 1998);
+    CHECK(percentile(w, 99.95) == 1999);
     CHECK_THROWS_AS((void)percentile({}, 50), std::invalid_argument);
 }
 

@@ -36,9 +36,13 @@ target_link_libraries(quetschn-split-corpus PRIVATE quetschn_collect quetschn_wa
 add_executable(quetschn-import-raw tools/collect/import_raw_main.cpp)
 target_link_libraries(quetschn-import-raw PRIVATE quetschn_collect quetschn_warnings)
 
-add_library(quetschn_bench STATIC bench/zsmalloc_cost.cpp bench/harness.cpp)
+add_library(quetschn_bench STATIC bench/zsmalloc_cost.cpp bench/harness.cpp bench/compare.cpp)
 target_include_directories(quetschn_bench PUBLIC bench)
-target_link_libraries(quetschn_bench PUBLIC quetschn_collect PRIVATE quetschn_warnings)
+find_package(Threads REQUIRED)
+target_link_libraries(quetschn_bench PUBLIC quetschn_collect Threads::Threads PRIVATE quetschn_warnings)
+
+add_executable(quetschn-compare bench/compare_main.cpp)
+target_link_libraries(quetschn-compare PRIVATE quetschn_bench quetschn_warnings)
 
 include(cmake/kernel_codecs.cmake)
 
@@ -53,7 +57,8 @@ if(BUILD_TESTING)
     FetchContent_MakeAvailable(doctest)
 
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
-                                 test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp)
+                                 test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp
+                                 test/compare_test.cpp)
     target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_warnings doctest::doctest)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp)
