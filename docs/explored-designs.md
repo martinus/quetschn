@@ -463,6 +463,34 @@ mispredicts 1.6 times per page instead of 98.
   behind `lz4-prefetch`. Every branch split mispredicts, and the copies' branches lose the history of
   the decoding branches that predicted them.
 
+**Rare tokens escaped, and smaller tables.** With an escape, only the frequent tokens get a code, a
+rare one is the escape's code and 11 raw bits; the escape has at most 8 bits, so the encoder's bound of
+31 bits per 4 bytes holds. The trainer tries how many tokens get a code and keeps the fewest bits.
+Decode cycles as the median of 5 processes on `zram0-sample2000`, cold as `--decode-loop 5 --cold`:
+
+| change | Σ zsmalloc cost | decode cycles | cold p50 / p99 |
+| --- | --- | --- | --- |
+| 1536 tokens, 12-bit table | 27.0% | 8168 | 2670 to 2830 / 3920 to 4070 ns |
+| 1536 tokens, 11-bit table and the escape | 26.8% | 8480 | 2490 to 2500 / 3690 ns |
+| four offset classes, 4 × class raw bits: below 16, 256, 4096 | 26.7% | 8237 | |
+| the encoder's token table with 16-bit entries (4 KiB) | 26.7% | | |
+| length values with codes of at most 8 bits (1 KiB tables) | 26.7% | | 2400 to 2420 / 3600 to 3620 ns |
+| no count of the sequences, the last one fills the page | 26.6% | 8107 | 2380 to 2410 / 3560 to 3600 ns |
+
+A 10-bit token table: 0.16% more bytes, cold 40 ns faster, within the scatter, 6 more mispredictions:
+dropped. The full benchmark on the whole corpus after these changes:
+
+| codec | Σ zsmalloc cost | compress p50 / p99 | decompress cold p50 / p99 | warm p99 |
+| --- | --- | --- | --- | --- |
+| `lz4-prefetch` | 34.5% | 2260 / 4190 ns | 1040 / 2650 ns | 2360 ns |
+| `lz4` | 34.5% | 2260 / 4190 ns | 1260 / 2900 ns | 2360 ns |
+| `seqlz-fast` | 26.6% | 3110 / 6490 ns | 1540 / 3130 ns | 2880 ns |
+| `seqlz-hc` | 25.6% | 10 950 / 15 920 ns | 1390 / 3270 ns | 3030 ns |
+| `zstd -1` | 26.9% | 5180 / 10 270 ns | 2580 / 4640 ns | 3890 ns |
+
+`seqlz-fast` has less memory than `zstd -1` and decodes 33% faster than it at cold p99, 8% slower than
+the kernel's `lz4` and 18% slower than `lz4` with the prefetches.
+
 ## bytelz: `seqlz-fast`'s matcher, a byte oriented format
 
 *Open. Close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
