@@ -670,6 +670,30 @@ int main(int argc, char** argv) {
             std::printf("weight %.1f: ", weight);
             report(layout);
         }
+        // one class per kind of offset, every field with an extension: the class follows from the
+        // offset alone, which keeps the encoder free of branches
+        std::printf("one class per offset kind:\n");
+        for (auto const& l : {std::vector<token_class>{{k::last, 3, true, 3, true},
+                                                       {k::before, 2, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 1, true, 3, true, 2},
+                                                       {k::word, 2, true, 3, true}},
+                              std::vector<token_class>{{k::last, 3, true, 2, true},
+                                                       {k::before, 2, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 1, true, 3, true, 2},
+                                                       {k::word, 3, true, 3, true}},
+                              std::vector<token_class>{{k::last, 2, true, 4, true},
+                                                       {k::before, 2, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 1, true, 2, true, 2},
+                                                       {k::word, 3, true, 3, true}},
+                              std::vector<token_class>{{k::last, 3, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 2, true, 2, true, 2},
+                                                       {k::word, 3, true, 3, true}}}) {
+            report(l);
+        }
 
         for (auto const f : {byte_format{4, 4, "4 / 4 / 0, token byte entropy coded"},
                              byte_format{3, 3, "3 / 3 / 2, token byte entropy coded"}}) {

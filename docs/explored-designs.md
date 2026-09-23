@@ -566,6 +566,12 @@ So a better layout is worth at most 0.4 points of memory, and cuts the sequences
 33% to about 24%; with `lz4`'s 4 bits 13% of the matches would still need one. `lzo`'s near matches
 help little here, because 49% of the offsets already fit into 1 byte.
 
+**One class per offset kind**, every field with an extension, so that the class follows from the
+offset and the encoder stays free of branches: the best of four is 28.76% (last 3e/3e, before 2e/3e,
+byte 2e/4e, near2 1e/3e, word 2e/3e), but 21% of the sequences need an extension of ll and 20% one of
+ml, 41% together against `bytelz`'s 33%. A token byte cannot make both rarer: 82% of the literal runs
+are shorter than 3, but 59% of the matches 4 to 7 bytes and 13% 19 or longer. `bytelz`'s layout stays.
+
 **Next, from `lzo`:** `lzo` (31.9%) beats `lz4` with its format, not its matcher: a match with an offset
 up to 2048, 3 to 8 bytes and up to 3 literals after it costs 2 bytes. 26% of `seqlz-fast`'s offsets are
 between 257 and 2048 and cost `bytelz` 2 bytes of offset. A token layout with fewer extensions and such
