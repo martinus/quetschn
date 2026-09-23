@@ -22,13 +22,14 @@ patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
 # seqlz and bytelz as zram backends, with lz4's -O3
 z="$work/src/drivers/block/zram"
 cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/backend_bytelz.c" "$here/backend_bytelz.h" \
+    "$here/backend_seqlz_hc.c" "$here/backend_seqlz_hc.h" \
     "$here/../../explore/seqlz.c" "$here/../../explore/seqlz.h" "$here/../../explore/bytelz.c" \
     "$here/../../explore/bytelz.h" "$here/../../explore/page_lz.h" "$here/../../explore/seqlz_default_tables.c" "$z/"
-sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"\n#include "backend_bytelz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_bytelz,\n\tNULL|' "$z/zcomp.c"
-printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o backend_bytelz.o bytelz.o\n' >>"$z/Makefile"
+sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"\n#include "backend_bytelz.h"\n#include "backend_seqlz_hc.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_bytelz,\n\t\&backend_seqlz_hc,\n\tNULL|' "$z/zcomp.c"
+printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o backend_bytelz.o bytelz.o backend_seqlz_hc.o\n' >>"$z/Makefile"
 printf 'CFLAGS_seqlz.o += -O3\nCFLAGS_bytelz.o += -O3\n' >>"$z/Makefile"
 make -C "$work/src" O="$work/build" defconfig >/dev/null
-"$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD \
+"$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \
     --enable DEVTMPFS --enable BLK_DEV_INITRD
 make -C "$work/src" O="$work/build" olddefconfig >/dev/null
 make -C "$work/src" O="$work/build" -j"$(nproc)" bzImage >/dev/null

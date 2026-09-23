@@ -666,6 +666,20 @@ prefetch, p50 / p99 in ns:
 than `lz4` and 8.8% less than `lzo-rle`: C1 just, C2 not quite, it asks for faster. It writes as slowly
 as `seqlz`: the matcher they share is most of it.
 
+**`seqlz-hc` for zram's recompression** (`ALGOS=lz4,zstd,seqlz,seqlz-hc`; `backend_seqlz_hc.c` takes
+the kernel's `lz4hc` at level 3 and codes its matches with seqlz). Compressed data flushed, with the
+prefetch, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | read | write |
+| --- | --- | --- | --- |
+| `lz4` | 29 007 872 | 2210 / 3990 | 5350 / 9260 |
+| `zstd` | 20 246 528 | 4689 / 7650 | 13 979 / 23 870 |
+| `seqlz` | 22 679 552 | 2790 / 4400 | 6291 / 11 620 |
+| `seqlz-hc` | 21 893 120 | 2531 / 4370 | 19 410 / 32 300 |
+
+For pages recompressed in the background, where the write does not wait, `seqlz-hc` needs 8% more
+memory than `zstd` and reads 43% faster at p99, 380 ns behind `lz4`.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
