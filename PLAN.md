@@ -475,6 +475,9 @@ Answer, with numbers from the corpus:
 - How many pages sit within 256 bytes above the cliff, and what recovers them?
 - How many pages sit a few bytes above a class boundary (§3.1), and how much Σ cost comes back if
   those pages get one extra compression attempt?
+- How often does a greedy parser get stuck in a chain of short matches on periodic data, like
+  `lz4` with a dictionary does (§9, next action 6)? A long match at a small multiple of the period is
+  cheap to check for.
 - Do the answers hold for Cuttlefish pages and for 16 KiB pages (§3.5)?
 
 Candidate designs to prototype in userspace, ranked by expected value:
@@ -690,9 +693,22 @@ results/                    published measurements (no raw pages, ever)
 
    The gate proxy holds up on swapped pages: `zstd -1` needs 16.9% less Σ zsmalloc cost than
    `lzo-rle`, which is again better than `lz4` + dict. A dictionary trained on resident pages saves
-   `lz4` only 2.3% on swapped pages, and makes `zstd 3` worse. Also, `lz4` + dict stores 1260 more
-   pages uncompressed than `lz4`; I have not looked into why yet. Still not the gate: one machine,
+   `lz4` only 2.3% on swapped pages, and makes `zstd 3` worse. Still not the gate: one machine,
    one dump, no confidence intervals, and the dictionary was trained on a different page population.
+
+   `lz4` + dict stores 1292 pages uncompressed that `lz4` alone does not, and 75 the other way. The
+   harness is right about that, upstream LZ4 1.10.0 gives the same sizes. The dictionary gains 2.72% Σ
+   zsmalloc cost on the pages it helps and loses 0.35% on the others, mostly on pages that already
+   compress to 2.5 to 3.5 KiB, 0.107% alone for the pages pushed over the cliff. The extreme case is
+   weird: a page of `ff`×16 `00`×16 repeated compresses to 49 bytes without a dictionary and to 1543
+   bytes with one, and a dictionary of the 8 bytes `00 00 00 00 00 00 00 04` is enough. A match into
+   the dictionary at the start shifts the greedy parse, and from then on the "test next position"
+   shortcut of `LZ4_compress_generic` only finds matches of 5 to 11 bytes with offsets 2 and 21 to 27,
+   512 of them, and never gets back to the search that would find the 4019-byte match at offset 32.
+   Without a dictionary the same chain happens too, but it breaks after 72 bytes. Rotating the page
+   shows that it is the dictionary: without one, all 32 rotations compress to 36 to 49 bytes, with the
+   8-byte dictionary 8 of 32 rotations go to about 1540 bytes. On the zram dump only 107 pages got
+   more than twice as large, 0.01%, so it does not change the table.
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.
