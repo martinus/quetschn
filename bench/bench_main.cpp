@@ -203,8 +203,8 @@ int main(int argc, char** argv) {
                     cpu_model().c_str(),
                     cpu >= 0 ? std::to_string(cpu).c_str() : "no",
                     first_line(cpufreq + "scaling_governor").c_str());
-        // A frequency that follows the load changes latencies by more than the differences between codecs,
-        // see docs/explored-designs.md. Fixed means min == max and boost off.
+        // Not the reason for the scatter of cold latencies (docs/explored-designs.md), but a table should
+        // still say at which clock it was measured.
         std::printf("frequency  %s to %s kHz, boost: %s\n",
                     first_line(cpufreq + "scaling_min_freq").c_str(),
                     first_line(cpufreq + "scaling_max_freq").c_str(),

@@ -38,11 +38,17 @@ Two benchmarks, and a few rules that came from getting it wrong first:
   between two builds that only differed in how the corpus was allocated.
 * **Nothing else runs on the machine while a benchmark times.** A build or a test run during a
   benchmark gave numbers that the next clean run did not reproduce.
-* **Fixed CPU frequency.** With the `powersave` governor the results depend on which codecs are in a
-  run: adding `lz4hc`, whose compressor keeps the core busy for 20 to 80 µs per page, moved `lzo-rle`
-  against `lz4` from +40 to -390 ns. A cold decode is part memory latency, fixed in ns, and part
-  compute, which scales with the clock, so codecs move by different amounts. Every benchmark prints
-  the frequency range and boost state now; min equal to max and boost off is what a table needs.
+* **Cold latency is not reproducible below a few hundred ns, warm latency is.** Adding `lz4hc` to a
+  run moved `lzo-rle` against `lz4` at cold p99 from +40 to -390 ns, and `zstd -1` ranged from +1410
+  to +2350 ns over five runs. The clock is not the reason: warm p99 was the same in all these runs
+  within 1.5% (`lz4` 1990 to 2000 ns), and so was the cycle count (APERF via `rdpru`, `lz4` 10 595 to
+  10 631 cycles), the core ran at about 5.3 GHz every time. In cycles the cold numbers scatter even
+  more (`zstd -1` +7542 to +12 750 cycles against `lz4`), because the time spent waiting for DRAM
+  grows with the clock. What changes between runs is how long the flushed lines take to come back
+  from memory, which depends on the state of DRAM and the fabric, and neither timer controls that.
+  So decoders are compared by warm cycles, and the cold penalty is mostly the number of bytes read:
+  the output page is the same 4 KiB for every codec, the input is `comp_len`. Every benchmark prints
+  the frequency range and boost state anyway.
 
 ## Baselines
 
@@ -104,9 +110,8 @@ entropy coded. A page has 636 literal bytes and 182 sequences on average: `lz4` 
 every token and two on every offset, where 4 KiB of page need 12 bits of offset at most, and
 usually fewer.
 
-Latency, preliminary: the CPU frequency was not fixed, and the set of codecs in a run changed the
-results by up to about 900 ns (see the rules above). What held in all five runs, cold p99 against
-`lz4`:
+Latency, preliminary: the cold numbers changed by up to about 900 ns between runs (see the rules
+above). What held in all five runs, cold p99 against `lz4`:
 
 * `zstd -1`: +1410 to +2350 ns.
 * `zstd 1`, the same plus Huffman coded literals: another +1150 to +1860 ns on top of `zstd -1`, for
