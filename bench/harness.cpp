@@ -126,8 +126,9 @@ corpus load_corpus(std::filesystem::path const& base) {
     if (c.page_size == 0 || raw.size() % c.page_size != 0) {
         throw std::runtime_error("load_corpus: " + pages_path.string() + " is not a whole number of pages");
     }
-    c.data.resize(raw.size());
-    std::memcpy(c.data.data(), raw.data(), raw.size());
+    // not memcpy: for an empty corpus data() is null, and memcpy with null is undefined even for 0 bytes
+    auto const* first = reinterpret_cast<std::byte const*>(raw.data());
+    c.data.assign(first, first + raw.size());
     return c;
 }
 
