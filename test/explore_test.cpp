@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 #include "bdelta.h"
+#include "bytelz.h"
 #include "seqlz.h"
 #include "shuffle.h"
 
@@ -685,5 +686,168 @@ TEST_CASE("seqlz: the encoder writes the format as seqlz.h describes it") {
                                       2 * 4096);
         got.resize(len);
         CHECK(got == reference_encode(seqlz_default_lz4, p.sequences, p.literals));
+    }
+}
+
+namespace {
+
+// bytelz decoded from its description in bytelz.h alone, byte by byte, to pin the format: encoder and
+// decoder share the matcher and the copies, a change to those would still roundtrip.
+bool reference_bytelz_decode(std::vector<unsigned char> const& c, std::vector<unsigned char>& out) {
+    out.clear();
+    auto i = std::size_t{0};
+    auto last = 1U, before = 4U;
+    auto extension = [&](unsigned& v) {
+        v = 0;
+        for (unsigned shift = 0;; shift += 7) {
+            if (i == c.size() || shift > 14) {
+                return false;
+            }
+            auto const b = c[i++];
+            v |= (b & 127U) << shift;
+            if ((b & 128U) == 0) {
+                return true;
+            }
+        }
+    };
+    while (true) {
+        if (i == c.size()) {
+            return false;
+        }
+        auto const tok = c[i++];
+        auto ll = tok & 7U, v = 0U;
+        if (ll == 7 && !extension(v)) {
+            return false;
+        }
+        ll += v;
+        for (unsigned k = 0; k < ll; ++k) {
+            if (i == c.size()) {
+                return false;
+            }
+            out.push_back(c[i++]);
+        }
+        if (out.size() >= 4096) {
+            return out.size() == 4096 && i == c.size() && (tok >> 3) == 0;
+        }
+        auto off = 0U;
+        switch (tok >> 6) {
+        case 0:
+            off = last;
+            break;
+        case 1:
+            off = before;
+            before = last;
+            break;
+        case 2:
+            if (i == c.size()) {
+                return false;
+            }
+            off = c[i++] + 1U;
+            before = last;
+            break;
+        default:
+            if (c.size() - i < 2) {
+                return false;
+            }
+            off = static_cast<unsigned>(c[i]) | static_cast<unsigned>(c[i + 1]) << 8;
+            i += 2;
+            before = last;
+        }
+        last = off;
+        auto ml = ((tok >> 3) & 7U) + 4U;
+        if (ml == 11 && !extension(v)) {
+            return false;
+        }
+        ml += ml == 11 ? v : 0U;
+        if (off == 0 || off > out.size()) {
+            return false;
+        }
+        for (unsigned k = 0; k < ml; ++k) {
+            out.push_back(out[out.size() - off]);
+        }
+    }
+}
+
+std::vector<unsigned char> bytelz_compressed(bytelz_state& st, std::vector<unsigned char> const& bytes) {
+    auto c = std::vector<unsigned char>(2 * 4096);
+    auto const len = bytelz_compress(&st, bytes.data(), c.data(), static_cast<unsigned>(c.size()));
+    REQUIRE(len > 0);
+    c.resize(len);
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("bytelz: pages come back, and decode as bytelz.h describes the format") {
+    auto st = std::make_unique<bytelz_state>();
+    auto rng = std::mt19937_64(71);
+    auto out = std::vector<unsigned char>(4096);
+    auto ref = std::vector<unsigned char>();
+    for (int round = 0; round < 800; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        auto const c = bytelz_compressed(*st, p.bytes);
+        REQUIRE(bytelz_decode(c.data(), static_cast<unsigned>(c.size()), out.data()) == 0);
+        CHECK(out == p.bytes);
+        REQUIRE(reference_bytelz_decode(c, ref));
+        CHECK(ref == p.bytes);
+    }
+}
+
+TEST_CASE("bytelz: a page without matches is a token, 2 bytes of extension and the page") {
+    auto st = std::make_unique<bytelz_state>();
+    auto rng = std::mt19937_64(83);
+    auto bytes = std::vector<unsigned char>(4096);
+    for (auto& b : bytes) {
+        b = static_cast<unsigned char>(rng());
+    }
+    auto const c = bytelz_compressed(*st, bytes);
+    REQUIRE(c.size() == 1 + 2 + 4096);
+    CHECK(c[0] == 7); // ll 7 and an extension, nothing else
+    CHECK(c[1] == (((4096 - 7) & 127) | 128));
+    CHECK(c[2] == (4096 - 7) >> 7);
+}
+
+TEST_CASE("bytelz: less than two pages of room is an error, and so is a cut off page") {
+    auto st = std::make_unique<bytelz_state>();
+    auto rng = std::mt19937_64(73);
+    auto const p = random_seqlz_page(rng, 1);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    CHECK(bytelz_compress(st.get(), p.bytes.data(), c.data(), 2 * 4096 - 1) == 0);
+    c = bytelz_compressed(*st, p.bytes);
+    auto out = std::vector<unsigned char>(4096);
+    for (auto len = std::size_t{0}; len < c.size(); ++len) {
+        CAPTURE(len);
+        CHECK(bytelz_decode(c.data(), static_cast<unsigned>(len), out.data()) == -1);
+    }
+    CHECK(bytelz_decode(c.data(), static_cast<unsigned>(c.size()), out.data()) == 0);
+}
+
+TEST_CASE("bytelz: any input is safe for the decoder") {
+    auto st = std::make_unique<bytelz_state>();
+    auto rng = std::mt19937_64(79);
+    auto out = std::vector<unsigned char>(4096);
+    auto ref = std::vector<unsigned char>();
+    for (int round = 0; round < 3000; ++round) {
+        CAPTURE(round);
+        auto c = std::vector<unsigned char>();
+        if (round % 2 == 0) {
+            c.resize(1 + rng() % 4000);
+            for (auto& b : c) {
+                b = static_cast<unsigned char>(rng());
+            }
+        } else {
+            // a valid page with some bits flipped
+            c = bytelz_compressed(*st, random_seqlz_page(rng, round % 4).bytes);
+            for (int f = 0; f < 3; ++f) {
+                c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
+            }
+        }
+        auto const ret = bytelz_decode(c.data(), static_cast<unsigned>(c.size()), out.data());
+        // the same verdict as the reference, and the same page where both accept it
+        CHECK(ret == (reference_bytelz_decode(c, ref) ? 0 : -1));
+        if (ret == 0) {
+            CHECK(std::equal(ref.begin(), ref.end(), out.begin()));
+        }
     }
 }
