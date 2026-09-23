@@ -10,7 +10,7 @@ typedef unsigned char u8;
  * Decode table entries, 0 for bits that start no code.
  * Length and offset tables: bits 0-3 the code length, bits 4-7 the number of extra bits, bits 8-23 the
  * base value, bit 24 set for a repeat offset (the base is its index). A value is base + extra bits.
- * Token table: bits 0-3 the code length, bits 4-7 min(ll, 15), bits 8-11 min(ml - 4, 15).
+ * Token table: bits 0-3 the code length, bits 4-7 min(ll, 15), bits 8-12 min(ml - 4, 31).
  */
 struct value_table {
     u32 decode[1U << SEQLZ_MAX_BITS];
@@ -62,8 +62,8 @@ static u32 token_entry(unsigned int s) {
 
 /*
  * Canonical Huffman codes from the code lengths, bit reversed, and the decode table with 1 << bits
- * entries of entry(symbol) | code length. -1 if a length is longer than bits, the codes are
- * over-subscribed, or there is no code at all.
+ * entries of entry(symbol) | code length. -1 if a length is longer than bits, or the codes are not a
+ * complete prefix code: over-subscribed, with gaps, or none at all.
  */
 static int build(const u8* len,
                  unsigned int n,
@@ -85,10 +85,11 @@ static int build(const u8* len,
     }
     if (used == 0)
         return -1;
-    /* Kraft: the codes must fit into bits bits */
+    /* Kraft: the codes must fill the bits bits exactly. Then every bit pattern starts a code, and the
+     * decoder does not need to check for one that does not. Huffman codes are complete. */
     for (l = 1, k = 0; l <= bits; l++)
         k += count[l] << (bits - l);
-    if (k > (1U << bits))
+    if (k != (1U << bits))
         return -1;
     count[0] = 0;
     for (l = 1; l <= bits; l++) {
@@ -218,11 +219,11 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
 
         if (put_code(&w, t->token.code, t->token.len, seqlz_token(ll, ml)))
             return 0;
-        if (ll >= 15 && put_length(&w, &t->ll, ll - 15))
+        if (ll >= SEQLZ_LL_CAP && put_length(&w, &t->ll, ll - SEQLZ_LL_CAP))
             return 0;
         if (last)
             break;
-        if (ml - 4 >= 15 && put_length(&w, &t->ml, ml - 4 - 15))
+        if (ml - 4 >= SEQLZ_ML_CAP && put_length(&w, &t->ml, ml - 4 - SEQLZ_ML_CAP))
             return 0;
 
         off = seq[i].offset;
@@ -286,7 +287,7 @@ static inline void drop(struct bit_reader* r, unsigned int n) {
     r->count -= (int)n;
 }
 
-/* One value: the table entry of the next code, then base + extra bits, in one step. Needs 10 + 12
+/* One value: the table entry of the next code, then base + extra bits, in one step. Needs 9 + 12
  * bits, refilled before. The entry is 0 for bits that start no code. */
 static inline unsigned int value(struct bit_reader* r, const struct value_table* t, u32* entry) {
     u32 e = t->decode[r->bits & ((1U << SEQLZ_MAX_BITS) - 1U)];
@@ -310,7 +311,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end;
     struct bit_reader br;
-    unsigned int n, n_lit, i, rep0 = 1, rep1 = 4, rep2 = 8, bad = 0;
+    unsigned int n, n_lit, i, rep[4] = {1, 4, 8, 0};
 
     if (src_len < SEQLZ_HEADER)
         return -1;
@@ -326,18 +327,16 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         unsigned int tok, nl, len, off, v, k;
         u32 e;
 
-        /* One refill per sequence: token, literal length value and offset need at most 11 + 22 + 21 =
-         * 54 of the at least 56 bits a refill leaves. Only after a match length value, up to 22 more
+        /* One refill per sequence: token, literal length value and offset need at most 11 + 21 + 20 =
+         * 52 of the at least 56 bits a refill leaves. Only after a match length value, up to 21 more
          * bits, the offset needs another one. */
         refill(&br);
         tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
-        bad |= tok == 0;
         drop(&br, tok & 15U);
         nl = (tok >> 4) & 15U;
-        len = ((tok >> 8) & 15U) + 4U;
-        if (nl == 15) {
+        len = ((tok >> 8) & 31U) + 4U;
+        if (nl == SEQLZ_LL_CAP) {
             nl += value(&br, &t->ll, &e);
-            bad |= e == 0;
         }
         if (nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
             return -1;
@@ -371,43 +370,67 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         if (i + 1 == n)
             break;
 
-        if (len == 19) {
-            /* no refill before: token and literal length value used at most 33 of the 56 bits */
+        if (len == SEQLZ_ML_CAP + 4U) {
+            /* no refill before: token and literal length value used at most 32 of the 56 bits */
             len += value(&br, &t->ml, &e);
-            bad |= e == 0;
             refill(&br);
         }
         v = value(&br, &t->off, &e);
-        bad |= e == 0;
-        /* Repeat offsets without branches: the new first is always this offset, the second is the old
-         * first unless this was the old first, the third the old second if this was the old second
-         * or third or new, the old third otherwise. */
+        /* Repeat offsets without branches, through an array: rep[3] is the new offset, idx picks the
+         * offset, and the move to front is two lookups. As ?: the compiler made branches of it, 28% of
+         * all mispredictions, and with masks it cost more instructions than it saved. */
         {
-            unsigned int is_rep = (e >> 24) & 1U, idx = is_rep ? v : 3U;
+            unsigned int is_rep = (e >> 24) & 1U, idx = v & (0U - is_rep);
 
-            off = idx == 0 ? rep0 : idx == 1 ? rep1 : idx == 2 ? rep2 : v;
-            rep2 = idx >= 2 ? rep1 : rep2;
-            rep1 = idx >= 1 ? rep0 : rep1;
-            rep0 = off;
+            idx |= 3U & (0U - (is_rep ^ 1U));
+            rep[3] = v;
+            off = rep[idx];
+            {
+                /* the old first becomes second unless it was picked, the old second becomes third if
+                 * the second, third or a new one was picked */
+                unsigned int r1 = rep[idx == 0], r2 = rep[2U - (idx >= 2)];
+
+                rep[0] = off;
+                rep[1] = r1;
+                rep[2] = r2;
+            }
         }
         if (off == 0 || off > (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
             return -1;
         /* 8 bytes at a time while there are 8 bytes of room behind in the page; may write past len,
-         * which the next sequence overwrites. For an offset below 8 the first bytes are written one
-         * by one, up to the largest multiple of the offset that fits into 8; then each step copies
-         * from that far back inside the match, so the first step bytes of every store repeat the
-         * pattern. The rest one by one, at most 7 bytes at the end of the page. A run to the end of
-         * the page byte by byte was what made the slowest pages 10 times slower than lz4. */
+         * which the next sequence overwrites. The rest one by one, at most 7 bytes at the end of the
+         * page; a run to the end of the page byte by byte made the slowest pages 10 times slower
+         * than lz4.
+         * For an offset below 8 the first 8 bytes of the match are built in a register: the off bytes
+         * before the match, repeated with shifts, then one 8-byte store. From there each step copies
+         * from step bytes back, the largest multiple of off up to 8, which is exactly what the
+         * previous store wrote, so the load gets it from that store. Writing the first bytes one by one
+         * made the load wait for four stores, and a loop over them mispredicted its exit. */
         {
             unsigned int step = off >= 8 ? 8U : step_for[off], back = off >= 8 ? off : step;
 
             k = 0;
             if (off < 8) {
-                for (; k < step && k < len; k++)
-                    d[k] = *(d + k - off);
+                if ((unsigned int)(d_end - d) >= 8U) {
+                    u64 w, pat;
+                    unsigned int bits = 8U * off;
+
+                    /* d - off + 7 < d + 8 <= d_end: inside the page */
+                    __builtin_memcpy(&w, d - off, 8);
+                    pat = w & ((1ULL << bits) - 1ULL);
+                    pat |= pat << bits;
+                    pat |= (pat << ((2U * bits) & 63U)) & (0ULL - (u64)(2U * bits < 64U));
+                    pat |= (pat << ((4U * bits) & 63U)) & (0ULL - (u64)(4U * bits < 64U));
+                    __builtin_memcpy(d, &pat, 8);
+                    k = step;
+                } else {
+                    back = 0; /* at the end of the page: one by one below */
+                }
             } else if ((unsigned int)(d_end - d) >= 16U) {
-                /* most matches are shorter than 16 bytes: two unconditional copies, the second reads
-                 * only bytes the first wrote or that were there before, because off >= 8 */
+                /* 79% of the matches are at most 16 bytes: two unconditional copies, the second reads
+                 * only bytes the first wrote or that were there before, because off >= 8. Four copies,
+                 * for 91% of them, were faster at p50 and slower at p99: the slowest pages have many
+                 * short matches, and copied 32 bytes for each. */
                 u64 a, b;
 
                 __builtin_memcpy(&a, d - off, 8);
@@ -416,21 +439,21 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
                 __builtin_memcpy(d + 8, &b, 8);
                 k = 16;
             }
-            while (k < len && (unsigned int)(d_end - d) >= k + 8U) {
-                u64 w;
+            if (back != 0) {
+                while (k < len && (unsigned int)(d_end - d) >= k + 8U) {
+                    u64 w;
 
-                __builtin_memcpy(&w, d + k - back, 8);
-                __builtin_memcpy(d + k, &w, 8);
-                k += step;
+                    __builtin_memcpy(&w, d + k - back, 8);
+                    __builtin_memcpy(d + k, &w, 8);
+                    k += step;
+                }
             }
             for (; k < len; k++)
                 d[k] = *(d + k - off);
         }
         d += len;
     }
-    /* An invalid code gives length 0 and uses no bits, and every copy above is checked, so it is safe
-     * to find out only here that the page was not valid. */
-    if (bad || d != d_end || lit != lit_end || br.count < 0)
+    if (d != d_end || lit != lit_end || br.count < 0)
         return -1;
     return 0;
 }

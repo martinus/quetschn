@@ -13,6 +13,10 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#if defined(__x86_64__)
+#    include <x86intrin.h>
+#endif
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -77,7 +81,8 @@ void usage() {
                  "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
                  "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n"
-                 "--decode-loop <n> decodes every page n times and nothing else, for perf.\n",
+                 "--decode-loop <n> decodes every page n times and nothing else, for perf; --cold reads 2 MiB of\n"
+                 "other data and flushes the compressed page and the output before each decode.\n",
                  program);
 }
 
@@ -111,7 +116,23 @@ void print_latency(char const* what, quetschn::latency_summary const& l) {
 
 // For perf: compresses every page once, then decompresses all of them loops times and nothing else,
 // so that a profile or perf stat shows only the decoder. No timing, no output but a checksum.
-int decode_loop(quetschn::corpus const& c, quetschn_codec const& codec, quetschn::run_options const& opts, unsigned loops) {
+// the lines of [p, p + n) out of all caches, like the harness's cold measurement
+void flush_lines(void const* p, std::size_t n) {
+#if defined(__x86_64__)
+    auto const* b = static_cast<char const*>(p);
+    for (std::size_t off = 0; off < n; off += 64) {
+        _mm_clflush(b + off);
+    }
+    _mm_clflush(b + n - 1);
+    _mm_mfence();
+#else
+    (void)p;
+    (void)n;
+#endif
+}
+
+int decode_loop(
+    quetschn::corpus const& c, quetschn_codec const& codec, quetschn::run_options const& opts, unsigned loops, bool cold) {
     auto params = quetschn_params{};
     params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
     params.dict_size = opts.dict.size();
@@ -135,16 +156,51 @@ int decode_loop(quetschn::corpus const& c, quetschn_codec const& codec, quetschn
     }
     auto out = std::vector<std::byte>(c.page_size);
     auto sum = std::uint64_t{0};
+    // warm decode time of every page in every loop, with steady_clock: coarse for one page, but the
+    // median over the loops and the percentiles over the pages show where the tail goes
+    auto ns = std::vector<std::vector<double>>(compressed.size(), std::vector<double>(loops));
+    auto other = std::vector<unsigned char>(cold ? 2U << 20 : 0U, 1);
+    auto sink = std::uint64_t{0};
     for (unsigned l = 0; l < loops; ++l) {
-        for (auto const& p : compressed) {
+        for (std::size_t i = 0; i < compressed.size(); ++i) {
+            auto const& p = compressed[i];
             auto len = static_cast<unsigned int>(out.size());
-            if (codec.decompress(&params, &stream, p.data(), static_cast<unsigned int>(p.size()), out.data(), &len) != 0) {
+            if (cold) {
+                // Other work between two page faults: 2 MiB read evicts L1 and L2 (1 MiB per core on
+                // Zen 4), so the codec's tables and code come from L3 like after a stretch of the
+                // application. Then the page and the output out of all caches.
+                for (std::size_t k = 0; k < other.size(); k += 64) {
+                    sink += other[k];
+                }
+                flush_lines(p.data(), p.size());
+                flush_lines(out.data(), out.size());
+            }
+            auto const t0 = std::chrono::steady_clock::now();
+            auto const ret =
+                codec.decompress(&params, &stream, p.data(), static_cast<unsigned int>(p.size()), out.data(), &len);
+            ns[i][l] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+            if (ret != 0) {
                 std::fprintf(stderr, "error: %s: decompress failed\n", codec.name);
                 return 1;
             }
             sum += static_cast<std::uint64_t>(out[len / 3]);
         }
     }
+    sum += sink; // keeps the reads of other
+    auto medians = std::vector<double>();
+    for (auto& v : ns) {
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
+        medians.push_back(v[v.size() / 2]);
+    }
+    auto const lat = quetschn::summarize_latency(medians);
+    std::printf("%s: %s decode per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f ns\n",
+                codec.name,
+                cold ? "cold" : "warm",
+                loops,
+                lat.p50,
+                lat.p90,
+                lat.p99,
+                lat.p999);
     codec.destroy(&stream);
     codec.release_params(&params);
     std::printf("%s: %zu pages decoded %u times, checksum %llu\n",
@@ -164,6 +220,7 @@ int main(int argc, char** argv) {
     auto opts = quetschn::run_options{};
     int cpu = -1;
     unsigned decode_loops = 0;
+    bool decode_cold = false;
     auto codecs = std::vector<quetschn_codec const*>();
     auto codec_levels = std::vector<int>();
 #ifndef QUETSCHN_INTERLEAVED
@@ -203,6 +260,8 @@ int main(int argc, char** argv) {
         } else if (arg == "--out" && has_value) {
             out_path = argv[++i];
         } else if (arg == "--decode-loop" && has_value && parse(argv[++i], decode_loops) && decode_loops > 0) {
+        } else if (arg == "--cold") {
+            decode_cold = true;
         } else if (arg == "--no-timing") {
             opts.measure_time = false;
         } else if (arg == "--repetitions" && has_value && parse(argv[++i], opts.repetitions) && opts.repetitions > 0) {
@@ -253,7 +312,7 @@ int main(int argc, char** argv) {
         }
         auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
         if (decode_loops > 0) {
-            return decode_loop(c, *codecs.front(), opts, decode_loops);
+            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold);
         }
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();

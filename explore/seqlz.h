@@ -8,10 +8,13 @@
  * Σ zsmalloc cost for this; the prototype measures what it really gets and how fast it decodes.
  *
  * A sequence is a literal length ll, a match length ml and an offset; the last sequence of a page has
- * no match. Like lz4's token, ll and ml - 4 share one symbol, each capped at 15:
- *   token:              min(ll, 15) + 16 * min(ml - 4, 15), 256 symbols, Huffman coded with at most
- *                       SEQLZ_TOKEN_BITS bits
- *   ll >= 15:           ll - 15 follows as a length value; the same for ml - 4 >= 15
+ * no match. Like lz4's token, ll and ml - 4 share one symbol, capped at 15 and 31:
+ *   token:              min(ll, 15) + 16 * min(ml - 4, 31), 512 symbols, Huffman coded with at most
+ *                       SEQLZ_TOKEN_BITS bits. 31 and not 15 for the match length, because with 15
+ *                       every fifth match needed a length value, and that branch mispredicted. 11 and
+ *                       not 12 bits, because the decode table of 12 bits, 8 KiB, made the cold decode
+ *                       slower: the tables of the decoder have to stay in L1.
+ *   ll >= 15:           ll - 15 follows as a length value; ml - 4 >= 31: ml - 4 - 31
  *   length value v:     v < 16 is the symbol itself; otherwise b = bit_width(v) - 1, the symbol is 12 +
  *                       b, and the b low bits of v follow as extra bits
  *   offset:             symbols 0 to 2 repeat the first, second or third of the last three offsets
@@ -36,15 +39,17 @@ extern "C" {
 #endif
 
 #define SEQLZ_PAGE 4096U
-#define SEQLZ_MAX_BITS 10U
+#define SEQLZ_MAX_BITS 9U /* for length values and offsets; tables of 2 KiB each */
 #define SEQLZ_TOKEN_BITS 11U
-#define SEQLZ_TOKEN_SYMBOLS 256U
+#define SEQLZ_TOKEN_SYMBOLS 512U
+#define SEQLZ_LL_CAP 15U      /* in the token, larger literal lengths follow as a value */
+#define SEQLZ_ML_CAP 31U      /* the same for ml - 4 */
 #define SEQLZ_LEN_SYMBOLS 25U /* 16 direct values, then buckets 4 to 12 */
 #define SEQLZ_OFF_SYMBOLS 15U /* 3 repeats, then buckets 0 to 11 */
 #define SEQLZ_HEADER 4U
 
 /* The code lengths of the four tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 321 bytes. */
+ * produces and what zram's dictionary parameter can carry: 577 bytes. */
 struct seqlz_lengths {
     unsigned char token[SEQLZ_TOKEN_SYMBOLS];
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
@@ -104,9 +109,10 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
 
 /* the token of a sequence, see above */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml) {
-    unsigned int a = ll < 15 ? ll : 15, b = ml < 19 ? ml - 4 : 15;
+    unsigned int a = ll < SEQLZ_LL_CAP ? ll : SEQLZ_LL_CAP;
+    unsigned int b = ml == 0 ? 0 : ml - 4 < SEQLZ_ML_CAP ? ml - 4 : SEQLZ_ML_CAP;
 
-    return a + 16U * (ml == 0 ? 0 : b);
+    return a + 16U * b;
 }
 
 /* The tables compiled in, trained on resident pages (explore/seqlz_default_tables.c). */

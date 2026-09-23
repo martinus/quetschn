@@ -154,10 +154,10 @@ sequences and is slow; what in its decoder costs the time is not measured yet.
 The estimate above, built. The matches come from the kernel's `lz4` (`seqlz`) or `lz4hc` level 3
 (`seqlz-hc`); the prototype takes their output apart and codes it again, so its compression time
 says nothing about a real encoder yet. Like `lz4`'s token, literal length and match length share one
-symbol, each capped at 15, Huffman coded with at most 11 bits; longer lengths add a value from a
+symbol, capped at 15 and 31, Huffman coded with at most 11 bits; longer lengths add a value from a
 second table, offsets are symbols with extra bits and three repeat offsets like `zstd`'s. Everything
 goes into one bitstream, read least significant bit first. Literals stay raw. The tables are compiled
-in, 321 bytes of code lengths, trained on the resident pages and not on the zram dump.
+in, 577 bytes of code lengths, trained on the resident pages and not on the zram dump.
 
 Full run on all pages, CPU 2 at 4.5 GHz, one process:
 
@@ -209,8 +209,52 @@ page of the decode loop, measured with `perf stat` and AMD's IBS sampling per so
 * The kernel flags compile for the x86-64 baseline without BMI2, so every variable shift has to go
   through register `cl`.
 
-Next for the decoder: fewer mispredicted branches, e.g. for literal runs of more than 16 bytes and for
-the escapes, and a matcher of its own, cheap like `lz4`'s and as good as `lz4hc` level 3's.
+### Second round: branches, tails and table sizes
+
+`seqlz-hc` after the second round, against the state above. First the decode loop
+(`--decode-loop 11`, 20 000 sampled pages, median per page over the loops), warm, and cold with 2 MiB of
+other data read and the page and output flushed before each decode:
+
+| `seqlz-hc` | warm p50 | warm p99 | cold p50 | cold p99 |
+| --- | --- | --- | --- | --- |
+| first round | 2230 ns | 4150 ns | 3080 ns | 4960 to 5070 ns |
+| second round | 1880 ns | 3350 ns | 2670 to 2740 ns | 4160 to 4290 ns |
+| `lz4` | 1130 ns | 2420 ns | 1500 ns | 2690 ns |
+| `zstd -1` | 2730 ns | 4600 ns | 3380 ns | 5340 ns |
+
+The full run of the harness sees less: cold p50 1830 against 1970 ns, cold p99 4090 against 4110 ns,
+warm p99 3240 against 3020 ns, Δ cold p99 against `lz4` +1380 ns [+1360, +1400] as before. The two
+measurements differ in what runs between two decodes: in the harness the other codecs, in the loop
+the same decoder. This is not resolved. Σ zsmalloc cost is 25.2% and 27.0% as before.
+
+What was tried, in the order it was measured, with the branch stack of Zen 4 (`perf record -j any,u`)
+for the mispredicted branches per source line, and the decode loop for p99:
+
+* **The compiler turns `?:` into branches.** The match length value "without a branch" and the
+  selection of the repeat offset were both compiled to branches, 30% and 28% of all mispredictions.
+* **Masks instead cost more than they saved.** They halved the mispredictions, 155 to 68 per page, and
+  added 15 000 instructions per page: 9400 to 12 000 cycles. At 3.4 to 3.9 instructions per cycle,
+  instructions are as expensive as mispredictions here.
+* **Rarer escapes: a token of 512 symbols**, 4 bits literal length and 5 bits match length, so a
+  match length value follows 8.5% of the matches instead of 18.7%. Same memory, 9400 to 9180 cycles.
+* **The repeat offsets in an array of four**, the offset and the move to front as lookups: no
+  branch, few instructions. 89 mispredictions per page, fewer than `lz4`'s 94, and p99 4230 to 3570 ns.
+* **Only complete prefix codes** (Kraft sum exactly 1): every bit pattern starts a code, and the
+  decoder does not need to check for one that does not. The checks were 6% of the instructions.
+* **The mean is not the tail.** Copying 32 bytes of every match without a loop made the mean faster
+  and p99 slower, 3570 to 4150 ns: the slowest pages have many short matches. Back to 16 bytes. That
+  is why the decode loop reports percentiles per page, not only cycles per page from `perf stat`.
+* **Tables have to stay in L1.** The 512-symbol token with codes up to 12 bits needs a decode table
+  of 8 KiB; with the three value tables that was 20 KiB, and the cold p99 was 650 ns worse than with
+  256 symbols. With codes up to 11 bits, 4 KiB, cold p99 went from 5070 to 4350 ns, without costing
+  memory. Codes of lengths and offsets are limited to 9 bits now, 2 KiB per table; that did not change
+  the time, but it is 6 KiB less per device.
+* **Short offsets** with lz4's trick, four bytes one by one and four from a position in a table: fewer
+  mispredictions, but more cycles, the load after four single-byte stores waits for them. Building
+  the first 8 bytes in a register and storing them once is a little faster, and kept.
+
+Next for the decoder: find out why the harness and the decode loop disagree on cold p99, and a
+matcher of its own, cheap like `lz4`'s and as good as `lz4hc` level 3's.
 
 ## Word model: WKdm-style 64-bit words
 
