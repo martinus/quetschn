@@ -118,7 +118,8 @@ std::vector<quetschn_codec const*> codecs() {
             &quetschn_codec_zstd_nolit,
             &quetschn_codec_seqlz,
             &quetschn_codec_seqlz_hc,
-            &quetschn_codec_seqlz_fast};
+            &quetschn_codec_seqlz_fast,
+            &quetschn_codec_bytelz};
 }
 
 // A zram device (params) with one per-CPU stream, set up the way zram does it.

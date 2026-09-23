@@ -406,6 +406,42 @@ The matcher alone needs 17 300 cycles and 32 400 instructions per page at IPC 1.
 together 17 100 and 30 300 at 1.77. `lz4`'s encoding hides in the cycles its matcher waits, ours does
 not quite, but even a free encoder would leave `seqlz-fast` at `lz4`'s speed and not below.
 
+## bytelz: `seqlz-fast`'s matcher, a byte oriented format
+
+*Open. Warm decode is at `lz4`'s speed, cold decode and compression are not yet.* Code:
+`explore/bytelz.c`, format in `explore/bytelz.h`, codec `bytelz`. The matcher and the literal and match
+copies are shared with `seqlz` in `explore/page_lz.h`.
+
+The question: `PLAN.md`'s goal is `lz4`'s speed in both directions at `zstd`'s ratio. `seqlz` has the
+ratio, but its Huffman codes cost in both directions. The third compressor round costed byte oriented
+formats on `seqlz-fast`'s matches, and the best one gets 29.4%: a token byte with 3 bits of literal
+length, 3 bits of match length and 2 bits for the offset (the last one, the one before, 1 byte, 2
+bytes), extensions as 7-bit varints, literals inline, no header. Does it decode like `lz4`?
+
+| codec | Σ zsmalloc cost | decompress cold p50 / p99 | warm p99 | compress p99, cold loop |
+| --- | --- | --- | --- | --- |
+| `lz4` | 34.5% | 1770 / 3430 ns | 2370 ns | 7530 ns |
+| `seqlz-fast` | 26.4% | 2830 / 5720 ns | 3300 ns | 10 010 ns |
+| `bytelz` | 29.4% | 2330 / 4870 ns | 2490 ns | 10 630 ns |
+
+Decompression with `tools/quick-bench.sh`, compression with `--decode-loop 11 --compress`. Per page
+with `perf stat`: decoding `lz4` 5161 cycles and 12 400 instructions, `bytelz` 7671 and 28 400,
+`seqlz-fast` 10 600 and 38 300; compressing `lz4` 17 200, `bytelz` 22 200 and 61 400 instructions,
+`seqlz-fast` 21 600.
+
+* **Warm, `bytelz` decodes at `lz4`'s speed, cold it is 1.42 times as slow.** That the gap grows from
+  120 to 1450 ns at p99 when the caches are cold is not explained yet. The code is 2564 bytes against
+  1840 of `LZ4_decompress_safe`, not enough for that alone; a branch predictor that forgot the
+  decoder's 15 branches per sequence is the next suspect.
+* **Tried in the decoder, both slower:** an `lz4`-like short path for sequences without extensions,
+  8935 cycles instead of 7671: the branch into it failed for a quarter of the sequences and
+  mispredicted. The same with the extensions read without a branch: 17 409 cycles, the position of the
+  next token then waits for up to 4 loads per sequence, where a predicted branch does not wait. The
+  offset with masks instead of a small array: 8192.
+* **The encoder is not faster than `seqlz`'s yet:** writing both extensions without branches costs
+  about 20 instructions each, and the state lives on the stack like `seqlz`'s. A quick version with
+  branches needed 43 300 instructions.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.

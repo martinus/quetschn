@@ -53,6 +53,7 @@ auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_seqlz,
     &quetschn_codec_seqlz_hc,
     &quetschn_codec_seqlz_fast,
+    &quetschn_codec_bytelz,
 #    ifdef QUETSCHN_HAVE_MEMLZ
     &quetschn_codec_memlz,
 #    endif
