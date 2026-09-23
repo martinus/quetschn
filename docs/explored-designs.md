@@ -621,6 +621,20 @@ Writing each page again, timed, compression and zsmalloc together, p50 / p90 / p
 11 620. So `seqlz` writes 1.26 times as long as `lz4` at p99, C3 allows 1.2; in the harness, which times
 the codec alone, it was 1.55: zram's own work on a write makes the difference smaller.
 
+**`bytelz` in the kernel** (`ALGOS=lz4,lzo-rle,bytelz,seqlz`), compressed data flushed, with the
+prefetch, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | read | write |
+| --- | --- | --- | --- |
+| `lz4` | 29 007 872 | 2210 / 3951 | 5260 / 9090 |
+| `lzo-rle` | 27 222 016 | 2260 / 3860 | 4991 / 9560 |
+| `bytelz` | 24 813 568 | 2390 / 3910 | 6280 / 11 560 |
+| `seqlz` | 22 679 552 | 2810 / 4460 | 6179 / 11 590 |
+
+`bytelz` reads as fast as `lz4` and `lzo-rle` at p99, 180 ns slower at p50, with 14.5% less memory
+than `lz4` and 8.8% less than `lzo-rle`: C1 just, C2 not quite, it asks for faster. It writes as slowly
+as `seqlz`: the matcher they share is most of it.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
