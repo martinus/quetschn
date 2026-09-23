@@ -271,10 +271,12 @@ The same argument applies to multi-page compression in zram, e.g. compressing wh
   sequenced to have standalone published value, so a stall does not waste the work before it.
 - **Hardware today: x86-64 only.** This is the single largest schedule risk (§8, R1). arm64 numbers are
   a hard prerequisite for submission: lzo-rle was merged on arm64-first evidence, and phones are the
-  users. Two cheap boards are bought in Phase 0 so that arm64 timings exist from Phase 2 on: one with
-  an out-of-order core (Raspberry Pi 5, Cortex-A76) and one with an in-order core like the little cores
-  in phones (Cortex-A53 or A55). About €150 for both. Phase 6 then only adds phone silicon and phone
-  data, and still **gates Phase 7**.
+  users. An old phone is used from Phase 2 on, so that arm64 timings exist early. It has both an
+  out-of-order big core and an in-order little core (e.g. Cortex-A76 + A55), which is what two separate
+  boards would have given, but on real phone silicon. Requirements: an unlockable bootloader (root is
+  needed to read other apps' memory for the corpus and to pin the CPU frequency, e.g. Pixel 3 to 7),
+  and Android 10 or newer. Phase 6 then adds a current phone and 16 KiB pages, and still **gates
+  Phase 7**.
 
 ---
 
@@ -292,11 +294,10 @@ Each phase ends in an artifact and a gate. Durations are calendar weeks at 3–8
   (`-std=gnu11 -ffreestanding -nostdinc -Wframe-larger-than=256 -fno-builtin`), plus `checkpatch.pl`,
   ASan/UBSan, and a big-endian cross-compile (`s390x` or `mips` via qemu-user).
 - `CONTRIBUTING.md` requiring `Signed-off-by:` (DCO), matching kernel practice.
-- Order the two arm64 boards (§4). They arrive while Phase 1 runs.
-- Check the employer rules on open-source side projects and kernel contributions (R8). Code already
-  exists, so this is overdue rather than early.
+- Get the old phone (§4) and root it.
+- ~~Check the employer rules (R8).~~ Done, side projects are fine.
 
-*Gate: CI green on an empty stub codec; employer question answered.*
+*Gate: CI green on an empty stub codec.*
 
 ### Phase 1 — Corpus tooling (4 weeks)
 
@@ -330,8 +331,15 @@ references either way), so an x86-64 Cuttlefish instance running a scripted app 
 pages a year before Phase 6. They are not a replacement for phone data, but they show early whether
 Android pages look different from desktop pages (R4).
 
-**16 KiB pages.** Collect with a 16 KiB page arm64 kernel on the Pi 5 where possible. Until then,
+**16 KiB pages.** An old phone runs 4 KiB pages; only Pixel 8 and newer offer 16 KiB pages, as a
+developer option. A Raspberry Pi 5 runs 16 KiB pages by default. Until one of them is available,
 concatenate four adjacent 4 KiB pages of the same mapping as an approximation (§3.5).
+
+**Collector 1 is done:** `quetschn-collect-resident` in `tools/collect/`. It finds resident pages with
+the `PAGEMAP_SCAN` ioctl (Linux 6.7+) and falls back to reading `/proc/<pid>/pagemap` on older kernels,
+so it runs on the old phone too. Pages that are already swapped are counted but never read, because
+reading them would swap them back in. On the development machine (Fedora, zram swap) a first run found
+1.8 million resident and 313 000 already swapped pages.
 
 **Reproducibility strategy.** Two corpora:
 - *private*: real dumps, never leave the machine, used for the headline numbers.
@@ -392,7 +400,8 @@ Timing with a dedicated per-page loop (`rdtscp`/`lfence` on x86-64, the PMU cycl
 stays useful for the aggregate throughput numbers. Pinned cores, fixed frequency, `perf` counters where
 available.
 
-**On which hardware.** x86-64 and both arm64 boards from Phase 0, from the first published table on.
+**On which hardware.** x86-64 and the big and little core of the old phone, from the first published
+table on.
 
 #### 5.3 Statistical presentation
 
@@ -430,7 +439,7 @@ kernel `lz4` decode of a 4 KiB page is mostly `memcpy` of literals and matches, 
 
 Write the smallest decoder of the design that §3.2 bets on: a WKdm-style 64-bit-word format with a
 fixed tag layout, no LZ pass, no dictionary, and a throwaway encoder. Measure its cold-cache p99 per
-page (§5.2) against kernel `lz4` on the test corpus, on x86-64 and on the in-order arm64 board.
+page (§5.2) against kernel `lz4` on the test corpus, on x86-64 and on the phone's in-order little core.
 
 *Gate: the spike decoder's p99 is at or below `lz4`'s on both machines. If it is clearly slower, the
 p99 argument of §3.2 does not hold, and Phase 3 starts from the §8 fallback instead of from the word
@@ -470,7 +479,7 @@ A slower, higher-ratio sibling for `CONFIG_ZRAM_MULTI_COMP` recompression of idl
 second target (working name `wuzl`) — but only after the primary codec lands. Do not split effort.
 
 *Gate: one design meets C1 against `lz4`+dict at equal or better p99 latency, in a userspace
-prototype, on the held-out test workloads, on x86-64 and the in-order arm64 board.*
+prototype, on the held-out test workloads, on x86-64 and the phone's in-order little core.*
 
 ### Phase 4 — Reference implementation, format spec, fuzzing (20 weeks)
 
@@ -515,18 +524,17 @@ confirms the userspace prediction within 2%.*
 
 ### Phase 6 — arm64 validation (**hard gate before Phase 7**)
 
-Unavoidable. No arm64 numbers, no patch. The two boards from Phase 0 have produced arm64 timings since
-Phase 2, so this phase no longer starts from zero. What is still missing is phone silicon and phone
-data. Options in descending order of value:
+Unavoidable. No arm64 numbers, no patch. The old phone has produced arm64 timings and phone pages since
+Phase 2, so this phase no longer starts from zero. What is still missing is a current phone and 16 KiB
+pages. Options in descending order of value:
 
-1. A rooted Android phone (real silicon, real ART heap data, little-core pinning under `cpuset`),
-   ideally one that runs a 16 KiB page kernel.
+1. A current rooted Android phone that runs a 16 KiB page kernel (Pixel 8 or newer).
 2. Ask Dave Rodgman (ARM, author of lzo-rle), the Android kernel team or the linux-mm list for help
    measuring. The Phase 2 publication makes this ask reasonable rather than presumptuous.
 
-Also needed: an arm64 corpus from a real phone. Android page data may differ from desktop data (ART
-heap layout, different allocator). The Cuttlefish corpus from Phase 1 already gives a first answer to
-that, so a surprise here should be small. The Phase 3 design still stays parameterised rather than
+Also needed: a corpus from a current phone. Android page data may differ from desktop data (ART heap
+layout, different allocator), and a newer Android version may differ from the old phone. The old phone
+and Cuttlefish corpora already give a first answer to that, so a surprise here should be small. The Phase 3 design still stays parameterised rather than
 hand-tuned to one corpus.
 
 *Gate: C1–C3 hold on arm64, on both a big and a little core, with 4 KiB and 16 KiB pages.*
@@ -586,14 +594,14 @@ results/                    published measurements (no raw pages, ever)
 
 | # | Risk | Evidence | Mitigation / fallback |
 | --- | --- | --- | --- |
-| R1 | **No arm64 hardware.** Phones are the users; lzo-rle was merged on arm64-first data. | Confirmed constraint | Two arm64 boards (out-of-order and in-order) are bought in Phase 0, so arm64 timings exist from Phase 2 on. Phase 6 adds a phone and is a hard gate; a rooted phone is worth real money here. Do not submit without it. |
+| R1 | **No arm64 hardware.** Phones are the users; lzo-rle was merged on arm64-first data. | Confirmed constraint | An old rooted phone (big and little core) is used from Phase 2 on. Phase 6 adds a current phone with 16 KiB pages and is a hard gate. Do not submit without it. |
 | R2 | **Insufficient headroom over lz4+dict.** Nobody has measured this. The whole project rests on an unverified assumption. | No measurement of `lz4`+dict on page data known to this plan | Phase 2 gate answers it before any codec work. Fallback: publish the benchmark, then pursue a *targeted improvement to lz4 or lzo-rle for page-sized inputs* — that is exactly what lzo-rle was, and it is a much easier merge. |
 | R3 | **Maintainers do not want another backend.** Each one is permanent maintenance cost. | zBeWalgo reached v7 and died | Ask right after Phase 2, together with the benchmark posting, before any codec work. A "no" discovered early redirects to R2's fallback. |
 | R4 | **Desktop-tuned codec loses on Android data.** Different heap layout, different allocator. | ART and bionic lay out the heap differently from glibc desktop processes; not measured yet | Cuttlefish pages in the Phase 1 corpus, so the difference is measured before Phase 3. Keep Phase 3 designs parameterised, not hand-tuned. Obtain real phone pages before freezing the format. |
 | R5 | **zram backend API churn.** 2024 rewrite, 2025 preemption series, 2026 param and naming changes. | `git log drivers/block/zram/` | Codec core has zero kernel-API dependency; all churn is absorbed by `backend_quetschn.c`. Rebase against mainline in CI. |
 | R6 | **Fuzz-safety or a sleeping-in-atomic bug burns maintainer goodwill.** | Biggers's objection; Minchan's panic | Phase 4 and the Phase 5 KASAN/`DEBUG_ATOMIC_SLEEP` gate exist for this. Continuous fuzzing with ClusterFuzzLite before submission; OSS-Fuzz if it accepts the project. |
 | R7 | **Timeline.** 3–8 h/week against an 18–24 month path. | lzo-rle: 4 months, v5, paid work, existing codec | Each phase publishes independently. Phase 2 alone is a worthwhile public contribution. |
-| R8 | **Employer rules on open-source side projects**, particularly kernel contributions with a `MAINTAINERS` entry. | Not checked yet | Check now, as part of Phase 0. Code and licenses already exist. Cheap to check, expensive to discover late. |
+| R8 | **Employer rules on open-source side projects**, particularly kernel contributions with a `MAINTAINERS` entry. | Checked 2026-09-23: side projects are fine | Resolved. |
 | R9 | **The input size changes under the codec.** 16 KiB page kernels on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5; multi-page compression proposed on the lists, not merged at `986c24e0fe44` | `PAGE_SIZE` is a parameter of format, cost model and harness from Phase 0. Every table from Phase 2 on has a 16 KiB column. Watch the zram and mm lists for multi-page compression, and rerun the Phase 2 gate if it gets merged. |
 | R10 | **No p99 decode win over `lz4`.** C2 rests on the branch-misprediction argument of §3.2, which is unmeasured. | Kernel `lz4` decode is mostly `memcpy` | Phase 2b spike measures it in 2 weeks, before Phase 3. If it fails, fall back to the R2 route. |
 
@@ -601,17 +609,18 @@ results/                    published measurements (no raw pages, ever)
 
 ## 9. Immediate next actions
 
-1. Check the employer rules (R8).
-2. Order the two arm64 boards (§4).
+1. Get the old phone and root it (§4).
+2. ~~Check the employer rules (R8).~~ Done.
 3. Finish Phase 0: the kernel-flag build job, which needs the codec stub. Licenses, `README.md`,
    CMake, doctest and CI are done.
 4. The zsmalloc cost model is done: `bench/zsmalloc_cost.cpp`, with `PAGE_SIZE` as a
    parameter. What is still open is a check against a real `/sys/kernel/debug/zsmalloc/<pool>/classes`
    dump; the tests only use the kernel docs and hand arithmetic.
-5. Build the swap-device corpus collector (Phase 1); collect a first small corpus in a VM.
+5. The resident-memory collector is done: `quetschn-collect-resident`. Next in Phase 1 is the
+   swap-device collector; collect a first small corpus in a VM.
 6. Stand up the harness with `lzo-rle`, `lz4` and `zstd -1` built from the local kernel tree with
-   kernel flags, and produce the first Σ cost and p99-latency table, on x86-64 and on arm64 once the
-   boards arrive.
+   kernel flags, and produce the first Σ cost and p99-latency table, on x86-64 and on the phone once
+   it is rooted. The resident corpus is enough to shake out the harness, not for the gate.
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.

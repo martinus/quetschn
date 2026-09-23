@@ -14,6 +14,17 @@ cmake --build build
 
 `-DQUETSCHN_SANITIZE=ON` builds with ASan and UBSan. Formatting is checked with clang-format 21.
 
+## Collecting pages
+
+```sh
+mkdir -p corpus
+./build/quetschn-collect-resident --out corpus/desktop --max-per-process 2000
+```
+
+This samples resident anonymous memory of all processes you may read into `corpus/desktop.pages`
+and `corpus/desktop.tsv`. The pages contain whatever was in memory, including keys and passwords.
+`corpus/` is in `.gitignore`; never commit or publish these files.
+
 ## Licensing
 
 quetschn is dual licensed under **`MIT OR GPL-2.0-only`**. You may use it under
