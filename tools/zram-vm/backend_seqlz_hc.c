@@ -14,6 +14,7 @@ struct szhc_ctx {
 	unsigned char *lz4;
 	struct seqlz_sequence *seq;
 	unsigned char *literals;
+	unsigned char *scratch; /* the decoded literals of seqlz-hc-lit */
 };
 
 static int szhc_setup_params(struct zcomp_params *params)
@@ -46,6 +47,7 @@ static void szhc_destroy(struct zcomp_ctx *ctx)
 	kfree(c->lz4);
 	kfree(c->seq);
 	kfree(c->literals);
+	kfree(c->scratch);
 	kfree(c);
 	ctx->context = NULL;
 }
@@ -61,7 +63,8 @@ static int szhc_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 	c->lz4 = kmalloc(2 * SEQLZ_PAGE, GFP_KERNEL);
 	c->seq = kmalloc_array(SEQLZ_MAX_SEQUENCES, sizeof(*c->seq), GFP_KERNEL);
 	c->literals = kmalloc(SEQLZ_PAGE, GFP_KERNEL);
-	if (!c->mem || !c->lz4 || !c->seq || !c->literals) {
+	c->scratch = kmalloc(SEQLZ_SCRATCH, GFP_KERNEL);
+	if (!c->mem || !c->lz4 || !c->seq || !c->literals || !c->scratch) {
 		szhc_destroy(ctx);
 		return -ENOMEM;
 	}
@@ -118,7 +121,8 @@ static int split(const unsigned char *p, unsigned int n, struct szhc_ctx *c, uns
 	return 0;
 }
 
-static int szhc_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
+static int szhc_compress_any(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req,
+			     int coded)
 {
 	struct szhc_ctx *c = ctx->context;
 	unsigned int n_seq, n_lit, len;
@@ -129,16 +133,31 @@ static int szhc_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	ret = LZ4_compress_HC(req->src, c->lz4, SEQLZ_PAGE, 2 * SEQLZ_PAGE, 3, c->mem);
 	if (ret <= 0 || split(c->lz4, ret, c, &n_seq, &n_lit))
 		return -EINVAL;
-	len = seqlz_encode(params->drv_data, c->seq, n_seq, c->literals, n_lit, req->dst, req->dst_len);
+	len = coded ? seqlz_encode_coded(params->drv_data, c->seq, n_seq, c->literals, n_lit, req->dst,
+					  req->dst_len)
+		    : seqlz_encode(params->drv_data, c->seq, n_seq, c->literals, n_lit, req->dst, req->dst_len);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
 	return 0;
 }
 
+static int szhc_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
+{
+	return szhc_compress_any(params, ctx, req, 0);
+}
+
+static int szhc_compress_coded(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
+{
+	return szhc_compress_any(params, ctx, req, 1);
+}
+
 static int szhc_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
-	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst))
+	struct szhc_ctx *c = ctx->context;
+
+	if (req->dst_len < SEQLZ_PAGE ||
+	    seqlz_decode_scratch(params->drv_data, req->src, req->src_len, req->dst, c->scratch))
 		return -EINVAL;
 	return 0;
 }
@@ -151,4 +170,15 @@ const struct zcomp_ops backend_seqlz_hc = {
 	.setup_params	= szhc_setup_params,
 	.release_params	= szhc_release_params,
 	.name		= "seqlz-hc",
+};
+
+/* the literals Huffman coded too, see seqlz_encode_coded() */
+const struct zcomp_ops backend_seqlz_hc_lit = {
+	.compress	= szhc_compress_coded,
+	.decompress	= szhc_decompress,
+	.create_ctx	= szhc_create,
+	.destroy_ctx	= szhc_destroy,
+	.setup_params	= szhc_setup_params,
+	.release_params	= szhc_release_params,
+	.name		= "seqlz-hc-lit",
 };

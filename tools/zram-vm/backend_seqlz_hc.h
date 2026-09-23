@@ -5,5 +5,6 @@
 #include "zcomp.h"
 
 extern const struct zcomp_ops backend_seqlz_hc;
+extern const struct zcomp_ops backend_seqlz_hc_lit;
 
 #endif

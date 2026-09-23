@@ -699,6 +699,19 @@ One stream is one chain of table lookups per literal, and the pages with the mos
 p99 as slow as `zstd`'s; four streams are four chains side by side, as `zstd` does it. With 1/16,
 `seqlz-hc-lit` needs 3.4% more memory than `zstd` and decodes in 37% less time at p99, 53% at p50.
 
+In the kernel (`ALGOS=lz4,zstd,seqlz-hc,seqlz-hc-lit`), compressed data flushed, with the prefetch,
+p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | read | write |
+| --- | --- | --- | --- |
+| `lz4` | 29 007 872 | 2200 / 3890 | 5460 / 9410 |
+| `zstd` | 20 246 528 | 4689 / 7611 | 14 130 / 24 071 |
+| `seqlz-hc` | 21 893 120 | 2501 / 4270 | 19 540 / 32 389 |
+| `seqlz-hc-lit` | 20 873 216 | 2771 / 5400 | 16 130 / 30 240 |
+
+So for recompression `seqlz-hc-lit` needs 3.1% more memory than `zstd` and reads 41% faster at p50,
+29% at p99.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
