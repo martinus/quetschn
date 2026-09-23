@@ -1,6 +1,7 @@
 # quetschn — project plan
 
-A compression codec for 4 KiB memory pages, aimed at the Linux kernel's zram module.
+A compression codec for memory pages, aimed at the Linux kernel's zram module. 4 KiB pages first,
+16 KiB pages as a parameter from day one (§3.5).
 
 Status: no code yet. This document is the plan, the evidence behind it, and the decision gates.
 
@@ -20,16 +21,21 @@ of the Pareto frontier**:
 
 | Criterion | Bar | Why this bar |
 | --- | --- | --- |
-| C1 | Strictly better stored size than `lzo-rle` **and** `lz4` on real page data, measured in zsmalloc buckets (§3.1) | `lzo-rle` is the zram default; `lz4` is the common Android choice |
-| C2 | Strictly better p99 decompression latency than `lz4` on the same data | decompression runs in the page-fault path (§3.2) |
-| C3 | Compression latency within 1.2× of `lz4` | zram compresses more often than it decompresses |
+| C1 | ≥ 8% less Σ zsmalloc cost (§3.1) than the better of `lzo-rle` and `lz4`, on the held-out test corpus (§5.3), same-filled pages excluded, 95% bootstrap confidence interval excluding 0 | `lzo-rle` is the zram default; `lz4` is the common Android choice. A 1% gain does not pay for a new backend |
+| C2 | Lower p99 decompression latency than `lz4`, cold cache, on x86-64 **and** an arm64 little core, 95% bootstrap confidence interval excluding 0. Latency statistic defined in §5.2 | decompression runs in the page-fault path (§3.2); on phones that often means a little core |
+| C3 | p99 compression latency within 1.2× of `lz4`, same statistic as C2 | zram compresses more often than it decompresses |
 | C4 | Beats `lz4` **with a trained dictionary**, not just bare `lz4` | zram supports dictionaries; Honor made dict-lz4 >50% faster in March 2026 (`f0f6f7871430`) |
 | C5 | Per-CPU workspace ≤ 4 KiB | `lz4` needs 16416 B/CPU, `lzo` 16384 B/CPU, `842` 61440 B/CPU (§3.3) |
 | C6 | Decompressor is fuzz-safe and bounded-time for arbitrary input | this is what killed the last new-codec attempt (§2.2) |
 
 C1 and C2 together are the merge argument: *strictly dominates the current default and the current
-fast option, on both memory and tail latency, with less per-CPU memory.* If C1 and C2 cannot both be
-met after Phase 2, the project pivots (§8).
+fast option, on both memory and tail latency, with less per-CPU memory.* C1 has headroom only if the
+Phase 2 gate passes, and C2 is plausible only if the decoder spike after Phase 2 passes (§5, Phase 2b).
+If either fails, the project pivots (§8).
+
+**Scope of "merged":** this plan ends when the backend is in mainline. That does not put it on phones.
+Android kernels are built from `gki_defconfig`, and enabling a new backend there is a separate
+decision by the Android kernel team, made after the mainline merge. Phase 7 has to plan for it.
 
 **Explicit non-goal:** beating `zstd` level 3 on ratio. If quetschn lands as "lz4-class latency at
 zstd-1-class ratio", that is a win.
@@ -42,7 +48,7 @@ Two data points, both verified.
 
 ### 2.1 The success: lzo-rle (Dave Rodgman, ARM, merged March 2019, `5ee4014af99f`)
 
-What the merged commit message contains, verbatim in substance:
+What the merged commit message contains. Italic text is quoted verbatim, the rest is paraphrased:
 
 - A real corpus: *"captured some memory via /dev/fmem from a Chromebook with many tabs open which is
   starting to swap, and then split this into 4178 4k pages"*, with all-zero pages excluded as zram does.
@@ -88,7 +94,7 @@ survive a reboot.
 
 ## 3. The technical ground truth (verified against mainline)
 
-These four facts shape the codec design and the benchmark. Three of them are routinely missed by
+These five facts shape the codec design and the benchmark. Most of them are routinely missed by
 public compression benchmarks.
 
 ### 3.1 zram does not pay for bytes; it pays for zsmalloc buckets
@@ -105,39 +111,61 @@ ZS_MIN_ALLOC_SIZE   = 32
 ZS_SIZE_CLASSES     = 255
 ```
 
-Computed cost for a page compressed to `n` bytes (64-bit, 4 KiB pages, `CONFIG_ZSMALLOC_CHAIN_SIZE=8`,
-the default — `huge_class_size` is config-dependent and the harness must read it from
-`/sys/kernel/debug/zsmalloc/` or recompute it, never hardcode it):
+Two more details decide the real cost:
 
-| comp_len | stored bytes |
-| --- | --- |
-| 100 | 112 |
-| 111 | 128 |
-| 1024 | 1040 |
-| 2048 | 2064 |
-| 3255 | 3264 |
-| **3624** | **3632** |
-| **3625** | **4096** |
-| 4000 | 4096 |
+- `zs_create_pool()` walks the classes from largest to smallest and **merges** a class into the
+  previous, larger one when both have the same `(pages_per_zspage, objs_per_zspage)`. An object
+  that maps to a merged class gets the slot size of the larger class.
+- `calculate_zspage_chain_size()` picks `pages_per_zspage` (1 to `CONFIG_ZSMALLOC_CHAIN_SIZE`) with the
+  least tail waste, but the waste is often not 0. A class really costs
+  `pages_per_zspage × PAGE_SIZE / objs_per_zspage` bytes per object, which is more than its slot size.
+
+Computed cost for a page compressed to `comp_len` bytes (64-bit, 4 KiB pages,
+`CONFIG_ZSMALLOC_CHAIN_SIZE=8`, the default). The numbers come from a port of the merge loop and of
+`calculate_zspage_chain_size()` at `986c24e0fe44`. `huge_class_size` depends on the config, so the
+harness must read it from `/sys/kernel/debug/zsmalloc/` or recompute it, never hardcode it:
+
+| comp_len | class slot | pages / objs per zspage | cost per page |
+| --- | --- | --- | --- |
+| 100 | 112 | 7 / 256 | 112.0 |
+| 111 | 128 | 1 / 32 | 128.0 |
+| 1024 | 1056 | 8 / 31 | 1057.0 |
+| 2048 | 2176 | 8 / 15 | 2184.5 |
+| 3255 | 3264 | 4 / 5 | 3276.8 |
+| **3624** | **3632** | 8 / 9 | **3640.9** |
+| **3625** | huge | 1 / 1 | **4096.0** |
+| 4000 | huge | 1 / 1 | 4096.0 |
+
+After merging, the 255 nominal classes collapse into 119 distinct ones. The step between them grows
+with the size:
+
+| size range | mean step | max step |
+| --- | --- | --- |
+| 0 - 1 KiB | 17 B | 32 B |
+| 1 - 2 KiB | 28 B | 128 B |
+| 2 - 3 KiB | 68 B | 144 B |
+| 3 KiB - cliff | 93 B | 144 B |
 
 Consequences:
 
-- **Saving fewer than 16 bytes on a page usually saves nothing.** A format header of up to ~8 bytes is
-  free. This buys real design freedom: richer per-page mode dispatch, alignment padding for a faster
-  decoder, and explicit length fields all cost nothing in practice.
+- **Saving less than one class step on a page usually saves nothing.** Below 1 KiB that is ~16 bytes,
+  above 2 KiB it is 68 to 144 bytes. A small format header is free for large pages. This gives real
+  design freedom: richer per-page mode dispatch, alignment padding for a faster decoder, and explicit
+  length fields cost nothing in practice.
 - **There is a cliff at `huge_class_size` = 3625 bytes.** Above it, `zram_write_page()` calls
   `write_incompressible_page()` and stores the full 4096 bytes. Moving one page from 3625 to 3600
-  saves 480 bytes — 30× more than the 25 bytes of compression it took. *Pages near the cliff are worth
-  disproportionate effort.* No general-purpose codec knows this.
-- zsmalloc **merges** size classes with identical `(pages_per_zspage, objs_per_zspage)`, so the real
-  granularity is sometimes coarser than 16 bytes. The harness must model the merged class table, not a
-  naive 16-byte grid.
-- Second-order: two codecs with the same bucket sum can still use different amounts of memory, because
-  per-class zspage fill depends on the *distribution* of sizes. Only a real zram run measures this
-  (Phase 5).
+  saves 455 bytes, 18× more than the 25 bytes of compression it took. The cliff is the largest step,
+  but every class boundary is a small cliff: a page that lands a few bytes above a boundary pays the
+  full step. *Pages just above a class boundary are worth extra compression effort, and the ones just
+  above the cliff most of all.* No general-purpose codec knows this.
+- Two separate effects decide how much memory the classes really use. The **tail waste** inside a
+  zspage is fixed per class and is already in the cost column above, so a userspace model gets it
+  exactly. **Fragmentation** from partly filled zspages depends on the size distribution and on
+  allocation history, so two codecs with the same Σ cost can still use different amounts of memory.
+  Only a real zram run measures fragmentation (Phase 5).
 
-The primary ratio metric for this project is therefore **Σ zsmalloc bucket bytes**, plus **count of
-pages over the cliff**. Not mean compression ratio.
+The primary ratio metric for this project is therefore **Σ zsmalloc cost** (the last column), plus
+the **count of pages over the cliff**. Not mean compression ratio.
 
 ### 3.2 Decompression is a tail-latency problem, not a throughput problem
 
@@ -155,7 +183,9 @@ Design constraints that follow:
 - **Worst-case bounded runtime** is a feature to advertise, not an afterthought.
 - Branch mispredictions dominate at 4 KiB inputs. An LZ literal/match loop has data-dependent,
   hard-to-predict branches. A word-granular format with near-data-independent control flow can win p99
-  even where it ties on p50. This is the most likely source of a genuine C2 win.
+  even where it ties on p50. This is the most likely source of a genuine C2 win. It is also an
+  unverified assumption, and on an in-order little core (Cortex-A53/A55/A520) the balance between
+  branch misses and instruction count is different. The Phase 2b spike tests it on both.
 - **Cold caches.** In a real page fault both the compressed source and the destination page are cold.
   A benchmark that hot-loops one page out of L1 measures the wrong thing. The harness needs a
   cold-cache mode (§5.2) — this alone may reorder the existing codecs.
@@ -187,6 +217,33 @@ Adding a backend is a contained diff:
 `struct zcomp_params` carries `dict` / `dict_sz` / `level`, so **dictionary support is available and
 should be designed in from the start** (see C4).
 
+### 3.5 Page size is not always 4 KiB
+
+Android supports 16 KiB page kernels on arm64, and since November 2025 Google Play requires apps that
+target Android 15 or newer to work on them. The phones this plan targets will increasingly run with
+16 KiB pages. zram compresses one `PAGE_SIZE` page at a time, and zsmalloc scales with it:
+`ZS_SIZE_CLASS_DELTA = PAGE_SIZE >> CLASS_BITS` is 64 bytes on 16 KiB pages. The same model as §3.1 gives, for 16 KiB pages:
+
+| | 4 KiB pages | 16 KiB pages |
+| --- | --- | --- |
+| class delta | 16 B | 64 B |
+| distinct classes after merging | 119 | 121 |
+| `huge_class_size` | 3625 | 14553 |
+| mean class step in the top quarter below the cliff | 93 B | 371 B |
+
+Which means that:
+
+- `PAGE_SIZE` is a parameter of the format, of the cost model and of the harness from the start. A
+  codec hand-tuned for 4096-byte inputs, e.g. with 12-bit offsets baked into the format, is a dead end.
+- The corpus needs 16 KiB pages too (§5, Phase 1). Four adjacent 4 KiB pages are a first
+  approximation, but real 16 KiB page kernels have different allocator behaviour.
+- Larger inputs help `lz4` and `zstd` more than a word model, because their match window gets 4× more
+  history. The quetschn advantage may shrink on 16 KiB pages. That has to be measured, not assumed.
+
+The same argument applies to multi-page compression in zram, e.g. compressing whole large folios
+(mTHP) as one unit. It has been proposed on the lists. At `986c24e0fe44`, `git log --grep=folio` on
+`drivers/block/zram/` and `mm/zsmalloc.c` shows nothing of that kind merged. It is tracked as R9.
+
 ---
 
 ## 4. Constraints
@@ -210,14 +267,17 @@ should be designed in from the start** (see C4).
 - **Time budget: 3–8 h/week.** Realistic end-to-end timeline is **18–24 months**. Every phase below is
   sequenced to have standalone published value, so a stall does not waste the work before it.
 - **Hardware today: x86-64 only.** This is the single largest schedule risk (§8, R1). arm64 numbers are
-  a hard prerequisite for submission — lzo-rle was merged on arm64-first evidence, and phones are the
-  users. Phase 6 exists solely to close this and **gates Phase 7**.
+  a hard prerequisite for submission: lzo-rle was merged on arm64-first evidence, and phones are the
+  users. Two cheap boards are bought in Phase 0 so that arm64 timings exist from Phase 2 on: one with
+  an out-of-order core (Raspberry Pi 5, Cortex-A76) and one with an in-order core like the little cores
+  in phones (Cortex-A53 or A55). About €150 for both. Phase 6 then only adds phone silicon and phone
+  data, and still **gates Phase 7**.
 
 ---
 
 ## 5. Phases
 
-Each phase ends in an artifact and a gate. Hours are calendar estimates at 3–8 h/week.
+Each phase ends in an artifact and a gate. Durations are calendar weeks at 3–8 h/week.
 
 ### Phase 0 — Repository foundation (2 weeks)
 
@@ -229,20 +289,31 @@ Each phase ends in an artifact and a gate. Hours are calendar estimates at 3–8
   (`-std=gnu11 -ffreestanding -nostdinc -Wframe-larger-than=256 -fno-builtin`), plus `checkpatch.pl`,
   ASan/UBSan, and a big-endian cross-compile (`s390x` or `mips` via qemu-user).
 - `CONTRIBUTING.md` requiring `Signed-off-by:` (DCO), matching kernel practice.
+- Order the two arm64 boards (§4). They arrive while Phase 1 runs.
+- Check the employer rules on open-source side projects and kernel contributions (R8). Code already
+  exists, so this is overdue rather than early.
 
-*Gate: CI green on an empty stub codec.*
+*Gate: CI green on an empty stub codec; employer question answered.*
 
 ### Phase 1 — Corpus tooling (4 weeks)
 
 The corpus decides everything downstream. Two collectors, because they answer different questions:
 
 1. **Resident-anonymous sampler.** Walks `/proc/<pid>/maps`, reads anonymous private mappings via
-   `process_vm_readv()`, writes 4 KiB pages. Cheap, broad, biased.
+   `process_vm_readv()`, writes pages. Cheap, broad, biased.
 2. **Swap-path capture (the better one).** Rodgman sampled *resident* memory; zram actually stores
-   *cold, reclaimed* pages, which are a different distribution. Capture the real thing: a small
-   BPF/kprobe tool on `zram_write_page()`, or a locally patched zram with a debugfs page dumper, run
-   under deliberate memory pressure in a VM. **This is a methodological improvement over the published
-   precedent and is worth the extra effort.**
+   *cold, reclaimed* pages, which are a different distribution. Capture the real thing, cheapest method
+   first:
+   - Swap to a plain block device in the VM instead of zram, zero it before `mkswap`, drive the VM
+     into memory pressure, then read the swap device from the host. It contains exactly the pages
+     that reclaim chose. No kernel patch, no BPF. Caveats: slots freed during the run keep stale
+     pages, so snapshot while the workload is still under pressure; and reclaim behaves a bit
+     differently with slow disk swap than with zram, which `swappiness` only partly corrects.
+   - Only if those caveats turn out to matter: a small BPF/kprobe tool on `zram_write_page()`, or a
+     locally patched zram with a debugfs page dumper.
+
+   **This is a methodological improvement over the published precedent, and the swap-device method
+   makes it cheap.**
 
 Both record, per page: all-zero, same-filled (zram handles these before any codec —
 `page_same_filled()`), zero density, byte entropy, source workload.
@@ -250,12 +321,22 @@ Both record, per page: all-zero, same-filled (zram handles these before any code
 Workload set, scripted and reproducible in a VM: Firefox with a fixed URL list, a JVM service, a
 Python/numpy job, a `make -j` kernel build, a GNOME session, PostgreSQL, Electron.
 
+**Android pages without a phone.** Cuttlefish, the AOSP virtual device, runs on x86-64 with zram
+enabled and runs real ART. The ART object layout is mostly architecture-independent (compressed 32-bit
+references either way), so an x86-64 Cuttlefish instance running a scripted app mix gives Android heap
+pages a year before Phase 6. They are not a replacement for phone data, but they show early whether
+Android pages look different from desktop pages (R4).
+
+**16 KiB pages.** Collect with a 16 KiB page arm64 kernel on the Pi 5 where possible. Until then,
+concatenate four adjacent 4 KiB pages of the same mapping as an approximation (§3.5).
+
 **Reproducibility strategy.** Two corpora:
 - *private*: real dumps, never leave the machine, used for the headline numbers.
 - *public*: generated by the scripted VM workloads above, redistributable, so third parties can
   reproduce the comparison without trusting anyone's private data.
 
-*Gate: ≥ 500 000 pages across ≥ 6 workload types; same-filled fraction measured and reported separately.*
+*Gate: ≥ 500 000 pages across ≥ 6 workload types, including Cuttlefish; same-filled fraction measured
+and reported separately.*
 
 ### Phase 2 — Benchmark harness and published baseline (8 weeks) — **first public artifact**
 
@@ -271,12 +352,31 @@ existing benchmark provides.
 `lzo`, `lzo-rle`, `lz4` (acceleration 1/2/4), `lz4` + trained dict, `lz4hc`, `zstd` −1/1/2/3 with and
 without trained dict, `deflate`, `842`. Plus, as design references: WKdm, WK4x4, memlz, LZAV.
 
+Plus one system configuration, because it is the first alternative a maintainer will suggest:
+**`lz4` as primary, `zstd` recompression of idle pages** via `CONFIG_ZRAM_MULTI_COMP`. Modelled as
+`lz4` for the pages that get read back soon and `zstd` for the rest, using the idle fraction measured
+in the workload. The cover letter has to explain why quetschn is still worth it next to that setup.
+
+**Compiler flags match the kernel.** Every codec in the harness, quetschn included, is built with the
+flags the kernel uses for `lib/`: `-O2 -fno-strict-aliasing`, and no SIMD registers
+(`-mno-sse -mno-mmx -mno-avx -mno-sse2` on x86-64, `-mgeneral-regs-only` on arm64). Otherwise the
+compiler auto-vectorizes loops in userspace that it cannot vectorize in the kernel, and the userspace
+numbers are not predictive. The exact flags are taken from a `make V=1` build of the local tree, not
+from this list.
+
 #### 5.2 Metrics
 
-1. **Σ zsmalloc bucket bytes** using the *real merged class table* (§3.1) — the primary ratio metric.
-2. **Pages at or over `huge_class_size`** (3625 B) — the cliff count.
+All metrics exclude same-filled pages, because zram stores them before any codec runs
+(`page_same_filled()`).
+
+1. **Σ zsmalloc cost** using the *real merged class table* and the per-object cost including zspage
+   tail waste (§3.1). This is the primary ratio metric.
+2. **Pages at or over `huge_class_size`** (3625 B on 4 KiB pages), the cliff count.
 3. **Per-page decompression latency**: p50 / p90 / p99 / p99.9 / max, in **both** warm-cache and
-   **cold-cache** modes (flush the source and destination between pages).
+   **cold-cache** modes (flush the source and destination between pages). Each page is timed several
+   times, and the page's latency is the **median** of those runs. The percentiles are then taken
+   across pages. That way p99 describes the slowest 1% of *pages*, which is a property of the data,
+   and not the slowest 1% of *measurements*, which is mostly interrupts and timer noise.
 4. **Per-page compression latency**, same statistics.
 5. **Weighted roundtrip**, with the compression:decompression ratio measured from the actual workload
    rather than assumed.
@@ -284,7 +384,12 @@ without trained dict, `deflate`, `842`. Plus, as design references: WKdm, WK4x4,
 7. **`perf` counters per page**: instructions, cycles, branch-misses, LLC-misses — these explain *why*
    a codec wins and make the eventual design argument credible.
 
-Timing via nanobench. Pinned cores, fixed frequency, `perf` counters where available.
+Timing with a dedicated per-page loop (`rdtscp`/`lfence` on x86-64, the PMU cycle counter through
+`perf_event_open` on arm64, because `cntvct_el0` ticks at only 19 to 54 MHz on many boards), because nanobench reports statistics over batches and not a distribution over pages. nanobench
+stays useful for the aggregate throughput numbers. Pinned cores, fixed frequency, `perf` counters where
+available.
+
+**On which hardware.** x86-64 and both arm64 boards from Phase 0, from the first published table on.
 
 #### 5.3 Statistical presentation
 
@@ -293,14 +398,40 @@ Copy the shape of the lzo-rle commit message, because it worked:
 - per-page **paired** differences against each baseline, not just aggregates;
 - count of pages regressing by > 1σ, and the largest regression;
 - the full distribution (violin/CDF per codec), since the data is bimodal;
-- results split by workload.
+- results split by workload;
+- 95% bootstrap confidence intervals, resampling pages, for every Σ cost and every percentile
+  difference;
+- a **train/test split by workload**. Dictionaries for `lz4` and `zstd` are trained on some workloads
+  and measured on the others; everything tuned for quetschn later (Phase 3) uses the same split. A
+  dictionary trained on the pages it is measured on overstates C4, and so does a tuned codec.
 
-*Gate (go/no-go): with the baseline table in hand, is there ≥ 8% bucket-bytes headroom over the best of
-`lz4`+dict and `lzo-rle` at equal-or-better p99 decompression latency? If no plausible headroom
-exists, go to §8.*
+*Gate (go/no-go): headroom cannot be measured on a codec that does not exist yet, so the gate uses
+a proxy. On the test corpus, does `zstd -1` without a dictionary need ≥ 12% less Σ zsmalloc cost than
+the better of `lz4`+dict and `lzo-rle`? `zstd -1` stands in for "how much redundancy is left that a
+fast codec could still find". It is not a strict bound, but quetschn will not get all of it, so the
+gate asks for more than C1's 8%. The 12% is a judgment call; revisit it when the first table exists.
+If the proxy shows less, go to §8.*
 
 Publish this on martin.ankerl.com and in the repo regardless of the outcome. A negative result is
 still the first honest public zram codec comparison.
+
+**Then post it to linux-mm**, without proposing a codec. Invite criticism of the methodology, and ask
+directly whether the zram maintainers would consider a new backend at all, and what evidence they
+would want. This is cheap and it tests R3 about 18 months earlier than a Phase 7 posting would. A
+clear "no" redirects the project to the R2 fallback before any codec work.
+
+### Phase 2b — Decoder latency spike (2 weeks)
+
+The Phase 2 gate tests ratio headroom. It does not test C2, and C2 is the less likely of the two:
+kernel `lz4` decode of a 4 KiB page is mostly `memcpy` of literals and matches, which is hard to beat.
+
+Write the smallest decoder of the design that §3.2 bets on: a WKdm-style 64-bit-word format with a
+fixed tag layout, no LZ pass, no dictionary, and a throwaway encoder. Measure its cold-cache p99 per
+page (§5.2) against kernel `lz4` on the test corpus, on x86-64 and on the in-order arm64 board.
+
+*Gate: the spike decoder's p99 is at or below `lz4`'s on both machines. If it is clearly slower, the
+p99 argument of §3.2 does not hold, and Phase 3 starts from the §8 fallback instead of from the word
+model.*
 
 ### Phase 3 — Page analysis and design exploration (12 weeks)
 
@@ -312,32 +443,38 @@ Answer, with numbers from the corpus:
   density), stride-8 and stride-16 autocorrelation (array-of-struct layout), small-integer density.
 - Where does `lz4` lose relative to `zstd`? Entropy coding, or match finding?
 - How many pages sit within 256 bytes above the cliff, and what recovers them?
+- How many pages sit a few bytes above a class boundary (§3.1), and how much Σ cost comes back if
+  those pages get one extra compression attempt?
+- Do the answers hold for Cuttlefish pages and for 16 KiB pages (§3.5)?
 
 Candidate designs to prototype in userspace, ranked by expected value:
 
 1. **Word-granular model with mode dispatch.** WKdm's idea, modernised: 64-bit words, a larger
    recent-word dictionary, tags for zero / exact-match / high-bits-match+low-bits-literal / literal.
-   Near-data-independent control flow → the p99 win of §3.2. The 16-byte quantum pays for a per-page
-   or per-512-byte mode header for free.
+   Near-data-independent control flow → the p99 win of §3.2. The class step (16 to 144 bytes, §3.1)
+   pays for a per-page or per-512-byte mode header for free.
 2. **Zero/RLE fast path.** Rodgman's corpus was bimodal: 44% of pages ≤ 5% zeros, 44% ≥ 90% zeros.
    Two well-separated modes beat one compromise model. Verify the bimodality holds on our corpus first.
 3. **Word model + short LZ pass** over the residual.
-4. **Cliff-recovery mode**: when the fast path lands just above `huge_class_size`, spend extra
-   compression time (a static Huffman or a small rANS stage) on that page only. Compression time is
-   less precious than decompression time, and the payoff is 400+ bytes per rescued page.
+4. **Boundary-recovery mode**: when the fast path lands just above a class boundary, spend extra
+   compression time (a static Huffman or a small rANS stage) on that page only. The encoder knows the
+   class table, so it knows the target size. Compression time is less precious than decompression
+   time. The payoff is largest at `huge_class_size`, 455 bytes per rescued page, and 16 to 144 bytes
+   at every other boundary.
 5. **Dictionary support** from the start, via `zcomp_params->dict` (C4).
 
 A slower, higher-ratio sibling for `CONFIG_ZRAM_MULTI_COMP` recompression of idle pages is a legitimate
 second target (working name `wuzl`) — but only after the primary codec lands. Do not split effort.
 
-*Gate: one design beats `lz4`+dict on bucket bytes at equal p99 latency, in a userspace prototype.*
+*Gate: one design meets C1 against `lz4`+dict at equal or better p99 latency, in a userspace
+prototype, on the held-out test workloads, on x86-64 and the in-order arm64 board.*
 
 ### Phase 4 — Reference implementation, format spec, fuzzing (20 weeks)
 
 This phase exists because of §2.2. Everything Biggers asked for, before the first patch.
 
 - `quetschn.c` / `quetschn.h`: C11, freestanding, no libc, no allocation, `≤ 4 KiB` scratch passed in
-  by the caller.
+  by the caller. Page size is a parameter, and every test runs with 4 KiB and 16 KiB pages (§3.5).
 - **`FORMAT.md`**: byte-exact format specification, plus an independent, deliberately slow reference
   decoder written from the spec alone. Differential-test the fast decoder against it.
 - **Fuzzing** (AFL++ is already checked out at `~/gra/AFLplusplus`):
@@ -345,8 +482,11 @@ This phase exists because of §2.2. Everything Biggers asked for, before the fir
     for truncated, corrupted and adversarial input;
   - roundtrip property fuzzing with structure-aware generators;
   - differential fuzzing fast decoder vs reference decoder;
-  - continuous fuzzing in CI, plus an OSS-Fuzz submission. *"We run under OSS-Fuzz"* is a strong,
-    checkable answer to objection 3.
+  - continuous fuzzing in CI with ClusterFuzzLite (GitHub Actions). OSS-Fuzz only accepts projects
+    with a significant user base or importance for critical infrastructure, so a new codec will likely
+    be rejected before it has users. Apply anyway, and apply again once there is adoption. *"We run
+    under OSS-Fuzz"* would be a strong, checkable answer to objection 3, but the plan does not depend
+    on it.
 - Sanitizers: ASan, UBSan, MSan in CI. Big-endian correctness tests.
 - Worst-case runtime bound, stated and measured.
 
@@ -361,8 +501,8 @@ corpus; frame size and workspace within budget.*
 - `backend_quetschn.c` modelled directly on `backend_lz4.c`, including `setup_params` validation
   (`7b0f677c7bd5`) and `pr_fmt` (`70922d5ef84a`).
 - QEMU test rig: a VM with zram as swap, driven into memory pressure by a reproducible workload.
-  Measure **actual** `mm_stat` memory used — this is where the class-fragmentation effect of §3.1
-  shows up and where the userspace bucket model gets validated or falsified.
+  Measure **actual** `mm_stat` memory used. This is where the fragmentation effect of §3.1 shows up
+  and where the userspace cost model gets validated or falsified.
 - Run `tools/testing/selftests/zram/`; add cases as needed.
 - Correctness under `CONFIG_DEBUG_ATOMIC_SLEEP`, `PROVE_LOCKING`, KASAN, and with preemption disabled.
   Minchan's zBeWalgo panic was exactly this class of bug.
@@ -372,25 +512,26 @@ confirms the userspace prediction within 2%.*
 
 ### Phase 6 — arm64 validation (**hard gate before Phase 7**)
 
-Unavoidable. No arm64 numbers, no patch. Options in descending order of value:
+Unavoidable. No arm64 numbers, no patch. The two boards from Phase 0 have produced arm64 timings since
+Phase 2, so this phase no longer starts from zero. What is still missing is phone silicon and phone
+data. Options in descending order of value:
 
-1. A rooted Android phone (real silicon, real ART heap data, little-core pinning under `cpuset`).
-2. An arm64 SBC or cloud instance (Graviton, Ampere, Pi 5) — real timings, desktop-class data.
-3. Ask Dave Rodgman (ARM, author of lzo-rle) or the linux-mm list for help measuring. A good Phase 2
-   publication makes this ask reasonable rather than presumptuous.
+1. A rooted Android phone (real silicon, real ART heap data, little-core pinning under `cpuset`),
+   ideally one that runs a 16 KiB page kernel.
+2. Ask Dave Rodgman (ARM, author of lzo-rle), the Android kernel team or the linux-mm list for help
+   measuring. The Phase 2 publication makes this ask reasonable rather than presumptuous.
 
-Also needed: an arm64 corpus. Android page data may differ substantially from desktop data (ART heap
-layout, different allocator). If quetschn was tuned on desktop pages and loses on Android pages, that
-is a late and expensive discovery — which is why the Phase 3 design should stay parameterised rather
-than hand-tuned to one corpus.
+Also needed: an arm64 corpus from a real phone. Android page data may differ from desktop data (ART
+heap layout, different allocator). The Cuttlefish corpus from Phase 1 already gives a first answer to
+that, so a surprise here should be small. The Phase 3 design still stays parameterised rather than
+hand-tuned to one corpus.
 
-*Gate: C1–C3 hold on arm64, on both a big and a little core.*
+*Gate: C1–C3 hold on arm64, on both a big and a little core, with 4 KiB and 16 KiB pages.*
 
 ### Phase 7 — Upstreaming (6+ months, expect v5+)
 
-- Before anything: post the Phase 2 benchmark results to linux-mm / LKML **without** proposing a codec.
-  Build credibility, invite criticism of the methodology, and find out whether maintainers even want a
-  new backend. Cheap, and it de-risks the whole project.
+- The benchmark and the question about a new backend were already posted after Phase 2. Before the
+  RFC, reply in that thread with the updated numbers, so the series does not arrive cold.
 - Then an RFC series. Cover letter modelled on `5ee4014af99f`: corpus provenance, distribution, both
   architectures, paired per-page regression analysis, fuzzing status, workspace comparison.
 - Series shape: (1) `lib/quetschn` + spec + `MAINTAINERS`, (2) zram backend + Kconfig/Makefile,
@@ -400,6 +541,8 @@ than hand-tuned to one corpus.
   this), Dave Rodgman.
 - Commit to maintaining it. A `MAINTAINERS` entry is a multi-year promise and maintainers will read it
   as one.
+- After the merge: propose `CONFIG_ZRAM_BACKEND_QUETSCHN=y` for Android's `gki_defconfig`, with the
+  phone numbers from Phase 6. Without that, the codec is merged but not on phones (§1).
 
 ---
 
@@ -412,7 +555,7 @@ src/quetschn_ref.c          independent reference decoder (from FORMAT.md only)
 FORMAT.md                   byte-exact format specification
 tools/collect/              corpus collectors (C++)
 tools/analyze/              page statistics (C++)
-bench/                      harness: nanobench + kernel-sourced codecs
+bench/                      harness: per-page timing loop + kernel-sourced codecs
 bench/kernel_codecs/        lib/lzo, lib/lz4, lib/zstd, lib/842 built for userspace
 fuzz/                       AFL++ / libFuzzer targets
 kernel/                     backend_quetschn.c + Kconfig/Makefile fragments + patch generator
@@ -438,25 +581,31 @@ results/                    published measurements (no raw pages, ever)
 
 | # | Risk | Evidence | Mitigation / fallback |
 | --- | --- | --- | --- |
-| R1 | **No arm64 hardware.** Phones are the users; lzo-rle was merged on arm64-first data. | Confirmed constraint | Phase 6 is a hard gate. Budget for an SBC or cloud instance early; a rooted phone is worth real money here. Do not submit without it. |
-| R2 | **Insufficient headroom over lz4+dict.** Nobody has measured this. The whole project rests on an unverified assumption. | Handoff reflection §2 | Phase 2 gate answers it before any codec work. Fallback: publish the benchmark, then pursue a *targeted improvement to lz4 or lzo-rle for 4 KiB inputs* — that is exactly what lzo-rle was, and it is a much easier merge. |
-| R3 | **Maintainers do not want another backend.** Each one is permanent maintenance cost. | zBeWalgo reached v7 and died | Ask first, in Phase 7's pre-RFC posting, before investing in the patch series. A "no" discovered early redirects to R2's fallback. |
-| R4 | **Desktop-tuned codec loses on Android data.** Different heap layout, different allocator. | Handoff reflection §2 | Keep Phase 3 designs parameterised, not hand-tuned. Obtain Android pages before freezing the format. |
+| R1 | **No arm64 hardware.** Phones are the users; lzo-rle was merged on arm64-first data. | Confirmed constraint | Two arm64 boards (out-of-order and in-order) are bought in Phase 0, so arm64 timings exist from Phase 2 on. Phase 6 adds a phone and is a hard gate; a rooted phone is worth real money here. Do not submit without it. |
+| R2 | **Insufficient headroom over lz4+dict.** Nobody has measured this. The whole project rests on an unverified assumption. | No measurement of `lz4`+dict on page data known to this plan | Phase 2 gate answers it before any codec work. Fallback: publish the benchmark, then pursue a *targeted improvement to lz4 or lzo-rle for page-sized inputs* — that is exactly what lzo-rle was, and it is a much easier merge. |
+| R3 | **Maintainers do not want another backend.** Each one is permanent maintenance cost. | zBeWalgo reached v7 and died | Ask right after Phase 2, together with the benchmark posting, before any codec work. A "no" discovered early redirects to R2's fallback. |
+| R4 | **Desktop-tuned codec loses on Android data.** Different heap layout, different allocator. | ART and bionic lay out the heap differently from glibc desktop processes; not measured yet | Cuttlefish pages in the Phase 1 corpus, so the difference is measured before Phase 3. Keep Phase 3 designs parameterised, not hand-tuned. Obtain real phone pages before freezing the format. |
 | R5 | **zram backend API churn.** 2024 rewrite, 2025 preemption series, 2026 param and naming changes. | `git log drivers/block/zram/` | Codec core has zero kernel-API dependency; all churn is absorbed by `backend_quetschn.c`. Rebase against mainline in CI. |
-| R6 | **Fuzz-safety or a sleeping-in-atomic bug burns maintainer goodwill.** | Biggers's objection; Minchan's panic | Phase 4 and the Phase 5 KASAN/`DEBUG_ATOMIC_SLEEP` gate exist for this. OSS-Fuzz before submission. |
+| R6 | **Fuzz-safety or a sleeping-in-atomic bug burns maintainer goodwill.** | Biggers's objection; Minchan's panic | Phase 4 and the Phase 5 KASAN/`DEBUG_ATOMIC_SLEEP` gate exist for this. Continuous fuzzing with ClusterFuzzLite before submission; OSS-Fuzz if it accepts the project. |
 | R7 | **Timeline.** 3–8 h/week against an 18–24 month path. | lzo-rle: 4 months, v5, paid work, existing codec | Each phase publishes independently. Phase 2 alone is a worthwhile public contribution. |
-| R8 | **Employer rules on open-source side projects**, particularly kernel contributions with a `MAINTAINERS` entry. | Handoff reflection §3 | Check before Phase 7, ideally before Phase 0. Cheap to check, expensive to discover late. |
+| R8 | **Employer rules on open-source side projects**, particularly kernel contributions with a `MAINTAINERS` entry. | Not checked yet | Check now, as part of Phase 0. Code and licenses already exist. Cheap to check, expensive to discover late. |
+| R9 | **The input size changes under the codec.** 16 KiB page kernels on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5; multi-page compression proposed on the lists, not merged at `986c24e0fe44` | `PAGE_SIZE` is a parameter of format, cost model and harness from Phase 0. Every table from Phase 2 on has a 16 KiB column. Watch the zram and mm lists for multi-page compression, and rerun the Phase 2 gate if it gets merged. |
+| R10 | **No p99 decode win over `lz4`.** C2 rests on the branch-misprediction argument of §3.2, which is unmeasured. | Kernel `lz4` decode is mostly `memcpy` | Phase 2b spike measures it in 2 weeks, before Phase 3. If it fails, fall back to the R2 route. |
 
 ---
 
 ## 9. Immediate next actions
 
-1. Phase 0 repository foundation: licenses, SPDX, CI with the kernel-flag build job.
-2. Write the zsmalloc bucket-cost model (merged class table, `huge_class_size` cliff) as a standalone,
-   tested C++ component — it is the core of every measurement that follows.
-3. Build the resident-anonymous corpus collector; collect a first small corpus locally.
-4. Stand up the harness with `lzo-rle`, `lz4` and `zstd -1` built from the local kernel tree, and
-   produce the first bucket-bytes and p99-latency table.
+1. Check the employer rules (R8).
+2. Order the two arm64 boards (§4).
+3. Finish Phase 0: SPDX headers, CI with the kernel-flag build job. Licenses and `README.md` are done.
+4. Write the zsmalloc cost model (merged class table, zspage tail waste, `huge_class_size` cliff,
+   `PAGE_SIZE` as a parameter) as a standalone, tested C++ component. It is the core of every
+   measurement that follows. Its first test: reproduce the tables in §3.1 and §3.5.
+5. Build the swap-device corpus collector (Phase 1); collect a first small corpus in a VM.
+6. Stand up the harness with `lzo-rle`, `lz4` and `zstd -1` built from the local kernel tree with
+   kernel flags, and produce the first Σ cost and p99-latency table, on x86-64 and on arm64 once the
+   boards arrive.
 
-Step 4 is the cheapest check that could disprove the project's central assumption. Reach it before
+Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.

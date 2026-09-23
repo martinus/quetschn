@@ -1,6 +1,6 @@
 # quetschn
 
-Fast compression for 4 KiB memory pages, built for Linux zram.
+Fast compression for memory pages, built for Linux zram.
 
 See [PLAN.md](PLAN.md) for the goal, the evidence behind it, and the plan.
 
