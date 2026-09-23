@@ -165,7 +165,11 @@ Consequences:
   zspage is fixed per class and is already in the cost column above, so a userspace model gets it
   exactly. **Fragmentation** from partly filled zspages depends on the size distribution and on
   allocation history, so two codecs with the same Σ cost can still use different amounts of memory.
-  Only a real zram run measures fragmentation (Phase 5).
+  Only a real zram run measures fragmentation (Phase 5). On the development machine the difference
+  was large: for the pages of the first zram dump (Phase 1) the model gives 604 MB, zram's
+  `mem_used_total` was 954 MB. Some minutes later zram had compacted (`pages_compacted` from 641 229
+  to 725 853) and used 628 MB for 3% more pages, close to the model. Fragmentation comes and goes,
+  and at its worst it is larger than the differences between codecs.
 
 The primary ratio metric for this project is therefore **Σ zsmalloc cost** (the last column), plus
 the **count of pages over the cliff**. Not mean compression ratio.
@@ -345,6 +349,12 @@ the `PAGEMAP_SCAN` ioctl (Linux 6.7+) and falls back to reading `/proc/<pid>/pag
 so it runs on the old phone too. Pages that are already swapped are counted but never read, because
 reading them would swap them back in. On the development machine (Fedora, zram swap) a first run found
 1.8 million resident and 313 000 already swapped pages.
+
+**Collector 2, the `dd` variant, is done:** `quetschn-import-raw` turns a `dd` of `/dev/zram0` into a
+corpus (`README.md` has the commands). The first dump of the development machine has 460 923 pages
+that are not zero. It also checks the harness against the kernel: `lzo-rle` built in userspace
+reproduces zram's `mm_stat` for these pages to the last digit, 11 852 pages stored uncompressed
+(`huge_pages`), 5684 same-filled (`same_pages`) and 590 800 867 compressed bytes (`compr_data_size`).
 
 **Reproducibility strategy.** Two corpora:
 - *private*: real dumps, never leave the machine, used for the headline numbers.
@@ -620,11 +630,12 @@ results/                    published measurements (no raw pages, ever)
 3. Finish Phase 0: the kernel-flag build job, which needs the codec stub. Licenses, `README.md`,
    CMake, doctest and CI are done.
 4. The zsmalloc cost model is done: `bench/zsmalloc_cost.cpp`, with `PAGE_SIZE` as a
-   parameter. What is still open is a check against a real `/sys/kernel/debug/zsmalloc/<pool>/classes`
-   dump; the tests only use the kernel docs and hand arithmetic.
-5. The resident-memory collector is done: `quetschn-collect-resident`. Next in Phase 1: read the
-   zram device of this machine with `dd` for the first corpus of really swapped pages (313 000 of
-   them right now), then the scripted VM workloads.
+   parameter. The first zram dump confirms `huge_class_size`: the harness stores exactly as many
+   pages uncompressed as zram (Phase 1). Still open is a check of the other classes against
+   `/sys/kernel/debug/zsmalloc/<pool>/classes`, which Fedora's kernel does not have.
+5. Both collectors are done: `quetschn-collect-resident`, and `quetschn-import-raw` for a `dd` of the
+   zram device. Next in Phase 1: a second zram dump some days later, to train a dictionary on
+   swapped pages and measure it on other swapped pages (§5.3), then the scripted VM workloads.
 6. The harness runs `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags, with
    and without dictionary: `quetschn-bench-<codec> [--level n] [--dict file]`, one binary per codec.
    `quetschn-split-corpus` splits a corpus by process name, so a dictionary is trained on programs it
@@ -656,6 +667,28 @@ results/                    published measurements (no raw pages, ever)
    costs 73 to 89 KiB per zram device for nothing. And the `zstd --train ... --split=4096` in the
    f0f6f7871430 commit message is not an option zstd 1.5.7 accepts; `-B4096` cuts the samples into
    pages.
+
+   The same codecs on the pages zram really holds, the first zram dump (Phase 1): 455 239 pages
+   measured, 5684 same-filled skipped. Same machine and setup, median of 3 runs per page. The
+   dictionary is the one from above, trained on resident pages. Memory per CPU and per device are the
+   same as in the table above:
+
+   | codec | Σ zsmalloc cost | stored uncompressed | compress p99 | decompress cold p50 / p99 |
+   | --- | --- | --- | --- | --- |
+   | `lz4` | 34.5% | 10 523 | 3540 ns | 1660 / 2930 ns |
+   | `lz4` + dict | 33.7% | 11 783 | 3910 ns | 1670 / 3060 ns |
+   | `lzo-rle` | 32.4% | 11 852 | 3770 ns | 1660 / 3040 ns |
+   | `lzo` | 31.9% | 11 831 | 3770 ns | 2020 / 6270 ns |
+   | `zstd -1` | 26.9% | 9638 | 8680 ns | 3290 / 4730 ns |
+   | `zstd -1` + dict | 26.8% | 9846 | 9930 ns | 3020 / 5560 ns |
+   | `zstd 3` (zram default) | 23.6% | 7491 | 15 700 ns | 3990 / 7080 ns |
+   | `zstd 3` + dict | 24.2% | 7499 | 18 530 ns | 3860 / 7210 ns |
+
+   The gate proxy holds up on swapped pages: `zstd -1` needs 16.9% less Σ zsmalloc cost than
+   `lzo-rle`, which is again better than `lz4` + dict. A dictionary trained on resident pages saves
+   `lz4` only 2.3% on swapped pages, and makes `zstd 3` worse. Also, `lz4` + dict stores 1260 more
+   pages uncompressed than `lz4`; I have not looked into why yet. Still not the gate: one machine,
+   one dump, no confidence intervals, and the dictionary was trained on a different page population.
 
 Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
 writing a single line of codec.
