@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: MIT OR GPL-2.0-only
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a PR makes the previous run obsolete. Runs on main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# The default shell has no pipefail, which would hide a failing test behind `tee`.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      # Pinned from pip, because the runner's apt has a different clang-format, and two versions
+      # never agree on every line.
+      - run: pip install clang-format==21.1.8
+      - run: clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: gcc-debug-sanitize, cxx: g++, build_type: Debug, sanitize: 'ON'}
+          - {name: clang-release, cxx: clang++, build_type: Release, sanitize: 'OFF'}
+    name: test (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DQUETSCHN_WERROR=ON
+          -DQUETSCHN_SANITIZE=${{ matrix.sanitize }}
+      - run: cmake --build build
+      # A binary that ran no test at all also exits 0, so check that doctest ran assertions.
+      - run: ./build/quetschn_test | tee test.log
+      - run: |
+          grep -E 'assertions: +[1-9][0-9]* \| +[1-9][0-9]* passed \| +0 failed' test.log
+
+  # The one required check. A job whose dependency failed is skipped, and a skipped required check
+  # counts as passed, so this needs if: always() and has to look at every result itself.
+  ci-ok:
+    if: always()
+    needs: [format, test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test "${{ needs.format.result }}" = success
+          test "${{ needs.test.result }}" = success

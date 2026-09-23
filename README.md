@@ -4,6 +4,16 @@ Fast compression for memory pages, built for Linux zram.
 
 See [PLAN.md](PLAN.md) for the goal, the evidence behind it, and the plan.
 
+## Build and test
+
+```sh
+cmake -S . -B build -G Ninja -DQUETSCHN_WERROR=ON
+cmake --build build
+./build/quetschn_test
+```
+
+`-DQUETSCHN_SANITIZE=ON` builds with ASan and UBSan. Formatting is checked with clang-format 21.
+
 ## Licensing
 
 quetschn is dual licensed under **`MIT OR GPL-2.0-only`**. You may use it under
