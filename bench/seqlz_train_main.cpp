@@ -3,7 +3,7 @@
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
 // lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 321 bytes that zram's dictionary parameter can carry.
+// 577 bytes that zram's dictionary parameter can carry.
 
 #include "harness.h"
 #include "kernel_codecs/zram_codec.h"
@@ -151,14 +151,14 @@ int main(int argc, char** argv) {
             auto extra = 0U;
             for (auto const& s : parsed.sequences) {
                 token[seqlz_token(s.literals, s.match)] += 1;
-                if (s.literals >= 15) {
-                    ll[seqlz_len_symbol(s.literals - 15, &extra)] += 1;
+                if (s.literals >= SEQLZ_LL_CAP) {
+                    ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
                 }
                 if (s.match == 0) {
                     continue;
                 }
-                if (s.match - 4 >= 15) {
-                    ml[seqlz_len_symbol(s.match - 4 - 15, &extra)] += 1;
+                if (s.match - 4 >= SEQLZ_ML_CAP) {
+                    ml[seqlz_len_symbol(s.match - 4 - SEQLZ_ML_CAP, &extra)] += 1;
                 }
                 auto r = 0U;
                 while (r < 3 && rep[r] != s.offset) {

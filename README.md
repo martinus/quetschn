@@ -75,8 +75,10 @@ sequences and literals, see `docs/explored-designs.md`. `quetschn-seqlz-train` t
 seqlz prototype; `explore/seqlz_default_tables.c` says how the compiled-in ones were made.
 
 For `perf`, `quetschn-bench-interleaved --codecs <codec> --corpus <base> --decode-loop <n>` compresses
-every page once and then only decodes, n times. The difference of two runs with different n, e.g. with
-`perf stat -e cycles,instructions,branch-misses`, is the decoder alone.
+every page once and then only decodes, n times, and prints warm decode percentiles per page; with
+`--cold`, 2 MiB of other data are read and the page is flushed before each decode. The difference of
+two runs with different n, e.g. with `perf stat -e cycles,instructions,branch-misses`, is the decoder
+alone. `perf record -j any,u -e branch-misses` shows the mispredicted branches on Zen 4.
 
 Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
 `quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on

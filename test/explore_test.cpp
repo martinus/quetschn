@@ -288,12 +288,12 @@ TEST_CASE("seqlz: pages from random sequences come back, with every kind of copy
     }
 }
 
-TEST_CASE("seqlz: the token holds both lengths up to 15, the last sequence has match length 0") {
+TEST_CASE("seqlz: the token holds ll up to 15 and ml - 4 up to 31, the last sequence has ml - 4 = 0") {
     CHECK(seqlz_token(0, 4) == 0);
     CHECK(seqlz_token(3, 9) == 3 + 16 * 5);
-    CHECK(seqlz_token(14, 18) == 14 + 16 * 14);
-    CHECK(seqlz_token(15, 19) == 15 + 16 * 15);
-    CHECK(seqlz_token(4000, 3000) == 15 + 16 * 15);
+    CHECK(seqlz_token(14, 34) == 14 + 16 * 30);
+    CHECK(seqlz_token(15, 35) == 15 + 16 * 31);
+    CHECK(seqlz_token(4000, 3000) == 15 + 16 * 31);
     CHECK(seqlz_token(7, 0) == 7);
     CHECK(seqlz_token(20, 0) == 15);
 }
@@ -330,7 +330,7 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     auto t = default_tables();
     auto l = seqlz_default_lz4;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.ll[0] = 11; // longer than SEQLZ_MAX_BITS
+    l.ll[0] = 10; // longer than SEQLZ_MAX_BITS
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     l = seqlz_default_lz4;
     l.off[0] = 1; // together with the others more codes than fit: over-subscribed
@@ -340,10 +340,40 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     l = seqlz_default_lz4;
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    // 512 tokens of 9 bits each fill the table exactly, a complete code
     l = seqlz_default_lz4;
-    l.token[0] = 11; // tokens may have 11 bits, one more than the others
+    std::memset(l.token, 9, sizeof(l.token));
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.token[0] = 12;
+    // tokens may have 11 bits, two more than the others. Tokens 0 to 2 with 10, 11 and 11 bits need
+    // the room of one 9-bit code, so two others get 8 bits: complete again.
+    auto complete = [&] {
+        std::memset(l.token, 9, sizeof(l.token));
+        l.token[0] = 10;
+        l.token[1] = 11;
+        l.token[2] = 11;
+        l.token[4] = 8;
+        l.token[5] = 8;
+    };
+    complete();
+    CHECK(seqlz_tables_init(t.get(), &l) == 0);
+    l.token[5] = 9;
+    CHECK(seqlz_tables_init(t.get(), &l) == -1); // a gap of one 9-bit code
+    complete();
+    l.token[2] = 12; // two 12-bit codes instead of an 11 and a 9-bit one, a 9-bit one becomes 8
+    l.token[6] = 12;
+    l.token[7] = 8;
+    CHECK(seqlz_tables_init(t.get(), &l) == -1); // complete, but longer than 11 bits
+    // A complete 11-bit code, plus one code of 12 bits: the Kraft sum over 11 bits is complete, only
+    // the length check stops the 12-bit code.
+    complete();
+    l.token[10] = 0;
+    l.token[11] = 8;
+    CHECK(seqlz_tables_init(t.get(), &l) == 0);
+    l.token[10] = 12;
+    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    // a gap: every bit pattern must start a code, the decoder does not check
+    l = seqlz_default_lz4;
+    l.off[0] = static_cast<unsigned char>(l.off[0] + 1);
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
 }
 
