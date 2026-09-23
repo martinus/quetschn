@@ -680,6 +680,25 @@ prefetch, p50 / p99 in ns:
 For pages recompressed in the background, where the write does not wait, `seqlz-hc` needs 8% more
 memory than `zstd` and reads 43% faster at p99, 380 ns behind `lz4`.
 
+**`seqlz-hc-lit`: the literals Huffman coded too**, the gap to `zstd`'s ratio (`seqlz_encode_coded()`,
+`seqlz_decode_scratch()`, experimental). A page with coded literals has its own header, 256 static code
+lengths for bytes trained with the others, and the literals are decoded into a per-CPU scratch buffer
+first, then the sequences run as before. `zstd` here at zram's default level. Quick benchmark:
+
+| variant | Σ zsmalloc cost | decode cycles | cold p50 / p99 |
+| --- | --- | --- | --- |
+| `seqlz-hc` | 25.6% | 7515 | 1320 / 3120 ns |
+| literals in one stream, coded if smaller | 24.1% | 11 901 | 2150 / 6210 ns |
+| one stream, coded if 1/8 smaller | 24.6% | 9522 | 1530 / 5270 ns |
+| four streams, literal k in stream k % 4, 1/8 | 24.9% | 8146 | 1370 / 3840 ns |
+| four streams, coded if smaller | 24.3% | | 1760 / 4280 ns |
+| four streams, 1/16 | 24.4% | | 1590 / 4010 ns |
+| `zstd` | 23.6% | 16 928 | 3350 / 6320 ns |
+
+One stream is one chain of table lookups per literal, and the pages with the most literals made the
+p99 as slow as `zstd`'s; four streams are four chains side by side, as `zstd` does it. With 1/16,
+`seqlz-hc-lit` needs 3.4% more memory than `zstd` and decodes in 37% less time at p99, 53% at p50.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.

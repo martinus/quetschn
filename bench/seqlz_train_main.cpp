@@ -200,6 +200,7 @@ int main(int argc, char** argv) {
         auto token = std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 1.0);
         auto ll = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto ml = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
+        auto lit = std::vector<double>(256, 1.0);
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto state = std::make_unique<seqlz_state>();
         auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
@@ -229,6 +230,16 @@ int main(int argc, char** argv) {
                 }
                 sequences = quetschn::parse_lz4(dst.data(), len).sequences;
             }
+            // the literal bytes, for pages with coded literals
+            {
+                auto in = std::size_t{0};
+                for (auto const& s : sequences) {
+                    for (std::size_t k = 0; k < s.literals; ++k) {
+                        lit[static_cast<unsigned char>(src[in + k])] += 1;
+                    }
+                    in += s.literals + s.match;
+                }
+            }
             // the same symbols and the same repeat offset as seqlz_encode()
             auto last = 1U;
             auto extra = 0U;
@@ -254,9 +265,11 @@ int main(int argc, char** argv) {
         auto const l_token = token_lengths(token);
         auto const l_ll = code_lengths(ll, SEQLZ_MAX_BITS);
         auto const l_ml = code_lengths(ml, SEQLZ_MAX_BITS);
+        auto const l_lit = code_lengths(lit, SEQLZ_LIT_BITS);
         std::copy(l_token.begin(), l_token.end(), lengths.token);
         std::copy(l_ll.begin(), l_ll.end(), lengths.ll);
         std::copy(l_ml.begin(), l_ml.end(), lengths.ml);
+        std::copy(l_lit.begin(), l_lit.end(), lengths.lit);
 
         if (!blob.empty()) {
             auto out = std::ofstream(blob, std::ios::binary);
@@ -278,6 +291,7 @@ int main(int argc, char** argv) {
         print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);
+        print("lit", lengths.lit, 256);
         std::printf("}\n");
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

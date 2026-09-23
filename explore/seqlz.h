@@ -68,6 +68,7 @@ struct seqlz_lengths {
     unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
     unsigned char ml[SEQLZ_LEN_SYMBOLS];
+    unsigned char lit[256]; /* for pages with coded literals, see seqlz_encode_coded() */
 };
 
 /* symbol and extra bits of a length, see above */
@@ -122,8 +123,26 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
                           unsigned int dst_cap);
 
 /* 0 on success, -1 if src is not a valid page for these tables. Never reads outside
- * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE). */
+ * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE). A page with coded literals is
+ * not valid here, see seqlz_decode_scratch(). */
 int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst);
+
+/*
+ * EXPERIMENT, for zram's recompression: the literals Huffman coded too, with the lit table, if that is
+ * smaller than the raw bytes by 1/16. Such a page starts with u16 0x8000 | literal bytes, 4 u16 bytes of
+ * the literals' four bitstreams (literal k in stream k % 4), then those, then the sequences' bitstream. seqlz_decode_scratch()
+ * decodes it into scratch first, SEQLZ_SCRATCH bytes; for any other page it is seqlz_decode().
+ */
+#define SEQLZ_LIT_BITS 11U
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 32U) /* 16 for the literal copies, 19 decoded past the end */
+unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
+                                const struct seqlz_sequence* seq,
+                                unsigned int n,
+                                const unsigned char* literals,
+                                unsigned int n_literals,
+                                void* dst,
+                                unsigned int dst_cap);
+int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
 
 /* the token of a sequence, see above */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigned int cls) {

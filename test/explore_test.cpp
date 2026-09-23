@@ -870,3 +870,59 @@ TEST_CASE("bytelz: any input is safe for the decoder") {
         }
     }
 }
+
+TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and are safe to decode") {
+    auto const t = default_tables(seqlz_default_lz4hc);
+    auto rng = std::mt19937_64(89);
+    auto out = std::vector<unsigned char>(4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto coded_pages = 0;
+    auto shortest = std::array<unsigned char, 256>{};
+    for (unsigned k = 0; k < 256; ++k) {
+        shortest[k] = static_cast<unsigned char>(k);
+    }
+    std::stable_sort(shortest.begin(), shortest.end(), [](auto a, auto b) {
+        return seqlz_default_lz4hc.lit[a] < seqlz_default_lz4hc.lit[b];
+    });
+    for (int round = 0; round < 1500; ++round) {
+        CAPTURE(round);
+        auto p = random_seqlz_page(rng, round % 4);
+        // literals from the 16 bytes with the shortest codes, so that coding them pays
+        for (auto& b : p.literals) {
+            b = shortest[rng() % 16];
+        }
+        {
+            auto in = std::size_t{0}, pos = std::size_t{0};
+            for (auto const& s : p.sequences) {
+                for (unsigned k = 0; k < s.literals; ++k) {
+                    p.bytes[pos++] = p.literals[in++];
+                }
+                for (unsigned k = 0; k < s.match; ++k, ++pos) {
+                    p.bytes[pos] = p.bytes[pos - s.offset];
+                }
+            }
+        }
+        auto c = std::vector<unsigned char>(2 * 4096);
+        auto const len = seqlz_encode_coded(t.get(),
+                                            p.sequences.data(),
+                                            static_cast<unsigned>(p.sequences.size()),
+                                            p.literals.data(),
+                                            static_cast<unsigned>(p.literals.size()),
+                                            c.data(),
+                                            2 * 4096);
+        REQUIRE(len > 0);
+        c.resize(len);
+        auto const coded = (c[1] & 0x80) != 0 && len > 1;
+        coded_pages += coded ? 1 : 0;
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == p.bytes);
+        CHECK(seqlz_decode(t.get(), c.data(), len, out.data()) == (coded ? -1 : 0));
+        // flipped bits: never unsafe
+        for (int f = 0; f < 3; ++f) {
+            c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
+        }
+        auto const ret = seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data());
+        CHECK((ret == 0 || ret == -1));
+    }
+    CHECK(coded_pages > 1000);
+}
