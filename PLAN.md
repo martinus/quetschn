@@ -121,8 +121,11 @@ Two more details decide the real cost:
   `pages_per_zspage × PAGE_SIZE / objs_per_zspage` bytes per object, which is more than its slot size.
 
 Computed cost for a page compressed to `comp_len` bytes (64-bit, 4 KiB pages,
-`CONFIG_ZSMALLOC_CHAIN_SIZE=8`, the default). The numbers come from a port of the merge loop and of
-`calculate_zspage_chain_size()` at `986c24e0fe44`. `huge_class_size` depends on the config, so the
+`CONFIG_ZSMALLOC_CHAIN_SIZE=8`, the default). The numbers come from `bench/zsmalloc_cost.cpp`, a port
+of the merge loop and of `calculate_zspage_chain_size()` at `986c24e0fe44`. It reproduces the huge
+class watermark for all 13 chain sizes and the class listings in `Documentation/mm/zsmalloc.rst`,
+except one row of the chain size 16 listing that contradicts the kernel code (see
+`test/zsmalloc_cost_test.cpp`). `huge_class_size` depends on the config, so the
 harness must read it from `/sys/kernel/debug/zsmalloc/` or recompute it, never hardcode it:
 
 | comp_len | class slot | pages / objs per zspage | cost per page |
@@ -556,7 +559,9 @@ FORMAT.md                   byte-exact format specification
 tools/collect/              corpus collectors (C++)
 tools/analyze/              page statistics (C++)
 bench/                      harness: per-page timing loop + kernel-sourced codecs
+bench/zsmalloc_cost.*       zsmalloc cost model (§3.1)
 bench/kernel_codecs/        lib/lzo, lib/lz4, lib/zstd, lib/842 built for userspace
+test/                       doctest unit tests
 fuzz/                       AFL++ / libFuzzer targets
 kernel/                     backend_quetschn.c + Kconfig/Makefile fragments + patch generator
 results/                    published measurements (no raw pages, ever)
@@ -598,10 +603,11 @@ results/                    published measurements (no raw pages, ever)
 
 1. Check the employer rules (R8).
 2. Order the two arm64 boards (§4).
-3. Finish Phase 0: SPDX headers, CI with the kernel-flag build job. Licenses and `README.md` are done.
-4. Write the zsmalloc cost model (merged class table, zspage tail waste, `huge_class_size` cliff,
-   `PAGE_SIZE` as a parameter) as a standalone, tested C++ component. It is the core of every
-   measurement that follows. Its first test: reproduce the tables in §3.1 and §3.5.
+3. Finish Phase 0: the kernel-flag build job, which needs the codec stub. Licenses, `README.md`,
+   CMake, doctest and CI are done.
+4. The zsmalloc cost model is done: `bench/zsmalloc_cost.cpp`, with `PAGE_SIZE` as a
+   parameter. What is still open is a check against a real `/sys/kernel/debug/zsmalloc/<pool>/classes`
+   dump; the tests only use the kernel docs and hand arithmetic.
 5. Build the swap-device corpus collector (Phase 1); collect a first small corpus in a VM.
 6. Stand up the harness with `lzo-rle`, `lz4` and `zstd -1` built from the local kernel tree with
    kernel flags, and produce the first Σ cost and p99-latency table, on x86-64 and on arm64 once the

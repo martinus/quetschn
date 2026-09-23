@@ -1,0 +1,5 @@
+# Page dumps contain keys, passwords and personal data. Never commit them.
+corpus/
+*.pages
+
+build*/
