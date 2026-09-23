@@ -141,6 +141,10 @@ int main(int argc, char** argv) {
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto state = std::make_unique<seqlz_state>();
         auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+        // what the tables are for, in the output
+        auto const matcher =
+            own_matcher ? std::string("seqlz") : std::string(codec->name) + " level " + std::to_string(params.level);
+        auto sequences = std::vector<quetschn::sequence>(); // of one page, reused
         auto pages = std::size_t{0};
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const src = c.page(i);
@@ -148,12 +152,12 @@ int main(int argc, char** argv) {
                 continue;
             }
             ++pages;
-            auto parsed = quetschn::parsed_page{};
             if (own_matcher) {
                 // seqlz's own matcher, as seqlz-fast uses it
                 auto const n = seqlz_find(state.get(), src.data(), seqs.data());
+                sequences.clear();
                 for (unsigned k = 0; k < n; ++k) {
-                    parsed.sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});
+                    sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});
                 }
             } else {
                 auto len = static_cast<unsigned int>(dst.size());
@@ -161,12 +165,12 @@ int main(int argc, char** argv) {
                     0) {
                     throw std::runtime_error(std::string(codec->name) + ": compress failed");
                 }
-                parsed = quetschn::parse_lz4(dst.data(), len);
+                sequences = quetschn::parse_lz4(dst.data(), len).sequences;
             }
             // the same symbols and the same repeat offsets as seqlz_encode()
             auto rep = std::array<unsigned, 3>{1, 4, 8};
             auto extra = 0U;
-            for (auto const& s : parsed.sequences) {
+            for (auto const& s : sequences) {
                 token[seqlz_token(s.literals, s.match)] += 1;
                 if (s.literals >= SEQLZ_LL_CAP) {
                     ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
@@ -213,12 +217,7 @@ int main(int argc, char** argv) {
             if (!out) {
                 throw std::runtime_error("cannot write " + blob);
             }
-            std::printf("%zu pages, %s level %d, %zu bytes to %s\n",
-                        pages,
-                        own_matcher ? "seqlz" : codec->name,
-                        params.level,
-                        sizeof(lengths),
-                        blob.c_str());
+            std::printf("%zu pages, %s, %zu bytes to %s\n", pages, matcher.c_str(), sizeof(lengths), blob.c_str());
             return 0;
         }
         auto print = [](char const* name, unsigned char const* l, unsigned n) {
@@ -228,11 +227,7 @@ int main(int argc, char** argv) {
             }
             std::printf("},\n");
         };
-        std::printf("/* trained on %zu pages of %s, %s level %d */\n{\n",
-                    pages,
-                    base.c_str(),
-                    own_matcher ? "seqlz" : codec->name,
-                    params.level);
+        std::printf("/* trained on %zu pages of %s, %s */\n{\n", pages, base.c_str(), matcher.c_str());
         print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);

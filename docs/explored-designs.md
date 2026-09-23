@@ -265,8 +265,10 @@ its own matcher, greedy like `lz4`'s fast mode: at every position the last offse
 from a hash of 4 bytes, the step growing with the distance to the last match. The hash table has
 16-bit positions and is never cleared: an entry from an earlier page only costs a comparison that
 fails. Each sequence is coded as soon as it is found; literals go to the front of the buffer, the
-bitstream behind the room of a page of literals and is moved in at the end. Its own tables are
-trained on its own matches. Per CPU: 8 KiB hash table and 6 KiB for sequences, `lz4` has 16 KiB.
+bitstream behind the room of a page of literals and is moved in at the end. zram's buffer has two
+pages, and that is always enough: at most 31 bits per 4 bytes of page, so at most 3972 bytes of
+bitstream, and 4076 fit behind the literals, for any tables. Its own tables are trained on its own
+matches. Per CPU: an 8 KiB hash table, `lz4` has 16 KiB.
 
 | codec | Σ zsmalloc cost | compress p50 / p99, page in cache | compress p50 / p99, page cold |
 | --- | --- | --- | --- |

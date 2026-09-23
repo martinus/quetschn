@@ -11,8 +11,6 @@
 #include "seqlz.h"
 #include "zram_codec.h"
 
-#define MAX_SEQUENCES (SEQLZ_PAGE / 4U + 2U)
-
 struct seqlz_ctx {
     void* lz4_mem;
     unsigned char* lz4_out;
@@ -32,7 +30,8 @@ static int setup(struct quetschn_params* p, const struct seqlz_lengths* built_in
     t = quetschn_zalloc(seqlz_tables_size(), &p->allocated);
     if (!t)
         return -1;
-    if (seqlz_tables_init(t, lengths)) {
+    /* the encoder needs a code for every symbol: tables without one fail here, not at every page */
+    if (seqlz_tables_init(t, lengths) || !seqlz_all_symbols(t)) {
         quetschn_free(t, &p->allocated);
         return -1;
     }
@@ -78,7 +77,7 @@ static int create(struct quetschn_stream* s, unsigned int workspace) {
     s->context = ctx;
     ctx->lz4_mem = quetschn_zalloc(workspace, &s->allocated);
     ctx->lz4_out = quetschn_zalloc(2 * SEQLZ_PAGE, &s->allocated);
-    ctx->seq = quetschn_zalloc(MAX_SEQUENCES * sizeof(*ctx->seq), &s->allocated);
+    ctx->seq = quetschn_zalloc(SEQLZ_MAX_SEQUENCES * sizeof(*ctx->seq), &s->allocated);
     ctx->literals = quetschn_zalloc(SEQLZ_PAGE, &s->allocated);
     if (!ctx->lz4_mem || !ctx->lz4_out || !ctx->seq || !ctx->literals) {
         destroy(s);
@@ -112,7 +111,7 @@ static int split(const unsigned char* p, unsigned int n, struct seqlz_ctx* ctx, 
                 ll += b;
             } while (b == 255);
         }
-        if (ll > n - i || ll > SEQLZ_PAGE - lits || k == MAX_SEQUENCES)
+        if (ll > n - i || ll > SEQLZ_PAGE - lits || k == SEQLZ_MAX_SEQUENCES)
             return -1;
         __builtin_memcpy(ctx->literals + lits, p + i, ll);
         lits += ll;

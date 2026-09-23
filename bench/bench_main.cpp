@@ -116,8 +116,6 @@ void print_latency(char const* what, quetschn::latency_summary const& l) {
     std::printf("%-22s %9.0f %9.0f %9.0f %9.0f %9.0f\n", what, l.p50, l.p90, l.p99, l.p999, l.max);
 }
 
-// For perf: compresses every page once, then decompresses all of them loops times and nothing else,
-// so that a profile or perf stat shows only the decoder. No timing, no output but a checksum.
 // the lines of [p, p + n) out of all caches, like the harness's cold measurement
 void flush_lines(void const* p, std::size_t n) {
 #if defined(__x86_64__)
@@ -133,6 +131,12 @@ void flush_lines(void const* p, std::size_t n) {
 #endif
 }
 
+// For perf: times one step, compression or decompression, for every page in every loop and nothing
+// else, so that a profile or perf stat shows only that step. Decompression works on pages compressed
+// once before. The pages are done one after the other, so a page comes from memory unless the corpus
+// fits into the caches. Prints the percentiles of the median time per page, with steady_clock: coarse
+// for one page, but the median over the loops and the percentiles over the pages show where the tail
+// goes.
 int decode_loop(quetschn::corpus const& c,
                 quetschn_codec const& codec,
                 quetschn::run_options const& opts,
@@ -149,71 +153,71 @@ int decode_loop(quetschn::corpus const& c,
         std::fprintf(stderr, "error: %s: setup failed\n", codec.name);
         return 1;
     }
-    auto compressed = std::vector<std::vector<std::byte>>();
-    auto pages = std::vector<std::size_t>();
     auto buf = std::vector<std::byte>(2 * c.page_size);
-    for (std::size_t i = 0; i < c.size(); ++i) {
-        auto len = static_cast<unsigned int>(buf.size());
-        if (codec.compress(&params, &stream, c.page(i).data(), static_cast<unsigned int>(c.page_size), buf.data(), &len) !=
-            0) {
-            std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
-            return 1;
-        }
-        compressed.emplace_back(buf.begin(), buf.begin() + len);
-        pages.push_back(i);
-    }
-    auto out = std::vector<std::byte>(c.page_size);
-    auto cbuf = std::vector<std::byte>(2 * c.page_size);
-    auto sum = std::uint64_t{0};
-    // warm decode time of every page in every loop, with steady_clock: coarse for one page, but the
-    // median over the loops and the percentiles over the pages show where the tail goes
-    auto ns = std::vector<std::vector<double>>(compressed.size(), std::vector<double>(loops));
-    auto other = std::vector<unsigned char>(cold ? 2U << 20 : 0U, 1);
-    auto sink = std::uint64_t{0};
-    for (unsigned l = 0; l < loops; ++l) {
-        for (std::size_t i = 0; i < compressed.size(); ++i) {
-            auto const& p = compressed[i];
-            if (time_compress) {
-                auto clen = static_cast<unsigned int>(cbuf.size());
-                auto const src = c.page(pages[i]);
-                auto const t0 = std::chrono::steady_clock::now();
-                auto const ret =
-                    codec.compress(&params, &stream, src.data(), static_cast<unsigned int>(c.page_size), cbuf.data(), &clen);
-                ns[i][l] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
-                if (ret != 0) {
-                    std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
-                    return 1;
-                }
-                sum += clen;
-                continue;
-            }
-            auto len = static_cast<unsigned int>(out.size());
-            if (cold) {
-                // Other work between two page faults: 2 MiB read evicts L1 and L2 (1 MiB per core on
-                // Zen 4), so the codec's tables and code come from L3 like after a stretch of the
-                // application. Then the page and the output out of all caches.
-                for (std::size_t k = 0; k < other.size(); k += 64) {
-                    sink += other[k];
-                }
-                flush_lines(p.data(), p.size());
-                flush_lines(out.data(), out.size());
-            }
-            auto const t0 = std::chrono::steady_clock::now();
-            auto const ret =
-                codec.decompress(&params, &stream, p.data(), static_cast<unsigned int>(p.size()), out.data(), &len);
-            ns[i][l] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
-            if (ret != 0) {
-                std::fprintf(stderr, "error: %s: decompress failed\n", codec.name);
+    auto compress = [&](std::size_t i, unsigned int& len) {
+        len = static_cast<unsigned int>(buf.size());
+        return codec.compress(&params, &stream, c.page(i).data(), static_cast<unsigned int>(c.page_size), buf.data(), &len);
+    };
+    auto compressed = std::vector<std::vector<std::byte>>();
+    if (!time_compress) {
+        for (std::size_t i = 0; i < c.size(); ++i) {
+            auto len = 0U;
+            if (compress(i, len) != 0) {
+                std::fprintf(stderr, "error: %s: compress failed\n", codec.name);
                 return 1;
             }
-            sum += static_cast<std::uint64_t>(out[len / 3]);
+            compressed.emplace_back(buf.begin(), buf.begin() + len);
         }
     }
-    sum += sink; // keeps the reads of other
-    auto medians = std::vector<double>();
-    for (auto& v : ns) {
-        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
-        medians.push_back(v[v.size() / 2]);
+    auto out = std::vector<std::byte>(c.page_size);
+    auto sum = std::uint64_t{0};
+    auto const pages = c.size();
+    auto ns = std::vector<double>(pages * loops); // ns[l * pages + i]
+    auto other = std::vector<unsigned char>(cold ? 2U << 20 : 0U, 1);
+    for (unsigned l = 0; l < loops; ++l) {
+        for (std::size_t i = 0; i < pages; ++i) {
+            auto len = 0U;
+            auto ret = 0;
+            if (time_compress) {
+                auto const t0 = std::chrono::steady_clock::now();
+                ret = compress(i, len);
+                ns[l * pages + i] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+                sum += len;
+            } else {
+                auto const& p = compressed[i];
+                if (cold) {
+                    // Other work between two page faults: 2 MiB read evicts L1 and L2 (1 MiB per core on
+                    // Zen 4), so the codec's tables and code come from L3 like after a stretch of the
+                    // application. Then the page and the output out of all caches.
+                    for (std::size_t k = 0; k < other.size(); k += 64) {
+                        sum += other[k];
+                    }
+                    flush_lines(p.data(), p.size());
+                    flush_lines(out.data(), out.size());
+                }
+                len = static_cast<unsigned int>(out.size());
+                auto const t0 = std::chrono::steady_clock::now();
+                ret = codec.decompress(&params, &stream, p.data(), static_cast<unsigned int>(p.size()), out.data(), &len);
+                ns[l * pages + i] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+                sum += static_cast<std::uint64_t>(out[len / 3]);
+            }
+            if (ret != 0) {
+                std::fprintf(stderr, "error: %s: %s failed\n", codec.name, time_compress ? "compress" : "decompress");
+                return 1;
+            }
+        }
+    }
+    codec.destroy(&stream);
+    codec.release_params(&params);
+
+    auto medians = std::vector<double>(pages);
+    auto per_page = std::vector<double>(loops);
+    for (std::size_t i = 0; i < pages; ++i) {
+        for (unsigned l = 0; l < loops; ++l) {
+            per_page[l] = ns[l * pages + i];
+        }
+        std::nth_element(per_page.begin(), per_page.begin() + loops / 2, per_page.end());
+        medians[i] = per_page[loops / 2];
     }
     auto const lat = quetschn::summarize_latency(medians);
     std::printf("%s: %s per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f ns\n",
@@ -226,13 +230,7 @@ int decode_loop(quetschn::corpus const& c,
                 lat.p90,
                 lat.p99,
                 lat.p999);
-    codec.destroy(&stream);
-    codec.release_params(&params);
-    std::printf("%s: %zu pages decoded %u times, checksum %llu\n",
-                codec.name,
-                compressed.size(),
-                loops,
-                static_cast<unsigned long long>(sum));
+    std::printf("%s: %zu pages, %u loops, checksum %llu\n", codec.name, pages, loops, static_cast<unsigned long long>(sum));
     return 0;
 }
 
@@ -339,6 +337,10 @@ int main(int argc, char** argv) {
             std::memcpy(opts.dict.data(), raw.data(), raw.size());
         }
         auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
+        if (decode_loops > 0 && decode_cold && loop_compress) {
+            std::fprintf(stderr, "error: --cold is for decoding, --compress already reads every page from memory\n");
+            return 2;
+        }
         if (decode_loops > 0) {
             return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold, loop_compress);
         }
