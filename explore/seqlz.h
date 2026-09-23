@@ -45,7 +45,7 @@ extern "C" {
 
 #define SEQLZ_PAGE 4096U
 #define SEQLZ_MAX_BITS 9U /* for length values; tables of 2 KiB each */
-#define SEQLZ_TOKEN_BITS 12U
+#define SEQLZ_TOKEN_BITS 11U
 #define SEQLZ_LL_BITS 4U /* of the token for ll, at most 4 */
 #define SEQLZ_ML_BITS 5U /* for ml - 4, at most 5 */
 #define SEQLZ_TOKEN_SYMBOLS (3U << (SEQLZ_LL_BITS + SEQLZ_ML_BITS))

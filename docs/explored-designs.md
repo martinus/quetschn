@@ -442,6 +442,27 @@ with `tools/quick-bench.sh`.
   into the format. Whether the destination page is cold in a real page fault is not measured: the page
   allocator may hand out a page that was just freed and is still in the cache.
 
+**More decoder experiments**, against `lz4-prefetch`, the kernel's `lz4` with the same prefetches
+before it (a codec of the benchmark for this comparison). Cycles on 2000 pages whose compressed data
+fits into L3 (`zram0-sample2000`): with 20 000 pages the loop reads from memory, and the result moved by
+up to 20% between processes. With 200 pages the branch predictor learns the pages: `lz4` then
+mispredicts 1.6 times per page instead of 98.
+
+* **Where the time goes**, by leaving parts out (wrong output, but the loop does not check it): the
+  match copies are 7100 instructions, about 2700 cycles and 63 of the 91 mispredictions per page, the
+  literal copies 4600 instructions and 500 cycles. The rest, bit reader, tokens and checks, is 113
+  instructions per sequence; `lz4` needs 55 for everything. Sampling instructions had put half of them
+  into the match copy, wrongly: the samples pile up behind its loads.
+* **Tables cold**, 2 MiB of other data read before each page (`--decode-loop --cold`), 3 runs each:
+  the 12-bit token table 2670 to 2830 / 3920 to 4070 ns, the 11-bit one 2460 to 2530 / 3690 to 3780,
+  `lz4` 1520 / 2720. Prefetching the tables at the start: about 100 ns less, within the scatter.
+* **Tried and slower:** the match copy with a bound computed once, 16 bytes per step for offsets of 16
+  and more, the pattern stored without loads for offsets 1, 2 and 4: 9193 cycles instead of 8410,
+  mispredictions 91 to 115. 32 bytes without a loop for offsets of 32 and more: 9223, 108. Decoding in
+  batches, 32 sequences into an array, then their copies: 10 667, 136 mispredictions, cold p99 1820 ns
+  behind `lz4-prefetch`. Every branch split mispredicts, and the copies' branches lose the history of
+  the decoding branches that predicted them.
+
 ## bytelz: `seqlz-fast`'s matcher, a byte oriented format
 
 *Open. Close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:

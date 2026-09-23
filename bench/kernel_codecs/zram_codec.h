@@ -79,6 +79,23 @@ extern const struct quetschn_codec quetschn_codec_zstd_nolit;
 extern const struct quetschn_codec quetschn_codec_seqlz;
 extern const struct quetschn_codec quetschn_codec_seqlz_hc;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast;
+extern const struct quetschn_codec quetschn_codec_lz4_prefetch;
+
+/*
+ * What zram could do before any decompression: ask for the cache lines of the compressed page and of
+ * the destination page, for writing, at once, so that their misses overlap. With the page and the
+ * output flushed, as the harness's cold decode does, writing into cold lines was the main wait of the
+ * decoders (docs/explored-designs.md, seqlz's third decoder round).
+ */
+static inline void quetschn_prefetch_page(const void* src, unsigned int src_len, void* dst, unsigned int dst_len) {
+    const char* q;
+    char* o;
+
+    for (q = (const char*)src + 64; q < (const char*)src + src_len; q += 64)
+        __builtin_prefetch(q);
+    for (o = (char*)dst; o < (char*)dst + dst_len; o += 64)
+        __builtin_prefetch(o, 1);
+}
 extern const struct quetschn_codec quetschn_codec_bytelz;
 /* optional, explore/zram_memlz.c with QUETSCHN_MEMLZ_DIR */
 extern const struct quetschn_codec quetschn_codec_memlz;

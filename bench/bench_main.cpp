@@ -39,6 +39,7 @@ namespace {
 // avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
 auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_lz4,
+    &quetschn_codec_lz4_prefetch,
     &quetschn_codec_lz4hc,
     &quetschn_codec_lzo,
     &quetschn_codec_lzo_rle,

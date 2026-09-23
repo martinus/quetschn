@@ -195,6 +195,7 @@ static int decompress(struct quetschn_params* p,
                       void* dst,
                       unsigned int* dst_len) {
     (void)s;
+    quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
     if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst))
         return -1;
     *dst_len = SEQLZ_PAGE;

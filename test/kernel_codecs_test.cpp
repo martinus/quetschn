@@ -109,6 +109,7 @@ std::vector<page> test_pages() {
 
 std::vector<quetschn_codec const*> codecs() {
     return {&quetschn_codec_lz4,
+            &quetschn_codec_lz4_prefetch,
             &quetschn_codec_lz4hc,
             &quetschn_codec_lzo,
             &quetschn_codec_lzo_rle,
