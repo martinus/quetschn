@@ -491,6 +491,12 @@ dropped. The full benchmark on the whole corpus after these changes:
 `seqlz-fast` has less memory than `zstd -1` and decodes 33% faster than it at cold p99, 8% slower than
 the kernel's `lz4` and 18% slower than `lz4` with the prefetches.
 
+**With clang**, which builds Android's kernels, and the same kernel flags: decoding `lz4` 5107
+cycles per page (gcc 5268), `seqlz-fast` 8449 (8192), `bytelz` 7808 (7276); `seqlz-fast` needs 34 108
+instructions instead of 31 176, `bytelz` 25 137 instead of 23 467, with the same mispredictions.
+Compressing, `lz4` 16 860 (17 105), `seqlz-fast` 20 687 (21 025). So with clang the decoders are 4 to
+8% further behind `lz4` than with gcc; the kernel numbers above are gcc's.
+
 ## bytelz: `seqlz-fast`'s matcher, a byte oriented format
 
 *Open. Close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
