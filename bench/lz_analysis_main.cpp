@@ -14,6 +14,7 @@
 #include "kernel_codecs/zram_codec.h"
 #include "lz_analysis.h"
 #include "page_stats.h"
+#include "seqlz.h"
 #include "zsmalloc_cost.h"
 
 #include <array>
@@ -24,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -107,6 +109,60 @@ double walk(parsed_page const& pg, model& m, bool count, bool with_repeat, bool 
     return bits;
 }
 
+// A byte oriented format without entropy coding: per sequence one token byte with ll_bits for the
+// literal length, ml_bits for the match length - 4, and the rest for how the offset is sent. Lengths
+// at or above what fits in the token follow as a 7-bit varint. With 2 offset bits (at most 2): the last offset,
+// the one before, 1 byte or 2 bytes; with 1: the last offset or 2 bytes; with 0: always 2 bytes.
+struct byte_format {
+    unsigned ll_bits;
+    unsigned ml_bits;
+    char const* name;
+};
+
+unsigned varint_bytes(std::uint32_t v) {
+    return v < 128 ? 1U : v < 16384 ? 2U : 3U;
+}
+
+// The bytes of one page in the format, without the literals; with tokens, the token bytes are counted
+// (tokens[byte] += 1) and left out, for an entropy coded token byte.
+double byte_format_bytes(parsed_page const& pg, byte_format f, std::array<double, 256>* tokens) {
+    auto const off_bits = 8U - f.ll_bits - f.ml_bits;
+    auto const ll_cap = (1U << f.ll_bits) - 1U, ml_cap = (1U << f.ml_bits) - 1U;
+    auto bytes = 0.0;
+    auto rep0 = 1U, rep1 = 4U;
+    for (auto const& s : pg.sequences) {
+        auto const ll = std::min(s.literals, ll_cap);
+        auto ml = 0U, mode = 0U;
+        bytes += s.literals >= ll_cap ? varint_bytes(s.literals - ll_cap) : 0U;
+        if (s.match != 0) {
+            ml = std::min(s.match - 4, ml_cap);
+            bytes += s.match - 4 >= ml_cap ? varint_bytes(s.match - 4 - ml_cap) : 0U;
+            if (off_bits >= 1 && s.offset == rep0) {
+                mode = 0;
+            } else if (off_bits == 2 && s.offset == rep1) {
+                mode = 1;
+            } else if (off_bits == 2 && s.offset <= 256) {
+                mode = 2;
+                bytes += 1;
+            } else {
+                mode = off_bits == 2 ? 3U : 1U;
+                bytes += 2;
+            }
+            if (s.offset != rep0) {
+                rep1 = rep0;
+                rep0 = s.offset;
+            }
+        }
+        auto const token = (ll | ml << f.ll_bits | mode << (f.ll_bits + f.ml_bits)) & 255U;
+        if (tokens != nullptr) {
+            (*tokens)[token] += 1;
+        } else {
+            bytes += 1;
+        }
+    }
+    return bytes;
+}
+
 void normalize(auto& table) {
     auto total = 0.0;
     for (auto v : table) {
@@ -119,9 +175,10 @@ void normalize(auto& table) {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-lz-analysis --corpus <base> [--codec lz4|lz4hc] [--level <n>]\n"
+                 "usage: quetschn-lz-analysis --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>]\n"
                  "\n"
-                 "The matches come from --codec, default lz4hc, at zram's default level unless --level.\n");
+                 "The matches come from --codec, default lz4hc, at zram's default level unless --level; seqlz is\n"
+                 "seqlz-fast's own matcher.\n");
 }
 
 } // namespace
@@ -130,6 +187,7 @@ int main(int argc, char** argv) {
     auto base = std::string();
     int level = QUETSCHN_LEVEL_DEFAULT;
     auto const* codec = &quetschn_codec_lz4hc;
+    auto own_matcher = false;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         if (arg == "--corpus" && i + 1 < argc) {
@@ -138,6 +196,8 @@ int main(int argc, char** argv) {
             auto const name = std::string_view(argv[++i]);
             if (name == "lz4") {
                 codec = &quetschn_codec_lz4;
+            } else if (name == "seqlz") {
+                own_matcher = true;
             } else if (name != "lz4hc") {
                 usage();
                 return 2;
@@ -174,20 +234,36 @@ int main(int argc, char** argv) {
         }
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto pages = std::vector<parsed_page>();
+        auto state = std::make_unique<seqlz_state>();
+        auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const src = c.page(i);
             if (quetschn::analyze_page(src).same_filled) {
                 continue;
             }
-            auto len = static_cast<unsigned int>(dst.size());
-            if (codec->compress(&params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) != 0) {
-                throw std::runtime_error(std::string(codec->name) + ": compress failed");
+            auto parsed = parsed_page{};
+            if (own_matcher) {
+                auto const n = seqlz_find(state.get(), src.data(), seqs.data());
+                auto in = std::size_t{0};
+                for (unsigned k = 0; k < n; ++k) {
+                    parsed.sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});
+                    for (unsigned j = 0; j < seqs[k].literals; ++j) {
+                        parsed.literals.push_back(static_cast<std::uint8_t>(src[in + j]));
+                    }
+                    in += seqs[k].literals + seqs[k].match;
+                }
+            } else {
+                auto len = static_cast<unsigned int>(dst.size());
+                if (codec->compress(&params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) !=
+                    0) {
+                    throw std::runtime_error(std::string(codec->name) + ": compress failed");
+                }
+                parsed = parse_lz4(dst.data(), len);
             }
-            auto parsed = parse_lz4(dst.data(), len);
             // the estimate is only as good as the parse, so every page must come back from it
             auto const back = quetschn::reconstruct(parsed);
             if (back.size() != src.size() || std::memcmp(back.data(), src.data(), src.size()) != 0) {
-                throw std::runtime_error("page " + std::to_string(i) + " does not come back from its lz4 sequences");
+                throw std::runtime_error("page " + std::to_string(i) + " does not come back from its sequences");
             }
             pages.push_back(std::move(parsed));
         }
@@ -208,16 +284,22 @@ int main(int argc, char** argv) {
         auto literal_bytes = 0.0;
         auto sequences = 0.0;
         for (auto const& p : pages) {
-            sum += zs.cost(p.lz4_size);
+            sum += own_matcher ? 0.0 : zs.cost(p.lz4_size);
             literal_bytes += static_cast<double>(p.literals.size());
             sequences += static_cast<double>(p.sequences.size());
         }
-        std::printf("corpus %s, %zu pages, %s level %d\n", base.c_str(), pages.size(), codec->name, params.level);
+        if (own_matcher) {
+            std::printf("corpus %s, %zu pages, seqlz-fast's matcher\n", base.c_str(), pages.size());
+        } else {
+            std::printf("corpus %s, %zu pages, %s level %d\n", base.c_str(), pages.size(), codec->name, params.level);
+        }
         std::printf("%.1f literal bytes and %.1f sequences per page\n\n",
                     literal_bytes / static_cast<double>(pages.size()),
                     sequences / static_cast<double>(pages.size()));
         std::printf("%-58s %6s\n", "Σ zsmalloc cost of the same matches, coded as", "");
-        print("lz4 format (what the codec writes)", sum);
+        if (!own_matcher) {
+            print("lz4 format (what the codec writes)", sum);
+        }
 
         // 2 bytes per page for a header, e.g. the number of sequences
         constexpr double header_bits = 16;
@@ -237,6 +319,39 @@ int main(int argc, char** argv) {
                 s += cost((walk(p, m, false, repeat, literals) + header_bits) / 8.0);
             }
             print(what, s);
+        }
+
+        // 4 bytes of header, as seqlz: the number of sequences and of literal bytes
+        std::printf("\n%-58s %6s\n", "byte oriented, token bits for ll / ml - 4 / offset", "");
+        for (auto const f : {byte_format{4, 4, "4 / 4 / 0 (lz4 with varints)"},
+                             byte_format{4, 3, "4 / 3 / 1 (last offset or 2 bytes)"},
+                             byte_format{3, 4, "3 / 4 / 1"},
+                             byte_format{3, 3, "3 / 3 / 2 (last, the one before, 1 or 2 bytes)"},
+                             byte_format{2, 4, "2 / 4 / 2"}}) {
+            auto s = 0.0;
+            for (auto const& p : pages) {
+                s += cost(4.0 + static_cast<double>(p.literals.size()) + byte_format_bytes(p, f, nullptr));
+            }
+            print(f.name, s);
+        }
+        for (auto const f : {byte_format{4, 4, "4 / 4 / 0, token byte entropy coded"},
+                             byte_format{3, 3, "3 / 3 / 2, token byte entropy coded"}}) {
+            auto tokens = std::array<double, 256>{};
+            for (auto const& p : pages) {
+                (void)byte_format_bytes(p, f, &tokens);
+            }
+            normalize(tokens);
+            auto s = 0.0;
+            for (auto const& p : pages) {
+                auto counts = std::array<double, 256>{};
+                auto bytes = byte_format_bytes(p, f, &counts);
+                auto bits = 0.0;
+                for (unsigned t = 0; t < 256; ++t) {
+                    bits += counts[t] * -std::log2(tokens[t]);
+                }
+                s += cost(4.0 + static_cast<double>(p.literals.size()) + bytes + bits / 8.0);
+            }
+            print(f.name, s);
         }
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

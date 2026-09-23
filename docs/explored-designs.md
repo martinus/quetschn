@@ -353,6 +353,59 @@ Tried and dropped:
 Next for the compressor: with the page in cache p99 is still 1.53 times `lz4`, cold 1.33. The matcher
 alone is as expensive as all of `lz4`, so that is where the rest has to come from.
 
+### The compressor, third round: ideas from the literature
+
+*Nothing kept yet. The encoder is no longer the problem, the matcher is: alone it costs as much as all
+of `lz4`.* Three searches through papers, blogs and codecs (fast LZ match finding, memory page
+compression, cheap entropy encoding) gave a short list, measured here the same way as the second round.
+Cycles per page, `seqlz-fast` at 21 450 to 21 600 before, `lz4` 17 100.
+
+**Which pages make the p99.** `--decode-loop --compress --out` now writes the time and length per page,
+and the full benchmark writes them anyway. With the page in cache, 70% of `seqlz-fast`'s p99 pages
+have 2 to 3 KiB of output, where it is 1.49 to 1.50 times `lz4`; pages of 1 to 2 KiB are 1.42 to 1.46.
+Pages that zram stores raw (3625 bytes and more) take 1952 ns and are 0.2% of the p99 pages, so
+stopping early on them, as Google's far memory does, would not change the p99. The cost is per
+sequence.
+
+| idea | source | cycles per page | Σ zsmalloc cost |
+| --- | --- | --- | --- |
+| before | | 21 599 | 26.4% |
+| hash of the next position before this one is decided | [zstd #2749](https://github.com/facebook/zstd/pull/2749), +16% at level -1 there | 21 481 | the same bytes |
+| two positions per round, one branch for both | the same | 21 653 | 26.4% |
+| byte oriented format, lz4-like encoder | Bloom's LZNib, Oodle Selkie | 20 289 | 29.4% |
+| only the last offset as a repeat, tables retrained | zstd's fast mode | 20 557 | 26.6% |
+| ... plus a 20-bit tag in each table entry, 4096 × `u32` | Bloom's cache tables, lzav | 21 468 | 26.6% |
+| ... tag, 2048 × `u32` | | 21 347 | 26.7% |
+| ... plus the offset code as `(offset << length) + base[symbol]` | libdeflate | 20 492 | the same bytes |
+
+* **Pipelining the hash** does nothing on Zen 4: the core already computes ahead, the loads of the
+  next position do not wait for the branch of this one. Two positions per round save branches but
+  need more instructions. On an in-order Cortex-A55 both could look different; not measured.
+* **Byte oriented formats** are costed exactly by `quetschn-lz-analysis --codec seqlz` on
+  `seqlz-fast`'s matches: a token byte with 2 bits of literal length, 4 of match length and 2 for the
+  offset (the last, the one before, 1 byte, 2 bytes) is the best at 29.4%, with a Huffman coded token
+  byte 28.0%, `lz4`'s own layout 34.2%. The encoder of the 29.4% format has 43 300 instructions per page
+  instead of 55 000, but 356 mispredictions instead of 279, from the offset mode and the varints. It is
+  1% faster for 3 points more memory.
+* **Only the last offset as a repeat** needs no format change, the decoder still has three. The
+  encoder keeps one offset instead of three and does not compare or move them: 4.8% fewer cycles,
+  5600 fewer instructions. The second and third repeat offsets were 11% of the matches; with tables
+  trained for it the output grows by 0.9%, 496 209 760 instead of 491 809 373 bytes. With the additive
+  offset code, p99 of the cold loop is 9590 ns instead of 9990, `lz4` 7550: 1.27 times.
+* **A tag in the table**, so that a miss needs no load from the page: more mispredictions (312 and 317
+  instead of 277), a second branch for tags that match but bytes that do not, and 16 KiB of table miss
+  L1 more often.
+* **The additive offset code** writes the same bytes with 1100 fewer instructions, but the cycles are
+  within the noise.
+* **Not tried:** zram's recompression (`lz4` at swap-out, `seqlz` later for idle pages from user
+  space) changes what the project is, not the codec. A dictionary table shared read-only by all CPUs
+  is for C4. Offsets relative to a running base, so that the table is not cleared: the second round
+  measured the check for stale entries as 7% slower than the `memset`.
+
+The matcher alone needs 17 300 cycles and 32 400 instructions per page at IPC 1.81, `lz4` all
+together 17 100 and 30 300 at 1.77. `lz4`'s encoding hides in the cycles its matcher waits, ours does
+not quite, but even a free encoder would leave `seqlz-fast` at `lz4`'s speed and not below.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
