@@ -406,6 +406,42 @@ The matcher alone needs 17 300 cycles and 32 400 instructions per page at IPC 1.
 together 17 100 and 30 300 at 1.77. `lz4`'s encoding hides in the cycles its matcher waits, ours does
 not quite, but even a free encoder would leave `seqlz-fast` at `lz4`'s speed and not below.
 
+### seqlz, third decoder round: one repeat offset, offset class in the token, and why cold is slow
+
+*Kept on the branch, not merged yet.* Decode cycles per page with `perf stat` (`--decode-loop`), cold
+with `tools/quick-bench.sh`.
+
+| step | Σ zsmalloc cost | decode cycles | cold p50 / p99 | warm p99 |
+| --- | --- | --- | --- | --- |
+| `seqlz-fast` before | 26.4% | 10 479 | 2840 / 5720 ns | 3310 ns |
+| one repeat offset instead of three | 26.6% | 8758 | | |
+| the offset's class in the token, raw offset bits | 27.0% | 8168 | 2830 / 5560 ns | 3050 ns |
+| ... and the page and the output prefetched | 27.0% | 6306 | 1640 / 3270 ns | 3030 ns |
+| `lz4` | 34.5% | 5100 | 1640 / 3540 ns | 2370 ns |
+| `lz4` with the same prefetches | 34.5% | | 1030 / 2710 ns | 2380 ns |
+
+* **One repeat offset:** the move to front of three cost the decoder 17% of its cycles, and the
+  other two were only 11% of `seqlz-fast`'s matches. Mispredictions 124 to 89 per page, `lz4` has 94.
+* **The offset's class in the token:** class 0 the last offset, 1 below 256 in 8 raw bits, 2 below
+  4096 in 12, right after the token. So one table lookup per sequence and not two on the chain from
+  token to token. The token has 1536 symbols then, and with 11 bits each of them needs at least
+  1/2048 of the code space, 75% of it together: 27.5% instead of the estimated 26.6%. Package-merge,
+  the optimal length limit, gave the same token bits as halving the counts (106.6 against 106.7
+  million, 90.6 without a limit), so it is the limit, not the method. A 12-bit token table (8 KiB)
+  gives 27.0%. Fewer symbols with 11 bits: 3 / 5 bits for ll / ml 26.9% at 8599 cycles, 4 / 4 27.0%
+  at 8482.
+* **The bitstream before the literals**, so that the first token is in the header's cache line: no
+  change of the cold latency, reverted.
+* **Why cold is slow:** with only the compressed page and the output flushed, as the harness does, a
+  page costs `lz4` 10 913 cycles and `seqlz-fast` 15 173, with the same cache misses (97 and 101 per
+  page) and mispredictions. Prefetching the compressed page first did nothing. Prefetching the 64 lines
+  of the output for writing first: 11 567. The writes into cold lines were the wait, and with 2.4
+  times the instructions of `lz4` fewer of them overlapped.
+* **But `lz4` gets the same from the prefetches:** 1030 / 2710 ns. Against that, `seqlz-fast` is 560
+  ns slower at cold p99, in all 5 runs. The prefetch belongs into zram, before any decompression, not
+  into the format. Whether the destination page is cold in a real page fault is not measured: the page
+  allocator may hand out a page that was just freed and is still in the cache.
+
 ## bytelz: `seqlz-fast`'s matcher, a byte oriented format
 
 *Open. Close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
