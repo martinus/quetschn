@@ -953,6 +953,25 @@ harness, which compresses with the page in cache, `seqlz-fast`'s compress p99 do
 5-byte hash (6590 ns, 1.57 times `lz4`); in the kernel it went down 10%. The harness is not the place
 to judge C3.
 
+**The harness lets the branch predictor learn the page, too.** For each page it first compresses and
+decodes once to check the roundtrip, then times 5 runs of each codec, one page after the other: every
+timed run comes right after the same code on the same bytes, as the warm-up read in `/init` did.
+`--decode-loop --flush` goes through all 20 000 pages of the sample before it sees a page again, with
+the page and the output flushed as the harness's cold decode does. `bytelz`'s glue now prefetches like
+`seqlz`'s (`explore/zram_bytelz.c`), as its kernel backend does. p50 / p99 in ns:
+
+| codec | harness, cold (full run) | `--decode-loop 11 --flush` |
+| --- | --- | --- |
+| `lz4-prefetch` | 1040 / 2650 | 1400 / 2740 |
+| `lz4` | 1060 / 2600 | 1940 / 3380 |
+| `bytelz` | 1140 / 2690 (without prefetch) | 1770 / 2830 |
+| `seqlz-fast` | 1240 / 2990 | 1840 / 3180 |
+
+Without the learned page `seqlz-fast` is 31% slower than `lz4-prefetch` at p50 instead of 19%,
+`bytelz` 26%. The loop also has TLB misses the harness does not have, each page's data is somewhere
+else, while the kernel's direct map uses large pages, so neither is the kernel. The numbers to decide
+with are the VM's, with the other page first; the harness is for quick comparisons of the same codec.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
