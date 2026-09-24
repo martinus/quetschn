@@ -509,7 +509,8 @@ TEST_CASE("seqlz: the compressor writes what seqlz_encode writes for seqlz_find'
 
 TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
     // Random bytes, and bytes 1 to 1 + len again at 62, with other bytes around both copies. Within the
-    // first 64 bytes, where the matcher looks at every position.
+    // first 64 bytes, where the matcher looks at every position. It hashes 5 bytes, so a repeat of 4 is
+    // not found.
     auto state = std::make_unique<seqlz_state>();
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
     auto rng = std::mt19937_64(67);
@@ -523,6 +524,10 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
         bytes[61] = static_cast<unsigned char>(bytes[0] + 1);
         bytes[62 + len] = static_cast<unsigned char>(bytes[1 + len] + 1);
         auto const n = seqlz_find(state.get(), bytes.data(), seq.data());
+        if (len == 4) {
+            CHECK(n == 1);
+            continue;
+        }
         REQUIRE(n == 2);
         CHECK(seq[0].literals == 62);
         CHECK(seq[0].match == len);

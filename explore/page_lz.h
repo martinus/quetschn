@@ -48,8 +48,9 @@ static inline void store64(u8* p, u64 v) {
     __builtin_memcpy(p, &v, 8);
 }
 
-static inline unsigned int hash4(u32 v) {
-    return (v * 2654435761U) >> (32U - PAGE_LZ_HASH_BITS);
+/* a hash of the low 5 bytes of v, as zstd's */
+static inline unsigned int hash5(u64 v) {
+    return (unsigned int)(((v << 24) * 889523592379ULL) >> (64U - PAGE_LZ_HASH_BITS));
 }
 
 /* number of equal bytes at p and q, p after q, up to end */
@@ -88,21 +89,24 @@ static inline unsigned int count(const u8* p, const u8* q, const u8* end) {
 typedef void (*emit_fn)(void* ctx, const u8* literals, unsigned int ll, unsigned int ml, unsigned int off);
 
 /*
- * Greedy, like lz4's fast mode: at every position the last offset and one candidate from a hash of 4
- * bytes. Without a match the step grows with the distance to the last match, like lz4's acceleration,
- * so incompressible pages go by fast. Each sequence goes to emit as soon as it is found; inlined with
- * the encoder that is one pass over the page, and the same matcher feeds seqlz_find.
+ * Greedy, like lz4's fast mode: at every position the last offset and one candidate from a hash of 5
+ * bytes. With 5 instead of 4 the matcher finds fewer sequences: 5% fewer compress cycles for 0.6 points
+ * of memory, and in the kernel 10% less write time at p99 (docs/explored-designs.md). Matches of 4
+ * bytes still come from the last offset. Without a match the step grows with the distance to the last
+ * match, like lz4's acceleration, so incompressible pages go by fast. Each sequence goes to emit as
+ * soon as it is found; inlined with the encoder that is one pass over the page, and the same matcher
+ * feeds seqlz_find.
  */
 static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_fn emit, void* ctx) {
     /* positions, not pointers: the end is a constant, and the position for the table is at hand */
-    const unsigned int limit = PAGE_LZ_PAGE - 8U; /* 8 bytes readable for the first comparison */
+    const unsigned int limit = PAGE_LZ_PAGE - 8U; /* 8 bytes readable for the hash and the comparison */
     unsigned int pos = 1, anchor = 0, last = 1;
 
     __builtin_memset(table, 0, sizeof(unsigned short) << PAGE_LZ_HASH_BITS);
 
     while (pos < limit) {
         u32 cur = load32(src + pos);
-        unsigned int h = hash4(cur), cand = table[h], m, len;
+        unsigned int h = hash5(load64(src + pos)), cand = table[h], m, len;
         /* One branch for both candidates, not three: the last offset always points into the page (it
          * starts at 1, the search at position 1), and so does a table entry, so both can be read before
          * it is known whether they count. Three branches mispredicted almost twice as often as lz4's
@@ -128,7 +132,7 @@ static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_
         anchor = pos;
         /* a position near the end of the match, for the next matches */
         if (pos < limit)
-            table[hash4(load32(src + pos - 2))] = (unsigned short)(pos - 2);
+            table[hash5(load64(src + pos - 2))] = (unsigned short)(pos - 2);
     }
     emit(ctx, src + anchor, PAGE_LZ_PAGE - anchor, 0, 0);
 }

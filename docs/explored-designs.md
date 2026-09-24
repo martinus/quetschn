@@ -891,6 +891,38 @@ write 1.26 and 1.25 times as long as `lz4`, C3 wants 1.2. `seqlz-fast-lit` now w
 `seqlz-fast` on the same page and was faster, it got the branch history of the same code on the same
 bytes.
 
+**A hash of 5 bytes: C3 in the kernel.** The second round of the compressor dropped it, 2.6% faster
+for 0.5 points. Measured in the kernel it is worth more than that. The matcher of `seqlz-fast` and
+`bytelz`, compress cycles per page with `perf stat`, Σ zsmalloc cost with `tools/quick-bench.sh`:
+
+| matcher | compress cycles | Σ zsmalloc cost |
+| --- | --- | --- |
+| hash of 4 bytes | 21 440 | 26.6% |
+| hash of 5 bytes | 20 425 | 27.2% |
+| step growing twice as fast (`>> 5`) | 20 994 | 26.7% |
+| both | 20 037 to 20 436 | 27.4% |
+| hash of 5 bytes, tables trained on its matches | | 27.0% |
+
+In the kernel, with the other page before each write, the 5-byte hash takes `seqlz-fast`'s write p99
+from 11 650 to 10 480 ns, 10%, twice what the cycles say: the slowest pages are the ones with many
+short matches, and the hash of 5 bytes finds fewer of them. Both changes together gave 10 380 ns, the
+step adds nearly nothing and is left out. Kept: the hash of 5 bytes and `seqlz-fast`'s tables trained
+again (only `seqlz_default_own` changes, the tables for `lz4`'s and `lz4hc`'s matches stay). Matches
+of 4 bytes still come from the last offset. The 16 KiB tables are not trained again. One boot, other
+page first, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 29 007 872 | +6.6% | 2490 / 4739 | 1950 / 3570 | 5369 / 9099 |
+| `lzo-rle` | 27 222 016 | | 2690 / 5399 | 2040 / 3571 | 5100 / 9500 |
+| `bytelz` | 25 014 272 | -8.1% | 2600 / 4160 | 2060 / 3609 | 6240 / 10 320 |
+| `seqlz-fast` | 22 953 984 | -15.7% | 2860 / 4480 | 2329 / 4071 | 6250 / 10 470 |
+
+`seqlz-fast` now needs 1.2% more memory than with the 4-byte hash and writes 1.15 times as long as
+`lz4` at p99, `bytelz` 1.13 times: C3 is met for both. With cold compressed data both read faster than
+stock `lz4` at p99, 5% and 12%, and are 15% and 4% slower at p50; with warm data slower throughout.
+`bytelz` is 8.1% below `lzo-rle`, C1 wants 8%, so it only just passes.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
