@@ -518,7 +518,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
     }
     n_lit = load16(s);
     if (n_lit & 0x8000U) {
-        /* coded literals: four streams, decoded into scratch first, 5 rounds of 4 per refill */
+        /* coded literals: four streams, decoded into scratch first, 6 rounds of 4 per refill */
         unsigned int sz0, sz1, sz2, sz3, k;
         struct bit_reader r0, r1, r2, r3;
         u8* out = scratch;
@@ -544,8 +544,8 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             refill(&r1);
             refill(&r2);
             refill(&r3);
-            /* scratch has room for 4 * 5 bytes past n_lit */
-            for (j = 0; j < 5U; j++, k += 4) {
+            /* scratch has room for 4 * 6 bytes past n_lit */
+            for (j = 0; j < 6U; j++, k += 4) {
                 unsigned int e0 = t->lit.decode[r0.bits & ((1U << SEQLZ_LIT_BITS) - 1U)];
                 unsigned int e1 = t->lit.decode[r1.bits & ((1U << SEQLZ_LIT_BITS) - 1U)];
                 unsigned int e2 = t->lit.decode[r2.bits & ((1U << SEQLZ_LIT_BITS) - 1U)];
@@ -562,7 +562,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             }
         }
         /* each stream may be read past its end only for the symbols behind n_lit */
-        if (r0.count < -44 || r1.count < -44 || r2.count < -44 || r3.count < -44)
+        if (r0.count < -54 || r1.count < -54 || r2.count < -54 || r3.count < -54)
             return -1;
         br = (struct bit_reader){q + sz0 + sz1 + sz2 + sz3, s_end, 0, 0};
         lit = out;

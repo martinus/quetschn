@@ -1036,6 +1036,12 @@ at p99 with cold data, 9% slower with warm data, and writes 1.16 times as long a
 `seqlz-fast-lit` writes 1.38 times as long, which fails C3; it is a candidate for recompression, next
 to `seqlz-hc-lit`.
 
+**6 literals per refill instead of 5** in the coded literals: at most 9 bits each, 54 of the 56 bits a
+refill leaves. Decode cycles 9258 to 8929 per page, mispredictions 142 to 130, quick benchmark cold
+p50 / p99 1490 / 3880 to 1480 / 3740 ns, warm p99 3660 to 3530 ns, both runs alike. The check that no
+stream was read too far past its end allows 54 bits now instead of 44; past the end the decoder reads
+zeros, which decode as the shortest code, so for tables the trainer writes either bound holds.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
