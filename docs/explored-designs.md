@@ -1017,6 +1017,25 @@ The branch on the bit count mispredicts, 39 more per page, but the load no longe
 lookup. The kernel decides: 7% less at p50, cold and warm, and with cold data `seqlz-fast` is now 4%
 behind `lz4` at p50 (2510 ns in the same boot) and 15% ahead at p99 (5089 ns). Kept.
 
+**All candidates with the refill change**, one boot, 7 devices, other page first, `seqlz`'s and
+`bytelz`'s backends with their own prefetch, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 29 007 872 | +6.6% | 2510 / 4680 | 1979 / 3530 | 5470 / 9240 |
+| `lzo-rle` | 27 222 016 | | 2690 / 5479 | 2060 / 3620 | 5280 / 9750 |
+| `bytelz` | 25 014 272 | -8.1% | 2670 / 4190 | 2080 / 3610 | 6440 / 10 551 |
+| `seqlz-fast` | 22 953 984 | -15.7% | 2620 / 4340 | 2150 / 3840 | 6360 / 10 690 |
+| `seqlz-fast-lit` | 21 848 064 | -19.7% | 2760 / 5301 | 2370 / 4519 | 6850 / 12 720 |
+| `seqlz-hc-lit` | 20 873 216 | -23.3% | 2840 / 5511 | 2310 / 4590 | 20 070 / 34 160 |
+| `zstd` | 20 246 528 | -25.6% | 5500 / 9700 | 4650 / 7810 | 14 110 / 23 981 |
+
+`seqlz-fast` now reads cold data as fast as `bytelz` at p50 and 150 ns slower at p99, for 8% less
+memory: `bytelz` is no longer on the Pareto front. Against `lz4` it is 4% slower at p50 and 7% faster
+at p99 with cold data, 9% slower with warm data, and writes 1.16 times as long at p99.
+`seqlz-fast-lit` writes 1.38 times as long, which fails C3; it is a candidate for recompression, next
+to `seqlz-hc-lit`.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
