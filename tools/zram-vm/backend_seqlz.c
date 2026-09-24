@@ -27,9 +27,15 @@ static void sz_release_params(struct zcomp_params *params)
 	params->drv_data = NULL;
 }
 
+/* the hash table, and the scratch for seqlz-fast-lit's literals */
+struct sz_ctx {
+	struct seqlz_state st;
+	unsigned char scratch[SEQLZ_SCRATCH];
+};
+
 static int sz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	ctx->context = kzalloc(sizeof(struct seqlz_state), GFP_KERNEL);
+	ctx->context = kzalloc(sizeof(struct sz_ctx), GFP_KERNEL);
 	return ctx->context ? 0 : -ENOMEM;
 }
 
@@ -45,7 +51,22 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
-	len = seqlz_compress(params->drv_data, ctx->context, req->src, req->dst, req->dst_len);
+	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
+			     req->dst_len);
+	if (!len)
+		return -EINVAL;
+	req->dst_len = len;
+	return 0;
+}
+
+static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
+{
+	unsigned int len;
+
+	if (req->src_len != SEQLZ_PAGE)
+		return -EINVAL;
+	len = seqlz_compress_coded(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
+				   req->dst_len);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -54,7 +75,8 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 
 static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
-	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst))
+	if (req->dst_len < SEQLZ_PAGE || seqlz_decode_scratch(params->drv_data, req->src, req->src_len, req->dst,
+							      ((struct sz_ctx *)ctx->context)->scratch))
 		return -EINVAL;
 	return 0;
 }
@@ -67,4 +89,15 @@ const struct zcomp_ops backend_seqlz = {
 	.setup_params	= sz_setup_params,
 	.release_params	= sz_release_params,
 	.name		= "seqlz",
+};
+
+/* seqlz-fast with the literals coded too */
+const struct zcomp_ops backend_seqlz_lit = {
+	.compress	= sz_lit_compress,
+	.decompress	= sz_decompress,
+	.create_ctx	= sz_create,
+	.destroy_ctx	= sz_destroy,
+	.setup_params	= sz_setup_params,
+	.release_params	= sz_release_params,
+	.name		= "seqlz-lit",
 };

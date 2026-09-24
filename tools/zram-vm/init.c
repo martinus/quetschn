@@ -15,7 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MAX_ALGOS 4
+#define MAX_ALGOS 8
 #define REPS 3
 
 static void put(const char* path, const char* v) {

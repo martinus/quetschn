@@ -726,6 +726,23 @@ compress cycles per page with `perf stat`:
 1.2 points less memory for 11% more compress time and 1 µs more at cold p99: another point between
 `seqlz-fast` and `zstd`.
 
+**All candidates in the kernel**, one boot, 7 zram devices read in turn (so each read finds less in
+the caches than in the runs above), compressed data flushed, with the prefetch, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | read | write |
+| --- | --- | --- | --- |
+| `lz4` | 29 007 872 | 2520 / 4310 | 5739 / 9670 |
+| `lzo-rle` | 27 222 016 | 2580 / 4180 | 5470 / 9991 |
+| `bytelz` | 24 813 568 | 2720 / 4251 | 6770 / 11 939 |
+| `seqlz-fast` | 22 679 552 | 3070 / 4640 | 6560 / 11 840 |
+| `seqlz-fast-lit` | 21 614 592 | 3280 / 5849 | 5690 / 12 480 |
+| `seqlz-hc-lit` | 20 873 216 | 3080 / 5700 | 20 519 / 34 360 |
+| `zstd` | 20 246 528 | 5120 / 8130 | 14 509 / 24 350 |
+
+The Pareto front on this machine, from `lz4`'s speed to `zstd`'s memory: `bytelz`, `seqlz-fast`,
+`seqlz-fast-lit`, and for recompression `seqlz-hc-lit`. `seqlz-fast-lit` writes faster than
+`seqlz-fast` at p50, not explained; zram's own work per write depends on the size of the object.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
