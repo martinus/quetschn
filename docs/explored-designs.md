@@ -795,6 +795,25 @@ prefetch, `seqlz-fast` reads cold pages 1.6% faster at p99 and 21% slower at p50
 at p99 and 5% slower at p50. That is C2 at p99 for both, but only as long as `lz4` does not do the
 same, which is a 4 line change to its backend.
 
+**A fast path in seqlz's decoder, as `lz4` and `bytelz` have one.** `seqlz-fast` decoded at IPC 3.74
+with 30 100 instructions per page, `lz4` 12 400: about 133 instructions per sequence against 55, so it
+waits for instructions, not for memory. A good part of them checked the room behind each literal and
+match copy. Now a sequence without length values, at least 64 bytes before the end of the page and 16
+before the end of the literals, copies 16 literal bytes, and 16 or 32 bytes of match for offsets of 8
+and more, without those checks; only the literal count and the offset are checked. The format stays
+the same.
+
+| | instructions per page | decode cycles, 2000 pages | cold p50 / p99 | kernel read p50 / p99, cold |
+| --- | --- | --- | --- | --- |
+| before | 30 100 | 8131, 8179 | 1550 / 3150, 1570 / 3160 ns | 2840 / 4440 ns |
+| fast path | 26 200 | 7725, 7750 | 1410 / 3140, 1400 / 3120 ns | 2740 / 4461 ns |
+
+13% fewer instructions and 5% fewer cycles: now something else limits the loop. Cold p50 is 10%
+lower, p99 does not move, and in the kernel it is 100 ns at p50. The literal count in the fast path
+needs its own check, which no test covered: without it, `lit` runs past the literals into the
+bitstream, and the careful path, where `lit_end - lit` is then negative and unsigned, reads behind the
+input. A test builds such a page now.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page

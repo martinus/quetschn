@@ -609,6 +609,46 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         }
         nl = (tok >> 4) & 15U;
         len = ((tok >> 8) & 31U) + 4U;
+        /* Far from the end of the page and of the literals, and no length value: 16 literal bytes
+         * and 16 or 32 bytes of match copied without checking the room behind them; nl + len is at
+         * most 14 + 34, and the last sequence always has its literals up to the end of the page. */
+        if (nl < SEQLZ_LL_CAP && len < SEQLZ_ML_CAP + 4U && (unsigned int)(d_end - d) >= 64U &&
+            (unsigned int)(lit_bound - lit) >= 16U) {
+            u64 a, b;
+
+            if (nl > (unsigned int)(lit_end - lit))
+                return -1;
+            __builtin_memcpy(&a, lit, 8);
+            __builtin_memcpy(&b, lit + 8, 8);
+            __builtin_memcpy(d, &a, 8);
+            __builtin_memcpy(d + 8, &b, 8);
+            d += nl;
+            lit += nl;
+            last = off;
+            if (off - 1U >= (unsigned int)(d - (u8*)dst))
+                return -1;
+            if (off >= 8U) {
+                /* for 8 <= off < 16 each load reads what the stores before it wrote, which is right */
+                __builtin_memcpy(&a, d - off, 8);
+                __builtin_memcpy(d, &a, 8);
+                __builtin_memcpy(&b, d + 8 - off, 8);
+                __builtin_memcpy(d + 8, &b, 8);
+                if (len > 16U) {
+                    __builtin_memcpy(&a, d + 16 - off, 8);
+                    __builtin_memcpy(d + 16, &a, 8);
+                    __builtin_memcpy(&b, d + 24 - off, 8);
+                    __builtin_memcpy(d + 24, &b, 8);
+                    if (len > 32U) {
+                        __builtin_memcpy(&a, d + 32 - off, 8);
+                        __builtin_memcpy(d + 32, &a, 8);
+                    }
+                }
+            } else {
+                copy_match(d, d_end, off, len);
+            }
+            d += len;
+            continue;
+        }
         if (nl == SEQLZ_LL_CAP) {
             nl += value(&br, &t->ll, &e);
         }

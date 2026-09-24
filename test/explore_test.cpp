@@ -708,6 +708,23 @@ TEST_CASE("seqlz: the encoder writes the format as seqlz.h describes it") {
     }
 }
 
+TEST_CASE("seqlz: sequences that need more literals than the header has are rejected, without reading past the input") {
+    // 16 literals, then n sequences of 10 literals and 4 bytes from 1 back: the second one has too
+    // few literals left. Decoded from a buffer of exactly the page's size, so that the sanitizer sees
+    // any read behind it; n moves the end of the input across the literals that would be read.
+    auto const t = default_tables();
+    auto out = std::vector<unsigned char>(4096);
+    auto const literals = std::vector<unsigned char>(16, 7);
+    for (unsigned n = 2; n < 80; ++n) {
+        CAPTURE(n);
+        auto const seq = std::vector<seqlz_sequence>(n, seqlz_sequence{10, 4, 1});
+        auto const encoded = reference_encode(seqlz_default_lz4, seq, literals);
+        auto const c = std::make_unique<unsigned char[]>(encoded.size());
+        std::copy(encoded.begin(), encoded.end(), c.get());
+        CHECK(seqlz_decode(t.get(), c.get(), static_cast<unsigned>(encoded.size()), out.data()) == -1);
+    }
+}
+
 namespace {
 
 // bytelz decoded from its description in bytelz.h alone, byte by byte, to pin the format: encoder and
