@@ -291,7 +291,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
          * Token and offset in one put, the length values after them. */
         unsigned int is_new = (off == e->last) - 1U, big = off >= 256U;
         unsigned int cls = (1U + (off >= 16U) + big) & is_new;
-        unsigned int raw_bits = 4U * cls + (QUETSCHN_PAGE_BITS - 12U) * (cls == 3U);
+        unsigned int raw_bits = SEQLZ_RAW_BITS(cls);
         unsigned int tlen;
         u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
 
@@ -576,7 +576,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             tok = token_entry(idx);
         }
         {
-            unsigned int cls = tok >> 13, raw_bits = (cls << 2) + (QUETSCHN_PAGE_BITS - 12U) * (cls == 3U);
+            unsigned int cls = tok >> 13, raw_bits = SEQLZ_RAW_BITS(cls);
             unsigned int n_tok = tok & 15U;
             unsigned int is_new = 0U - (cls != 0);
             unsigned int raw = (unsigned int)(br.bits >> n_tok) & ((1U << raw_bits) - 1U);

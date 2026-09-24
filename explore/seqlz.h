@@ -89,8 +89,15 @@ static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_
     return 12U + b;
 }
 
-/* the class of an offset and its raw bits, see above; offsets are below the page size, class 3 has as
- * many raw bits as the page size has */
+/* The raw bits of an offset class: 4 * class, and for class 3 as many as the page size has. From a
+ * packed constant: the multiply by (class == 3) made gcc branch on the class for 16 KiB pages. */
+#if QUETSCHN_PAGE_BITS == 12
+#    define SEQLZ_RAW_BITS(cls) (4U * (cls))
+#else
+#    define SEQLZ_RAW_BITS(cls) ((((unsigned int)QUETSCHN_PAGE_BITS << 24 | 0x080400U) >> (8U * (cls))) & 255U)
+#endif
+
+/* the class of an offset and its raw bits, see above; offsets are below the page size */
 static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last, unsigned int* raw_bits) {
     unsigned int cls = off == last ? 0U : off < 16 ? 1U : off < 256 ? 2U : 3U;
 

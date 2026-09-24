@@ -749,9 +749,11 @@ Timing with the harness on the 2088 pages (so p99 is about 20 pages), p50 / p99 
 
 Decoding keeps the proportions of 4 KiB pages. Compressing takes 1.8 to 2.1 times `lz4`'s time in the
 harness, but in the loop (`perf stat`) 1.32 times its cycles (95 419 against 72 400 per page), `bytelz`
-1.24; there `seqlz-fast` mispredicts 1608 times per page against `lz4`'s 1192, a gap it does not have
-on 4 KiB pages. Not looked into yet: the page, the output and the 16 KiB hash table share a 32 KiB L1
-in the harness, and the matcher's step and skipping were tuned on 4 KiB pages.
+1.24; there `seqlz-fast` mispredicted 1608 times per page against `lz4`'s 1192, a gap it does not
+have on 4 KiB pages. The branch stack showed why: for 16 KiB, gcc turned the encoder's offset class
+into branches, because of the extra bits of class 3. With the raw bits from a packed constant: 1176
+mispredictions, 92 362 cycles, 1.28 times `lz4`. Not looked into yet: the page, the output and the
+16 KiB hash table share a 32 KiB L1 in the harness, and the matcher's step was tuned on 4 KiB pages.
 
 ## Word model: WKdm-style 64-bit words
 
