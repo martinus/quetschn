@@ -112,7 +112,7 @@ quetschn_kernel_codec(quetschn_kernel_explore lib/lz4 -O3 explore/shuffle.c expl
 target_include_directories(quetschn_kernel_explore PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 target_link_libraries(quetschn_kernel_explore PUBLIC quetschn_kernel_lz4)
 # seqlz: lz4's or lz4hc's matches, Huffman coded sequences with static tables
-quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 explore/seqlz.c explore/seqlz_default_tables.c
+quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c
                       explore/zram_seqlz.c explore/bytelz.c explore/zram_bytelz.c)
 target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 target_link_libraries(quetschn_kernel_seqlz PUBLIC quetschn_kernel_lz4)
