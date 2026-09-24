@@ -982,6 +982,16 @@ instead of taken from the bit buffer. With the raw bits widened to 0 / 8 / 8 / 1
 at `bytelz`'s speed; but it needs one more pointer in a loop that already has none to spare, which is
 what sank `bytelz`'s stream of extensions.
 
+Tried and dropped: **two literals per lookup** for `seqlz-fast-lit`, as `zstd`'s Huffman decoder does
+(HUF_decompress4X2): a table of 2048 `u32` entries with one or two literals and their bits, the
+streams each a quarter of the literals in a row instead of literal k in stream k % 4, and the last
+literals of each stream one at a time. Same size, 25.5%. In the loop over 2000 pages with the data in
+the cache 12% faster (8967 to 7865 cycles), but with the data cold slower: quick benchmark cold p50 /
+p99 1600 / 4210 against 1560 / 3950 ns, `--decode-loop 11 --flush` on 20 000 pages 2120 / 4790
+against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no better cold. The
+loop exits now depend on the literals, and the short pages decode their literals mostly one stream
+after the other.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
