@@ -1266,14 +1266,39 @@ estimated at 2 bytes above the whole bits. The model's baseline is 24.52% and 31
 | per page: a table, the XOR, or a table per lane | 23.99% | 30.81% |
 
 * **XOR with the byte at the last offset**, as `lzma` codes the literal after a match: 0.15 and 0.37
-  points, on both dumps. Cheap to decode, the literal copy XORs with the bytes at `d - last`, which it
-  loads anyway for a match. The candidate to build next.
+  points, on both dumps. Built, and dropped, see below.
 * **A table per byte lane**: 0.4 points on the first dump, 0.1 points worse on the second, where the
   pages have less structure in 8-byte words. The decoder would have to gather each literal from the
   lane of its page offset instead of copying 16 bytes. Dropped for now.
 * **Coding the literals only when the page moves to a smaller zsmalloc class**: of the coded pages
   only 0.5% and 0.2% stay at the same cost, with 0.4% and 0.1% of the coded literals. The classes are
   too fine for this to save work. Dropped.
+
+**The XOR with the byte at the last offset, built** (branch `feat/lit-xor`, not merged). In every run of
+literals but the page's first, the first min(ll, last, 16) literals are coded XOR the byte `last`
+bytes before them, `last` the offset of the match before the run; bit 7 of the table byte says so.
+The encoder writes the XOR literals next to the raw ones while it matches, prices both with all 8
+tables and takes the cheaper. The decoder XORs after the literal copy, with 16 bytes and two masks,
+without a loop; the bytes it XORs with are before the run, so nothing waits for the run's own bytes.
+Without the cap of 16 the size is the same, 0.03% of the bytes.
+
+Kernel VM, 20 000 pages per dump, p50 / p99 in ns:
+
+| | used by zsmalloc | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- |
+| first dump, without the XOR | 21 184 512 | 2640 / 4390 | 2280 / 3950 | 6810 / 12 100 |
+| first dump, with | 21 090 304 | 2671 / 5381 | 2310 / 4720 | 7330 / 13 631 |
+| second dump, without | 26 673 152 | 2840 / 4551 | 2450 / 3960 | 7670 / 12 170 |
+| second dump, with | 26 484 736 | 2981 / 5240 | 2600 / 4600 | 8250 / 13 460 |
+
+0.1 and 0.25 points less memory, for 700 to 1000 ns more at read p99, which is then slower than
+`lz4`'s (4910 and 5110 ns in the same boots), and 1.3 µs more at write p99. The same build with the
+XOR never chosen reads as before (2830 / 4620 ns on the second dump), so it is the pages with the XOR:
+the XOR loads the bytes just before `d`, which the match before has often just stored, and with
+`last` = 8, as in arrays of words, an 8-byte load spans stores that cannot be forwarded to it. In
+the loop over 2000 pages with the data in the cache it is only 3% slower (8964 against 8678 cycles).
+The writes pay for the XOR literals and their prices on every page, whether the XOR wins or not: 12%
+more compress cycles. Dropped.
 
 ## 16 KiB pages
 
