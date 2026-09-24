@@ -999,6 +999,24 @@ are read. Tables trained again: 27.1% instead of 27.0%, cold p50 / p99 1410 / 32
 3040 ns, 7625 decode cycles against 6883, 2800 more instructions per page and no fewer
 mispredictions (95).
 
+**A refill only when the bits might run out.** The decoder refilled its 64-bit buffer once per
+sequence, and the next token's lookup waited for the refill's load, which with cold data is a miss.
+A sequence on the fast path needs at most 11 + 12 bits, a refill leaves 56: now it refills only below
+23 bits, and the escape and the literal length value refill before they read. Same format. The four
+measurements do not agree:
+
+| | before | refill below 23 bits |
+| --- | --- | --- |
+| loop over 2000 pages, cycles / mispredictions | 6883 / 91 | 7115 / 130 |
+| quick benchmark, cold p50 / p99 | 1470 / 3040 ns | 1370 / 2970 ns |
+| `--decode-loop 11 --flush`, p50 / p99 | 1840 / 3160 ns | 1895 / 3140 ns |
+| kernel, cold, other page first | 2811 / 4501 ns | 2610 / 4300 ns |
+| kernel, warm | 2290 / 4049 ns | 2129 / 3790 ns |
+
+The branch on the bit count mispredicts, 39 more per page, but the load no longer holds up every
+lookup. The kernel decides: 7% less at p50, cold and warm, and with cold data `seqlz-fast` is now 4%
+behind `lz4` at p50 (2510 ns in the same boot) and 15% ahead at p99 (5089 ns). Kept.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
