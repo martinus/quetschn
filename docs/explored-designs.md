@@ -837,6 +837,13 @@ only. Its mispredictions, from the branch stack (`perf record -b`), were 31% the
 entry to the fast path. 7310 to 7019 cycles per page, mispredictions 149 to 147: the branch on
 `len > 16` mispredicts where the loop did.
 
+Tried and dropped: **the extensions of ml in their own stream**, downwards from the end of the page,
+so that the fast path reads them without a branch and the position of the next token does not wait
+for them. Same size. Mispredictions 147 to 107 per page, but 7862 cycles instead of 7019 and 30 500
+instructions instead of 22 200; with a branch on the extension again 7418 cycles. The second pointer
+costs a register the loop does not have, and the branchless read of up to 3 bytes costs more than the
+misprediction it saves.
+
 Tried and dropped: **no offsets below 8 from the matcher**, a run with a short period taken from a
 multiple of its period that is at least 8, when the bytes before repeat too. With such matches only,
 the fast path needs no branch on the offset: 6864 cycles instead of 7750, mispredictions 99 to 75,
