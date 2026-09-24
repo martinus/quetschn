@@ -1047,6 +1047,16 @@ bits is on the chain from one token's lookup to the next; the raw bits themselve
 offset only. With `u32` entries (8 KiB) that hold the sum in bits 16 to 20: 7296 cycles instead of
 7088, 1760 more instructions per page, quick benchmark cold 1290 / 3090 against 1190 / 2940 ns.
 
+Tried and dropped: **the offsets as bytes in a stream of their own**, now built, with the refill
+change in mind: without raw bits a token needs at most 11 bits, so the bit buffer lasts 4 or 5
+sequences. Layout: `u16` literal count, `u16` offset bytes, literals, the offsets read downwards,
+the bitstream; while encoding, the offsets grow down towards the literals, which they never reach,
+because each offset of at most 2 bytes has a match of at least 4 bytes. 28.1% instead of 27.0%.
+Mispredictions 130 to 114 per page, but 1500 more instructions, and quick benchmark cold 1220 / 3010
+against 1190 / 2940 ns. In the kernel, other page first, cold 2659 / 4370 against 2610 / 4300 ns,
+warm 2150 / 3890 against 2129 / 3790 ns, 3.5% more memory. The refill change took most of what the
+raw bits cost.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
