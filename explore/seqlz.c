@@ -518,7 +518,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
     }
     n_lit = load16(s);
     if (n_lit & 0x8000U) {
-        /* coded literals: four streams, decoded into scratch first, 5 rounds of 4 per refill */
+        /* coded literals: four streams, decoded into scratch first, 6 rounds of 4 per refill */
         unsigned int sz0, sz1, sz2, sz3, k;
         struct bit_reader r0, r1, r2, r3;
         u8* out = scratch;
@@ -544,8 +544,8 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             refill(&r1);
             refill(&r2);
             refill(&r3);
-            /* scratch has room for 4 * 5 bytes past n_lit */
-            for (j = 0; j < 5U; j++, k += 4) {
+            /* scratch has room for 4 * 6 bytes past n_lit */
+            for (j = 0; j < 6U; j++, k += 4) {
                 unsigned int e0 = t->lit.decode[r0.bits & ((1U << SEQLZ_LIT_BITS) - 1U)];
                 unsigned int e1 = t->lit.decode[r1.bits & ((1U << SEQLZ_LIT_BITS) - 1U)];
                 unsigned int e2 = t->lit.decode[r2.bits & ((1U << SEQLZ_LIT_BITS) - 1U)];
@@ -562,7 +562,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             }
         }
         /* each stream may be read past its end only for the symbols behind n_lit */
-        if (r0.count < -44 || r1.count < -44 || r2.count < -44 || r3.count < -44)
+        if (r0.count < -54 || r1.count < -54 || r2.count < -54 || r3.count < -54)
             return -1;
         br = (struct bit_reader){q + sz0 + sz1 + sz2 + sz3, s_end, 0, 0};
         lit = out;
@@ -581,17 +581,19 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         unsigned int tok, nl, len, off;
         u32 e;
 
-        /* One refill per sequence: token, offset and literal length value need at most 11 + 12 + 21 =
-         * 44 of the at least 56 bits a refill leaves. Only a match length value, up to 21 more bits,
-         * needs another one. The token's entry has the class of the offset, so its raw bits are
-         * known without a second lookup, and the next token's lookup waits for one load, not two. */
-        refill(&br);
+        /* A refill only when token and offset might not fit, 11 + 12 bits: the next token's lookup then
+         * does not wait for the refill's load, and a refill leaves 56 bits for two or three sequences.
+         * The escape and the length values refill before they read. The token's entry has the class
+         * of the offset, so its raw bits are known without a second lookup. */
+        if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
+            refill(&br);
         tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
         if (tok >> 15) {
             /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
             unsigned int idx;
 
             drop(&br, tok & 15U);
+            refill(&br);
             idx = (unsigned int)br.bits & ((1U << SEQLZ_ESCAPE_BITS) - 1U);
             drop(&br, SEQLZ_ESCAPE_BITS);
             if (idx >= SEQLZ_TOKEN_SYMBOLS)
@@ -672,6 +674,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             continue;
         }
         if (nl == SEQLZ_LL_CAP) {
+            refill(&br);
             nl += value(&br, &t->ll, &e);
         }
         if (nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))

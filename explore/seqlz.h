@@ -147,7 +147,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
  * decodes it into scratch first, SEQLZ_SCRATCH bytes; for any other page it is seqlz_decode().
  */
 #define SEQLZ_LIT_BITS 9U
-#define SEQLZ_SCRATCH (SEQLZ_PAGE + 32U) /* 16 for the literal copies, 19 decoded past the end */
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 32U) /* 16 for the literal copies, 23 decoded past the end */
 unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 const struct seqlz_sequence* seq,
                                 unsigned int n,

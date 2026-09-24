@@ -972,6 +972,91 @@ Without the learned page `seqlz-fast` is 31% slower than `lz4-prefetch` at p50 i
 else, while the kernel's direct map uses large pages, so neither is the kernel. The numbers to decide
 with are the VM's, with the other page first; the harness is for quick comparisons of the same codec.
 
+**The harness now times each page after other pages** (`bench/harness.cpp`). It checks 16 pages at a
+time, then goes through all 16 once per repetition, first the compressions, then the warm and then the
+cold decompressions, so no timed run comes right after a run on the same page. The warm decompression
+finds its data in the cache by reading it and writing the output page, not by decoding it once before.
+The 16 pages keep their compressed data in 1 MiB per codec. Quick benchmark, p50 / p99 in ns, two runs
+each within 10 ns:
+
+| codec | Σ zsmalloc cost | before, cold | now, cold | before, warm p99 | now, warm p99 |
+| --- | --- | --- | --- | --- | --- |
+| `lz4-prefetch` | 34.5% | 1020 / 2690 | 1080 / 2620 | 2380 | 2410 |
+| `lz4` | 34.5% | | 1010 / 2560 | | 2380 |
+| `lzo-rle` | 32.4% | | 1110 / 2500 | | 2470 |
+| `bytelz` | 29.7% | 1190 / 2770 | 1230 / 2640 | 2390 | 2480 |
+| `seqlz-fast` | 27.0% | 1270 / 3060 | 1470 / 3040 | 2810 | 2890 |
+
+`seqlz-fast`'s p50 moves the most, 200 ns: 460 ns behind `lz4` instead of 210, close to the 370 ns of
+the kernel. p99 hardly moves, the slowest pages were not the ones the predictor could learn. So the
+quick benchmark's cold p50 can be trusted more than before, and it was too kind to `seqlz-fast` by
+about half its gap to `lz4`.
+
+Tried and dropped, measured with it: **the branch on short offsets decided early.** `off >= 8` depends
+on the raw bits, so a misprediction there is found late. With class 1 for offsets 1 to 7 (3 raw bits)
+instead of 1 to 15, the class and the last offset say whether an offset is short before the raw bits
+are read. Tables trained again: 27.1% instead of 27.0%, cold p50 / p99 1410 / 3280 against 1470 /
+3040 ns, 7625 decode cycles against 6883, 2800 more instructions per page and no fewer
+mispredictions (95).
+
+**A refill only when the bits might run out.** The decoder refilled its 64-bit buffer once per
+sequence, and the next token's lookup waited for the refill's load, which with cold data is a miss.
+A sequence on the fast path needs at most 11 + 12 bits, a refill leaves 56: now it refills only below
+23 bits, and the escape and the literal length value refill before they read. Same format. The four
+measurements do not agree:
+
+| | before | refill below 23 bits |
+| --- | --- | --- |
+| loop over 2000 pages, cycles / mispredictions | 6883 / 91 | 7115 / 130 |
+| quick benchmark, cold p50 / p99 | 1470 / 3040 ns | 1370 / 2970 ns |
+| `--decode-loop 11 --flush`, p50 / p99 | 1840 / 3160 ns | 1895 / 3140 ns |
+| kernel, cold, other page first | 2811 / 4501 ns | 2610 / 4300 ns |
+| kernel, warm | 2290 / 4049 ns | 2129 / 3790 ns |
+
+The branch on the bit count mispredicts, 39 more per page, but the load no longer holds up every
+lookup. The kernel decides: 7% less at p50, cold and warm, and with cold data `seqlz-fast` is now 4%
+behind `lz4` at p50 (2510 ns in the same boot) and 15% ahead at p99 (5089 ns). Kept.
+
+**All candidates with the refill change**, one boot, 7 devices, other page first, `seqlz`'s and
+`bytelz`'s backends with their own prefetch, p50 / p99 in ns:
+
+| algorithm | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 29 007 872 | +6.6% | 2510 / 4680 | 1979 / 3530 | 5470 / 9240 |
+| `lzo-rle` | 27 222 016 | | 2690 / 5479 | 2060 / 3620 | 5280 / 9750 |
+| `bytelz` | 25 014 272 | -8.1% | 2670 / 4190 | 2080 / 3610 | 6440 / 10 551 |
+| `seqlz-fast` | 22 953 984 | -15.7% | 2620 / 4340 | 2150 / 3840 | 6360 / 10 690 |
+| `seqlz-fast-lit` | 21 848 064 | -19.7% | 2760 / 5301 | 2370 / 4519 | 6850 / 12 720 |
+| `seqlz-hc-lit` | 20 873 216 | -23.3% | 2840 / 5511 | 2310 / 4590 | 20 070 / 34 160 |
+| `zstd` | 20 246 528 | -25.6% | 5500 / 9700 | 4650 / 7810 | 14 110 / 23 981 |
+
+`seqlz-fast` now reads cold data as fast as `bytelz` at p50 and 150 ns slower at p99, for 8% less
+memory: `bytelz` is no longer on the Pareto front. Against `lz4` it is 4% slower at p50 and 7% faster
+at p99 with cold data, 9% slower with warm data, and writes 1.16 times as long at p99.
+`seqlz-fast-lit` writes 1.38 times as long, which fails C3; it is a candidate for recompression, next
+to `seqlz-hc-lit`.
+
+**6 literals per refill instead of 5** in the coded literals: at most 9 bits each, 54 of the 56 bits a
+refill leaves. Decode cycles 9258 to 8929 per page, mispredictions 142 to 130, quick benchmark cold
+p50 / p99 1490 / 3880 to 1480 / 3740 ns, warm p99 3660 to 3530 ns, both runs alike. The check that no
+stream was read too far past its end allows 54 bits now instead of 44; past the end the decoder reads
+zeros, which decode as the shortest code, so for tables the trainer writes either bound holds.
+
+Tried and dropped: **the bits to drop in the token's table entry.** Only code length plus raw offset
+bits is on the chain from one token's lookup to the next; the raw bits themselves are needed for the
+offset only. With `u32` entries (8 KiB) that hold the sum in bits 16 to 20: 7296 cycles instead of
+7088, 1760 more instructions per page, quick benchmark cold 1290 / 3090 against 1190 / 2940 ns.
+
+Tried and dropped: **the offsets as bytes in a stream of their own**, now built, with the refill
+change in mind: without raw bits a token needs at most 11 bits, so the bit buffer lasts 4 or 5
+sequences. Layout: `u16` literal count, `u16` offset bytes, literals, the offsets read downwards,
+the bitstream; while encoding, the offsets grow down towards the literals, which they never reach,
+because each offset of at most 2 bytes has a match of at least 4 bytes. 28.1% instead of 27.0%.
+Mispredictions 130 to 114 per page, but 1500 more instructions, and quick benchmark cold 1220 / 3010
+against 1190 / 2940 ns. In the kernel, other page first, cold 2659 / 4370 against 2610 / 4300 ns,
+warm 2150 / 3890 against 2129 / 3790 ns, 3.5% more memory. The refill change took most of what the
+raw bits cost.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
