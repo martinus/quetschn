@@ -1448,6 +1448,99 @@ encoder, so for independent 4 KiB pages both sides reset them for every page.
 * Not measured yet: a dictionary trained on swapped pages, which needs a second zram dump
   (`tools/bench-dict.sh`).
 
+## The ideas of #29 and #31, measured
+
+What was still open in the lists of ideas of issues #29 and #31, each with its first check. The budget
+for the literals and the parser for recompression have their own sections. Unless noted, 20 000 pages
+per dump, zsmalloc cost in the model, first dump / second dump.
+
+**The device's own literal tables: 0.3 and 1.7 points.** The dumps store the pages in the order of
+their swap slots, which the kernel hands out about in the order of time. Literal tables trained on the
+first half of each dump, measured on a sample of the second half, `seqlz-fast-lit`:
+
+| tables | first dump, second half | second dump, second half |
+| --- | --- | --- |
+| trained on the resident pages | 25.8% | 36.1% |
+| trained on the first dump's first half | 25.5% | 36.5% |
+| trained on the second dump's first half | 25.7% | 34.4% |
+
+The other dump's history helps little or not at all, the device's own a lot on the second dump, so it
+is the device, not only more training data. Decoding stays as fast. It needs tables in generations,
+one byte per page for the generation, and the trainer running on the device (38 s on one CPU for
+56 559 pages now, a sample would do). Combined with the parser for recompression: 32.06% and 23.42%
+against `zstd` 3's 31.74% and 24.18% on the second halves. Not built.
+
+**A choice per page, after Apple's memory compressor: the word model no, the shuffle yes, but at a
+price.** The smaller of `seqlz-fast-lit` and another codec per page, from the per-page lengths:
+
+| other codec | first dump | second dump | pages where it is smaller |
+| --- | --- | --- | --- |
+| none | 24.81% | 31.89% | |
+| word model (`spike-branchless`) | 24.81% | 31.89% | 16 / 14 |
+| `lz4` | 24.80% | 31.87% | 21 / 38 |
+| BΔI (`bdelta`) | 24.77% | 31.71% | 29 / 97 |
+| byte shuffle, then `lz4` | 24.46% | 31.39% | 817 / 566 |
+| byte shuffle, then `seqlz-fast-lit` | 23.95% | 30.61% | 1899 / 1464 |
+
+The last row comes from another tool, where `seqlz-fast-lit` alone is 24.55% and 31.33%. The shuffle gives 0.6 and 0.7 points if the compressor knows which pages to shuffle, and nothing
+cheap tells it: the best rule of one or two features (words whose high halves repeat, bytes equal to
+the one 8 back against the one before, ...) found on the resident pages makes the first dump worse,
+24.60%, and the second hardly better, 31.29%. Compressing both ways where a filter says maybe, on 35%
+to 39% of the pages, gets 24.10% and 30.71%: a second compression for a third of the pages, which C3
+does not allow, recompression would. The decoder pays for undoing the shuffle, 3300 ticks per shuffled
+page with the kernel's flags, 0.75 us. Not built.
+
+**Two, four neighbouring swap slots together: 5% to 8%.** 80 000 pages in slot order from the second
+halves, compressed alone and in blocks, bytes per page before zsmalloc:
+
+| block | `seqlz-fast-lit` | `zstd` -1 | `zstd` 3 |
+| --- | --- | --- | --- |
+| 4 KiB | 1060 / 1686 | 1163 / 1884 | 1003 / 1437 |
+| 8 KiB | | 1097 / 1759 | 953 / 1371 |
+| 16 KiB | 1010 / 1559 | 1048 / 1645 | 920 / 1314 |
+
+`seqlz`'s tables do not fit an 8 KiB build. A fault on one page decodes the whole block. That fits
+the swap-out of large folios in recent kernels, where zram gets 16 KiB and more at once, better than
+collecting single pages; `seqlz` has a 16 KiB build already.
+
+**A delta against a similar page: 2.3 to 3.9 points, the largest outside the codec.** Per page the page
+with the most of 16 min-hashes of its 8-byte windows in common, as a `zstd` 3 dictionary. Against any
+other page of the 20 000: 23.31% to 17.69% and 27.90% to 24.98%. Causal and one level deep, as zram
+could do it, against an earlier page that is stored whole, where it saves 10% at least, on the first
+20 000 slots of the second halves: 25.03% to 21.12% (8465 pages as deltas) and 46.31% to 43.97% (3801).
+The full dumps, 16 and 23 times the sample, would have more candidates. It needs an index over all
+pages, reference counts on the base pages, and a fault on a delta page decodes its base page too.
+Not built, it is zram's work more than the codec's.
+
+**BPC** (bit-plane compression, Kim et al., ISCA 2016): per 128-byte block of 32-bit words the
+differences of neighbours as 33 bit planes, each plane XOR the next, then `zstd` 3, per page the
+smaller: 23.31% to 23.15% (156 pages) and 27.90% to 27.63% (239). Made for cache lines in hardware.
+Dropped.
+
+**The literal coder in AVX2**: 8 streams in 64-bit lanes, the codes gathered, the whole bytes out every
+4 rounds, the same bits as the scalar coder. 3.16 against 3.34 ticks per literal for 512 literals, 2.53
+against 3.09 for 4096: the gather and the flush per lane eat most of it, and the kernel would need
+`kernel_fpu_begin()` and arm64 a NEON version. Dropped; the budget of #33 gets the writes within C3.
+
+**Xpress**, the format of Windows' memory compression, with the open
+[ms-compress](https://github.com/coderforlife/ms-compress), 2000 pages per dump, ticks per page:
+Xpress Huffman 29.63% / 34.00%, compress 139 095 / 145 305, decompress 18 000 / 20 565; Xpress 29.47%
+/ 35.07%, compress 51 795 / 56 880, decompress 4680 / 5040. `seqlz-fast-lit` 25.87% / 32.78%, 4770 /
+5130. Windows' own compressor may parse better.
+
+**Answered by other results, not built:**
+
+* **Coding the literals later, without matching again**: the coding is about 4000 cycles per page of the
+  compressor's time, 1 us, where recompression with the parser takes 234 us. It needs its own zram
+  hook, recompression decompresses and compresses again, and it would get `seqlz-fast-lit`'s memory,
+  where the parser through zram's recompression gets `zstd`'s.
+* **A table of short matches per page**, the most frequent pairs of bytes in its header: Huffman on
+  FSST's codes is no better than on the bytes, the literals have no structure of more than one byte
+  left.
+* **A delta against the page's own last swap-out**: the dumps have each page once, it needs a trace
+  of pages that go out, come in and go out again.
+* **Oodle's Selkie and Mermaid**: closed, not measured.
+
 ## Not evaluated yet
 
 * **A faster decoder for seqlz**, see its section. The format has the memory, the decoder has to get
@@ -1458,13 +1551,7 @@ encoder, so for independent 4 KiB pages both sides reset them for every page.
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **`lz4` tuned for 4 KiB pages:** offsets limited to the page, word-aligned matches, a parser that
   does not get stuck. The `lzo-rle` route, the easiest merge.
-* **Per-page mode selection**, e.g. between a byte-oriented and a word-oriented coder. The shuffle
-  result says a quarter of the pages would pick the word side.
-* **Writes of `seqlz-fast-lit` within C3.** It reads at `lz4`'s speed and needs 20% to 22% less memory
-  than `lzo-rle`, but writes 1.27 to 1.31 times as long as `lz4` at p99, see its section. Either
-  cheaper literal coding, or `seqlz-fast` for writes and `seqlz-fast-lit` for zram's recompression of
-  idle pages: the same decoder reads both.
-* **A parser that knows seqlz's costs**, for recompression: `lz4hc`'s matches do not get better with
-  its level for this format, 23.8% to 23.9% and 30.1% to 30.2% at levels 3 to 12.
+* **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
+  #31: both measured, neither built.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently.
