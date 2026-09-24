@@ -933,6 +933,26 @@ Also dropped: **one step of lazy matching**, after a match the candidate of the 
 if it is longer by 2 bytes or more. 24 808 compress cycles instead of 20 400, 21% more, `seqlz-fast`
 stays at 27.0%, `bytelz` 29.7% to 29.4%, decoding within 1%.
 
+**The full benchmark after these changes** (decoder fast path, short offsets with stores, hash of 5
+bytes, tables trained again), all 455 239 pages, CPU 2 at 4.5 GHz:
+
+| codec | Σ zsmalloc cost | compress p50 / p99 | decompress cold p50 / p99 | warm p99 |
+| --- | --- | --- | --- | --- |
+| `lz4-prefetch` | 34.5% | 2260 / 4200 ns | 1040 / 2650 ns | 2360 ns |
+| `lz4` | 34.5% | 2260 / 4200 ns | 1060 / 2600 ns | 2350 ns |
+| `bytelz` | 29.7% | 3030 / 6270 ns | 1140 / 2690 ns | 2340 ns |
+| `seqlz-fast` | 27.0% | 3110 / 6590 ns | 1240 / 2990 ns | 2770 ns |
+| `seqlz-hc` | 25.6% | 10 960 / 15 950 ns | 1160 / 3080 ns | 2830 ns |
+| `zstd -1` | 26.9% | 5210 / 10 350 ns | 2410 / 4460 ns | 3910 ns |
+
+Against the full run before: `seqlz-fast` decodes cold in 1240 / 2990 instead of 1540 / 3130 ns, for
+0.4 points more memory, now 0.1 points more than `zstd -1`, which takes twice as long at p50. `lz4`
+without the prefetch also came out faster than in that run (1060 / 2600 instead of 1260 / 2900 ns),
+with the same code, so differences of that size between two full runs are not all ours. In the
+harness, which compresses with the page in cache, `seqlz-fast`'s compress p99 does not move with the
+5-byte hash (6590 ns, 1.57 times `lz4`); in the kernel it went down 10%. The harness is not the place
+to judge C3.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
