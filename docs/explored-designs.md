@@ -1077,6 +1077,177 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## seqlz-fast-lit: one of 8 literal tables per page
+
+`seqlz-fast-lit` now picks one of 8 static literal tables per page, and decodes the literals in 8
+streams instead of 4. In the kernel it needs 22% less memory than `lzo-rle` on the first dump and 20%
+less on the second, where `seqlz-fast` needs 16% and 11% less. That is 89% and 76% of the way from
+`lz4` to `zstd`. It reads cold data 6% to 8% faster than `lz4` at p99 and 6% to 13% slower at p50. It
+writes 1.27 to 1.31 times as long as `lz4` at p99, and C3 allows 1.2.
+
+**Where the gap to `zstd` is.** The second dump (24th September 2026, after a forced reclaim, 1.3 GB)
+compresses worse than the first, and `seqlz-fast` got only 48% of the way from `lz4` to `zstd` on it.
+Sizes on 20 000 sampled pages of each dump:
+
+| | first dump | second dump |
+| --- | --- | --- |
+| `seqlz-fast` | 27.0% | 35.7% |
+| `zstd -1`, literals not coded | 26.9% | 35.4% |
+| `zstd-nolit` 3 | 25.8% | 33.1% |
+| `zstd` 3 | 23.5% | 28.4% |
+| `seqlz-hc`, `lz4hc` 3's matches | 25.6% | 33.0% |
+
+Coding the literals is worth 2.3 points to `zstd` 3 on the first dump and 4.7 on the second, better
+matches 1.1 and 2.6. The literals are 66% and 69% of `seqlz-fast`'s output. With its matcher, the
+order-0 entropy of each page's literals, plus a header estimate for a table per page, would save 10.7%
+and 17.6% of the output. The one static table of `seqlz-fast-lit` saved 6.1% and 5.2%.
+
+**K tables, the cheapest per page choice.** k-means over the literal histograms: each page goes to the
+table that codes its literals in the fewest bits, each table is the Huffman code of its pages'
+literals. Trained on the resident pages, priced on the dumps, share of `seqlz-fast`'s output saved:
+
+| tables, code bits | first dump | second dump |
+| --- | --- | --- |
+| 1, 11 | 7.3% | 6.3% |
+| 4, 11 | 9.2% | 9.1% |
+| 8, 10 | 10.2% | 12.5% |
+| 8, 11 | 10.3% | 12.5% |
+| 16, 11 | 10.6% | 13.1% |
+| 64, 11 | 11.4% | 14.4% |
+
+The tables are not tied to the pages they are trained on. Trained on either dump and priced on the
+other, they save within 1 point of tables trained on the pages they are priced on: 8 tables of 10
+bits trained on the first dump save 12.9% on the second, trained on the second 13.3%, trained on the
+resident pages 12.5%.
+
+**Built:** 8 tables of at most 10 bits (`explore/seqlz_lit_sets.c`, from `quetschn-seqlz-train
+--corpus resident --codec seqlz --lit-sets`), the table number in one byte of the coded page's
+header. The trainer runs k-means from 4 starts and keeps the one that saves the most on the training
+pages. Two things in it matter, each found with a table that no page chose:
+
+* A page whose literals no table codes in 1/16 fewer bytes stays raw and counts for no table.
+  Otherwise the pages with the flattest literals get a table of their own, and it never pays.
+* A table without pages starts again from the page whose literals cost most per byte.
+
+Share of `seqlz-fast`'s output saved, on the resident pages, the first and the second dump: plain
+k-means 6.91%, 8.68%, 10.10%, one table unused; with raw pages left out 6.87%, 8.41%, 9.98%, still
+one unused; with both 6.97%, 8.48%, 11.29%. The last one saves the most on the training pages and is
+in `explore/seqlz_lit_sets.c`. The start matters too: the prototype of the trainer found a set with
+6.914 bits per literal on the resident pages against 6.889 for plain k-means, and 6.566 against 6.676
+on the second dump, 610 KB of the 81.9 MB in the kernel. Training on the pages that are measured flatters: tables
+trained on the resident pages save 8.49% and 11.03% of `seqlz-fast`'s output on the two dumps, with
+the second dump added to the training 12.62% on it. Trained on the resident pages and the first dump,
+they save 11.33% on the second, trained on the resident pages and the second 8.31% on the first. So
+the tables stay trained on the resident pages only. Measured sizes: 24.6% and 31.8% with 4 streams. 16 tables 24.5% and 31.5%,
+8 of 11 bits 24.6% and 31.7%, 8 of 9 bits 24.9% and 32.4%, 4 of 10 bits 24.9% and 33.1%. Coding
+the literals of a page when it saves anything instead of 1/16 saves less than 0.1 points.
+
+**The encoder prices all 8 tables at once.** Per byte, its code lengths in all 8 tables are the 8
+lanes of a `u64` (2 KiB); adding one per literal gives the bits in all tables, widened to 16-bit
+lanes every 25 literals of a stream, before a lane could overflow. One lane per stream, so the exact
+size of each stream is known before it is written. The first version, a histogram and 8 * 256
+products, cost 1400 ns on pages with few literals.
+
+**Writing the streams is what costs.** In the kernel, pricing alone costs 30 to 40 ns per write: a
+build that prices and then stores the page with raw literals wrote in 6920 / 10 529 ns, `seqlz-fast`
+in 6890 / 10 490. A build that encoded the streams into a scratch buffer and threw them away wrote as
+slow as the real thing. Steps, second dump, kernel, p50 / p99 in ns, `lz4` at about 5870 / 9370:
+
+| literal encoder | write |
+| --- | --- |
+| histogram, 8 * 256 products, one stream after the other | 7820 / 12 880 |
+| packed prices, accumulator shifted left, marker bit | 7680 / 12 619 |
+| 4 streams in one loop, sizes from the prices | 7530 / 12 030 |
+| bit count from the sum of the table entries, no marker | 7560 / 12 101 |
+| code and length in two tables | 7690 / 12 410 |
+| 8 streams, 4 in one loop, twice | 7590 / 12 030 |
+
+One stream after the other waited on its accumulator, a shift and an or per literal, about 3.5
+cycles per literal. The kernel still pays about 0.6 ns per coded literal, and the slowest pages to
+write have about 2600 literals. Coding only pages with fewer literals does not help: with at most 2048
+literals the saving drops from 8.8% to 7.3% of the output on the first dump and from 11.3% to 8.3% on
+the second, and even a threshold of 1/4 leaves the 99th percentile of coded literals per page at about
+2200.
+
+**8 streams decode faster.** With 4 streams the literals took about 2.9 cycles each: four chains of
+a shift, a table load and a shift. With 8 the containers stay in registers and the stream pointers go
+to the stack, they are only needed for a refill. Decode loop, 2000 pages in the cache: 9070 to
+8676 cycles (median of 5, `seqlz-fast` 7316). Kernel, cold, p50 / p99: 2940 / 4810 to 2860 / 4531 ns
+(two boots, same numbers). The header grows by 8 bytes, 0.1 to 0.2 points.
+
+**The literal decoder's place in memory matters by 250 ns.** Two kernels with byte for byte the same
+pages and the same decoder source, only the encoder built differently, read in 2860 / 2870 and in
+3100 / 3120 ns at p50 (two boots each). The kernel builds with `-falign-loops=1`. With
+`decode_literals()` aligned to 64 bytes: 2920 ns. In userspace the difference does not show. Kept the
+alignment, so that a change elsewhere in the file does not move this number.
+
+All candidates, kernel, one boot per dump, other page first, backend prefetch, p50 / p99 in ns:
+
+| second dump | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 35 090 432 | +4.5% | 2519 / 4840 | 1920 / 3529 | 6010 / 9600 |
+| `lzo-rle` | 33 570 816 | | 2700 / 5580 | 2049 / 3600 | 5849 / 9800 |
+| `seqlz-fast` | 29 757 440 | -11.4% | 2640 / 4369 | 2200 / 3789 | 6940 / 10 570 |
+| `seqlz-fast-lit` | 26 673 152 | -20.5% | 2840 / 4551 | 2450 / 3960 | 7670 / 12 170 |
+| `zstd` | 23 949 312 | -28.7% | 5770 / 9730 | 4929 / 7560 | 14 779 / 23 940 |
+
+| first dump | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 29 007 872 | +6.6% | 2500 / 4770 | 1950 / 3510 | 5450 / 9240 |
+| `lzo-rle` | 27 222 016 | | 2680 / 5520 | 2040 / 3541 | 5190 / 9609 |
+| `seqlz-fast` | 22 953 984 | -15.7% | 2550 / 4300 | 2140 / 3830 | 6250 / 10 379 |
+| `seqlz-fast-lit` | 21 184 512 | -22.2% | 2640 / 4390 | 2280 / 3950 | 6810 / 12 100 |
+| `zstd` | 20 246 528 | -25.6% | 5460 / 9870 | 4630 / 7720 | 13 840 / 23 660 |
+
+Against `lz4`, `seqlz-fast-lit` reads cold data 13% and 6% slower at p50, 6% and 8% faster at p99,
+and writes 1.27 and 1.31 times as long at p99. Userspace sizes on the 20 000 pages: 24.8% and 31.9%,
+`seqlz-fast` 27.0% and 35.7%. Quick benchmark with the tables of the prototype: cold p50 / p99 1400 /
+3100 and 1640 / 3040 ns, `lz4` 1210 / 2880 and 1210 / 2780 ns.
+
+Tests: the encoder's choice against the bits of every table computed in the test, on pages whose
+literals are drawn as one table expects them and in every other page the first stream's as another
+does; a decoder in the test, written from `seqlz.h`, for the header, the 8 streams, the canonical
+codes and the sequences' bitstream behind them; 20 000 random or damaged coded pages for the decoder.
+Mutations, each caught: the choice from the first stream's bits only, the canonical codes of one
+length in the other order (encoder and decoder still agree, only the format test sees it), no check
+of the table number (with the sanitizers).
+
+Tried and dropped, all on 20 000 pages of each dump with `seqlz-fast-lit`, compress cycles per page
+in the loop over 2000 pages of the second dump (`seqlz-fast` about 22 500):
+
+* **A 4-byte hash** again: 25.0% and 32.6% instead of 24.6% and 31.8%. With coded literals a 4-byte
+  match costs about as much as its 4 literals. **A 6-byte hash**: 25.1% and 32.3%.
+* **A hash table of 13 bits**: 24.4% and 31.6%, collisions are not what the matcher misses.
+* **A second table on 8 bytes** (`zstd`'s double fast), checked after the last offset: 24.5% and
+  31.6%. Checked before the last offset: 24.8% and 31.9%.
+* **A hash chain**, up to 3 older positions with the same hash, the longest match wins: 24.2% and
+  31.4% for 28 400 cycles. With 1 step 24.4% and 31.5% for 26 400.
+* **The chain plus one step of lazy matching**: 24.0% and 31.0%, 39 500 cycles and 2.3 times the
+  mispredictions. Lazy only after matches shorter than 12 bytes: 24.6% and 31.6% for 30 600.
+  `lz4hc`'s matches have 834 literal bytes per page against 976 with the same number of sequences,
+  but this matcher cannot afford to find them.
+* **Slower acceleration** (`>> 8`): 24.5% and 31.6%. **Faster** (`>> 5`): 24.8% and 32.1% for 3%
+  fewer cycles.
+* **The sequences into an array first, then encoded**, so that each loop has its registers:
+  25 100 cycles instead of 22 800, more mispredictions.
+* **Two literals per lookup**, priced from the chosen table and each page's histogram: 10 bits give
+  a pair in 20% and 29% of the lookups, 12 bits 39% and 43%, 14% to 27% fewer lookups. Not built
+  again, see the last try above.
+* **Coded literals only on pages with at most 1536 literals**, in the kernel on the second dump:
+  28 127 232 bytes instead of 26 791 936 (`seqlz-fast` 29 757 440), write p99 11 510 ns, 1.22 times
+  `lz4`. Most of the gain is on the pages with many literals, and C3 still fails.
+* **16 tables instead of 8**, priced in two words: 24.7% and 31.7% instead of 24.8% and 32.0%, 4% more
+  compress cycles, and twice the decode tables in use.
+* **One branch for both candidates of the matcher**, as the product of the two differences, because
+  gcc turns `!(rep_hit | cand_hit)` into two branches: 23 900 cycles instead of 22 500.
+* **`lz4hc`'s matches at higher levels** for `seqlz-hc-lit`: levels 3, 6, 9 and 12 all give 23.8% to
+  23.9% and 30.1% to 30.2%, `zstd` 1 23.9% and 29.1%. `lz4hc`'s parse optimizes `lz4`'s costs, not
+  these.
+* **8 token tables per page, as for the literals**, priced from each page's token histogram: the
+  tokens are 16.8% and 15.5% of the output, 8 tables would make them 15.6% and 14.1%, about 0.3 to 0.4
+  points of memory. The encoder would have to know all tokens before it writes the first, and
+  matching first and encoding after cost 2300 cycles per page.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
@@ -1237,7 +1408,11 @@ encoder, so for independent 4 KiB pages both sides reset them for every page.
   does not get stuck. The `lzo-rle` route, the easiest merge.
 * **Per-page mode selection**, e.g. between a byte-oriented and a word-oriented coder. The shuffle
   result says a quarter of the pages would pick the word side.
-* **Entropy coded literals** on top, 1.5 points by the estimate, but `zstd 1` shows it costs a lot of
-  decode time. Maybe only for pages just above a size class boundary (`PLAN.md` Phase 3, candidate 4).
+* **Writes of `seqlz-fast-lit` within C3.** It reads at `lz4`'s speed and needs 20% to 22% less memory
+  than `lzo-rle`, but writes 1.27 to 1.31 times as long as `lz4` at p99, see its section. Either
+  cheaper literal coding, or `seqlz-fast` for writes and `seqlz-fast-lit` for zram's recompression of
+  idle pages: the same decoder reads both.
+* **A parser that knows seqlz's costs**, for recompression: `lz4hc`'s matches do not get better with
+  its level for this format, 23.8% to 23.9% and 30.1% to 30.2% at levels 3 to 12.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently.
