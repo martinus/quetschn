@@ -972,6 +972,16 @@ Without the learned page `seqlz-fast` is 31% slower than `lz4-prefetch` at p50 i
 else, while the kernel's direct map uses large pages, so neither is the kernel. The numbers to decide
 with are the VM's, with the other page first; the harness is for quick comparisons of the same codec.
 
+**Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
+in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
+sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
+choice of the last offset), the checks of the fast path about 20, the refill about 12, six values live
+on the stack. Priced, not built: the offsets as whole bytes in a stream of their own, read with a load
+instead of taken from the bit buffer. With the raw bits widened to 0 / 8 / 8 / 16 as an estimate:
+28.1% instead of 27.0%. That is between `seqlz-fast` and `bytelz` (29.7%), and would pay if it decoded
+at `bytelz`'s speed; but it needs one more pointer in a loop that already has none to spare, which is
+what sank `bytelz`'s stream of extensions.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
