@@ -61,7 +61,7 @@ target_include_directories(quetschn_spike PUBLIC spike bench/kernel_codecs)
 target_link_libraries(quetschn_spike PRIVATE quetschn_warnings)
 
 # Candidate designs, see docs/explored-designs.md. The parts that need no kernel code, for the tests.
-add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c explore/seqlz.c explore/seqlz_default_tables.c
+add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c
             explore/bytelz.c)
 target_include_directories(quetschn_explore PUBLIC explore)
 target_link_libraries(quetschn_explore PRIVATE quetschn_warnings)
