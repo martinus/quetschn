@@ -822,6 +822,22 @@ what a store a few cycles before wrote, and with `u64` copies such a load often 
 cannot take its bytes from them: `ls_bad_status2.stli_other` counts 359 per page for `seqlz-fast`,
 363 for `lz4`, 92 for `bytelz`. More copies, more of those waits.
 
+Kept: for offsets below 8, `copy_match` built the first 8 bytes in a register and then loaded, step
+bytes on, what the store before had written. Step is a multiple of the offset, so that is the same 8
+bytes again: now the register is stored at each step, without loads. The fast path stores it 5 times
+unconditionally (at least 28 bytes) and loops only for longer matches. Decode cycles on 2000 pages
+7750 to 7276, mispredictions 99 to 92 per page, cold p50 / p99 1405 / 3130 to 1380 / 3090 ns. In the
+kernel it is within the scatter (2970 / 4621 ns, other page first). `bytelz` does not change, its
+fast path rarely gets there.
+
+Tried and dropped: **no offsets below 8 from the matcher**, a run with a short period taken from a
+multiple of its period that is at least 8, when the bytes before repeat too. With such matches only,
+the fast path needs no branch on the offset: 6864 cycles instead of 7750, mispredictions 99 to 75,
+but 27.9% instead of 26.6%. The short runs, e.g. 4 to 11 zero bytes, have no 8 equal bytes before them
+and become literals. Taking the multiple only where it works and the short offset otherwise keeps
+26.6% and gains 1.5%: most short offsets are at the start of a run. It would also be a format change
+for `seqlz-hc`, whose `lz4hc` matches have short offsets.
+
 **The warm-up read flattered the kernel numbers.** Before each timed read, `/init` read the same page
 from the same device, to warm the path. That also lets the branch predictor learn the branches of just
 this page, which a page fault does not get. With another page read first (i + n / 2), compressed data

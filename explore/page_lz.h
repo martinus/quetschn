@@ -193,7 +193,11 @@ static ALWAYS_INLINE void copy_match(u8* d, const u8* d_end, unsigned int off, u
             pat |= (pat << ((2U * bits) & 63U)) & (0ULL - (u64)(2U * bits < 64U));
             pat |= (pat << ((4U * bits) & 63U)) & (0ULL - (u64)(4U * bits < 64U));
             __builtin_memcpy(d, &pat, 8);
-            k = step;
+            /* step bytes on, a multiple of off, it is the same 8 bytes again: stores only, without
+             * a load that waits for the store before it */
+            for (k = step; k < len && (unsigned int)(d_end - d) >= k + 8U; k += step)
+                __builtin_memcpy(d + k, &pat, 8);
+            back = 0;
         } else {
             back = 0; /* at the end of the page: one by one below */
         }

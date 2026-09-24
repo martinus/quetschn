@@ -644,7 +644,29 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
                     }
                 }
             } else {
-                copy_match(d, d_end, off, len);
+                /* The off bytes before d repeated to 8 bytes; step, the largest multiple of off up to
+                 * 8, apart it is the same 8 bytes again, so the same register is stored at each step,
+                 * without loads. Five stores cover at least 28 bytes. */
+                static const u8 step_for[8] = {0, 8, 8, 6, 8, 5, 6, 7};
+                static const u64 repeat[8] = {0,
+                                              0x0101010101010101ULL,
+                                              0x0001000100010001ULL,
+                                              0x0001000001000001ULL,
+                                              0x0000000100000001ULL,
+                                              0x0000010000000001ULL,
+                                              0x0001000000000001ULL,
+                                              0x0100000000000001ULL};
+                unsigned int step = step_for[off], k;
+
+                __builtin_memcpy(&a, d - off, 8);
+                a = (a & (~0ULL >> (64U - 8U * off))) * repeat[off];
+                __builtin_memcpy(d, &a, 8);
+                __builtin_memcpy(d + step, &a, 8);
+                __builtin_memcpy(d + 2U * step, &a, 8);
+                __builtin_memcpy(d + 3U * step, &a, 8);
+                __builtin_memcpy(d + 4U * step, &a, 8);
+                for (k = 5U * step; k < len; k += step)
+                    __builtin_memcpy(d + k, &a, 8);
             }
             d += len;
             continue;
