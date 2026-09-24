@@ -739,6 +739,11 @@ the caches than in the runs above), compressed data flushed, with the prefetch, 
 | `seqlz-hc-lit` | 20 873 216 | 3080 / 5700 | 20 519 / 34 360 |
 | `zstd` | 20 246 528 | 5120 / 8130 | 14 509 / 24 350 |
 
+Without the insert of the position 2 bytes before the end of each match into the hash table:
+27.1% instead of 26.6% for 1.8% fewer compress cycles, dropped like the other matcher trades. In this
+run `seqlz-fast` writes 1.22 times as long as `lz4` at p99, in the run before 1.26: C3's 1.2 is within
+the scatter between runs in the kernel, while the harness, which times the codec alone, says 1.55.
+
 The Pareto front on this machine, from `lz4`'s speed to `zstd`'s memory: `bytelz`, `seqlz-fast`,
 `seqlz-fast-lit`, and for recompression `seqlz-hc-lit`. `seqlz-fast-lit` writes faster than
 `seqlz-fast` at p50, not explained; zram's own work per write depends on the size of the object.
