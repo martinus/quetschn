@@ -134,6 +134,27 @@ static int lz4_decompress(struct quetschn_params* p,
     return 0;
 }
 
+/* lz4 with quetschn_prefetch_page() before the decompression, for a fair comparison */
+static int lz4_prefetch_decompress(struct quetschn_params* p,
+                                   struct quetschn_stream* s,
+                                   const void* src,
+                                   unsigned int src_len,
+                                   void* dst,
+                                   unsigned int* dst_len) {
+    quetschn_prefetch_page(src, src_len, dst, *dst_len);
+    return lz4_decompress(p, s, src, src_len, dst, dst_len);
+}
+
+const struct quetschn_codec quetschn_codec_lz4_prefetch = {
+    .name = "lz4-prefetch",
+    .setup_params = lz4_setup_params,
+    .release_params = lz4_release_params,
+    .create = lz4_create,
+    .destroy = lz4_destroy,
+    .compress = lz4_compress,
+    .decompress = lz4_prefetch_decompress,
+};
+
 const struct quetschn_codec quetschn_codec_lz4 = {
     .name = "lz4",
     .setup_params = lz4_setup_params,

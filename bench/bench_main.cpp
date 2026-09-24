@@ -39,6 +39,7 @@ namespace {
 // avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
 auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_lz4,
+    &quetschn_codec_lz4_prefetch,
     &quetschn_codec_lz4hc,
     &quetschn_codec_lzo,
     &quetschn_codec_lzo_rle,
@@ -53,6 +54,8 @@ auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_seqlz,
     &quetschn_codec_seqlz_hc,
     &quetschn_codec_seqlz_fast,
+    &quetschn_codec_seqlz_hc_lit,
+    &quetschn_codec_seqlz_fast_lit,
     &quetschn_codec_bytelz,
 #    ifdef QUETSCHN_HAVE_MEMLZ
     &quetschn_codec_memlz,
@@ -84,7 +87,8 @@ void usage() {
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
                  "--no-timing only compresses and checks the roundtrip: sizes and zsmalloc cost, fast.\n"
                  "--decode-loop <n> decodes every page n times and nothing else, for perf; --cold reads 2 MiB of\n"
-                 "other data and flushes the compressed page and the output before each decode; --compress times\n"
+                 "other data and flushes the compressed page and the output before each decode, --flush only flushes\n"
+                 "them, as the harness's cold decode does; --compress times\n"
                  "the compression instead; --out <file.tsv> writes the median time and compressed length per page.\n",
                  program);
 }
@@ -144,6 +148,7 @@ int decode_loop(quetschn::corpus const& c,
                 quetschn::run_options const& opts,
                 unsigned loops,
                 bool cold,
+                bool flush_only,
                 bool time_compress,
                 std::string const& out_file) {
     auto params = quetschn_params{};
@@ -178,7 +183,7 @@ int decode_loop(quetschn::corpus const& c,
     auto sum = std::uint64_t{0};
     auto const pages = c.size();
     auto ns = std::vector<double>(pages * loops); // ns[l * pages + i]
-    auto other = std::vector<unsigned char>(cold ? 2U << 20 : 0U, 1);
+    auto other = std::vector<unsigned char>(cold && !flush_only ? 2U << 20 : 0U, 1);
     for (unsigned l = 0; l < loops; ++l) {
         for (std::size_t i = 0; i < pages; ++i) {
             auto len = 0U;
@@ -261,6 +266,7 @@ int main(int argc, char** argv) {
     int cpu = -1;
     unsigned decode_loops = 0;
     bool decode_cold = false;
+    bool flush_only = false;
     bool loop_compress = false;
     auto codecs = std::vector<quetschn_codec const*>();
     auto codec_levels = std::vector<int>();
@@ -303,6 +309,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--decode-loop" && has_value && parse(argv[++i], decode_loops) && decode_loops > 0) {
         } else if (arg == "--cold") {
             decode_cold = true;
+        } else if (arg == "--flush") {
+            decode_cold = true;
+            flush_only = true;
         } else if (arg == "--compress") {
             loop_compress = true;
         } else if (arg == "--no-timing") {
@@ -359,7 +368,7 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (decode_loops > 0) {
-            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold, loop_compress, out_path);
+            return decode_loop(c, *codecs.front(), opts, decode_loops, decode_cold, flush_only, loop_compress, out_path);
         }
 
         auto const governor_cpu = cpu >= 0 ? cpu : ::sched_getcpu();

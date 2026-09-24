@@ -48,6 +48,7 @@ static int decompress(struct quetschn_params* p,
                       unsigned int* dst_len) {
     (void)p;
     (void)s;
+    quetschn_prefetch_page(src, src_len, dst, BYTELZ_PAGE);
     if (*dst_len < BYTELZ_PAGE || bytelz_decode(src, src_len, dst))
         return -1;
     *dst_len = BYTELZ_PAGE;
