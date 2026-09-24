@@ -71,9 +71,18 @@ int main(void) {
     posix_memalign((void**)&pages, 4096, (size_t)size);
     pread(pf, pages, (size_t)size, 0);
     for (int a = 0; a < n_algos; a++) {
-        char path[128], dev[64];
+        char path[128], dev[64], primary[32];
+        /* primary+secondary: the secondary for zram's recompression of idle pages, before the reads */
+        char* plus = strchr(algos[a], '+');
+        snprintf(primary, sizeof primary, "%.*s", plus ? (int)(plus - algos[a]) : (int)strlen(algos[a]), algos[a]);
         snprintf(path, sizeof path, "/sys/block/zram%d/comp_algorithm", a);
-        put(path, algos[a]);
+        put(path, primary);
+        if (plus) {
+            char arg[64];
+            snprintf(path, sizeof path, "/sys/block/zram%d/recomp_algorithm", a);
+            snprintf(arg, sizeof arg, "algo=%s priority=1", plus + 1);
+            put(path, arg);
+        }
         snprintf(path, sizeof path, "/sys/block/zram%d/disksize", a);
         put(path, "512M");
         snprintf(dev, sizeof dev, "/dev/zram%d", a);
@@ -123,6 +132,28 @@ int main(void) {
             free(med);
         }
         free(w);
+    }
+    /* recompression of all pages as idle ones, where a device has a secondary algorithm */
+    for (int a = 0; a < n_algos; a++) {
+        char path[128], st[256] = {0};
+        long long t0;
+
+        if (!strchr(algos[a], '+'))
+            continue;
+        snprintf(path, sizeof path, "/sys/block/zram%d/idle", a);
+        put(path, "all");
+        snprintf(path, sizeof path, "/sys/block/zram%d/recompress", a);
+        t0 = now();
+        put(path, "type=idle priority=1");
+        printf("RESULT %-8s recompress: %lld ns per page\n", algos[a], (now() - t0) / (long long)n);
+        /* the old objects leave holes in zsmalloc's pages until they are compacted */
+        snprintf(path, sizeof path, "/sys/block/zram%d/compact", a);
+        put(path, "1");
+        snprintf(path, sizeof path, "/sys/block/zram%d/mm_stat", a);
+        int sf = open(path, O_RDONLY);
+        read(sf, st, sizeof st - 1);
+        close(sf);
+        printf("RESULT %-8s mm_stat after recompress %s", algos[a], st);
     }
     size_t per = (size_t)n_algos * 3;
     long long* t = malloc(sizeof(long long) * n * REPS * per);

@@ -1155,6 +1155,19 @@ The parser's pages read a bit faster than `seqlz-fast-lit`'s, fewer and longer s
 kernel the cut at 256 costs 0.13 points on the first dump (19 607 552 without it), in userspace
 nothing. The work memory is 110 KB per stream, the price table in it and not on the kernel's stack.
 
+**With zram's recompression**, the way it would be used: the pages written with `seqlz-fast-lit`,
+then all marked idle and recompressed with `seqlz-opt` as the secondary algorithm (`recomp_algorithm`,
+`idle`, `recompress`, then `compact`, `run.sh` enables `ZRAM_MULTI_COMP`), then the reads. The writes
+are `seqlz-fast-lit`'s, the recompression takes 233 and 235 us per page, about 17 MB/s on one CPU:
+
+| | before | after recompression | `zstd` 3 | read after, cold | `lz4` |
+| --- | --- | --- | --- | --- | --- |
+| second dump | 26 673 152 | 24 498 176 | 23 949 312 | 2920 / 4980 | 2491 / 4710 |
+| first dump | 21 184 512 | 19 742 720 | 20 246 528 | 2720 / 4730 | 2509 / 4770 |
+
+Without `compact` zsmalloc keeps the holes of the old objects: in a first try with 200 pages the memory
+went up after recompression.
+
 Tests: the parser's pages from four kinds of page come back; on pages of words from a vocabulary of
 60, where the first match found is often not the cheapest, they are 8.5% smaller than the greedy
 matcher's with the same tables, the bound is 7%. Mutations, each caught: only the longest length of
