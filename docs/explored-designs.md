@@ -1042,6 +1042,11 @@ p50 / p99 1490 / 3880 to 1480 / 3740 ns, warm p99 3660 to 3530 ns, both runs ali
 stream was read too far past its end allows 54 bits now instead of 44; past the end the decoder reads
 zeros, which decode as the shortest code, so for tables the trainer writes either bound holds.
 
+Tried and dropped: **the bits to drop in the token's table entry.** Only code length plus raw offset
+bits is on the chain from one token's lookup to the next; the raw bits themselves are needed for the
+offset only. With `u32` entries (8 KiB) that hold the sum in bits 16 to 20: 7296 cycles instead of
+7088, 1760 more instructions per page, quick benchmark cold 1290 / 3090 against 1190 / 2940 ns.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
