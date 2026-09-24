@@ -749,6 +749,12 @@ Three more runs with only `lz4`, `lzo-rle`, `seqlz-fast` and `bytelz`, write p50
 11 750 to 11 819. So both write 1.24 times as long as `lz4` at p99, 1.16 at p50: C3 missed by about
 3% of the write time, 300 ns on the slowest pages.
 
+**Tables trained on the device**, passed as zram's dictionary (2355 bytes of code lengths): trained on
+the 20 000 sampled swap pages and measured on the whole dump, `seqlz-fast` needs 495 461 348 bytes
+instead of 496 301 529 with the tables from the resident pages, 0.17% less. The static tables carry
+over; retraining them per device is not worth it, and for C4 `seqlz` needs no dictionary to beat
+`lz4` with one (33.7%).
+
 The Pareto front on this machine, from `lz4`'s speed to `zstd`'s memory: `bytelz`, `seqlz-fast`,
 `seqlz-fast-lit`, and for recompression `seqlz-hc-lit`. `seqlz-fast-lit` writes faster than
 `seqlz-fast` at p50, not explained; zram's own work per write depends on the size of the object.
