@@ -992,6 +992,13 @@ the kernel. p99 hardly moves, the slowest pages were not the ones the predictor 
 quick benchmark's cold p50 can be trusted more than before, and it was too kind to `seqlz-fast` by
 about half its gap to `lz4`.
 
+Tried and dropped, measured with it: **the branch on short offsets decided early.** `off >= 8` depends
+on the raw bits, so a misprediction there is found late. With class 1 for offsets 1 to 7 (3 raw bits)
+instead of 1 to 15, the class and the last offset say whether an offset is short before the raw bits
+are read. Tables trained again: 27.1% instead of 27.0%, cold p50 / p99 1410 / 3280 against 1470 /
+3040 ns, 7625 decode cycles against 6883, 2800 more instructions per page and no fewer
+mispredictions (95).
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
