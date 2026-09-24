@@ -1248,6 +1248,33 @@ in the loop over 2000 pages of the second dump (`seqlz-fast` about 22 500):
   points of memory. The encoder would have to know all tokens before it writes the first, and
   matching first and encoding after cost 2300 cycles per page.
 
+**Three more ideas for the literals, priced, not built.** Per page of the resident pages and the two
+dumps: `seqlz-fast`'s and `seqlz-fast-lit`'s lengths, the literal histogram, the histogram of each
+literal XOR the byte at the last offset, and the literal histograms by page offset mod 8. For each
+variant 8 tables are trained on the resident pages the way the trainer does it (raw pages left out,
+tables without pages started again), then priced on the dumps with the zsmalloc model, the streams
+estimated at 2 bytes above the whole bits. The model's baseline is 24.52% and 31.15%, the real
+`seqlz-fast-lit` 24.8% and 31.9%, so only the differences count:
+
+| variant | first dump | second dump |
+| --- | --- | --- |
+| today, a table per page | 24.52% | 31.15% |
+| a flag per page: literals raw or XOR the byte at the last offset | 24.37% | 30.78% |
+| XOR for every page | 25.03% | 31.64% |
+| a table per byte lane (page offset mod 8), 3 more header bytes | 24.12% | 31.29% |
+| per page: a table, or a table per lane | 24.08% | 31.23% |
+| per page: a table, the XOR, or a table per lane | 23.99% | 30.81% |
+
+* **XOR with the byte at the last offset**, as `lzma` codes the literal after a match: 0.15 and 0.37
+  points, on both dumps. Cheap to decode, the literal copy XORs with the bytes at `d - last`, which it
+  loads anyway for a match. The candidate to build next.
+* **A table per byte lane**: 0.4 points on the first dump, 0.1 points worse on the second, where the
+  pages have less structure in 8-byte words. The decoder would have to gather each literal from the
+  lane of its page offset instead of copying 16 bytes. Dropped for now.
+* **Coding the literals only when the page moves to a smaller zsmalloc class**: of the coded pages
+  only 0.5% and 0.2% stay at the same cost, with 0.4% and 0.1% of the coded literals. The classes are
+  too fine for this to save work. Dropped.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
