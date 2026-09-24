@@ -736,6 +736,23 @@ pages, so they have seen these pages: optimistic for `seqlz`, by about a point o
 Against `lzo-rle`, `seqlz-fast` needs 20% less at 4 KiB and 19% less at 16 KiB; `bytelz` 9.5% and
 7.2%. Every codec gains about 4 points from the larger pages.
 
+Timing with the harness on the 2088 pages (so p99 is about 20 pages), p50 / p99 in ns:
+
+| codec | compress | decompress cold |
+| --- | --- | --- |
+| `lz4` | 10 210 / 14 540 | 5100 / 12 790 |
+| `lzo-rle` | 12 090 / 20 500 | 4570 / 10 120 |
+| `zstd` | 35 690 / 55 610 | 11 390 / 16 830 |
+| `bytelz` | 17 890 / 29 280 | 5880 / 10 940 |
+| `seqlz-fast` | 18 670 / 31 140 | 7600 / 13 130 |
+| `seqlz-hc-lit` | 61 470 / 98 430 | 7550 / 13 140 |
+
+Decoding keeps the proportions of 4 KiB pages. Compressing takes 1.8 to 2.1 times `lz4`'s time in the
+harness, but in the loop (`perf stat`) 1.32 times its cycles (95 419 against 72 400 per page), `bytelz`
+1.24; there `seqlz-fast` mispredicts 1608 times per page against `lz4`'s 1192, a gap it does not have
+on 4 KiB pages. Not looked into yet: the page, the output and the 16 KiB hash table share a 32 KiB L1
+in the harness, and the matcher's step and skipping were tuned on 4 KiB pages.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
