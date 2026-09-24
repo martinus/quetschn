@@ -814,6 +814,32 @@ needs its own check, which no test covered: without it, `lit` runs past the lite
 bitstream, and the careful path, where `lit_end - lit` is then negative and unsigned, reads behind the
 input. A test builds such a page now.
 
+Tried and dropped on top of it: no branch on the offset in the fast path, the first 8 bytes as
+`(load64(d - off) & mask) * repeat[off]` for every offset and then copies step bytes apart as in
+`copy_match`. Three copies and a loop for longer matches: 8264 cycles instead of 7740, the loop exit
+mispredicts instead. Five copies: mispredictions 99 to 82 per page, but 8987 cycles. Each copy loads
+what a store a few cycles before wrote, and with `u64` copies such a load often spans two stores and
+cannot take its bytes from them: `ls_bad_status2.stli_other` counts 359 per page for `seqlz-fast`,
+363 for `lz4`, 92 for `bytelz`. More copies, more of those waits.
+
+**The warm-up read flattered the kernel numbers.** Before each timed read, `/init` read the same page
+from the same device, to warm the path. That also lets the branch predictor learn the branches of just
+this page, which a page fault does not get. With another page read first (i + n / 2), compressed data
+flushed, p50 / p99 in ns, two boots:
+
+| algorithm | same page first | other page first | other page first, again |
+| --- | --- | --- | --- |
+| `lz4` | 2399 / 4451 | 2530 / 4661 | 2510 / 4740 |
+| `lzo-rle` | 2469 / 4890 | 2690 / 5490 | 2680 / 5230 |
+| `seqlz-fast`, prefetch in the backend | 2760 / 4490 | 2969 / 4600 | 2950 / 4600 |
+| `bytelz`, prefetch in the backend | 2480 / 3980 | 2710 / 4339 | 2750 / 4351 |
+
+`lz4` gets 130 ns slower at p50, the others 180 to 230: the more mispredictions a decoder has, the
+more it gained from the page it had just seen. Against stock `lz4` `seqlz-fast` is now 18% slower at
+p50 and 3% faster at p99, `bytelz` 9% slower and 8% faster. The other page first is the condition to
+compare with from here on. Writes with another page before them: 130 to 180 ns more for all four,
+`seqlz-fast` 1.26 times `lz4` at p99 as before (11 640 and 9230 ns).
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
