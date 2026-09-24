@@ -114,8 +114,12 @@ int main(void) {
                 med[i] = x[REPS / 2];
             }
             qsort(med, n, sizeof med[0], cmp);
-            printf("RESULT %-8s write, %-20s: p50 %lld p90 %lld p99 %lld ns\n", algos[a],
-                   v == 0 ? "same page before" : "other page before", med[n / 2], med[n * 9 / 10], med[n * 99 / 100]);
+            printf("RESULT %-8s write, %-20s: p50 %lld p90 %lld p99 %lld ns\n",
+                   algos[a],
+                   v == 0 ? "same page before" : "other page before",
+                   med[n / 2],
+                   med[n * 9 / 10],
+                   med[n * 99 / 100]);
             free(med);
         }
         free(w);
@@ -153,8 +157,13 @@ int main(void) {
                 med[i] = v[REPS / 2];
             }
             qsort(med, n, sizeof med[0], cmp);
-            printf("RESULT %-8s %-26s prefetch %d: p50 %lld p90 %lld p99 %lld ns\n", algos[which % (size_t)n_algos], conds[c],
-                   modes[which / (size_t)n_algos], med[n / 2], med[n * 9 / 10], med[n * 99 / 100]);
+            printf("RESULT %-8s %-26s prefetch %d: p50 %lld p90 %lld p99 %lld ns\n",
+                   algos[which % (size_t)n_algos],
+                   conds[c],
+                   modes[which / (size_t)n_algos],
+                   med[n / 2],
+                   med[n * 9 / 10],
+                   med[n * 99 / 100]);
             free(med);
         }
     }
