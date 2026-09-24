@@ -870,6 +870,27 @@ p50 and 3% faster at p99, `bytelz` 9% slower and 8% faster. The other page first
 compare with from here on. Writes with another page before them: 130 to 180 ns more for all four,
 `seqlz-fast` 1.26 times `lz4` at p99 as before (11 640 and 9230 ns).
 
+**All candidates again, with the other page first**, one boot, 7 devices, the decoder changes above,
+`seqlz`'s and `bytelz`'s backends with their own prefetch, the others as the kernel has them. p50 /
+p99 in ns:
+
+| algorithm | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 29 007 872 | +6.6% | 2549 / 4820 | 1990 / 3560 | 5471 / 9299 |
+| `lzo-rle` | 27 222 016 | | 2730 / 5609 | 2080 / 3650 | 5260 / 9690 |
+| `bytelz` | 24 813 568 | -8.8% | 2780 / 4410 | 2179 / 3701 | 6571 / 11 740 |
+| `seqlz-fast` | 22 679 552 | -16.7% | 2941 / 4660 | 2440 / 4190 | 6409 / 11 650 |
+| `seqlz-fast-lit` | 21 614 592 | -20.6% | 3019 / 5510 | 2610 / 4819 | 6820 / 13 469 |
+| `seqlz-hc-lit` | 20 873 216 | -23.3% | 3000 / 5540 | 2459 / 4760 | 20 190 / 34 349 |
+| `zstd` | 20 246 528 | -25.6% | 5560 / 9960 | 4700 / 7900 | 14 171 / 24 040 |
+
+With cold compressed data, `bytelz` and `seqlz-fast` read faster than `lz4` and `lzo-rle` at
+p99, and 9% and 15% slower than `lz4` at p50; with warm data they are slower throughout. At p99 they
+write 1.26 and 1.25 times as long as `lz4`, C3 wants 1.2. `seqlz-fast-lit` now writes slower than
+`seqlz-fast` (6820 against 6409 ns at p50): in the run before, where it came right after
+`seqlz-fast` on the same page and was faster, it got the branch history of the same code on the same
+bytes.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page

@@ -3,11 +3,15 @@
  * seqlz's tables for lz4hc. Slow to compress, as a candidate for zram's recompression. */
 #include <linux/kernel.h>
 #include <linux/lz4.h>
+#include <linux/prefetch.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 #include "backend_seqlz_hc.h"
 #include "seqlz.h"
+
+/* zram-prefetch.patch */
+extern int zram_prefetch;
 
 struct szhc_ctx {
 	void *mem;
@@ -156,6 +160,10 @@ static int szhc_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, s
 {
 	struct szhc_ctx *c = ctx->context;
 
+	/* EXPERIMENT: the compressed data requested first, here instead of in zram_drv.c */
+	if (READ_ONCE(zram_prefetch) & 8)
+		for (unsigned int q = 64; q < req->src_len; q += 64)
+			prefetch((const char *)req->src + q);
 	if (req->dst_len < SEQLZ_PAGE ||
 	    seqlz_decode_scratch(params->drv_data, req->src, req->src_len, req->dst, c->scratch))
 		return -EINVAL;
