@@ -1,20 +1,22 @@
---- a/drivers/block/zram/zram_drv.c	2026-09-01 22:04:41.838465680 +0200
-+++ b/drivers/block/zram/zram_drv.c	2026-09-23 22:54:24.896628240 +0200
-@@ -15,6 +15,8 @@
+--- a/drivers/block/zram/zram_drv.c	2026-09-24 04:12:08.073651891 +0200
++++ b/drivers/block/zram/zram_drv.c	2026-09-24 04:12:08.086306659 +0200
+@@ -15,7 +15,10 @@
  #define pr_fmt(fmt) "zram: " fmt
  
  #include <linux/module.h>
 +#include <linux/prefetch.h>
 +#include <asm/cacheflush.h>
  #include <linux/kernel.h>
++
  #include <linux/bio.h>
  #include <linux/bitops.h>
-@@ -2099,6 +2101,13 @@
+ #include <linux/blkdev.h>
+@@ -2099,6 +2102,13 @@
  	return 0;
  }
  
 +/* EXPERIMENT: switch the prefetch before decompression on and off at run time */
-+static int zram_prefetch; /* 1 the destination, 2 the source, 3 both */
++int zram_prefetch; /* 1 the destination, 2 the source, 3 both, 8 the source in the backend */
 +module_param(zram_prefetch, int, 0644);
 +/* EXPERIMENT: flush the compressed data first, as if it had not been read for a long time */
 +static bool zram_flush_src;
@@ -23,7 +25,7 @@
  static int read_compressed_page(struct zram *zram, struct page *page,
  				unsigned long index)
  {
-@@ -2116,6 +2125,22 @@
+@@ -2116,6 +2126,22 @@
  	src = zs_obj_read_begin(zram->mem_pool, handle, size,
  				zstrm->local_copy);
  	dst = kmap_local_page(page);

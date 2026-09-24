@@ -759,6 +759,42 @@ The Pareto front on this machine, from `lz4`'s speed to `zstd`'s memory: `bytelz
 `seqlz-fast-lit`, and for recompression `seqlz-hc-lit`. `seqlz-fast-lit` writes faster than
 `seqlz-fast` at p50, not explained; zram's own work per write depends on the size of the object.
 
+**The same prefetch before compression does nothing.** A switch `zram_prefetch_write` asked for all
+lines of the page in `zram_write_page()` before `zcomp_compress()`, with the page flushed from the
+cache before each timed write. The first run said 1.0 to 1.2 µs less at p50 for every algorithm, and a
+prefetch in seqlz's own backend instead said nothing at all, which made no sense: both run a few
+instructions apart. A third value, prefetch in the backend, gave it away: `lz4`'s backend ignores it,
+and `lz4` was still the fastest with it. The variants of one algorithm followed each other in the
+loop, so the write before was the same page to the same device, and zram's slot and the freed
+zsmalloc object were still in the cache. With the devices in turn between two writes, p50 / p99 in ns:
+
+| algorithm | no prefetch | prefetch in zram | prefetch in the backend |
+| --- | --- | --- | --- |
+| `lz4` | 4440 / 9020 | 4381 / 8840 | 4390 / 8970 (ignored) |
+| `seqlz-fast` | 5260 / 11 160 | 5449 / 11 219 | 5490 / 11 110 |
+| `bytelz` | 5300 / 11 160 | 5460 / 11 230 | 5499 / 11 160 |
+
+All within the scatter. The compressors read the page front to back, and the hardware prefetcher keeps
+up with that. The write numbers of the tables above rotate through the devices and are not affected.
+
+**The prefetch before decompression survives the same check, and the codec can do it itself.** The
+read loop had the same order, so it got the same treatment: the devices in turn, and a mode 8 that
+prefetches the compressed data in seqlz's and bytelz's backend instead of in zram, which `lz4`'s and
+`lzo-rle`'s backends ignore. Compressed data flushed, p50 / p99 in ns:
+
+| algorithm | no prefetch | prefetch in zram | prefetch in the backend |
+| --- | --- | --- | --- |
+| `lz4` | 2350 / 4510 | 2280 / 3939 | 2379 / 4680 (ignored) |
+| `lzo-rle` | 2470 / 4660 | 2350 / 3980 | 2480 / 4800 (ignored) |
+| `seqlz-fast` | 3020 / 5400 | 2830 / 4419 | 2840 / 4440 |
+| `bytelz` | 2541 / 4710 | 2461 / 3960 | 2470 / 3950 |
+
+So the saving is real, and it does not need a change to zram: the backend is the first to read the
+compressed data, and it can ask for all of it at once. Against a stock kernel, where `lz4` does not
+prefetch, `seqlz-fast` reads cold pages 1.6% faster at p99 and 21% slower at p50, `bytelz` 12% faster
+at p99 and 5% slower at p50. That is C2 at p99 for both, but only as long as `lz4` does not do the
+same, which is a 4 line change to its backend.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
