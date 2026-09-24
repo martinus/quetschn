@@ -351,19 +351,13 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
     return encoder_finish(&e, dst);
 }
 
-unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
-                                const struct seqlz_sequence* seq,
-                                unsigned int n,
-                                const unsigned char* literals,
-                                unsigned int n_literals,
-                                void* dst_v,
-                                unsigned int dst_cap) {
-    u8* const d = dst_v;
-    unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst_v, dst_cap), bits = 0, k, coded, seq_bytes;
+/* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
+ * literals somewhere that the coded ones do not overwrite. Returns the new length. */
+static unsigned int
+code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals) {
+    unsigned int bits = 0, k, coded, seq_bytes;
     struct encoder e;
 
-    if (len == 0)
-        return 0;
     for (k = 0; k < n_literals; k++)
         bits += t->lit.enc[literals[k]] >> 12;
     coded = (bits + 7U) / 8U;
@@ -404,6 +398,35 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
     }
     __builtin_memmove(d + 10 + coded, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, seq_bytes);
     return 10U + coded + seq_bytes;
+}
+
+unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
+                                const struct seqlz_sequence* seq,
+                                unsigned int n,
+                                const unsigned char* literals,
+                                unsigned int n_literals,
+                                void* dst,
+                                unsigned int dst_cap) {
+    unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap);
+
+    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals);
+}
+
+unsigned int seqlz_compress_coded(
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap) {
+    u8* const d = dst_v;
+    unsigned int len = seqlz_compress(t, st, src, dst_v, dst_cap), n_lit;
+    u8* keep;
+
+    if (len == 0)
+        return 0;
+    n_lit = load16(d);
+    /* the literals to the end of dst, behind where code_literals() puts the sequences' bitstream */
+    if (len - SEQLZ_HEADER + 18U > SEQLZ_PAGE)
+        return len;
+    keep = d + 2U * SEQLZ_PAGE - n_lit;
+    __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
+    return code_literals(t, d, len, keep, n_lit);
 }
 
 unsigned int

@@ -265,6 +265,61 @@ const struct quetschn_codec quetschn_codec_seqlz_fast = {
     fast_decompress,
 };
 
+/* EXPERIMENT: seqlz-fast with the literals Huffman coded too; the hash table and the scratch */
+struct fast_lit_ctx {
+    struct seqlz_state st;
+    unsigned char scratch[SEQLZ_SCRATCH];
+};
+
+static int fast_lit_create(struct quetschn_params* p, struct quetschn_stream* s) {
+    (void)p;
+    s->context = quetschn_zalloc(sizeof(struct fast_lit_ctx), &s->allocated);
+    return s->context ? 0 : -1;
+}
+
+static int fast_lit_compress(struct quetschn_params* p,
+                             struct quetschn_stream* s,
+                             const void* src,
+                             unsigned int src_len,
+                             void* dst,
+                             unsigned int* dst_len) {
+    struct fast_lit_ctx* c = s->context;
+    unsigned int len;
+
+    if (src_len != SEQLZ_PAGE)
+        return -1;
+    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len);
+    if (!len)
+        return -1;
+    *dst_len = len;
+    return 0;
+}
+
+static int fast_lit_decompress(struct quetschn_params* p,
+                               struct quetschn_stream* s,
+                               const void* src,
+                               unsigned int src_len,
+                               void* dst,
+                               unsigned int* dst_len) {
+    struct fast_lit_ctx* c = s->context;
+
+    quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode_scratch(p->drv_data, src, src_len, dst, c->scratch))
+        return -1;
+    *dst_len = SEQLZ_PAGE;
+    return 0;
+}
+
+const struct quetschn_codec quetschn_codec_seqlz_fast_lit = {
+    "seqlz-fast-lit",
+    setup_own,
+    release,
+    fast_lit_create,
+    fast_destroy,
+    fast_lit_compress,
+    fast_lit_decompress,
+};
+
 const struct quetschn_codec quetschn_codec_seqlz = {
     "seqlz",
     setup_lz4,

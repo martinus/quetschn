@@ -156,6 +156,10 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 void* dst,
                                 unsigned int dst_cap);
 int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
+/* seqlz_compress(), then the literals coded as in seqlz_encode_coded() */
+struct seqlz_state;
+unsigned int
+seqlz_compress_coded(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
 
 /* the token of a sequence, see above */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigned int cls) {

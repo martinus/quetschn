@@ -712,6 +712,20 @@ p50 / p99 in ns:
 So for recompression `seqlz-hc-lit` needs 3.1% more memory than `zstd` and reads 41% faster at p50,
 29% at p99.
 
+**`seqlz-fast-lit`**: `seqlz-fast` with the literals coded the same way (`seqlz_compress_coded()`: the
+raw page first, then the literals moved to the end of dst and coded from there). Quick benchmark, and
+compress cycles per page with `perf stat`:
+
+| codec | Σ zsmalloc cost | compress cycles | decompress cold p50 / p99 |
+| --- | --- | --- | --- |
+| `lz4` | 34.5% | 17 067 | 1030 / 2700 ns (with the prefetch) |
+| `seqlz-fast` | 26.6% | 21 059 | 1540 / 3150 ns |
+| `seqlz-fast-lit` | 25.4% | 23 300 | 1780 / 4130 ns |
+| `zstd` | 23.6% | | 3680 / 6580 ns |
+
+1.2 points less memory for 11% more compress time and 1 µs more at cold p99: another point between
+`seqlz-fast` and `zstd`.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page

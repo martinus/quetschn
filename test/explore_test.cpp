@@ -926,3 +926,29 @@ TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and ar
     }
     CHECK(coded_pages > 1000);
 }
+
+TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
+    auto const t = default_tables(seqlz_default_own);
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(97);
+    auto out = std::vector<unsigned char>(4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto coded_pages = 0;
+    for (int round = 0; round < 800; ++round) {
+        CAPTURE(round);
+        auto p = random_seqlz_page(rng, round % 4);
+        // most bytes zero, so that coding the literals pays
+        for (auto& b : p.bytes) {
+            if (rng() % 4 != 0) {
+                b = 0;
+            }
+        }
+        auto c = std::vector<unsigned char>(2 * 4096);
+        auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096);
+        REQUIRE(len > 0);
+        coded_pages += (c[1] & 0x80) != 0 ? 1 : 0;
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == p.bytes);
+    }
+    CHECK(coded_pages > 400);
+}
