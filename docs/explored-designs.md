@@ -712,6 +712,30 @@ p50 / p99 in ns:
 So for recompression `seqlz-hc-lit` needs 3.1% more memory than `zstd` and reads 41% faster at p50,
 29% at p99.
 
+## 16 KiB pages
+
+*`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
+size of `explore/` is now `QUETSCHN_PAGE_BITS` (12 or 14, CMake), with its own tables for 16 KiB
+(`explore/seqlz_default_tables_16k.inc`): class 3 of seqlz's offsets has as many raw bits as the page,
+the length values one bucket more, the escape at most 6 bits so that 31 bits per 4 bytes still fit into
+two pages, the hash table 16 KiB like `lz4`'s. There is no zram dump of 16 KiB pages: the corpus is
+2088 groups of four adjacent resident pages of the same mapping, 16 KiB aligned
+(`resident-16k`), against the same 8352 pages as 4 KiB pages. Our tables are trained on the resident
+pages, so they have seen these pages: optimistic for `seqlz`, by about a point on the zram dump.
+
+| codec | 4 KiB | 16 KiB |
+| --- | --- | --- |
+| `lz4` | 39.2% | 34.6% |
+| `lzo-rle` | 36.7% | 32.1% |
+| `zstd` (level 3) | 27.8% | 23.5% |
+| `bytelz` | 33.2% | 29.8% |
+| `seqlz-fast` | 29.4% | 26.1% |
+| `seqlz-hc` | 28.0% | 24.2% |
+| `seqlz-hc-lit` | 26.6% | 23.2% |
+
+Against `lzo-rle`, `seqlz-fast` needs 20% less at 4 KiB and 19% less at 16 KiB; `bytelz` 9.5% and
+7.2%. Every codec gains about 4 points from the larger pages.
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.

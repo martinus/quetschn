@@ -46,7 +46,10 @@
 extern "C" {
 #endif
 
-#define SEQLZ_PAGE 4096U
+#ifndef QUETSCHN_PAGE_BITS
+#    define QUETSCHN_PAGE_BITS 12 /* see page_lz.h */
+#endif
+#define SEQLZ_PAGE (1U << QUETSCHN_PAGE_BITS)
 #define SEQLZ_MAX_BITS 8U /* for length values; tables of 1 KiB each, 9 bits were 80 ns slower when cold */
 #define SEQLZ_TOKEN_BITS 11U
 #define SEQLZ_LL_BITS 4U /* of the token for ll, at most 4 */
@@ -57,9 +60,11 @@ extern "C" {
  * shortest codes alone, and 2048 do not fit at all: only the frequent ones get a code. */
 #define SEQLZ_ESCAPE SEQLZ_TOKEN_SYMBOLS
 #define SEQLZ_ESCAPE_BITS 11U
-#define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U) /* in the token, larger literal lengths follow as a value */
-#define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U) /* the same for ml - 4 */
-#define SEQLZ_LEN_SYMBOLS 25U                     /* 16 direct values, then buckets 4 to 12 */
+/* an escaped token and the largest offset in at most 31 bits, the encoder's bound for two pages */
+#define SEQLZ_MAX_ESCAPE_LEN (31U - QUETSCHN_PAGE_BITS - SEQLZ_ESCAPE_BITS)
+#define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U)    /* in the token, larger literal lengths follow as a value */
+#define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U)    /* the same for ml - 4 */
+#define SEQLZ_LEN_SYMBOLS (13U + QUETSCHN_PAGE_BITS) /* 16 direct values, then buckets 4 to page bits */
 #define SEQLZ_HEADER 2U
 
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
@@ -84,11 +89,12 @@ static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_
     return 12U + b;
 }
 
-/* the class of an offset and its raw bits, see above; offsets are below 4096 */
+/* the class of an offset and its raw bits, see above; offsets are below the page size, class 3 has as
+ * many raw bits as the page size has */
 static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last, unsigned int* raw_bits) {
     unsigned int cls = off == last ? 0U : off < 16 ? 1U : off < 256 ? 2U : 3U;
 
-    *raw_bits = 4U * cls;
+    *raw_bits = cls == 3 ? QUETSCHN_PAGE_BITS : 4U * cls;
     return cls;
 }
 
@@ -157,7 +163,7 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigne
  * the page. The state is per CPU, 8 KiB of hash table, cleared for each page: that was 7% faster than
  * keeping it and checking each entry for whether it is before the current position.
  */
-#define SEQLZ_HASH_BITS 12U
+#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
 struct seqlz_state {

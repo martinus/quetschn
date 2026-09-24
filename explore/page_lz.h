@@ -12,8 +12,14 @@ typedef unsigned int u32;
 typedef unsigned short u16;
 typedef unsigned char u8;
 
-#define PAGE_LZ_PAGE 4096U
-#define PAGE_LZ_HASH_BITS 12U /* the matcher's table has 1 << PAGE_LZ_HASH_BITS unsigned shorts */
+/* 12 for 4 KiB pages, 14 for 16 KiB, set for the whole build (CMake's QUETSCHN_PAGE_BITS) */
+#ifndef QUETSCHN_PAGE_BITS
+#    define QUETSCHN_PAGE_BITS 12
+#endif
+#define PAGE_LZ_PAGE (1U << QUETSCHN_PAGE_BITS)
+/* the matcher's table has 1 << PAGE_LZ_HASH_BITS unsigned shorts: 8 KiB for 4 KiB pages, 16 KiB for
+ * larger ones, lz4's size */
+#define PAGE_LZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
 
 #define ALWAYS_INLINE inline __attribute__((always_inline))
 

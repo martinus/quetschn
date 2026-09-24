@@ -9,6 +9,9 @@
  */
 #include "seqlz.h"
 
+#if QUETSCHN_PAGE_BITS != 12
+#    include "seqlz_default_tables_16k.inc"
+#else
 const struct seqlz_lengths seqlz_default_lz4 = {
     .token = {0,  9,  11, 11, 10, 9,  0,  0,  10, 0,  0,  0,  11, 0,  0,  11, 0,  10, 11, 9,  0,  0,  0,  11, 0,  0,  0,  0,
               0,  0,  0,  0,  0,  9,  7,  11, 0,  0,  11, 0,  0,  0,  11, 0,  0,  0,  0,  0,  0,  5,  11, 0,  0,  11, 0,  0,
@@ -266,3 +269,4 @@ const struct seqlz_lengths seqlz_default_own = {
             9, 9, 9, 9, 9, 9, 9, 7, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 7, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
             9, 9, 7, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 7, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 7},
 };
+#endif

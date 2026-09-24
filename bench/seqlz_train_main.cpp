@@ -115,7 +115,7 @@ std::vector<unsigned char> token_lengths(std::vector<double> const& counts) {
         }
         kept.push_back(escaped);
         auto const l = code_lengths(kept, SEQLZ_TOKEN_BITS);
-        if (l.back() > 31U - 12U - SEQLZ_ESCAPE_BITS) {
+        if (l.back() > SEQLZ_MAX_ESCAPE_LEN) {
             continue;
         }
         auto bits = (escaped - 1.0) * (l.back() + SEQLZ_ESCAPE_BITS);

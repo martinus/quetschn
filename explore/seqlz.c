@@ -158,7 +158,7 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
         for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
             all &= lengths->token[k] != 0 || lengths->token[SEQLZ_ESCAPE] != 0;
         /* an escaped token and a 12-bit offset in at most 31 bits, the encoder's bound */
-        all &= lengths->token[SEQLZ_ESCAPE] <= 31U - 12U - SEQLZ_ESCAPE_BITS;
+        all &= lengths->token[SEQLZ_ESCAPE] <= SEQLZ_MAX_ESCAPE_LEN;
         for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
             all &= lengths->ll[k] != 0 && lengths->ml[k] != 0;
         for (k = 0; k < 256; k++)
@@ -290,7 +290,8 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         /* The class of the offset without a branch: 0 the last offset, 1 below 256 in 8 bits, 2 in 12.
          * Token and offset in one put, the length values after them. */
         unsigned int is_new = (off == e->last) - 1U, big = off >= 256U;
-        unsigned int cls = (1U + (off >= 16U) + big) & is_new, raw_bits = 4U * cls;
+        unsigned int cls = (1U + (off >= 16U) + big) & is_new;
+        unsigned int raw_bits = 4U * cls + (QUETSCHN_PAGE_BITS - 12U) * (cls == 3U);
         unsigned int tlen;
         u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
 
@@ -575,7 +576,8 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
             tok = token_entry(idx);
         }
         {
-            unsigned int cls = tok >> 13, raw_bits = cls << 2, n_tok = tok & 15U;
+            unsigned int cls = tok >> 13, raw_bits = (cls << 2) + (QUETSCHN_PAGE_BITS - 12U) * (cls == 3U);
+            unsigned int n_tok = tok & 15U;
             unsigned int is_new = 0U - (cls != 0);
             unsigned int raw = (unsigned int)(br.bits >> n_tok) & ((1U << raw_bits) - 1U);
 
