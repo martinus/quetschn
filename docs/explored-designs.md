@@ -923,6 +923,10 @@ page first, p50 / p99 in ns:
 stock `lz4` at p99, 5% and 12%, and are 15% and 4% slower at p50; with warm data slower throughout.
 `bytelz` is 8.1% below `lzo-rle`, C1 wants 8%, so it only just passes.
 
+Fewer sequences also decode faster: 7276 to 6883 cycles per page for `seqlz-fast`, 7019 to 6696 for
+`bytelz`. A hash of 6 bytes goes on the same way, 19 487 compress cycles and 6668 decode cycles, but
+27.9% (with the tables of the 5-byte hash) and `bytelz` 30.4%, which fails C1. Dropped.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
