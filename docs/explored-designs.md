@@ -929,6 +929,10 @@ Fewer sequences also decode faster: 7276 to 6883 cycles per page for `seqlz-fast
 `bytelz`. A hash of 6 bytes goes on the same way, 19 487 compress cycles and 6668 decode cycles, but
 27.9% (with the tables of the 5-byte hash) and `bytelz` 30.4%, which fails C1. Dropped.
 
+Also dropped: **one step of lazy matching**, after a match the candidate of the next position, taken
+if it is longer by 2 bytes or more. 24 808 compress cycles instead of 20 400, 21% more, `seqlz-fast`
+stays at 27.0%, `bytelz` 29.7% to 29.4%, decoding within 1%.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
