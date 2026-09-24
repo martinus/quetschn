@@ -167,7 +167,7 @@ static int compress(struct quetschn_params* p,
         ret = LZ4_compress_fast(src, (char*)ctx->lz4_out, (int)src_len, 2 * SEQLZ_PAGE, p->level, ctx->lz4_mem);
     if (ret <= 0 || split(ctx->lz4_out, (unsigned int)ret, ctx, &n_seq, &n_lit))
         return -1;
-    len = ctx->coded ? seqlz_encode_coded(p->drv_data, ctx->seq, n_seq, ctx->literals, n_lit, dst, *dst_len)
+    len = ctx->coded ? seqlz_encode_coded(p->drv_data, ctx->seq, n_seq, ctx->literals, n_lit, src, dst, *dst_len, ctx->scratch)
                      : seqlz_encode(p->drv_data, ctx->seq, n_seq, ctx->literals, n_lit, dst, *dst_len);
     if (!len)
         return -1;
@@ -288,7 +288,7 @@ static int fast_lit_compress(struct quetschn_params* p,
 
     if (src_len != SEQLZ_PAGE)
         return -1;
-    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len);
+    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len, c->scratch);
     if (!len)
         return -1;
     *dst_len = len;

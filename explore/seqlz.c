@@ -259,6 +259,7 @@ struct encoder {
     u8* lit;           /* literals */
     const u8* src_end; /* the 16-byte literal copies may read up to here */
     unsigned int last; /* the last offset */
+    u8* xlit;          /* the literals XOR the byte last before them, see xor_literals() */
 };
 
 /* v has n bits, n < 64 - cnt */
@@ -350,8 +351,60 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
     }
 }
 
+/* the low n bytes of a word, for the XOR of the literals */
+static const u64 xor_bytes[9] = {
+    0, 0xffULL, 0xffffULL, 0xffffffULL, 0xffffffffULL, 0xffffffffffULL, 0xffffffffffffULL, 0xffffffffffffffULL, ~0ULL};
+
+/* how many literals of a run of ll literals are XOR the bytes last before them, see seqlz.h */
+static ALWAYS_INLINE unsigned int xor_count(unsigned int ll, unsigned int last) {
+    unsigned int m = ll < last ? ll : last;
+
+    return m < SEQLZ_LIT_XOR_MAX ? m : SEQLZ_LIT_XOR_MAX;
+}
+
+/*
+ * The literals of a run for pages with coded literals and the XOR (seqlz.h): the first min(ll, last)
+ * of them XOR the byte last bytes before each, the others as they are; the page's first run as it is.
+ * After a match the literals often differ from the bytes after the match's source in a few bits
+ * only, e.g. in arrays of pointers and counters. Only bytes before the run: the decoder XORs after
+ * it copied the run, with bytes it already has.
+ */
+static ALWAYS_INLINE void xor_literals(u8* out, const u8* in, unsigned int ll, unsigned int pos, unsigned int last) {
+    unsigned int m = pos >= last ? xor_count(ll, last) : 0U, k;
+
+    for (k = 0; k < m; k++)
+        out[k] = in[k] ^ *(in + k - last);
+    __builtin_memcpy(out + m, in + m, ll - m);
+}
+
+/* xor_literals() for the matcher, out with 16 bytes of room: runs of at most 16 literals with 16 bytes
+ * readable behind in without loops, most runs are that short */
+static ALWAYS_INLINE void
+xor_literals_fast(u8* out, const u8* in, const u8* in_end, unsigned int ll, unsigned int pos, unsigned int last) {
+    if (ll <= 16U && in_end - in >= 16) {
+        unsigned int m = pos >= last ? xor_count(ll, last) : 0U;
+        const u8* x = pos >= last ? in - last : in; /* in - last is before the page for the first run */
+        u64 a = load64(in) ^ (load64(x) & xor_bytes[m < 8U ? m : 8U]);
+        u64 b = load64(in + 8) ^ (load64(x + 8) & xor_bytes[m > 8U ? m - 8U : 0U]);
+
+        store64(out, a);
+        store64(out + 8, b);
+        return;
+    }
+    xor_literals(out, in, ll, pos, last);
+}
+
+/* encode_emit(), and the run's literals for the XOR into e->xlit */
+static ALWAYS_INLINE void encode_emit_x(void* ctx, const u8* in, unsigned int ll, unsigned int ml, unsigned int off) {
+    struct encoder* e = ctx;
+
+    xor_literals_fast(e->xlit, in, e->src_end, ll, (unsigned int)(in - (e->src_end - SEQLZ_PAGE)), e->last);
+    e->xlit += ll;
+    encode_emit(ctx, in, ll, ml, off);
+}
+
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
-    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1};
+    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, 0};
 }
 
 /* the last bits, the header, and the bitstream moved in behind the literals */
@@ -432,19 +485,16 @@ static void store_tail(u8* p, u64 w, unsigned int n) {
         p[k] = b[k];
 }
 
-/* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
- * literals somewhere that the coded ones do not overwrite. Returns the new length. */
-static unsigned int
-code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals) {
+/* per stream the bits of the literals in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of
+ * each word; 25 literals of a stream per sum of 8-bit lanes */
+static void price_literals(const struct seqlz_tables* t,
+                           const u8* literals,
+                           unsigned int n_literals,
+                           u64 even[8][LIT_COST_WORDS],
+                           u64 odd[8][LIT_COST_WORDS]) {
     const u64 lanes = 0x00ff00ff00ff00ffULL;
-    unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, sizes[8];
-    /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
-    u64 even[8][LIT_COST_WORDS] = {{0}}, odd[8][LIT_COST_WORDS] = {{0}};
-    unsigned int w;
-    u8* q[9];
-    const struct lit_table* lt;
+    unsigned int k, j, w;
 
-    /* the bits of each stream in each table, 25 literals of a stream per sum of 8-bit lanes */
     for (k = 0; k < n_literals;) {
         u64 x[8][LIT_COST_WORDS] = {{0}};
         unsigned int end = n_literals - k < 200U ? n_literals : k + 200U;
@@ -462,20 +512,43 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
                 odd[j][w] += x[j][w] >> 8 & lanes;
             }
     }
-    /* the table with the fewest bits */
-    for (k = 0; k < SEQLZ_LIT_SETS; k++) {
+}
+
+/* the bits of stream j in table k */
+static unsigned int stream_bits(u64 even[8][LIT_COST_WORDS], u64 odd[8][LIT_COST_WORDS], unsigned int k, unsigned int j) {
+    return (unsigned int)(((k & 1U ? odd : even)[j][k / 8] >> (16U * (k % 8 / 2))) & 0xffffU);
+}
+
+/* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
+ * literals somewhere that the coded ones do not overwrite, xliterals the same XOR the bytes before
+ * them (xor_literals()) or 0. Returns the new length. */
+static unsigned int code_literals(
+    const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, const u8* xliterals, unsigned int n_literals) {
+    unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, mode = 0, sizes[8];
+    u64 even[2][8][LIT_COST_WORDS] = {{{0}}}, odd[2][8][LIT_COST_WORDS] = {{{0}}};
+    u8* q[9];
+    const struct lit_table* lt;
+
+    price_literals(t, literals, n_literals, even[0], odd[0]);
+    if (xliterals)
+        price_literals(t, xliterals, n_literals, even[1], odd[1]);
+    /* the table with the fewest bits, for the literals as they are or XOR the bytes before them */
+    for (k = 0; k < (xliterals ? 2U : 1U) * SEQLZ_LIT_SETS; k++) {
         unsigned int b = 0;
 
         for (j = 0; j < 8U; j++)
-            b += (unsigned int)(((k & 1U ? odd : even)[j][k / 8] >> (16U * (k % 8 / 2))) & 0xffffU);
+            b += stream_bits(even[k / SEQLZ_LIT_SETS], odd[k / SEQLZ_LIT_SETS], k % SEQLZ_LIT_SETS, j);
         if (b < bits) {
             bits = b;
-            set = k;
+            set = k % SEQLZ_LIT_SETS;
+            mode = k / SEQLZ_LIT_SETS;
         }
     }
+    if (mode)
+        literals = xliterals;
     lt = &t->lit[set];
     for (j = 0, coded = 0; j < 8U; j++) {
-        sizes[j] = (((unsigned int)((set & 1U ? odd : even)[j][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) + 7U) / 8U;
+        sizes[j] = (stream_bits(even[mode], odd[mode], set, j) + 7U) / 8U;
         coded += sizes[j];
     }
     /* only if it saves at least 1/16: decoding coded literals costs time per byte, and coding them
@@ -541,7 +614,7 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
         }
     }
     store16(d, 0x8000U | n_literals);
-    d[2] = (u8)set;
+    d[2] = (u8)(set | mode << 7);
     for (j = 0; j < 8U; j++)
         store16(d + 3 + 2 * j, sizes[j]);
     coded += SEQLZ_LIT_HEADER;
@@ -554,17 +627,49 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 unsigned int n,
                                 const unsigned char* literals,
                                 unsigned int n_literals,
+                                const void* page,
                                 void* dst,
-                                unsigned int dst_cap) {
-    unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap);
+                                unsigned int dst_cap,
+                                void* scratch) {
+    unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap), i, pos = 0, last = 1;
+    u8* x = scratch;
 
-    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals);
+    if (len == 0)
+        return 0;
+    /* seqlz_encode() checked that the sequences fit the page */
+    for (i = 0; i < n; i++) {
+        unsigned int ml = i + 1 == n ? 0U : seq[i].match;
+
+        xor_literals(x, (const u8*)page + pos, seq[i].literals, pos, last);
+        x += seq[i].literals;
+        pos += seq[i].literals + ml;
+        if (ml != 0)
+            last = seq[i].offset;
+    }
+    return code_literals(t, dst, len, literals, scratch, n_literals);
+}
+
+/* seqlz_compress(), with the literals for the XOR into xlit if it is not 0 */
+static ALWAYS_INLINE unsigned int
+compress_page(const struct seqlz_tables* t, struct seqlz_state* st, const u8* src, void* dst, unsigned int dst_cap, u8* xlit) {
+    struct encoder e;
+
+    if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
+        return 0;
+    encoder_init(&e, t, dst, src + SEQLZ_PAGE);
+    if (xlit) {
+        e.xlit = xlit;
+        match_page(st->table, src, encode_emit_x, &e);
+    } else {
+        match_page(st->table, src, encode_emit, &e);
+    }
+    return encoder_finish(&e, dst);
 }
 
 unsigned int seqlz_compress_coded(
-    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap) {
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap, void* scratch) {
     u8* const d = dst_v;
-    unsigned int len = seqlz_compress(t, st, src, dst_v, dst_cap), n_lit;
+    unsigned int len = compress_page(t, st, src, dst_v, dst_cap, scratch), n_lit;
     u8* keep;
 
     if (len == 0)
@@ -575,19 +680,12 @@ unsigned int seqlz_compress_coded(
         return len;
     keep = d + 2U * SEQLZ_PAGE - n_lit;
     __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
-    return code_literals(t, d, len, keep, n_lit);
+    return code_literals(t, d, len, keep, scratch, n_lit);
 }
 
 unsigned int
-seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src_v, void* dst, unsigned int dst_cap) {
-    const u8* const src = src_v;
-    struct encoder e;
-
-    if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
-        return 0;
-    encoder_init(&e, t, dst, src + SEQLZ_PAGE);
-    match_page(st->table, src, encode_emit, &e);
-    return encoder_finish(&e, dst);
+seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap) {
+    return compress_page(t, st, src, dst, dst_cap, 0);
 }
 
 /* ---- decoder ---- */
@@ -694,9 +792,9 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     u64 total = 0;
     const u16* lt;
 
-    if (src_len < SEQLZ_LIT_HEADER || n_lit > SEQLZ_PAGE || s[2] >= SEQLZ_LIT_SETS)
+    if (src_len < SEQLZ_LIT_HEADER || n_lit > SEQLZ_PAGE || (s[2] & ~SEQLZ_LIT_XOR) >= SEQLZ_LIT_SETS)
         return 0;
-    lt = t->lit[s[2]].decode;
+    lt = t->lit[s[2] & ~SEQLZ_LIT_XOR].decode;
     for (k = 0; k < sizeof(t->lit[0].decode); k += 64)
         __builtin_prefetch((const u8*)lt + k);
     for (k = 0; k < 8U; k++) {
@@ -753,47 +851,40 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     return seqlz_decode_scratch(t, src, src_len, dst, 0);
 }
 
-int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
-    const u8* s = src;
-    const u8* const s_end = s + src_len;
+/* After a run of nl literals is copied to d, in a page with SEQLZ_LIT_XOR: the first xor_count() of
+ * them XOR the bytes last before them, which are all before d; not in the page's first run. With 16
+ * bytes of room without a loop: the bytes the masks keep are before d, the others may not be, and the
+ * 16 bytes at d are written back as they are but for the first ones. */
+static ALWAYS_INLINE void unxor_literals(u8* d, const u8* dst, const u8* d_end, unsigned int nl, unsigned int last) {
+    unsigned int m, k;
+
+    if ((unsigned int)(d - dst) < last)
+        return;
+    m = xor_count(nl, last);
+    if (d_end - d >= 16) {
+        u64 a = load64(d) ^ (load64(d - last) & xor_bytes[m < 8U ? m : 8U]);
+        u64 b = load64(d + 8) ^ (load64(d - last + 8) & xor_bytes[m > 8U ? m - 8U : 0U]);
+
+        store64(d, a);
+        store64(d + 8, b);
+        return;
+    }
+    for (k = 0; k < m; k++)
+        d[k] ^= *(d + k - last);
+}
+
+/* The sequences of a page from br and the literals at lit into dst; xmode for pages with
+ * SEQLZ_LIT_XOR, a constant, so that the loop without it stays as it was. */
+static ALWAYS_INLINE int decode_sequences(const struct seqlz_tables* t,
+                                          struct bit_reader br,
+                                          const u8* lit,
+                                          const u8* const lit_end,
+                                          const u8* const lit_bound,
+                                          u8* const dst,
+                                          const int xmode) {
     u8* d = dst;
     u8* const d_end = d + SEQLZ_PAGE;
-    const u8 *lit, *lit_end, *lit_bound;
-    struct bit_reader br;
-    unsigned int n_lit, last = 1;
-
-    if (src_len < SEQLZ_HEADER)
-        return -1;
-    {
-        /* the decoder's tables, so that their misses overlap when they are cold */
-        const u8* q;
-
-        for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
-            __builtin_prefetch(q);
-        for (q = (const u8*)t->ll.decode; q < (const u8*)(t->ll.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
-            __builtin_prefetch(q);
-        for (q = (const u8*)t->ml.decode; q < (const u8*)(t->ml.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
-            __builtin_prefetch(q);
-    }
-    n_lit = load16(s);
-    if (n_lit & 0x8000U) {
-        const u8* q;
-
-        n_lit &= 0x7fffU;
-        if (!scratch || !(q = decode_literals(t, s, src_len, n_lit, scratch)))
-            return -1;
-        br = (struct bit_reader){q, s_end, 0, 0};
-        lit = scratch;
-        lit_end = lit + n_lit;
-        lit_bound = lit + SEQLZ_SCRATCH;
-    } else {
-        if ((u64)SEQLZ_HEADER + n_lit > src_len)
-            return -1;
-        lit = s + SEQLZ_HEADER;
-        lit_end = lit + n_lit;
-        lit_bound = s_end;
-        br = (struct bit_reader){lit_end, s_end, 0, 0};
-    }
+    unsigned int last = 1;
 
     for (;;) {
         unsigned int tok, nl, len, off;
@@ -840,12 +931,22 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
                 return -1;
             __builtin_memcpy(&a, lit, 8);
             __builtin_memcpy(&b, lit + 8, 8);
+            if (xmode && (unsigned int)(d - dst) >= last) {
+                /* unxor_literals() before the stores, nl < 15 */
+                unsigned int m = xor_count(nl, last);
+                u64 x1, x2;
+
+                __builtin_memcpy(&x1, d - last, 8);
+                __builtin_memcpy(&x2, d - last + 8, 8);
+                a ^= x1 & xor_bytes[m < 8U ? m : 8U];
+                b ^= x2 & xor_bytes[m > 8U ? m - 8U : 0U];
+            }
             __builtin_memcpy(d, &a, 8);
             __builtin_memcpy(d + 8, &b, 8);
             d += nl;
             lit += nl;
             last = off;
-            if (off - 1U >= (unsigned int)(d - (u8*)dst))
+            if (off - 1U >= (unsigned int)(d - dst))
                 return -1;
             if (off >= 8U) {
                 /* for 8 <= off < 16 each load reads what the stores before it wrote, which is right */
@@ -898,6 +999,8 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         if (nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
             return -1;
         copy_literals(d, d_end, lit, lit_bound, nl);
+        if (xmode)
+            unxor_literals(d, dst, d_end, nl, last);
         d += nl;
         lit += nl;
         if (d == d_end)
@@ -909,7 +1012,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         }
         last = off;
         /* off - 1 wraps for 0 */
-        if (off - 1U >= (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
+        if (off - 1U >= (unsigned int)(d - dst) || len > (unsigned int)(d_end - d))
             return -1;
         copy_match(d, d_end, off, len);
         d += len;
@@ -917,4 +1020,51 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
     if (d != d_end || lit != lit_end || br.count < 0)
         return -1;
     return 0;
+}
+
+int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
+    const u8* s = src;
+    const u8* const s_end = s + src_len;
+    const u8 *lit, *lit_end, *lit_bound;
+    struct bit_reader br;
+    unsigned int n_lit;
+    int xmode = 0;
+
+    if (src_len < SEQLZ_HEADER)
+        return -1;
+    {
+        /* the decoder's tables, so that their misses overlap when they are cold */
+        const u8* q;
+
+        for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
+            __builtin_prefetch(q);
+        for (q = (const u8*)t->ll.decode; q < (const u8*)(t->ll.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
+            __builtin_prefetch(q);
+        for (q = (const u8*)t->ml.decode; q < (const u8*)(t->ml.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
+            __builtin_prefetch(q);
+    }
+    n_lit = load16(s);
+    if (n_lit & 0x8000U) {
+        const u8* q;
+
+        n_lit &= 0x7fffU;
+        if (!scratch || !(q = decode_literals(t, s, src_len, n_lit, scratch)))
+            return -1;
+        br = (struct bit_reader){q, s_end, 0, 0};
+        xmode = (s[2] & SEQLZ_LIT_XOR) != 0;
+        lit = scratch;
+        lit_end = lit + n_lit;
+        lit_bound = lit + SEQLZ_SCRATCH;
+    } else {
+        if ((u64)SEQLZ_HEADER + n_lit > src_len)
+            return -1;
+        lit = s + SEQLZ_HEADER;
+        lit_end = lit + n_lit;
+        lit_bound = s_end;
+        br = (struct bit_reader){lit_end, s_end, 0, 0};
+    }
+
+    if (xmode)
+        return decode_sequences(t, br, lit, lit_end, lit_bound, dst, 1);
+    return decode_sequences(t, br, lit, lit_end, lit_bound, dst, 0);
 }

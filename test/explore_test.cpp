@@ -931,8 +931,10 @@ TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and ar
                                             static_cast<unsigned>(p.sequences.size()),
                                             p.literals.data(),
                                             static_cast<unsigned>(p.literals.size()),
+                                            p.bytes.data(),
                                             c.data(),
-                                            2 * 4096);
+                                            2 * 4096,
+                                            scratch.data());
         REQUIRE(len > 0);
         c.resize(len);
         auto const coded = (c[1] & 0x80) != 0 && len > 1;
@@ -982,15 +984,69 @@ std::vector<unsigned char> bytes_as_coded_by(std::mt19937_64& rng, unsigned k) {
     return bytes;
 }
 
+// A page of 64-bit counters, base + i * step with a step of 1, 2 or 4, and its sequences from seqlz's
+// matcher: the high bytes match the word before, the low byte is a literal. As it is, it is spread
+// over all 256 values; XOR the byte 8 back it is mostly 1, 3 or 7, what SEQLZ_LIT_XOR is for.
+seqlz_page counter_page(std::mt19937_64& rng) {
+    auto p = seqlz_page{};
+    auto const base = rng();
+    auto const step = std::uint64_t{1} << (rng() % 3);
+    for (std::uint64_t i = 0; i < 4096 / 8; ++i) {
+        auto const v = base + i * step;
+        for (unsigned k = 0; k < 8; ++k) {
+            p.bytes.push_back(static_cast<unsigned char>(v >> (8 * k)));
+        }
+    }
+    auto st = std::make_unique<seqlz_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto const n = seqlz_find(st.get(), p.bytes.data(), seq.data());
+    auto pos = std::size_t{0};
+    for (unsigned i = 0; i < n; ++i) {
+        p.sequences.push_back(seq[i]);
+        p.literals.insert(p.literals.end(),
+                          p.bytes.begin() + static_cast<std::ptrdiff_t>(pos),
+                          p.bytes.begin() + static_cast<std::ptrdiff_t>(pos + seq[i].literals));
+        pos += seq[i].literals + seq[i].match;
+    }
+    return p;
+}
+
+// The literals as a page with SEQLZ_LIT_XOR codes them, from seqlz.h: in every run but the first,
+// the first min(ll, last) XOR the byte last bytes before, last the offset of the match before the run.
+std::vector<unsigned char> xor_literals_of(seqlz_page const& p) {
+    auto out = std::vector<unsigned char>();
+    auto pos = std::size_t{0};
+    auto last = std::size_t{1};
+    for (std::size_t i = 0; i < p.sequences.size(); ++i) {
+        auto const& sq = p.sequences[i];
+        auto const ml = i + 1 == p.sequences.size() ? 0U : sq.match;
+        for (std::size_t k = 0; k < sq.literals; ++k) {
+            auto b = p.bytes[pos + k];
+            if (pos >= last && k < last && k < SEQLZ_LIT_XOR_MAX) {
+                b ^= p.bytes[pos + k - last];
+            }
+            out.push_back(b);
+        }
+        pos += sq.literals + ml;
+        if (ml != 0) {
+            last = sq.offset;
+        }
+    }
+    return out;
+}
+
 std::vector<unsigned char> encode_coded(seqlz_tables const* t, seqlz_page const& p) {
     auto c = std::vector<unsigned char>(2 * 4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto const len = seqlz_encode_coded(t,
                                         p.sequences.data(),
                                         static_cast<unsigned>(p.sequences.size()),
                                         p.literals.data(),
                                         static_cast<unsigned>(p.literals.size()),
+                                        p.bytes.data(),
                                         c.data(),
-                                        2 * 4096);
+                                        2 * 4096,
+                                        scratch.data());
     REQUIRE(len > 0);
     c.resize(len);
     return c;
@@ -1005,8 +1061,8 @@ TEST_CASE("seqlz: coded literals use the literal table with the fewest bits for 
         // literals as one of the tables expects them; in every other page every 8th literal, the first
         // stream, as another table expects them
         auto const want = static_cast<unsigned>(round) % SEQLZ_LIT_SETS;
-        auto p = page_with_literals_from(rng, round % 4, bytes_as_coded_by(rng, want));
-        if (round % 2 == 1) {
+        auto p = round % 4 == 3 ? counter_page(rng) : page_with_literals_from(rng, round % 4, bytes_as_coded_by(rng, want));
+        if (round % 4 == 1) {
             auto const other = bytes_as_coded_by(rng, (want + 1) % SEQLZ_LIT_SETS);
             auto in = std::size_t{0}, pos = std::size_t{0};
             for (auto const& sq : p.sequences) {
@@ -1025,20 +1081,24 @@ TEST_CASE("seqlz: coded literals use the literal table with the fewest bits for 
         if ((c[1] & 0x80) == 0) {
             continue;
         }
+        // the literals as they are, then XOR the bytes before them: the table and the flag
+        auto const xored = xor_literals_of(p);
         auto best = 0U;
         auto best_bits = ~0ULL;
-        for (unsigned k = 0; k < SEQLZ_LIT_SETS; ++k) {
-            auto bits = 0ULL;
-            for (auto b : p.literals) {
-                bits += seqlz_lit_sets[k][b];
-            }
-            if (bits < best_bits) {
-                best = k;
-                best_bits = bits;
+        for (unsigned m = 0; m < 2; ++m) {
+            for (unsigned k = 0; k < SEQLZ_LIT_SETS; ++k) {
+                auto bits = 0ULL;
+                for (auto b : m == 0 ? p.literals : xored) {
+                    bits += seqlz_lit_sets[k][b];
+                }
+                if (bits < best_bits) {
+                    best = k | (m == 0 ? 0U : SEQLZ_LIT_XOR);
+                    best_bits = bits;
+                }
             }
         }
         CHECK(c[2] == best);
-        ++chosen[c[2]];
+        ++chosen[c[2] & ~SEQLZ_LIT_XOR];
     }
     // not always the same table
     CHECK(std::count_if(chosen.begin(), chosen.end(), [](int n) {
@@ -1066,10 +1126,13 @@ TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most signific
     auto const t = default_tables(seqlz_default_lz4hc);
     auto rng = std::mt19937_64(11);
     auto checked = 0;
+    auto xor_pages = 0;
     for (int round = 0; round < 300; ++round) {
         CAPTURE(round);
-        auto const p =
-            page_with_literals_from(rng, round % 4, bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS));
+        auto const p = round % 2 == 0
+                           ? counter_page(rng)
+                           : page_with_literals_from(
+                                 rng, round % 4, bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS));
         auto const c = encode_coded(t.get(), p);
         if ((c[1] & 0x80) == 0) {
             continue;
@@ -1078,8 +1141,8 @@ TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most signific
         // header: u16 0x8000 | literal bytes, u8 the table, 8 u16 stream bytes
         auto const n_lit = static_cast<unsigned>(c[0] | (c[1] & 0x7f) << 8);
         REQUIRE(n_lit == p.literals.size());
-        REQUIRE(c[2] < SEQLZ_LIT_SETS);
-        auto const codes = canonical_codes(seqlz_lit_sets[c[2]]);
+        REQUIRE((c[2] & ~SEQLZ_LIT_XOR) < SEQLZ_LIT_SETS);
+        auto const codes = canonical_codes(seqlz_lit_sets[c[2] & ~SEQLZ_LIT_XOR]);
         auto pos = std::size_t{19};
         auto literals = std::vector<unsigned char>(n_lit);
         for (unsigned st = 0; st < 8; ++st) {
@@ -1110,7 +1173,8 @@ TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most signific
             CHECK((bit + 7) / 8 == size);
             pos += size;
         }
-        CHECK(literals == p.literals);
+        CHECK(literals == ((c[2] & SEQLZ_LIT_XOR) != 0 ? xor_literals_of(p) : p.literals));
+        xor_pages += (c[2] & SEQLZ_LIT_XOR) != 0 ? 1 : 0;
         // then the sequences' bitstream, as in the page with raw literals
         auto raw = std::vector<unsigned char>(2 * 4096);
         auto const raw_len = seqlz_encode(t.get(),
@@ -1124,6 +1188,7 @@ TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most signific
         CHECK(std::equal(c.begin() + static_cast<std::ptrdiff_t>(pos), c.end(), raw.begin() + 2 + n_lit));
     }
     CHECK(checked > 100);
+    CHECK(xor_pages > 50);
 }
 
 TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
@@ -1161,7 +1226,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             }
             auto const p = page_with_literals_from(rng, round % 4, few);
             c = std::vector<unsigned char>(2 * 4096);
-            auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096);
+            auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096, scratch.data());
             REQUIRE(len > 0);
             c.resize(len);
             for (auto f = 1 + rng() % 8; f > 0; --f) {
@@ -1176,6 +1241,26 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
     }
 }
 
+// 64-byte records, each from the one before: 20 bytes whose lowest bit flips with a probability of
+// 70%, then 44 bytes that stay the same. XOR the byte 64 back the 20 bytes are 0 or 1, as they are
+// they are anything. The runs of about 20 literals are longer than the decoder's fast path takes.
+std::vector<unsigned char> records_page(std::mt19937_64& rng) {
+    auto record = std::array<unsigned char, 64>{};
+    for (auto& b : record) {
+        b = static_cast<unsigned char>(rng());
+    }
+    auto bytes = std::vector<unsigned char>();
+    for (unsigned r = 0; r < 4096 / 64; ++r) {
+        for (unsigned k = 0; k < 20; ++k) {
+            if (rng() % 10 < 7) {
+                record[k] ^= 1U;
+            }
+        }
+        bytes.insert(bytes.end(), record.begin(), record.end());
+    }
+    return bytes;
+}
+
 TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
@@ -1183,21 +1268,37 @@ TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
     auto out = std::vector<unsigned char>(4096);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto coded_pages = 0;
-    for (int round = 0; round < 800; ++round) {
+    auto xor_pages = std::array<int, 3>{};
+    for (int round = 0; round < 1200; ++round) {
         CAPTURE(round);
-        auto p = random_seqlz_page(rng, round % 4);
-        // most bytes zero, so that coding the literals pays
-        for (auto& b : p.bytes) {
-            if (rng() % 4 != 0) {
-                b = 0;
+        auto bytes = std::vector<unsigned char>();
+        switch (round % 3) {
+        case 0: {
+            // most bytes zero, so that coding the literals pays
+            bytes = random_seqlz_page(rng, round % 4).bytes;
+            for (auto& b : bytes) {
+                if (rng() % 4 != 0) {
+                    b = 0;
+                }
             }
+            break;
+        }
+        case 1:
+            bytes = counter_page(rng).bytes;
+            break;
+        default:
+            bytes = records_page(rng);
         }
         auto c = std::vector<unsigned char>(2 * 4096);
-        auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096);
+        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096, scratch.data());
         REQUIRE(len > 0);
         coded_pages += (c[1] & 0x80) != 0 ? 1 : 0;
+        xor_pages[static_cast<std::size_t>(round % 3)] += (c[1] & 0x80) != 0 && (c[2] & SEQLZ_LIT_XOR) != 0 ? 1 : 0;
         REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
-        CHECK(out == p.bytes);
+        CHECK(out == bytes);
     }
-    CHECK(coded_pages > 400);
+    CHECK(coded_pages > 700);
+    // the counters and the records take the XOR, with runs of 1 and of 20 literals
+    CHECK(xor_pages[1] > 300);
+    CHECK(xor_pages[2] > 300);
 }

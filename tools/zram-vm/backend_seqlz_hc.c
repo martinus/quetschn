@@ -137,8 +137,8 @@ static int szhc_compress_any(struct zcomp_params *params, struct zcomp_ctx *ctx,
 	ret = LZ4_compress_HC(req->src, c->lz4, SEQLZ_PAGE, 2 * SEQLZ_PAGE, 3, c->mem);
 	if (ret <= 0 || split(c->lz4, ret, c, &n_seq, &n_lit))
 		return -EINVAL;
-	len = coded ? seqlz_encode_coded(params->drv_data, c->seq, n_seq, c->literals, n_lit, req->dst,
-					  req->dst_len)
+	len = coded ? seqlz_encode_coded(params->drv_data, c->seq, n_seq, c->literals, n_lit, req->src,
+					  req->dst, req->dst_len, c->scratch)
 		    : seqlz_encode(params->drv_data, c->seq, n_seq, c->literals, n_lit, req->dst, req->dst_len);
 	if (!len)
 		return -EINVAL;
