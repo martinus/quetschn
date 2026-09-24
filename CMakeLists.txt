@@ -2,6 +2,13 @@
 cmake_minimum_required(VERSION 3.25)
 project(quetschn LANGUAGES C CXX)
 
+# The page size of the explore/ codecs: 12 for 4 KiB, 14 for 16 KiB. The tests assume 4 KiB.
+set(QUETSCHN_PAGE_BITS 12 CACHE STRING "log2 of the page size of the explore/ codecs")
+if(NOT QUETSCHN_PAGE_BITS EQUAL 12)
+    add_compile_definitions(QUETSCHN_PAGE_BITS=${QUETSCHN_PAGE_BITS})
+endif()
+
+
 # Tools and the benchmark harness are C++20. The codec core will be C11, see PLAN.md §4.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

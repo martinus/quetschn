@@ -8,27 +8,35 @@
  * Σ zsmalloc cost for this; the prototype measures what it really gets and how fast it decodes.
  *
  * A sequence is a literal length ll, a match length ml and an offset; the last sequence of a page has
- * no match. Like lz4's token, ll and ml - 4 share one symbol, capped at 15 and 31:
- *   token:              min(ll, 15) + 16 * min(ml - 4, 31), 512 symbols, Huffman coded with at most
- *                       SEQLZ_TOKEN_BITS bits. 31 and not 15 for the match length, because with 15
- *                       every fifth match needed a length value, and that branch mispredicted. 11 and
- *                       not 12 bits, because the decode table of 12 bits, 8 KiB, made the cold decode
- *                       slower: the tables of the decoder have to stay in L1.
+ * no match. Like lz4's token, ll and ml - 4 share one symbol, capped at 15 and 31, and with them the
+ * class of the offset:
+ *   token:              min(ll, 15) + 16 * min(ml - 4, 31) + 512 * class, 2048 symbols, Huffman coded
+ *                       with at most SEQLZ_TOKEN_BITS bits, rare ones escaped (SEQLZ_ESCAPE). Class 0
+ *                       repeats the last offset (initially 1), class c >= 1 is an offset below 1 << 4c,
+ *                       sent in 4c raw bits: below 16, 256 or 4096. 31 and not 15 for
+ *                       the match length, because with 15 every fifth match needed a length value, and
+ *                       that branch mispredicted. 11 and not 12 bits, because the decode table of 12
+ *                       bits, 8 KiB, made the cold decode slower: the tables of the decoder have to stay
+ *                       in L1.
+ *   offset:             4 * class raw bits, right after the token. So the decoder
+ *                       needs one table lookup per sequence and not two: a Huffman coded offset
+ *                       bucket cost 0.3 points less memory, but its lookup was a second step on the
+ *                       chain from one sequence to the next. One repeat offset and not three: the other
+ *                       two were 11% of seqlz-fast's matches, 0.2 points of memory, and their move to
+ *                       front made decoding 17% slower.
  *   ll >= 15:           ll - 15 follows as a length value; ml - 4 >= 31: ml - 4 - 31
  *   length value v:     v < 16 is the symbol itself; otherwise b = bit_width(v) - 1, the symbol is 12 +
  *                       b, and the b low bits of v follow as extra bits
- *   offset:             symbols 0 to 2 repeat the first, second or third of the last three offsets
- *                       (initially 1, 4, 8), which moves it to the front; otherwise b = bit_width(off)
- *                       - 1, the symbol is 3 + b, and the b low bits of off follow
- * The length values of ll and of ml and the offsets have Huffman tables of at most SEQLZ_MAX_BITS
- * bits. Everything goes into one bitstream, read least significant bit first: per sequence the token,
- * the length values if any, then the offset, each symbol followed by its extra bits. One token and not
- * two length symbols, because each symbol is a table lookup on the chain of dependent steps of the
- * decoder; one stream and not three, because the state of three bit readers does not fit into the
- * registers of x86-64 (docs/explored-designs.md). The last sequence's token has ml - 4 = 0.
+ * The length values of ll and of ml have Huffman tables of at most SEQLZ_MAX_BITS bits. Everything goes
+ * into one bitstream, read least significant bit first: per sequence the token, the offset, then the
+ * length values if any, each symbol followed by its extra bits. One stream and not three, because the
+ * state of three bit readers does not fit into the registers of x86-64 (docs/explored-designs.md). The
+ * last sequence's token has ml - 4 = 0 and class 0.
  *
  * Page layout, all little endian:
- *   u16 sequences, u16 literal bytes, literals, the bitstream (the rest)
+ *   u16 literal bytes, literals, the bitstream (the rest)
+ * No count of the sequences: the last one is the one whose literals fill the page, every other one
+ * has a match behind its literals.
  *
  * The prototype does not find matches itself: it takes them from the kernel's lz4 or lz4hc. So its
  * compression time says nothing yet; its size and its decode time do.
@@ -38,23 +46,34 @@
 extern "C" {
 #endif
 
-#define SEQLZ_PAGE 4096U
-#define SEQLZ_MAX_BITS 9U /* for length values and offsets; tables of 2 KiB each */
+#ifndef QUETSCHN_PAGE_BITS
+#    define QUETSCHN_PAGE_BITS 12 /* see page_lz.h */
+#endif
+#define SEQLZ_PAGE (1U << QUETSCHN_PAGE_BITS)
+#define SEQLZ_MAX_BITS 8U /* for length values; tables of 1 KiB each, 9 bits were 80 ns slower when cold */
 #define SEQLZ_TOKEN_BITS 11U
-#define SEQLZ_TOKEN_SYMBOLS 512U
-#define SEQLZ_LL_CAP 15U      /* in the token, larger literal lengths follow as a value */
-#define SEQLZ_ML_CAP 31U      /* the same for ml - 4 */
-#define SEQLZ_LEN_SYMBOLS 25U /* 16 direct values, then buckets 4 to 12 */
-#define SEQLZ_OFF_SYMBOLS 15U /* 3 repeats, then buckets 0 to 11 */
-#define SEQLZ_HEADER 4U
+#define SEQLZ_LL_BITS 4U /* of the token for ll, at most 4 */
+#define SEQLZ_ML_BITS 5U /* for ml - 4, at most 5 */
+#define SEQLZ_TOKEN_SYMBOLS (4U << (SEQLZ_LL_BITS + SEQLZ_ML_BITS))
+/* A token without a code is sent as the escape's code and SEQLZ_ESCAPE_BITS raw bits of the token.
+ * With 1536 tokens and codes of at most 11 bits, a code for each needed 75% of the code space for the
+ * shortest codes alone, and 2048 do not fit at all: only the frequent ones get a code. */
+#define SEQLZ_ESCAPE SEQLZ_TOKEN_SYMBOLS
+#define SEQLZ_ESCAPE_BITS 11U
+/* an escaped token and the largest offset in at most 31 bits, the encoder's bound for two pages */
+#define SEQLZ_MAX_ESCAPE_LEN (31U - QUETSCHN_PAGE_BITS - SEQLZ_ESCAPE_BITS)
+#define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U)    /* in the token, larger literal lengths follow as a value */
+#define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U)    /* the same for ml - 4 */
+#define SEQLZ_LEN_SYMBOLS (13U + QUETSCHN_PAGE_BITS) /* 16 direct values, then buckets 4 to page bits */
+#define SEQLZ_HEADER 2U
 
-/* The code lengths of the four tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 577 bytes. */
+/* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
+ * produces and what zram's dictionary parameter can carry: 2099 bytes. */
 struct seqlz_lengths {
-    unsigned char token[SEQLZ_TOKEN_SYMBOLS];
+    unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
     unsigned char ml[SEQLZ_LEN_SYMBOLS];
-    unsigned char off[SEQLZ_OFF_SYMBOLS];
+    unsigned char lit[256]; /* for pages with coded literals, see seqlz_encode_coded() */
 };
 
 /* symbol and extra bits of a length, see above */
@@ -70,11 +89,20 @@ static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_
     return 12U + b;
 }
 
-static inline unsigned int seqlz_off_bucket(unsigned int off, unsigned int* extra_bits) {
-    unsigned int b = 31U - (unsigned int)__builtin_clz(off);
+/* The raw bits of an offset class: 4 * class, and for class 3 as many as the page size has. From a
+ * packed constant: the multiply by (class == 3) made gcc branch on the class for 16 KiB pages. */
+#if QUETSCHN_PAGE_BITS == 12
+#    define SEQLZ_RAW_BITS(cls) (4U * (cls))
+#else
+#    define SEQLZ_RAW_BITS(cls) ((((unsigned int)QUETSCHN_PAGE_BITS << 24 | 0x080400U) >> (8U * (cls))) & 255U)
+#endif
 
-    *extra_bits = b;
-    return 3U + b;
+/* the class of an offset and its raw bits, see above; offsets are below the page size */
+static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last, unsigned int* raw_bits) {
+    unsigned int cls = off == last ? 0U : off < 16 ? 1U : off < 256 ? 2U : 3U;
+
+    *raw_bits = cls == 3 ? QUETSCHN_PAGE_BITS : 4U * cls;
+    return cls;
 }
 
 /* A sequence as the matcher found it. */
@@ -108,15 +136,37 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
                           unsigned int dst_cap);
 
 /* 0 on success, -1 if src is not a valid page for these tables. Never reads outside
- * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE). */
+ * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE). A page with coded literals is
+ * not valid here, see seqlz_decode_scratch(). */
 int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst);
 
+/*
+ * EXPERIMENT, for zram's recompression: the literals Huffman coded too, with the lit table, if that is
+ * smaller than the raw bytes by 1/16. Such a page starts with u16 0x8000 | literal bytes, 4 u16 bytes of
+ * the literals' four bitstreams (literal k in stream k % 4), then those, then the sequences' bitstream. seqlz_decode_scratch()
+ * decodes it into scratch first, SEQLZ_SCRATCH bytes; for any other page it is seqlz_decode().
+ */
+#define SEQLZ_LIT_BITS 9U
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 32U) /* 16 for the literal copies, 19 decoded past the end */
+unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
+                                const struct seqlz_sequence* seq,
+                                unsigned int n,
+                                const unsigned char* literals,
+                                unsigned int n_literals,
+                                void* dst,
+                                unsigned int dst_cap);
+int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
+/* seqlz_compress(), then the literals coded as in seqlz_encode_coded() */
+struct seqlz_state;
+unsigned int
+seqlz_compress_coded(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
+
 /* the token of a sequence, see above */
-static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml) {
+static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigned int cls) {
     unsigned int a = ll < SEQLZ_LL_CAP ? ll : SEQLZ_LL_CAP;
     unsigned int b = ml == 0 ? 0 : ml - 4 < SEQLZ_ML_CAP ? ml - 4 : SEQLZ_ML_CAP;
 
-    return a + 16U * b;
+    return a + (b << SEQLZ_LL_BITS) + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
 }
 
 /*
@@ -124,7 +174,7 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml) {
  * the page. The state is per CPU, 8 KiB of hash table, cleared for each page: that was 7% faster than
  * keeping it and checking each entry for whether it is before the current position.
  */
-#define SEQLZ_HASH_BITS 12U
+#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
 struct seqlz_state {

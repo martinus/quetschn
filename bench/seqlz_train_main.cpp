@@ -3,7 +3,7 @@
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
 // lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 577 bytes that zram's dictionary parameter can carry.
+// 2099 bytes that zram's dictionary parameter can carry.
 
 #include "harness.h"
 #include "kernel_codecs/zram_codec.h"
@@ -20,8 +20,8 @@
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
-#include <queue>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,45 +29,108 @@
 
 namespace {
 
-// Huffman code lengths, limited to max_bits by halving the counts until they fit.
-std::vector<unsigned char> code_lengths(std::vector<double> counts, unsigned max_bits) {
+// The optimal code lengths of at most max_bits bits, by package-merge (Larmore and Hirschberg): the
+// lists of the levels from max_bits up to 1 each hold the symbols and the pairs of the level below,
+// sorted by weight; a symbol's length is how often it is among the 2n - 2 lightest items of the top
+// list, counted through the pairs. With 1536 tokens and 11 bits, halving all counts until a Huffman
+// code fits cost 18% more token bits than no limit at all.
+std::vector<unsigned char> code_lengths(std::vector<double> const& counts, unsigned max_bits) {
     auto const n = counts.size();
-    while (true) {
-        // nodes: leaves 0..n-1, then inner nodes; parent[] to walk up
-        auto parent = std::vector<std::size_t>(2 * n, 0);
-        using item = std::pair<double, std::size_t>;
-        auto q = std::priority_queue<item, std::vector<item>, std::greater<>>();
-        for (std::size_t i = 0; i < n; ++i) {
-            q.emplace(counts[i], i);
+    struct item {
+        double weight;
+        std::size_t left, right; // items of the level below; left == right: a symbol, left is its index
+        bool leaf;
+    };
+    auto symbols = std::vector<std::size_t>(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        symbols[i] = i;
+    }
+    std::stable_sort(symbols.begin(), symbols.end(), [&](auto a, auto b) {
+        return counts[a] < counts[b];
+    });
+    auto levels = std::vector<std::vector<item>>();
+    auto leaves = std::vector<item>();
+    for (auto sym : symbols) {
+        leaves.push_back({counts[sym], sym, sym, true});
+    }
+    levels.push_back(leaves);
+    for (unsigned level = 1; level < max_bits; ++level) {
+        auto const& below = levels.back();
+        auto pairs = std::vector<item>();
+        for (std::size_t i = 0; i + 1 < below.size(); i += 2) {
+            pairs.push_back({below[i].weight + below[i + 1].weight, i, i + 1, false});
         }
-        auto next = n;
-        while (q.size() > 1) {
-            auto const a = q.top();
-            q.pop();
-            auto const b = q.top();
-            q.pop();
-            parent[a.second] = next;
-            parent[b.second] = next;
-            q.emplace(a.first + b.first, next++);
+        auto merged = std::vector<item>();
+        std::merge(leaves.begin(),
+                   leaves.end(),
+                   pairs.begin(),
+                   pairs.end(),
+                   std::back_inserter(merged),
+                   [](auto const& a, auto const& b) {
+                       return a.weight < b.weight;
+                   });
+        levels.push_back(std::move(merged));
+    }
+    auto lengths = std::vector<unsigned char>(n);
+    // count the symbols under the lightest 2n - 2 items of the top level
+    auto count = [&](auto& self, std::size_t level, std::size_t index) -> void {
+        auto const& it = levels[level][index];
+        if (it.leaf) {
+            ++lengths[it.left];
+            return;
         }
-        auto const root = next - 1;
-        auto lengths = std::vector<unsigned char>(n);
-        auto longest = 0U;
-        for (std::size_t i = 0; i < n; ++i) {
-            auto depth = 0U;
-            for (auto k = i; k != root; k = parent[k]) {
-                ++depth;
+        self(self, level - 1, it.left);
+        self(self, level - 1, it.right);
+    };
+    for (std::size_t i = 0; i < 2 * n - 2; ++i) {
+        count(count, levels.size() - 1, i);
+    }
+    return lengths;
+}
+
+// The token lengths with an escape: only the k most frequent tokens get a code, the others the escape's
+// code and SEQLZ_ESCAPE_BITS bits. k as it gives the fewest bits, with an escape of at most 8 bits
+// (seqlz_tables_init() checks that).
+std::vector<unsigned char> token_lengths(std::vector<double> const& counts) {
+    auto order = std::vector<std::size_t>(counts.size());
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        order[i] = i;
+    }
+    std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {
+        return counts[a] > counts[b];
+    });
+    auto best = std::vector<unsigned char>();
+    auto best_bits = 0.0;
+    // at most 1 << SEQLZ_TOKEN_BITS codes fit, the escape is one of them
+    auto const most = std::min(counts.size(), (std::size_t{1} << SEQLZ_TOKEN_BITS) - 1);
+    for (auto k = std::size_t{64}; k <= most; k = k + 64 <= most || k == most ? k + 64 : most) {
+        auto kept = std::vector<double>();
+        auto escaped = 1.0;
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            if (i < k) {
+                kept.push_back(counts[order[i]]);
+            } else {
+                escaped += counts[order[i]];
             }
-            lengths[i] = static_cast<unsigned char>(depth);
-            longest = std::max(longest, depth);
         }
-        if (longest <= max_bits) {
-            return lengths;
+        kept.push_back(escaped);
+        auto const l = code_lengths(kept, SEQLZ_TOKEN_BITS);
+        if (l.back() > SEQLZ_MAX_ESCAPE_LEN) {
+            continue;
         }
-        for (auto& c : counts) {
-            c = std::max(1.0, std::floor(c / 2));
+        auto bits = (escaped - 1.0) * (l.back() + SEQLZ_ESCAPE_BITS);
+        auto lengths = std::vector<unsigned char>(counts.size() + 1, 0);
+        for (std::size_t i = 0; i < k; ++i) {
+            bits += counts[order[i]] * l[i];
+            lengths[order[i]] = l[i];
+        }
+        lengths.back() = l.back();
+        if (best.empty() || bits < best_bits) {
+            best = lengths;
+            best_bits = bits;
         }
     }
+    return best;
 }
 
 void usage() {
@@ -137,7 +200,7 @@ int main(int argc, char** argv) {
         auto token = std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 1.0);
         auto ll = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto ml = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
-        auto off = std::vector<double>(SEQLZ_OFF_SYMBOLS, 1.0);
+        auto lit = std::vector<double>(256, 1.0);
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto state = std::make_unique<seqlz_state>();
         auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
@@ -167,11 +230,22 @@ int main(int argc, char** argv) {
                 }
                 sequences = quetschn::parse_lz4(dst.data(), len).sequences;
             }
-            // the same symbols and the same repeat offsets as seqlz_encode()
-            auto rep = std::array<unsigned, 3>{1, 4, 8};
+            // the literal bytes, for pages with coded literals
+            {
+                auto in = std::size_t{0};
+                for (auto const& s : sequences) {
+                    for (std::size_t k = 0; k < s.literals; ++k) {
+                        lit[static_cast<unsigned char>(src[in + k])] += 1;
+                    }
+                    in += s.literals + s.match;
+                }
+            }
+            // the same symbols and the same repeat offset as seqlz_encode()
+            auto last = 1U;
             auto extra = 0U;
             for (auto const& s : sequences) {
-                token[seqlz_token(s.literals, s.match)] += 1;
+                auto const cls = s.match == 0 ? 0U : seqlz_off_class(s.offset, last, &extra);
+                token[seqlz_token(s.literals, s.match, cls)] += 1;
                 if (s.literals >= SEQLZ_LL_CAP) {
                     ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
                 }
@@ -181,35 +255,21 @@ int main(int argc, char** argv) {
                 if (s.match - 4 >= SEQLZ_ML_CAP) {
                     ml[seqlz_len_symbol(s.match - 4 - SEQLZ_ML_CAP, &extra)] += 1;
                 }
-                auto r = 0U;
-                while (r < 3 && rep[r] != s.offset) {
-                    ++r;
-                }
-                if (r < 3) {
-                    off[r] += 1;
-                    for (; r > 0; --r) {
-                        rep[r] = rep[r - 1];
-                    }
-                } else {
-                    off[seqlz_off_bucket(s.offset, &extra)] += 1;
-                    rep[2] = rep[1];
-                    rep[1] = rep[0];
-                }
-                rep[0] = s.offset;
+                last = s.offset;
             }
         }
         codec->destroy(&stream);
         codec->release_params(&params);
 
         auto lengths = seqlz_lengths{};
-        auto const l_token = code_lengths(token, SEQLZ_TOKEN_BITS);
+        auto const l_token = token_lengths(token);
         auto const l_ll = code_lengths(ll, SEQLZ_MAX_BITS);
         auto const l_ml = code_lengths(ml, SEQLZ_MAX_BITS);
-        auto const l_off = code_lengths(off, SEQLZ_MAX_BITS);
+        auto const l_lit = code_lengths(lit, SEQLZ_LIT_BITS);
         std::copy(l_token.begin(), l_token.end(), lengths.token);
         std::copy(l_ll.begin(), l_ll.end(), lengths.ll);
         std::copy(l_ml.begin(), l_ml.end(), lengths.ml);
-        std::copy(l_off.begin(), l_off.end(), lengths.off);
+        std::copy(l_lit.begin(), l_lit.end(), lengths.lit);
 
         if (!blob.empty()) {
             auto out = std::ofstream(blob, std::ios::binary);
@@ -228,10 +288,10 @@ int main(int argc, char** argv) {
             std::printf("},\n");
         };
         std::printf("/* trained on %zu pages of %s, %s */\n{\n", pages, base.c_str(), matcher.c_str());
-        print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS);
+        print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);
-        print("off", lengths.off, SEQLZ_OFF_SYMBOLS);
+        print("lit", lengths.lit, 256);
         std::printf("}\n");
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

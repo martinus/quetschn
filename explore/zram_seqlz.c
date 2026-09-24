@@ -4,7 +4,7 @@
  * "seqlz" and "seqlz-hc" take the matches from the kernel's lz4 or lz4hc at level 3 instead: compress
  * with it into a per-CPU buffer, split that into sequences, code them with seqlz; they are the
  * reference for what a better matcher is worth. zram's dictionary parameter, if it is exactly a struct
- * seqlz_lengths (577 bytes), carries other code lengths instead of the ones compiled in.
+ * seqlz_lengths (2099 bytes), carries other code lengths instead of the ones compiled in.
  */
 #include <linux/lz4.h>
 
@@ -16,6 +16,8 @@ struct seqlz_ctx {
     unsigned char* lz4_out;
     struct seqlz_sequence* seq;
     unsigned char* literals;
+    unsigned char* scratch; /* for the literals of seqlz-hc-lit */
+    int coded;
 };
 
 static int setup(struct quetschn_params* p, const struct seqlz_lengths* built_in) {
@@ -65,6 +67,7 @@ static void destroy(struct quetschn_stream* s) {
     quetschn_free(ctx->lz4_out, &s->allocated);
     quetschn_free(ctx->seq, &s->allocated);
     quetschn_free(ctx->literals, &s->allocated);
+    quetschn_free(ctx->scratch, &s->allocated);
     quetschn_free(ctx, &s->allocated);
     s->context = NULL;
 }
@@ -79,7 +82,8 @@ static int create(struct quetschn_stream* s, unsigned int workspace) {
     ctx->lz4_out = quetschn_zalloc(2 * SEQLZ_PAGE, &s->allocated);
     ctx->seq = quetschn_zalloc(SEQLZ_MAX_SEQUENCES * sizeof(*ctx->seq), &s->allocated);
     ctx->literals = quetschn_zalloc(SEQLZ_PAGE, &s->allocated);
-    if (!ctx->lz4_mem || !ctx->lz4_out || !ctx->seq || !ctx->literals) {
+    ctx->scratch = quetschn_zalloc(SEQLZ_SCRATCH, &s->allocated);
+    if (!ctx->lz4_mem || !ctx->lz4_out || !ctx->seq || !ctx->literals || !ctx->scratch) {
         destroy(s);
         return -1;
     }
@@ -163,7 +167,8 @@ static int compress(struct quetschn_params* p,
         ret = LZ4_compress_fast(src, (char*)ctx->lz4_out, (int)src_len, 2 * SEQLZ_PAGE, p->level, ctx->lz4_mem);
     if (ret <= 0 || split(ctx->lz4_out, (unsigned int)ret, ctx, &n_seq, &n_lit))
         return -1;
-    len = seqlz_encode(p->drv_data, ctx->seq, n_seq, ctx->literals, n_lit, dst, *dst_len);
+    len = ctx->coded ? seqlz_encode_coded(p->drv_data, ctx->seq, n_seq, ctx->literals, n_lit, dst, *dst_len)
+                     : seqlz_encode(p->drv_data, ctx->seq, n_seq, ctx->literals, n_lit, dst, *dst_len);
     if (!len)
         return -1;
     *dst_len = len;
@@ -194,8 +199,10 @@ static int decompress(struct quetschn_params* p,
                       unsigned int src_len,
                       void* dst,
                       unsigned int* dst_len) {
-    (void)s;
-    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst))
+    struct seqlz_ctx* ctx = s->context;
+
+    quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode_scratch(p->drv_data, src, src_len, dst, ctx ? ctx->scratch : 0))
         return -1;
     *dst_len = SEQLZ_PAGE;
     return 0;
@@ -233,6 +240,21 @@ static int setup_own(struct quetschn_params* p) {
     return setup(p, &seqlz_default_own);
 }
 
+/* seqlz-fast's context is its hash table, it has no scratch: pages with coded literals are invalid */
+static int fast_decompress(struct quetschn_params* p,
+                           struct quetschn_stream* s,
+                           const void* src,
+                           unsigned int src_len,
+                           void* dst,
+                           unsigned int* dst_len) {
+    (void)s;
+    quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst))
+        return -1;
+    *dst_len = SEQLZ_PAGE;
+    return 0;
+}
+
 const struct quetschn_codec quetschn_codec_seqlz_fast = {
     "seqlz-fast",
     setup_own,
@@ -240,7 +262,62 @@ const struct quetschn_codec quetschn_codec_seqlz_fast = {
     fast_create,
     fast_destroy,
     fast_compress,
-    decompress,
+    fast_decompress,
+};
+
+/* EXPERIMENT: seqlz-fast with the literals Huffman coded too; the hash table and the scratch */
+struct fast_lit_ctx {
+    struct seqlz_state st;
+    unsigned char scratch[SEQLZ_SCRATCH];
+};
+
+static int fast_lit_create(struct quetschn_params* p, struct quetschn_stream* s) {
+    (void)p;
+    s->context = quetschn_zalloc(sizeof(struct fast_lit_ctx), &s->allocated);
+    return s->context ? 0 : -1;
+}
+
+static int fast_lit_compress(struct quetschn_params* p,
+                             struct quetschn_stream* s,
+                             const void* src,
+                             unsigned int src_len,
+                             void* dst,
+                             unsigned int* dst_len) {
+    struct fast_lit_ctx* c = s->context;
+    unsigned int len;
+
+    if (src_len != SEQLZ_PAGE)
+        return -1;
+    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len);
+    if (!len)
+        return -1;
+    *dst_len = len;
+    return 0;
+}
+
+static int fast_lit_decompress(struct quetschn_params* p,
+                               struct quetschn_stream* s,
+                               const void* src,
+                               unsigned int src_len,
+                               void* dst,
+                               unsigned int* dst_len) {
+    struct fast_lit_ctx* c = s->context;
+
+    quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode_scratch(p->drv_data, src, src_len, dst, c->scratch))
+        return -1;
+    *dst_len = SEQLZ_PAGE;
+    return 0;
+}
+
+const struct quetschn_codec quetschn_codec_seqlz_fast_lit = {
+    "seqlz-fast-lit",
+    setup_own,
+    release,
+    fast_lit_create,
+    fast_destroy,
+    fast_lit_compress,
+    fast_lit_decompress,
 };
 
 const struct quetschn_codec quetschn_codec_seqlz = {
@@ -250,6 +327,25 @@ const struct quetschn_codec quetschn_codec_seqlz = {
     create_lz4,
     destroy,
     compress_lz4,
+    decompress,
+};
+
+static int create_lz4hc_coded(struct quetschn_params* p, struct quetschn_stream* s) {
+    int ret = create_lz4hc(p, s);
+
+    if (!ret)
+        ((struct seqlz_ctx*)s->context)->coded = 1;
+    return ret;
+}
+
+/* EXPERIMENT: seqlz-hc with the literals Huffman coded too, for zram's recompression */
+const struct quetschn_codec quetschn_codec_seqlz_hc_lit = {
+    "seqlz-hc-lit",
+    setup_lz4hc,
+    release,
+    create_lz4hc_coded,
+    destroy,
+    compress_lz4hc,
     decompress,
 };
 

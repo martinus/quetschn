@@ -163,6 +163,186 @@ double byte_format_bytes(parsed_page const& pg, byte_format f, std::array<double
     return bytes;
 }
 
+// A joint token for seqlz: min(ll, ll_cap), min(ml - 4, ml_cap) and a class of the offset in one
+// Huffman symbol, so the decoder needs one table lookup per sequence and not two. Class 0 is the last
+// offset; class c >= 1 holds the offsets whose bit width - 1 is in [lo_c, hi_c], sent raw after the
+// token: hi_c bits if lo_c == hi_c (the top bit is known), else hi_c + 1 bits. Lengths at or above the
+// cap follow as seqlz's length values (a bucket symbol and extra bits) from their own model.
+struct joint_format {
+    unsigned ll_cap;
+    unsigned ml_cap;
+    std::vector<std::pair<unsigned, unsigned>> classes; // [lo, hi] of the bucket for class 1, 2, ...
+    char const* name;
+    bool separate = false; // the class as its own symbol after the token, as seqlz does
+};
+
+struct joint_model {
+    std::vector<double> token;
+    std::array<double, 64> ll{};
+    std::array<double, 64> ml{};
+    std::array<double, 64> off{}; // the class, if separate
+};
+
+// bits of one page, counting (count = true) or costing; ll_ext, ml_ext count the sequences with one
+double joint_walk(parsed_page const& pg, joint_format const& f, joint_model& m, bool count, double* ll_ext, double* ml_ext) {
+    auto bits = 0.0;
+    auto last = 1U;
+    auto const n_ll = f.ll_cap + 1, n_ml = f.ml_cap + 1;
+    auto add = [&](std::array<double, 64>& table, std::uint32_t v) {
+        auto const s = length_symbol(v);
+        if (count) {
+            table[s.code] += 1;
+        } else {
+            bits += -std::log2(table[s.code]) + s.extra_bits;
+        }
+    };
+    for (auto const& s : pg.sequences) {
+        auto const ll = std::min(s.literals, f.ll_cap);
+        auto ml = 0U, cls = 0U;
+        if (s.literals >= f.ll_cap) {
+            add(m.ll, s.literals - f.ll_cap);
+            *ll_ext += count ? 0 : 1;
+        }
+        if (s.match != 0) {
+            ml = std::min(s.match - 4, f.ml_cap);
+            if (s.match - 4 >= f.ml_cap) {
+                add(m.ml, s.match - 4 - f.ml_cap);
+                *ml_ext += count ? 0 : 1;
+            }
+            if (s.offset != last) {
+                auto const b = static_cast<unsigned>(std::bit_width(s.offset) - 1);
+                cls = 1;
+                while (cls <= f.classes.size() && b > f.classes[cls - 1].second) {
+                    ++cls;
+                }
+                auto const [lo, hi] = f.classes[cls - 1];
+                bits += count ? 0.0 : (lo == hi ? hi : hi + 1);
+            }
+            last = s.offset;
+        }
+        auto const sym = ll + n_ll * (ml + n_ml * (f.separate ? 0U : cls));
+        if (count) {
+            m.token[sym] += 1;
+        } else {
+            bits += -std::log2(m.token[sym]);
+        }
+        if (f.separate && s.match != 0) {
+            if (count) {
+                m.off[cls] += 1;
+            } else {
+                bits += -std::log2(m.off[cls]);
+            }
+        }
+    }
+    return bits;
+}
+
+// A token byte whose 256 values are split into classes. A class has fields for the literal length
+// and for the match length - 4, each with or without a 7-bit varint extension for values that do not
+// fit, and one kind of offset: the last one, the one before, 1 byte (1 to 256), near (k bits in the
+// token and 1 byte, 1 to 256 << k) or 2 bytes. It takes 1 << (ll_bits + ml_bits + k) token values.
+// Each sequence is sent in the cheapest class that can hold it. The last sequence has only literals.
+enum class off_kind { last, before, byte, near, word };
+
+struct token_class {
+    off_kind kind;
+    unsigned ll_bits;
+    bool ll_ext;
+    unsigned ml_bits;
+    bool ml_ext;
+    unsigned near_bits = 0;
+
+    [[nodiscard]] unsigned tokens() const {
+        return 1U << (ll_bits + ml_bits + near_bits);
+    }
+};
+
+struct layout_stats {
+    double sequences = 0;
+    double ll_extensions = 0;
+    double ml_extensions = 0;
+};
+
+// bytes of a length in a field of bits, with or without extension; 0 if it does not fit
+unsigned field_bytes(std::uint32_t v, unsigned bits, bool ext, bool& fits) {
+    auto const cap = (1U << bits) - 1U;
+    fits = true;
+    if (!ext) {
+        fits = v <= cap;
+        return 0;
+    }
+    return v >= cap ? varint_bytes(v - cap) : 0U;
+}
+
+double layout_bytes(parsed_page const& pg, std::vector<token_class> const& layout, layout_stats* stats) {
+    auto bytes = 0.0;
+    auto last = 1U, before = 4U;
+    for (auto const& s : pg.sequences) {
+        auto best = ~0U;
+        auto best_kind = off_kind::word;
+        auto best_ll_ext = false, best_ml_ext = false;
+        for (auto const& c : layout) {
+            auto fits = true, f = true;
+            auto b = 1U + field_bytes(s.literals, c.ll_bits, c.ll_ext, f);
+            fits = f;
+            if (s.match != 0) {
+                b += field_bytes(s.match - 4, c.ml_bits, c.ml_ext, f);
+                fits = fits && f;
+                switch (c.kind) {
+                case off_kind::last:
+                    fits = fits && s.offset == last;
+                    break;
+                case off_kind::before:
+                    fits = fits && s.offset == before;
+                    break;
+                case off_kind::byte:
+                    fits = fits && s.offset <= 256;
+                    b += 1;
+                    break;
+                case off_kind::near:
+                    fits = fits && s.offset <= (256U << c.near_bits);
+                    b += 1;
+                    break;
+                case off_kind::word:
+                    b += 2;
+                    break;
+                }
+            }
+            if (fits && b < best) {
+                best = b;
+                best_kind = c.kind;
+                best_ll_ext = c.ll_ext && s.literals >= (1U << c.ll_bits) - 1U;
+                best_ml_ext = s.match != 0 && c.ml_ext && s.match - 4 >= (1U << c.ml_bits) - 1U;
+            }
+        }
+        if (best == ~0U) {
+            return 1e9; // the layout cannot send this sequence
+        }
+        bytes += best;
+        if (stats != nullptr) {
+            stats->sequences += 1;
+            stats->ll_extensions += best_ll_ext ? 1 : 0;
+            stats->ml_extensions += best_ml_ext ? 1 : 0;
+        }
+        if (s.match != 0 && best_kind != off_kind::last) {
+            before = last;
+            last = s.offset;
+        }
+    }
+    return bytes;
+}
+
+std::string layout_name(std::vector<token_class> const& layout) {
+    auto name = std::string();
+    for (auto const& c : layout) {
+        static char const* const kinds[] = {"last", "before", "byte", "near", "word"};
+        name += std::string(name.empty() ? "" : ", ") + kinds[static_cast<int>(c.kind)] +
+                (c.kind == off_kind::near ? std::to_string(c.near_bits) : "") + " " + std::to_string(c.ll_bits) +
+                (c.ll_ext ? "e" : "") + "/" + std::to_string(c.ml_bits) + (c.ml_ext ? "e" : "");
+    }
+    return name;
+}
+
 void normalize(auto& table) {
     auto total = 0.0;
     for (auto v : table) {
@@ -334,6 +514,187 @@ int main(int argc, char** argv) {
             }
             print(f.name, s);
         }
+        {
+            // seqlz itself and joint tokens, with the same static model (optimistic, trained on the
+            // pages it is measured on); header 4 bytes
+            auto buckets = [](unsigned from, unsigned to) {
+                auto v = std::vector<std::pair<unsigned, unsigned>>();
+                for (auto b = from; b <= to; ++b) {
+                    v.emplace_back(b, b);
+                }
+                return v;
+            };
+            using cls = std::vector<std::pair<unsigned, unsigned>>;
+            std::printf("\n%-58s %6s %7s %7s\n", "joint token: ll cap / ml cap / offset classes", "", "ll ext", "ml ext");
+            for (auto const& f :
+                 {joint_format{15, 31, buckets(0, 11), "seqlz: 15 / 31, last + 12 buckets as own symbol", true},
+                  joint_format{7, 7, buckets(0, 11), "7 / 7 / last + 12 buckets"},
+                  joint_format{
+                      7, 7, cls{{0, 3}, {4, 5}, {6, 7}, {8, 8}, {9, 9}, {10, 10}, {11, 11}}, "7 / 7 / last + 7 classes"},
+                  joint_format{7, 15, cls{{0, 4}, {5, 7}, {8, 9}, {10, 11}}, "7 / 15 / last + 4 classes"},
+                  joint_format{
+                      3, 15, cls{{0, 3}, {4, 5}, {6, 7}, {8, 8}, {9, 9}, {10, 10}, {11, 11}}, "3 / 15 / last + 7 classes"},
+                  joint_format{
+                      7, 15, cls{{0, 3}, {4, 5}, {6, 7}, {8, 8}, {9, 9}, {10, 10}, {11, 11}}, "7 / 15 / last + 7 classes"},
+                  joint_format{15, 15, cls{{0, 4}, {5, 7}, {8, 9}, {10, 11}}, "15 / 15 / last + 4 classes"},
+                  joint_format{7, 31, cls{{0, 4}, {5, 7}, {8, 9}, {10, 11}}, "7 / 31 / last + 4 classes"},
+                  joint_format{15, 31, cls{{0, 7}, {8, 11}}, "15 / 31 / last + 2 classes"},
+                  joint_format{7, 31, cls{{0, 7}, {8, 11}}, "7 / 31 / last + 2 classes"},
+                  joint_format{15, 31, cls{{0, 11}}, "15 / 31 / last + 1 class of 12 bits"}}) {
+                auto m = joint_model{};
+                auto const n_ll = f.ll_cap + 1, n_ml = f.ml_cap + 1;
+                m.token.assign(n_ll * n_ml * (f.separate ? 1 : f.classes.size() + 1), 0.0);
+                auto dummy = 0.0;
+                for (auto const& p : pages) {
+                    (void)joint_walk(p, f, m, true, &dummy, &dummy);
+                }
+                normalize(m.token);
+                normalize(m.ll);
+                normalize(m.ml);
+                normalize(m.off);
+                auto s = 0.0, lle = 0.0, mle = 0.0, n_seq = 0.0;
+                for (auto const& p : pages) {
+                    s += cost(static_cast<double>(p.literals.size()) + (joint_walk(p, f, m, false, &lle, &mle) + 32.0) / 8.0);
+                    n_seq += static_cast<double>(p.sequences.size());
+                }
+                std::printf("%-58s %5.1f%% %6.1f%% %6.1f%%  %zu symbols\n",
+                            f.name,
+                            100.0 * s / total,
+                            100.0 * lle / n_seq,
+                            100.0 * mle / n_seq,
+                            m.token.size());
+            }
+        }
+
+        // token classes: bytelz's layout, then a search from it that changes one class at a time
+        auto layout_cost = [&](std::vector<token_class> const& layout, layout_stats* st) {
+            auto tokens = 0U;
+            for (auto const& tc : layout) {
+                tokens += tc.tokens();
+            }
+            if (tokens > 256) {
+                return 1e18;
+            }
+            auto sum_cost = 0.0;
+            for (auto const& p : pages) {
+                sum_cost += cost(static_cast<double>(p.literals.size()) + layout_bytes(p, layout, st));
+            }
+            return sum_cost;
+        };
+        auto report = [&](std::vector<token_class> const& layout) {
+            auto st = layout_stats{};
+            auto const layout_sum = layout_cost(layout, &st);
+            std::printf("%5.2f%%  ll ext %4.1f%%  ml ext %4.1f%%  %s\n",
+                        100.0 * layout_sum / total,
+                        100.0 * st.ll_extensions / st.sequences,
+                        100.0 * st.ml_extensions / st.sequences,
+                        layout_name(layout).c_str());
+        };
+        std::printf("\ntoken classes (offset kind ll/ml bits, e: with extension), Σ zsmalloc cost\n");
+        using k = off_kind;
+        auto layout = std::vector<token_class>{{k::last, 3, true, 3, true},
+                                               {k::before, 3, true, 3, true},
+                                               {k::byte, 3, true, 3, true},
+                                               {k::word, 3, true, 3, true}};
+        report(layout);
+        auto const start = layout;
+        // Add a near class, then improve one field at a time while it gets better. Better: smaller,
+        // with each extension counted as weight bytes more, because each is a branch in the decoder
+        // that mispredicts.
+        for (auto const weight : {0.0, 0.5, 1.0, 2.0}) {
+            layout = start;
+            layout.push_back({k::near, 0, false, 0, false, 3});
+            auto score = [&](std::vector<token_class> const& l) {
+                auto st = layout_stats{};
+                auto const x = layout_cost(l, &st);
+                return x + weight * (st.ll_extensions + st.ml_extensions);
+            };
+            auto best = score(layout);
+            for (bool better = true; better;) {
+                better = false;
+                for (std::size_t i = 0; i < layout.size(); ++i) {
+                    for (int change = 0; change < 12; ++change) {
+                        auto l = layout;
+                        auto& cl = l[i];
+                        switch (change) {
+                        case 0:
+                            cl.ll_bits += 1;
+                            break;
+                        case 1:
+                            cl.ll_bits -= cl.ll_bits > 0 ? 1U : 0U;
+                            break;
+                        case 2:
+                            cl.ml_bits += 1;
+                            break;
+                        case 3:
+                            cl.ml_bits -= cl.ml_bits > 0 ? 1U : 0U;
+                            break;
+                        case 4:
+                            cl.ll_ext = !cl.ll_ext;
+                            break;
+                        case 5:
+                            cl.ml_ext = !cl.ml_ext;
+                            break;
+                        case 6:
+                            cl.near_bits += cl.kind == k::near ? 1U : 0U;
+                            break;
+                        case 7:
+                            cl.near_bits -= cl.kind == k::near && cl.near_bits > 0 ? 1U : 0U;
+                            break;
+                        case 8:
+                            cl.ll_bits += 1;
+                            cl.ml_bits -= cl.ml_bits > 0 ? 1U : 0U;
+                            break;
+                        case 9:
+                            cl.ml_bits += 1;
+                            cl.ll_bits -= cl.ll_bits > 0 ? 1U : 0U;
+                            break;
+                        case 10:
+                            cl.ml_bits += 1;
+                            cl.near_bits -= cl.kind == k::near && cl.near_bits > 0 ? 1U : 0U;
+                            break;
+                        default:
+                            cl.ll_bits += 1;
+                            cl.near_bits -= cl.kind == k::near && cl.near_bits > 0 ? 1U : 0U;
+                            break;
+                        }
+                        auto const x = score(l);
+                        if (x < best - 0.5) {
+                            best = x;
+                            layout = l;
+                            better = true;
+                        }
+                    }
+                }
+            }
+            std::printf("weight %.1f: ", weight);
+            report(layout);
+        }
+        // one class per kind of offset, every field with an extension: the class follows from the
+        // offset alone, which keeps the encoder free of branches
+        std::printf("one class per offset kind:\n");
+        for (auto const& l : {std::vector<token_class>{{k::last, 3, true, 3, true},
+                                                       {k::before, 2, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 1, true, 3, true, 2},
+                                                       {k::word, 2, true, 3, true}},
+                              std::vector<token_class>{{k::last, 3, true, 2, true},
+                                                       {k::before, 2, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 1, true, 3, true, 2},
+                                                       {k::word, 3, true, 3, true}},
+                              std::vector<token_class>{{k::last, 2, true, 4, true},
+                                                       {k::before, 2, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 1, true, 2, true, 2},
+                                                       {k::word, 3, true, 3, true}},
+                              std::vector<token_class>{{k::last, 3, true, 3, true},
+                                                       {k::byte, 2, true, 4, true},
+                                                       {k::near, 2, true, 2, true, 2},
+                                                       {k::word, 3, true, 3, true}}}) {
+            report(l);
+        }
+
         for (auto const f : {byte_format{4, 4, "4 / 4 / 0, token byte entropy coded"},
                              byte_format{3, 3, "3 / 3 / 2, token byte entropy coded"}}) {
             auto tokens = std::array<double, 256>{};

@@ -109,7 +109,7 @@ int bytelz_decode(const void* src, unsigned int src_len, void* dst) {
          * like lz4 does: without one, the next token's position waits for the extension's loads. Up
          * to 1 + 3 + 16 + 2 + 3 bytes are read, 6 + 16 written before the match is checked. Longer
          * literals take the careful way below. */
-        if ((unsigned int)(s_end - s) >= 32U && (unsigned int)(d_end - d) >= 32U && (s[0] & 7U) != 7U) {
+        if ((unsigned int)(s_end - s) >= 32U && (unsigned int)(d_end - d) >= 64U && (s[0] & 7U) != 7U) {
             u64 a, b;
 
             tok = *s++;
@@ -156,14 +156,43 @@ int bytelz_decode(const void* src, unsigned int src_len, void* dst) {
             /* off - 1 wraps for 0 */
             if (off - 1U >= (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
                 return -1;
-            /* for 8 <= off < 16 the second 8 bytes read what the first 8 wrote, which is right */
-            if (off >= 8U && len <= 16U) {
+            /* at least 64 - 6 bytes of room: 32 bytes of match, or 40 of a short offset, fit */
+            if (off >= 8U) {
+                /* for 8 <= off < 16 each load reads what the stores before it wrote, which is right */
                 __builtin_memcpy(&a, d - off, 8);
                 __builtin_memcpy(d, &a, 8);
                 __builtin_memcpy(&b, d - off + 8, 8);
                 __builtin_memcpy(d + 8, &b, 8);
+                if (len > 16U) {
+                    __builtin_memcpy(&a, d + 16 - off, 8);
+                    __builtin_memcpy(d + 16, &a, 8);
+                    __builtin_memcpy(&b, d + 24 - off, 8);
+                    __builtin_memcpy(d + 24, &b, 8);
+                    if (len > 32U)
+                        copy_match(d + 32, d_end, off, len - 32U);
+                }
             } else {
-                copy_match(d, d_end, off, len);
+                /* the off bytes before d repeated to 8 bytes, the same 8 bytes every step bytes */
+                static const u8 step_for[8] = {0, 8, 8, 6, 8, 5, 6, 7};
+                static const u64 repeat[8] = {0,
+                                              0x0101010101010101ULL,
+                                              0x0001000100010001ULL,
+                                              0x0001000001000001ULL,
+                                              0x0000000100000001ULL,
+                                              0x0000010000000001ULL,
+                                              0x0001000000000001ULL,
+                                              0x0100000000000001ULL};
+                unsigned int step = step_for[off];
+
+                __builtin_memcpy(&a, d - off, 8);
+                a = (a & (~0ULL >> (64U - 8U * off))) * repeat[off];
+                __builtin_memcpy(d, &a, 8);
+                __builtin_memcpy(d + step, &a, 8);
+                __builtin_memcpy(d + 2U * step, &a, 8);
+                __builtin_memcpy(d + 3U * step, &a, 8);
+                __builtin_memcpy(d + 4U * step, &a, 8);
+                if (len > 4U * step + 8U)
+                    copy_match(d + 4U * step + 8U, d_end, off, len - 4U * step - 8U);
             }
             d += len;
             continue;
