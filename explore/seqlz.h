@@ -200,10 +200,30 @@ unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_se
 unsigned int
 seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
 
+/* EXPERIMENT: the cheapest parse by the tables' code lengths, for recompression; the literals priced
+ * with table lit_set. work: seqlz_opt_work_size() bytes. */
+unsigned int seqlz_compress_opt(const struct seqlz_tables* t,
+                                const void* src,
+                                void* dst,
+                                unsigned int dst_cap,
+                                void* scratch,
+                                void* work,
+                                unsigned int lit_set);
+__SIZE_TYPE__ seqlz_opt_work_size(void);
+/* the parse of seqlz_compress_opt(), into seq (SEQLZ_MAX_SEQUENCES), the last one without a match;
+ * returns their number */
+unsigned int
+seqlz_parse_opt(const struct seqlz_tables* t, const void* src, void* work, unsigned int lit_set, struct seqlz_sequence* seq);
+
 /* The tables compiled in, trained on resident pages (explore/seqlz_default_tables.c). */
 extern const struct seqlz_lengths seqlz_default_lz4;
 extern const struct seqlz_lengths seqlz_default_lz4hc;
 extern const struct seqlz_lengths seqlz_default_own; /* for seqlz_compress, its own matcher */
+#if QUETSCHN_PAGE_BITS == 12
+extern const struct seqlz_lengths seqlz_default_opt; /* EXPERIMENT, for seqlz_compress_opt() */
+#else
+#    define seqlz_default_opt seqlz_default_lz4hc
+#endif
 
 #ifdef __cplusplus
 }

@@ -1077,6 +1077,89 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## seqlz-opt: a parser that knows seqlz's costs, zstd's memory at lz4's read speed
+
+`seqlz-opt` writes the same format as `seqlz-fast-lit`, with the same decoder, but finds the sequences
+with a parser that prices every choice by the code lengths of the tables. In the kernel it needs 2.6%
+less memory than `zstd` 3 on the first dump and 2.5% more on the second, and reads cold data twice as
+fast as `zstd`, at `lz4`'s speed: p50 / p99 2720 / 4670 and 2910 / 4900 ns, `lz4` 2491 / 4730 and 2510 /
+4781, `zstd` 5440 / 9560 and 5730 / 9480. It needs about 0.25 ms per page to compress, 0.47 and 0.54 ms
+at p99: not for zram's writes, for recompression of idle pages.
+
+**Why.** Codecs we had not looked at, 2000 pages per dump, one binary, `-O2` for x86-64 without
+SIMD, ticks per page in a loop with the data in the cache, the old dump / the new one:
+
+| codec | memory | compress p50 | decompress p50 / p99 |
+| --- | --- | --- | --- |
+| `lz4` | 35.02% / 41.61% | 11 025 | 2970 / 10 215 |
+| `seqlz-fast-lit` | 25.87% / 32.78% | 17 820 | 5130 / 10 305 |
+| `zstd` 3 | 23.81% / 27.75% | 39 735 | 13 860 / 22 635 |
+| LZSA2, matches from 2 bytes | 24.34% / 29.52% | 158 million | 6255 / 24 795 |
+| LZSA1 | 27.45% / 33.21% | 4 million | 3915 / 24 705 |
+| lzfse | 26.48% / 30.38% | 171 540 | 24 570 / 36 585 |
+| lzav, lzav hi | 35.00% / 41.37%, 32.58% / 39.42% | 12 735, 50 175 | 3060, 2745 |
+| Lizard 10 to 47 | 32.0% to 44.8% / 34.4% to 47.8% | up to 10 million | 2000 to 3500 |
+
+LZSA2 has no entropy coding, only nibbles, a repeat offset and matches from 2 bytes, and is still
+smaller than `seqlz-fast-lit`: its compressor parses optimally, with a suffix array. LZSA1, a byte
+format like `lz4`'s, gets `seqlz-fast-lit`'s size the same way. The parse is worth more here than the
+coding. Nothing in the table decodes as fast as `lz4` for less memory than `seqlz-fast-lit`.
+[lzav](https://github.com/avaneev/lzav), [Lizard](https://github.com/inikep/lizard),
+[LZSA](https://github.com/emmanuel-marty/lzsa), [lzfse](https://github.com/lzfse/lzfse).
+
+**The parser** (`seqlz_parse_opt()`): forward over the page, at each position the literal, priced by
+the literal table that codes the whole page in the fewest bits, and the matches from a hash chain of
+4 bytes, 16 steps, and the last offset. Each length from 4 to the token's cap of 35, above that only
+the longest, priced with the token for the literals since the last match, the raw offset bits and
+the length values. One state per position, the cheapest, with its literal count and last offset. The
+token tables are trained on its own parses of the resident pages (`--codec opt`,
+`seqlz_default_opt`); the sequences go through `seqlz_encode_coded()`. A match of 256 bytes and more is
+taken as it is, the positions inside it only go into the chains: without that a run cost every
+position a count of the run per candidate, and the p99 of the writes was 7.7 and 9 ms in the kernel.
+
+2000 pages per dump, userspace, ticks per page:
+
+| variant | first dump | second dump | ticks p50 / p99 |
+| --- | --- | --- | --- |
+| `seqlz-fast-lit` | 25.13% | 31.20% | |
+| `lz4hc` level 3's matches (`seqlz-hc-lit`) | 23.9% | 30.2% | |
+| parser, `seqlz-fast`'s tables, chain 64 | 23.39% | 28.79% | 14.6 / 9.3 million mean |
+| `lz4hc`'s tables | 23.36% | 28.52% | |
+| its own tables | 23.22% | 28.50% | |
+| its own tables, chain 16 | 23.28% | 28.57% | 4.8 / 3.4 million mean |
+| chain 4 | 23.43% | 28.78% | 2.3 / 1.7 million mean |
+| chain 16, matches of 256 taken as they are | 23.28% | 28.57% | 1.1 to 1.3 million / 2.9 to 3.1 million |
+| the same, 64 | 23.34% | 28.61% | 0.8 / 1.8 million |
+| 256, prices from a table per parse | 23.28% | 28.57% | 0.94 to 1.05 million / 2.0 to 2.1 million |
+| `zstd` 3 | 23.81% | 27.75% | |
+
+A second pass with the literal table of the first gains 0.01 points. On the second halves of the dumps,
+with literal tables trained on the first halves (the device's own tables, see the device tables below):
+`zstd` 3 31.74% and 24.18%, `seqlz-opt` with the resident tables 33.17% and 23.66%, with the device's
+own 32.06% and 23.42%.
+
+Kernel VM, 20 000 pages per dump, one boot per dump, p50 / p99 in ns:
+
+| | used by zsmalloc | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- |
+| second dump: `lz4` | 35 090 432 | 2510 / 4781 | 1920 / 3550 | 6221 / 9901 |
+| `seqlz-fast-lit` | 26 673 152 | 3020 / 4890 | 2490 / 4080 | 8000 / 12 700 |
+| `seqlz-opt` | 24 539 136 | 2910 / 4900 | 2410 / 3960 | 238 259 / 536 538 |
+| `zstd` 3 | 23 949 312 | 5730 / 9480 | 4910 / 7470 | 16 170 / 26 180 |
+| first dump: `lz4` | 29 007 872 | 2491 / 4730 | 1940 / 3530 | 5710 / 9580 |
+| `seqlz-fast-lit` | 21 184 512 | 2840 / 4690 | 2310 / 3989 | 7200 / 12 540 |
+| `seqlz-opt` | 19 714 048 | 2720 / 4670 | 2240 / 4050 | 264 419 / 468 008 |
+| `zstd` 3 | 20 246 528 | 5440 / 9560 | 4600 / 7661 | 15 520 / 26 510 |
+
+The parser's pages read a bit faster than `seqlz-fast-lit`'s, fewer and longer sequences. In the
+kernel the cut at 256 costs 0.13 points on the first dump (19 607 552 without it), in userspace
+nothing. The work memory is 110 KB per stream, the price table in it and not on the kernel's stack.
+
+Tests: the parser's pages from four kinds of page come back; on pages of words from a vocabulary of
+60, where the first match found is often not the cheapest, they are 8.5% smaller than the greedy
+matcher's with the same tables, the bound is 7%. Mutations, each caught: only the longest length of
+each match (5.4%), a chain of 1 (5.6%).
+
 ## seqlz-fast-lit: one of 8 literal tables per page
 
 `seqlz-fast-lit` now picks one of 8 static literal tables per page, and decodes the literals in 8
