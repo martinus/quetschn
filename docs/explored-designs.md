@@ -744,6 +744,11 @@ Without the insert of the position 2 bytes before the end of each match into the
 run `seqlz-fast` writes 1.22 times as long as `lz4` at p99, in the run before 1.26: C3's 1.2 is within
 the scatter between runs in the kernel, while the harness, which times the codec alone, says 1.55.
 
+Three more runs with only `lz4`, `lzo-rle`, `seqlz-fast` and `bytelz`, write p50 / p99 in ns: `lz4`
+5571 to 5610 / 9420 to 9450, `seqlz-fast` 6470 to 6520 / 11 660 to 11 740, `bytelz` 6580 to 6610 /
+11 750 to 11 819. So both write 1.24 times as long as `lz4` at p99, 1.16 at p50: C3 missed by about
+3% of the write time, 300 ns on the slowest pages.
+
 The Pareto front on this machine, from `lz4`'s speed to `zstd`'s memory: `bytelz`, `seqlz-fast`,
 `seqlz-fast-lit`, and for recompression `seqlz-hc-lit`. `seqlz-fast-lit` writes faster than
 `seqlz-fast` at p50, not explained; zram's own work per write depends on the size of the object.
