@@ -908,8 +908,10 @@ from 11 650 to 10 480 ns, 10%, twice what the cycles say: the slowest pages are 
 short matches, and the hash of 5 bytes finds fewer of them. Both changes together gave 10 380 ns, the
 step adds nearly nothing and is left out. Kept: the hash of 5 bytes and `seqlz-fast`'s tables trained
 again (only `seqlz_default_own` changes, the tables for `lz4`'s and `lz4hc`'s matches stay). Matches
-of 4 bytes still come from the last offset. The 16 KiB tables are not trained again. One boot, other
-page first, p50 / p99 in ns:
+of 4 bytes still come from the last offset. With 16 KiB pages (`resident-16k`) the hash of 5 bytes
+takes `bytelz` from 29.8% to 29.6% (7.8% below `lzo-rle`, still short of C1) and `seqlz-fast` from
+26.1% to 26.3%, and 26.1% again with its 16 KiB table trained again. One boot, other page first, p50 /
+p99 in ns:
 
 | algorithm | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
 | --- | --- | --- | --- | --- | --- |
