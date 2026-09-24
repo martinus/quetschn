@@ -133,7 +133,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
  * the literals' four bitstreams (literal k in stream k % 4), then those, then the sequences' bitstream. seqlz_decode_scratch()
  * decodes it into scratch first, SEQLZ_SCRATCH bytes; for any other page it is seqlz_decode().
  */
-#define SEQLZ_LIT_BITS 11U
+#define SEQLZ_LIT_BITS 9U
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 32U) /* 16 for the literal copies, 19 decoded past the end */
 unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 const struct seqlz_sequence* seq,
