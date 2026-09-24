@@ -830,6 +830,13 @@ unconditionally (at least 28 bytes) and loops only for longer matches. Decode cy
 kernel it is within the scatter (2970 / 4621 ns, other page first). `bytelz` does not change, its
 fast path rarely gets there.
 
+`bytelz`'s fast path now copies matches the same way (and needs 64 bytes of room instead of 32): 16
+bytes, 16 more for longer matches, `copy_match` only past 32 bytes, and short offsets with stores
+only. Its mispredictions, from the branch stack (`perf record -b`), were 31% the extension of ml,
+22% the choice between the 16-byte copy and `copy_match`, 17% the loop in `copy_match`, 13% the
+entry to the fast path. 7310 to 7019 cycles per page, mispredictions 149 to 147: the branch on
+`len > 16` mispredicts where the loop did.
+
 Tried and dropped: **no offsets below 8 from the matcher**, a run with a short period taken from a
 multiple of its period that is at least 8, when the bytes before repeat too. With such matches only,
 the fast path needs no branch on the offset: 6864 cycles instead of 7750, mispredictions 99 to 75,
