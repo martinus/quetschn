@@ -376,6 +376,56 @@ TEST_CASE("harness: every measured page gets a latency, stored-uncompressed page
     }
 }
 
+namespace {
+
+// the trimmed length of each page trim's compress and decompress got, in order
+std::vector<unsigned int> compressed_pages, decompressed_pages;
+
+int log_compress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    compressed_pages.push_back(trimmed_length(src, src_len));
+    return trim_compress(p, s, src, src_len, dst, dst_len);
+}
+
+int log_decompress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    auto const* b = static_cast<unsigned char const*>(src);
+    decompressed_pages.push_back(static_cast<unsigned int>(b[0] | (b[1] << 8)));
+    return trim_decompress(p, s, src, src_len, dst, dst_len);
+}
+
+quetschn_codec const log_codec{
+    "log", trim_setup_params, trim_release_params, trim_create, trim_destroy, log_compress, log_decompress};
+
+} // namespace
+
+TEST_CASE("harness: a codec never runs on the same page twice in a row") {
+    // Timed right after the same code ran on the same page, the branch predictor has learned it.
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(10), page_with_prefix(20), page_with_prefix(30), page_with_prefix(40)});
+    auto opts = run_options{};
+    opts.repetitions = 3;
+    compressed_pages.clear();
+    decompressed_pages.clear();
+    auto const r = run_codec(c, log_codec, model, opts);
+    REQUIRE(r.pages.size() == 4);
+    for (std::size_t i = 0; i < 4; ++i) {
+        CHECK(r.pages[i].page == i);
+        CHECK(r.pages[i].comp_len == 10 * (i + 1) + 2);
+    }
+    // the check once, then 3 compressions and 6 decompressions (warm and cold) per page
+    CHECK(compressed_pages.size() == 4 * 4);
+    CHECK(decompressed_pages.size() == 4 * 7);
+    for (std::size_t k = 1; k < compressed_pages.size(); ++k) {
+        CAPTURE(k);
+        CHECK(compressed_pages[k] != compressed_pages[k - 1]);
+    }
+    for (std::size_t k = 1; k < decompressed_pages.size(); ++k) {
+        CAPTURE(k);
+        CHECK(decompressed_pages[k] != decompressed_pages[k - 1]);
+    }
+}
+
 TEST_CASE("harness: nearest-rank percentile") {
     auto v = std::vector<double>();
     for (int i = 100; i >= 1; --i) {

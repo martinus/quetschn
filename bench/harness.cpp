@@ -24,6 +24,12 @@ namespace {
 
 constexpr std::size_t cache_line = 64;
 
+// Pages are checked and then timed in blocks of this many. Each repetition goes through the whole block,
+// so before a codec runs on a page again it has run on the others: timing a page right after the same
+// code ran on it let the branch predictor learn that page's branches, which a page fault does not get
+// (docs/explored-designs.md). 16 pages of 2 * 2 pages of room each are 1 MiB per codec.
+constexpr std::size_t block_pages = 16;
+
 #if defined(__x86_64__)
 
 // TSC ticks, with lfence so that the read is not moved across the measured code. Converted to ns with
@@ -65,6 +71,19 @@ void flush(void const* p, std::size_t size) {
 }
 
 #endif
+
+// every cache line of [p, p + size) read once
+void touch(void const* p, std::size_t size) {
+    auto const* b = static_cast<unsigned char const*>(p);
+    auto sum = 0U;
+    for (std::size_t off = 0; off < size; off += cache_line) {
+        sum += *static_cast<unsigned char const volatile*>(b + off);
+    }
+    if (size > 0) {
+        sum += *static_cast<unsigned char const volatile*>(b + size - 1);
+    }
+    static_cast<void>(sum);
+}
 
 double ns_per_tick() {
     static double const factor = [] {
@@ -139,7 +158,8 @@ class codec_instance {
 public:
     codec_instance(quetschn_codec const& codec, std::size_t page_size, run_options const& opts)
         : m_codec(codec)
-        , m_compressed(2 * page_size + 2 * page_size)
+        , m_slot_size(4 * page_size)
+        , m_compressed(block_pages * 4 * page_size + page_size)
         , m_restored(2 * page_size) {
         m_params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
         m_params.dict_size = opts.dict.size();
@@ -184,8 +204,9 @@ public:
     // loads and stores alias in the low 12 address bits. So the compressed data of page i starts at an
     // offset that depends on i, a multiple of 16 like zsmalloc's size classes, and the same for all
     // codecs: every codec sees the same mix of offsets, and every run the same.
-    void set_page(std::size_t i) {
-        dst = m_compressed_base + (i * 2704U) % 4096U / 16U * 16U;
+    // Each page of a block has its own slot, so that its compressed data stays until it is timed.
+    void set_page(std::size_t slot, std::size_t i) {
+        dst = m_compressed_base + slot * m_slot_size + (i * 2704U) % 4096U / 16U * 16U;
     }
 
     int compress(std::span<std::byte const> src, unsigned int& len) {
@@ -217,6 +238,7 @@ private:
     }
 
     quetschn_codec const& m_codec;
+    std::size_t m_slot_size;
     quetschn_params m_params{};
     quetschn_stream m_stream{};
     bool m_have_params = false;
@@ -257,10 +279,14 @@ std::vector<run_result> run_interleaved(corpus const& c,
 
     auto const n = codecs.size();
     auto const reps = opts.measure_time ? opts.repetitions : 0U;
-    auto samples = std::vector<std::array<std::vector<double>, 3>>(n);
-    for (auto& s : samples) {
-        for (auto& v : s) {
-            v.resize(reps);
+    // per page of the block, per codec: compress, decompress warm and cold, one value per repetition
+    auto samples = std::vector<std::vector<std::array<std::vector<double>, 3>>>(
+        block_pages, std::vector<std::array<std::vector<double>, 3>>(n));
+    for (auto& page : samples) {
+        for (auto& s : page) {
+            for (auto& v : s) {
+                v.resize(reps);
+            }
         }
     }
     auto median = [](std::vector<double>& v) {
@@ -268,85 +294,105 @@ std::vector<run_result> run_interleaved(corpus const& c,
         return v[v.size() / 2];
     };
 
-    auto pages = std::vector<page_result>(n);
-    for (std::size_t i = 0; i < c.size(); ++i) {
-        auto const src = c.page(i);
-        if (analyze_page(src).same_filled) {
-            for (auto& r : results) {
-                ++r.same_filled;
+    // the block's pages that zram compresses, and their results per codec
+    auto todo = std::vector<std::size_t>();
+    auto pages = std::vector<std::vector<page_result>>(block_pages, std::vector<page_result>(n));
+    for (std::size_t start = 0; start < c.size(); start += block_pages) {
+        auto const end = std::min(c.size(), start + block_pages);
+        todo.clear();
+        for (std::size_t i = start; i < end; ++i) {
+            auto const src = c.page(i);
+            if (analyze_page(src).same_filled) {
+                for (auto& r : results) {
+                    ++r.same_filled;
+                }
+                continue;
             }
-            continue;
-        }
-
-        for (std::size_t k = 0; k < n; ++k) {
-            auto& inst = *instances[k];
-            inst.set_page(i);
-            auto& r = pages[k];
-            r = page_result{};
-            r.page = i;
-            if (inst.compress(src, r.comp_len) != 0) {
-                fail(inst.codec(), i, "compress failed");
-            }
-            r.huge = r.comp_len >= model.huge_class_size();
-            r.cost = model.cost(r.comp_len);
-
-            // Roundtrip check, also for pages that zram would store raw: the codec must still be correct.
-            auto out_len = static_cast<unsigned int>(page_size);
-            if (inst.decompress(r.comp_len, out_len) != 0) {
-                fail(inst.codec(), i, "decompress failed");
-            }
-            if (out_len != page_size || std::memcmp(inst.out, src.data(), page_size) != 0) {
-                fail(inst.codec(), i, "roundtrip does not reproduce the page");
-            }
-        }
-
-        // Every repetition runs every codec once, starting with another codec each time, so that a
-        // change of CPU frequency or temperature during the run hits all codecs alike. First all
-        // compressions, then all decompressions: a compressor with a large workspace, like lz4hc's
-        // 256 KiB, evicts what the next codec's cold decompression would otherwise still find in the
-        // cache, and with it the set of codecs in a run changed the others' cold latency by 300 ns.
-        for (unsigned rep = 0; rep < reps; ++rep) {
-            for (std::size_t o = 0; o < n; ++o) {
-                auto const k = (o + rep) % n;
-                auto const t0 = ticks();
-                auto len = 0U;
-                (void)instances[k]->compress(src, len);
-                samples[k][0][rep] = static_cast<double>(ticks() - t0) * tick_ns;
-            }
-            for (std::size_t o = 0; o < n; ++o) {
-                auto const k = (o + rep) % n;
+            auto const slot = todo.size();
+            todo.push_back(i);
+            for (std::size_t k = 0; k < n; ++k) {
                 auto& inst = *instances[k];
-                auto const& r = pages[k];
+                inst.set_page(slot, i);
+                auto& r = pages[slot][k];
+                r = page_result{};
+                r.page = i;
+                if (inst.compress(src, r.comp_len) != 0) {
+                    fail(inst.codec(), i, "compress failed");
+                }
+                r.huge = r.comp_len >= model.huge_class_size();
+                r.cost = model.cost(r.comp_len);
 
-                // What zram_read_from_zspool() does: memcpy for pages stored raw, decompress otherwise
-                auto read_once = [&] {
-                    if (r.huge) {
-                        std::memcpy(inst.out, src.data(), page_size);
-                        return;
-                    }
-                    auto out_len = static_cast<unsigned int>(page_size);
-                    (void)inst.decompress(r.comp_len, out_len);
-                };
-                // warm: the data is in the cache after one read, whatever ran before
-                read_once();
-                auto t0 = ticks();
-                read_once();
-                samples[k][1][rep] = static_cast<double>(ticks() - t0) * tick_ns;
-
-                flush(r.huge ? static_cast<void const*>(src.data()) : inst.dst, r.huge ? page_size : r.comp_len);
-                flush(inst.out, page_size);
-                t0 = ticks();
-                read_once();
-                samples[k][2][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+                // Roundtrip check, also for pages that zram would store raw: the codec must still be correct.
+                auto out_len = static_cast<unsigned int>(page_size);
+                if (inst.decompress(r.comp_len, out_len) != 0) {
+                    fail(inst.codec(), i, "decompress failed");
+                }
+                if (out_len != page_size || std::memcmp(inst.out, src.data(), page_size) != 0) {
+                    fail(inst.codec(), i, "roundtrip does not reproduce the page");
+                }
             }
         }
-        for (std::size_t k = 0; k < n; ++k) {
-            if (reps > 0) {
-                pages[k].compress_ns = median(samples[k][0]);
-                pages[k].decompress_ns = median(samples[k][1]);
-                pages[k].decompress_cold_ns = median(samples[k][2]);
+
+        // Every repetition runs every codec once per page, starting with another codec each time, so
+        // that a change of CPU frequency or temperature during the run hits all codecs alike. First the
+        // compressions of the block, then the warm and then the cold decompressions, each pass over all
+        // pages, so that no timed run comes right after a run on the same page. A compressor with a
+        // large workspace, like lz4hc's 256 KiB, evicts what a cold decompression would otherwise still
+        // find in the cache, but the cold pass flushes the data and follows other decompressions only.
+        for (unsigned rep = 0; rep < reps; ++rep) {
+            for (std::size_t slot = 0; slot < todo.size(); ++slot) {
+                auto const i = todo[slot];
+                for (std::size_t o = 0; o < n; ++o) {
+                    auto const k = (o + rep) % n;
+                    instances[k]->set_page(slot, i);
+                    auto const t0 = ticks();
+                    auto len = 0U;
+                    (void)instances[k]->compress(c.page(i), len);
+                    samples[slot][k][0][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+                }
             }
-            results[k].pages.push_back(pages[k]);
+            for (auto const cold : {false, true}) {
+                for (std::size_t slot = 0; slot < todo.size(); ++slot) {
+                    auto const i = todo[slot];
+                    auto const src = c.page(i);
+                    for (std::size_t o = 0; o < n; ++o) {
+                        auto const k = (o + rep) % n;
+                        auto& inst = *instances[k];
+                        auto const& r = pages[slot][k];
+                        inst.set_page(slot, i);
+                        auto const* data = r.huge ? static_cast<void const*>(src.data()) : inst.dst;
+                        auto const data_len = r.huge ? page_size : r.comp_len;
+                        if (cold) {
+                            flush(data, data_len);
+                            flush(inst.out, page_size);
+                        } else {
+                            // the data read and the output written, without decoding
+                            touch(data, data_len);
+                            std::memset(inst.out, 0, page_size);
+                        }
+                        // What zram_read_from_zspool() does: memcpy for pages stored raw, decompress otherwise
+                        auto const t0 = ticks();
+                        if (r.huge) {
+                            std::memcpy(inst.out, src.data(), page_size);
+                        } else {
+                            auto out_len = static_cast<unsigned int>(page_size);
+                            (void)inst.decompress(r.comp_len, out_len);
+                        }
+                        samples[slot][k][cold ? 2 : 1][rep] = static_cast<double>(ticks() - t0) * tick_ns;
+                    }
+                }
+            }
+        }
+        for (std::size_t slot = 0; slot < todo.size(); ++slot) {
+            for (std::size_t k = 0; k < n; ++k) {
+                auto& r = pages[slot][k];
+                if (reps > 0) {
+                    r.compress_ns = median(samples[slot][k][0]);
+                    r.decompress_ns = median(samples[slot][k][1]);
+                    r.decompress_cold_ns = median(samples[slot][k][2]);
+                }
+                results[k].pages.push_back(r);
+            }
         }
     }
     // zstd allocates some of its per-stream memory lazily during the first compression

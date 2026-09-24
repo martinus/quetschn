@@ -972,6 +972,26 @@ Without the learned page `seqlz-fast` is 31% slower than `lz4-prefetch` at p50 i
 else, while the kernel's direct map uses large pages, so neither is the kernel. The numbers to decide
 with are the VM's, with the other page first; the harness is for quick comparisons of the same codec.
 
+**The harness now times each page after other pages** (`bench/harness.cpp`). It checks 16 pages at a
+time, then goes through all 16 once per repetition, first the compressions, then the warm and then the
+cold decompressions, so no timed run comes right after a run on the same page. The warm decompression
+finds its data in the cache by reading it and writing the output page, not by decoding it once before.
+The 16 pages keep their compressed data in 1 MiB per codec. Quick benchmark, p50 / p99 in ns, two runs
+each within 10 ns:
+
+| codec | Σ zsmalloc cost | before, cold | now, cold | before, warm p99 | now, warm p99 |
+| --- | --- | --- | --- | --- | --- |
+| `lz4-prefetch` | 34.5% | 1020 / 2690 | 1080 / 2620 | 2380 | 2410 |
+| `lz4` | 34.5% | | 1010 / 2560 | | 2380 |
+| `lzo-rle` | 32.4% | | 1110 / 2500 | | 2470 |
+| `bytelz` | 29.7% | 1190 / 2770 | 1230 / 2640 | 2390 | 2480 |
+| `seqlz-fast` | 27.0% | 1270 / 3060 | 1470 / 3040 | 2810 | 2890 |
+
+`seqlz-fast`'s p50 moves the most, 200 ns: 460 ns behind `lz4` instead of 210, close to the 370 ns of
+the kernel. p99 hardly moves, the slowest pages were not the ones the predictor could learn. So the
+quick benchmark's cold p50 can be trusted more than before, and it was too kind to `seqlz-fast` by
+about half its gap to `lz4`.
+
 **Where `seqlz-fast`'s decoder still spends its instructions**: 24 800 per page against `lz4`'s 13 750
 in the loop above, at about the same mispredictions (90 against 97). Of the about 95 instructions of a
 sequence on the fast path, the raw offset bits take about 15 (class to bit count, mask, two shifts, the
