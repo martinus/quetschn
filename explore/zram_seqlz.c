@@ -288,7 +288,7 @@ static int fast_lit_compress(struct quetschn_params* p,
 
     if (src_len != SEQLZ_PAGE)
         return -1;
-    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len);
+    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len, c->scratch);
     if (!len)
         return -1;
     *dst_len = len;

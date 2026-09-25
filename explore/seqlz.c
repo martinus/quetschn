@@ -42,9 +42,13 @@ struct lit_table {
 _Static_assert(SEQLZ_LIT_BITS * 25U <= 255U, "lit_cost has lanes of 8 bits");
 
 struct seqlz_tables {
-    struct token_table token;
+    struct token_table token[SEQLZ_TOKEN_SETS];
     struct lit_table lit[SEQLZ_LIT_SETS];
     u64 lit_cost[256][LIT_COST_WORDS];
+    /* the code of a page's literal lengths by context, see SEQLZ_LIT_OWN; 16 contexts for an index & 15
+     * without a check, and 1 KiB apart */
+    u16 hdr_decode[16][1U << 9]; /* length | its bits << 4 */
+    u16 hdr_enc[16][16];
     struct value_table ll, ml;
     u8 all_symbols; /* every symbol has a code, which the encoder needs; the decoder does not */
 };
@@ -66,6 +70,11 @@ static u32 length_entry(unsigned int s) {
     if (s < 16)
         return s << 8;
     return ((1U << (s - 12U)) << 8) | ((s - 12U) << 4);
+}
+
+/* a length of a page's literal table, see SEQLZ_LIT_OWN */
+static u32 hdr_entry(unsigned int s) {
+    return s << 4;
 }
 
 /* ll, ml - 4 and the offset class of a token symbol, class 7 for the escape */
@@ -144,7 +153,7 @@ static int build(const u8* len,
 }
 
 /* canonical codes and the decode table of a literal table, not reversed; -1 as build() */
-static int build_lit(const u8* len, struct lit_table* t) {
+static int build_lit(const u8* len, struct lit_table* t, int with_decode) {
     unsigned int count[16] = {0}, next[17], c = 0, s, l, k;
 
     for (s = 0; s < 256; s++) {
@@ -168,8 +177,66 @@ static int build_lit(const u8* len, struct lit_table* t) {
             continue;
         c = next[l]++;
         t->enc[s] = l | c << 8;
-        for (k = c << (SEQLZ_LIT_BITS - l); k < (c + 1U) << (SEQLZ_LIT_BITS - l); k++)
+        for (k = c << (SEQLZ_LIT_BITS - l); with_decode && k < (c + 1U) << (SEQLZ_LIT_BITS - l); k++)
             t->decode[k] = (u16)(l | s << 8);
+    }
+    return 0;
+}
+
+/* build_lit() for the decoder only, fast, for a page's own table: in canonical order each byte's entries
+ * are the next 1 << (SEQLZ_LIT_BITS - length) of the table, so the bytes go by length and their entries
+ * are written one after the other, 4 at a time where there are 4. Each length at most 15, as from
+ * t->hdr_decode. -1 as build_lit(). */
+static int build_lit_decode(const u8* len, u16* decode, u8 order[512]) {
+    /* the symbols in 4 banks of 64 in a row, so that the counts and the places of neighbours with the same
+     * length do not wait for each other; bank by bank is still the order of the symbols */
+    unsigned int cnt[4][16] = {{0}}, first[4][16], count[16], s, l, k, pos = 0;
+
+    for (s = 0; s < 64; s++) {
+        cnt[0][len[s] & 15U]++;
+        cnt[1][len[s + 64] & 15U]++;
+        cnt[2][len[s + 128] & 15U]++;
+        cnt[3][len[s + 192] & 15U]++;
+    }
+    for (l = 0, k = 0; l < 16U; l++) {
+        count[l] = cnt[0][l] + cnt[1][l] + cnt[2][l] + cnt[3][l];
+        if (l > SEQLZ_LIT_BITS && count[l])
+            return -1;
+    }
+    for (l = 1; l <= SEQLZ_LIT_BITS; l++)
+        k += count[l] << (SEQLZ_LIT_BITS - l);
+    if (k != (1U << SEQLZ_LIT_BITS))
+        return -1;
+    for (l = 1, k = 0; l <= SEQLZ_LIT_BITS; l++) {
+        first[0][l] = k;
+        first[1][l] = k + cnt[0][l];
+        first[2][l] = first[1][l] + cnt[1][l];
+        first[3][l] = first[2][l] + cnt[2][l];
+        k += count[l];
+    }
+    first[0][0] = first[1][0] = first[2][0] = first[3][0] = 256; /* unused symbols go behind the end, order has 512 bytes */
+    for (s = 0; s < 64; s++) {
+        order[first[0][len[s]]++] = (u8)s;
+        order[first[1][len[s + 64]]++] = (u8)(s + 64);
+        order[first[2][len[s + 128]]++] = (u8)(s + 128);
+        order[first[3][len[s + 192]]++] = (u8)(s + 192);
+    }
+    for (k = 0; k < 256U - count[0]; k++) {
+        unsigned int sym = order[k], n = 1U << (SEQLZ_LIT_BITS - len[sym]);
+        u16 e = (u16)(len[sym] | sym << 8);
+
+        if (n >= 4) {
+            u64 w = e * 0x0001000100010001ULL;
+            unsigned int i;
+
+            for (i = 0; i < n; i += 4)
+                __builtin_memcpy(decode + pos + i, &w, 8);
+        } else {
+            decode[pos] = e;
+            if (n == 2)
+                decode[pos + 1] = e;
+        }
+        pos += n;
     }
     return 0;
 }
@@ -180,19 +247,56 @@ int seqlz_all_symbols(const struct seqlz_tables* t) {
 
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths) {
     __builtin_memset(t, 0, sizeof(*t)); /* also the encoder's entries behind the last symbol */
-    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, token_entry, 0, t->token.enc, 0, t->token.decode) ||
+    if (build(lengths->token,
+              SEQLZ_TOKEN_SYMBOLS + 1,
+              SEQLZ_TOKEN_BITS,
+              token_entry,
+              0,
+              t->token[0].enc,
+              0,
+              t->token[0].decode) ||
         build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, 0, t->ll.decode, 0) ||
         build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, 0, t->ml.decode, 0))
         return -1;
     {
-        /* the literal tables are compiled in, seqlz_lit_sets */
+        /* the literal tables are compiled in, seqlz_lit_sets, and so are the token tables from 1 on */
         unsigned int k;
 
+#if SEQLZ_TOKEN_SETS > 1
+        for (k = 1; k < SEQLZ_TOKEN_SETS; k++) {
+            unsigned int s;
+
+            if (build(seqlz_token_sets[k - 1],
+                      SEQLZ_TOKEN_SYMBOLS + 1,
+                      SEQLZ_TOKEN_BITS,
+                      token_entry,
+                      0,
+                      t->token[k].enc,
+                      0,
+                      t->token[k].decode) ||
+                seqlz_token_sets[k - 1][SEQLZ_ESCAPE] == 0 || seqlz_token_sets[k - 1][SEQLZ_ESCAPE] > SEQLZ_MAX_ESCAPE_LEN)
+                return -1;
+            for (s = 0; s < SEQLZ_TOKEN_SYMBOLS; s++)
+                if (seqlz_token_sets[k - 1][s] > SEQLZ_TOKEN_BITS)
+                    return -1;
+        }
+#endif
+
         for (k = 0; k < SEQLZ_LIT_SETS; k++)
-            if (build_lit(seqlz_lit_sets[k], &t->lit[k]))
+            if (build_lit(seqlz_lit_sets[k], &t->lit[k], 1))
                 return -1;
         for (k = 0; k < 256U * SEQLZ_LIT_SETS; k++)
             t->lit_cost[k % 256][k / 256 / 8] |= (u64)seqlz_lit_sets[k / 256][k % 256] << (8U * (k / 256 % 8));
+        for (k = 0; k < 16U; k++)
+            if (build(seqlz_lit_hdr[k <= SEQLZ_LIT_BITS ? k : 0],
+                      SEQLZ_LIT_BITS + 1,
+                      9,
+                      hdr_entry,
+                      0,
+                      t->hdr_enc[k],
+                      0,
+                      t->hdr_decode[k]))
+                return -1;
     }
     {
         /* every token has a code or the escape has one, every length value has one */
@@ -259,6 +363,8 @@ struct encoder {
     u8* lit;           /* literals */
     const u8* src_end; /* the 16-byte literal copies may read up to here */
     unsigned int last; /* the last offset */
+    const struct token_table* tok;
+    unsigned int set; /* of tok, into the header */
 };
 
 /* v has n bits, n < 64 - cnt */
@@ -289,14 +395,14 @@ static ALWAYS_INLINE void put_len_value(struct encoder* e, const struct value_ta
 }
 
 /* the code of a token and its length; the escape and the token for a token without a code */
-static ALWAYS_INLINE u32 token_code(const struct seqlz_tables* t, unsigned int tok, unsigned int* len) {
-    u32 te = t->token.enc[tok], ee;
+static ALWAYS_INLINE u32 token_code(const struct token_table* t, unsigned int tok, unsigned int* len) {
+    u32 te = t->enc[tok], ee;
 
     if (te != 0) {
         *len = te >> 12;
         return te & 0xfffU;
     }
-    ee = t->token.enc[SEQLZ_ESCAPE];
+    ee = t->enc[SEQLZ_ESCAPE];
     *len = (ee >> 12) + SEQLZ_ESCAPE_BITS;
     return (ee & 0xfffU) | tok << (ee >> 12);
 }
@@ -321,7 +427,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
     if (ml == 0) {
         /* the last sequence */
         unsigned int tlen;
-        u32 code = token_code(t, seqlz_token(ll, 0, 0), &tlen);
+        u32 code = token_code(e->tok, seqlz_token(ll, 0, 0), &tlen);
 
         enc_put(e, code, tlen);
         if (ll >= SEQLZ_LL_CAP)
@@ -337,7 +443,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         unsigned int cls = (1U + (off >= 16U) + big + 2U * aligned) & is_new;
         unsigned int raw_bits = SEQLZ_RAW_BITS(cls);
         unsigned int tlen;
-        u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
+        u32 code = token_code(e->tok, seqlz_token(ll, ml, cls), &tlen);
 
         enc_put(e, code | (u64)((off >> SEQLZ_OFF_SHIFT(cls)) & ((1U << raw_bits) - 1U)) << tlen, tlen + raw_bits);
         if (ll >= SEQLZ_LL_CAP) {
@@ -352,7 +458,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
 }
 
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
-    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1};
+    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, &t->token[0], 0};
 }
 
 /* the last bits, the header, and the bitstream moved in behind the literals */
@@ -365,7 +471,7 @@ static unsigned int encoder_finish(struct encoder* e, u8* d) {
         e->p++;
     }
     bytes = (unsigned int)(e->p - bits);
-    store16(d, n_lit);
+    store16(d, n_lit | e->set << 13);
     __builtin_memmove(e->lit, bits, bytes);
     return SEQLZ_HEADER + n_lit + bytes;
 }
@@ -433,12 +539,84 @@ static void store_tail(u8* p, u64 w, unsigned int n) {
         p[k] = b[k];
 }
 
+/* EXPERIMENT: what a page with its own literal table needs while it is written, see SEQLZ_LIT_OWN */
+struct own_work {
+    struct lit_table table;
+    u16 hist[4][256]; /* 4 banks, so that repeated bytes do not wait for each other's increment */
+    u8 len[256];
+};
+_Static_assert(sizeof(struct lit_table) <= 3072U, "SEQLZ_SCRATCH has 3072 bytes for the table");
+
+/* Code lengths for the n bytes of hist, at most SEQLZ_LIT_BITS, a complete code: Shannon's, ceil(log2(n
+ * / count)), then as many codes of each length lengthened or shortened as the code needs, decided per
+ * length and applied in one pass. At most 1 bit per byte more than Huffman's: a heap and the fix-ups
+ * of its lengths cost 37 000 cycles per page, fix-ups byte by byte 10 000. */
+static void own_lengths(struct own_work* w, unsigned int n) {
+    const unsigned int full = 1U << SEQLZ_LIT_BITS;
+    unsigned int s, l, total = 0, cnt[SEQLZ_LIT_BITS + 2] = {0}, up[SEQLZ_LIT_BITS + 1] = {0}, down[SEQLZ_LIT_BITS + 1] = {0};
+
+    for (s = 0; s < 256; s++) {
+        unsigned int c = (unsigned int)w->hist[0][s] + w->hist[1][s] + w->hist[2][s] + w->hist[3][s];
+
+        w->len[s] = 0;
+        if (c) {
+            /* the smallest l with c << l >= n */
+            l = (unsigned int)__builtin_clz(c) - (unsigned int)__builtin_clz(n);
+            l += (c << l) < n;
+            l = l < 1U ? 1U : l > SEQLZ_LIT_BITS ? SEQLZ_LIT_BITS : l;
+            w->len[s] = (u8)l;
+            cnt[l]++;
+            total += full >> l;
+        }
+    }
+    if (total == 0) {
+        /* no literal: two codes of one bit */
+        w->len[0] = w->len[1] = 1;
+        return;
+    }
+    /* Codes cut to SEQLZ_LIT_BITS can overfill the code: the longest ones below that one bit longer,
+     * each frees half its share */
+    for (l = SEQLZ_LIT_BITS - 1U; l >= 1 && total > full; l--) {
+        unsigned int k = (total - full + (full >> (l + 1U)) - 1U) / (full >> (l + 1U));
+
+        up[l] = k < cnt[l] ? k : cnt[l];
+        total -= up[l] * (full >> (l + 1U));
+        cnt[l] -= up[l];
+        cnt[l + 1U] += up[l];
+    }
+    /* room left: codes one bit shorter, from the shortest ones; each needs its share again */
+    for (l = 2; l <= SEQLZ_LIT_BITS && total < full; l++) {
+        unsigned int k = (full - total) / (full >> l);
+
+        down[l] = k < cnt[l] ? k : cnt[l];
+        total += down[l] * (full >> l);
+    }
+    for (s = 0; s < 256; s++) {
+        l = w->len[s];
+        if (up[l]) {
+            up[l]--;
+            w->len[s] = (u8)(l + 1U);
+        } else if (down[l]) {
+            down[l]--;
+            w->len[s] = (u8)(l - 1U);
+        }
+    }
+    /* still room: codes for bytes that are not in the page */
+    for (s = 0; s < 256 && total < full; s++)
+        if (!w->len[s]) {
+            for (l = 1; total + (full >> l) > full; l++)
+                ;
+            w->len[s] = (u8)l;
+            total += full >> l;
+        }
+}
+
 /* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
  * literals somewhere that the coded ones do not overwrite. Returns the new length. */
-static unsigned int
-code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals) {
+static unsigned int code_literals(
+    const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals, struct own_work* own) {
     const u64 lanes = 0x00ff00ff00ff00ffULL;
-    unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, sizes[8];
+    unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, sizes[8], hdr_bytes = 0, lit_header;
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
     u64 even[8][LIT_COST_WORDS] = {{0}}, odd[8][LIT_COST_WORDS] = {{0}};
     unsigned int w;
@@ -482,16 +660,103 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
         sizes[j] = (((unsigned int)((set & 1U ? odd : even)[j][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) + 7U) / 8U;
         coded += sizes[j];
     }
+    lit_header = SEQLZ_LIT_HEADER;
+    /* below 256 literals the lengths alone, about 64 bytes, leave no 16 bytes to save */
+    if (n_literals < 256U)
+        own = 0;
+    if (own) {
+        /* the page's own table, if it and its lengths save at least 16 bytes: zsmalloc's size classes are
+         * 16 bytes apart, and a page with its own table decodes 3000 cycles slower */
+        unsigned int own_sizes[8] = {0}, hb[4] = {0}, own_bytes = 3U;
+
+        __builtin_memset(own->hist, 0, sizeof(own->hist));
+        for (k = 0; k + 4U <= n_literals; k += 4) {
+            own->hist[0][literals[k]]++;
+            own->hist[1][literals[k + 1]]++;
+            own->hist[2][literals[k + 2]]++;
+            own->hist[3][literals[k + 3]]++;
+        }
+        for (; k < n_literals; k++)
+            own->hist[0][literals[k]]++;
+        own_lengths(own, n_literals);
+        /* per stream, 8 sums in registers: into the array, each literal waited for a store */
+        {
+            unsigned int a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0, a6 = 0, a7 = 0;
+
+            for (k = 0; k + 8U <= n_literals; k += 8) {
+                a0 += own->len[literals[k]];
+                a1 += own->len[literals[k + 1]];
+                a2 += own->len[literals[k + 2]];
+                a3 += own->len[literals[k + 3]];
+                a4 += own->len[literals[k + 4]];
+                a5 += own->len[literals[k + 5]];
+                a6 += own->len[literals[k + 6]];
+                a7 += own->len[literals[k + 7]];
+            }
+            own_sizes[0] = a0;
+            own_sizes[1] = a1;
+            own_sizes[2] = a2;
+            own_sizes[3] = a3;
+            own_sizes[4] = a4;
+            own_sizes[5] = a5;
+            own_sizes[6] = a6;
+            own_sizes[7] = a7;
+            for (; k < n_literals; k++)
+                own_sizes[k & 7U] += own->len[literals[k]];
+        }
+        /* the lengths in 4 streams, byte k's in stream k % 4, and 3 bytes for the sizes of the first 3 */
+        for (k = 0; k < 256; k++)
+            hb[k & 3U] += t->hdr_enc[seqlz_lit_sets[set][k] & 15U][own->len[k] & 15U] >> 12;
+        for (j = 0; j < 4U; j++)
+            own_bytes += (hb[j] + 7U) / 8U;
+        hdr_bytes = own_bytes;
+        for (j = 0; j < 8U; j++)
+            own_bytes += (own_sizes[j] + 7U) / 8U;
+        if (own_bytes + 2U + 16U <= coded && build_lit(own->len, &own->table, 0) == 0) {
+            lit_header = SEQLZ_LIT_HEADER + 2U + hdr_bytes;
+            lt = &own->table;
+            for (j = 0, coded = 0; j < 8U; j++) {
+                sizes[j] = (own_sizes[j] + 7U) / 8U;
+                coded += sizes[j];
+            }
+        } else {
+            own = 0;
+        }
+    }
     /* only if it saves at least 1/16: decoding coded literals costs time per byte, and coding them
      * whenever they save anything saved less than 0.1 points more (docs/explored-designs.md) */
-    if (coded + SEQLZ_LIT_HEADER >= n_literals - n_literals / 16U)
+    if (coded + lit_header >= n_literals - n_literals / 16U)
         return len;
     seq_bytes = len - SEQLZ_HEADER - n_literals;
     /* the sequences' bitstream out of the way, behind where it would ever be */
     __builtin_memmove(d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER + n_literals, seq_bytes);
-    q[0] = d + SEQLZ_LIT_HEADER;
+    q[0] = d + lit_header;
     for (j = 0; j < 8U; j++)
         q[j + 1] = q[j] + sizes[j];
+    if (own) {
+        /* the lengths, before the streams, which overwrite what their last store wrote past them; the
+         * 4 streams one after the other, each a whole number of bytes */
+        u8* p = d + SEQLZ_LIT_HEADER + 2U + 3U;
+        unsigned int st;
+
+        for (st = 0; st < 4U; st++) {
+            struct encoder e = {t, 0, 0, p, 0, 0, 0, 0, 0};
+            u8* begin = p;
+
+            for (k = st; k < 256; k += 4) {
+                u32 he = t->hdr_enc[seqlz_lit_sets[set][k] & 15U][own->len[k] & 15U];
+
+                enc_put(&e, he & 0xfffU, he >> 12);
+                if ((k & 15U) == 12U + st)
+                    enc_flush(&e);
+            }
+            enc_flush(&e);
+            p = e.p + (e.cnt != 0);
+            if (st < 3U)
+                d[SEQLZ_LIT_HEADER + 2U + st] = (u8)(p - begin);
+        }
+        store16(d + SEQLZ_LIT_HEADER, hdr_bytes);
+    }
     /* Eight streams, literal k in stream k % 8, so that the decoder has eight chains side by side; most
      * significant bit first, see decode_literals(). Four at a time, each straight to its place: one
      * stream after the other waited for its accumulator, 3.5 cycles per literal. */
@@ -544,11 +809,11 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
             ENC_FLUSH(p3, e3, a3, c3, s3);
         }
     }
-    store16(d, 0x8000U | n_literals);
-    d[2] = (u8)set;
+    store16(d, 0x8000U | (load16(d) & 0x7fffU & ~SEQLZ_NLIT_MASK) | n_literals);
+    d[2] = (u8)(set | (own ? SEQLZ_LIT_OWN : 0U));
     for (j = 0; j < 8U; j++)
         store16(d + 3 + 2 * j, sizes[j]);
-    coded += SEQLZ_LIT_HEADER;
+    coded += lit_header;
     __builtin_memmove(d + coded, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, seq_bytes);
     return coded + seq_bytes;
 }
@@ -562,7 +827,7 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 unsigned int dst_cap) {
     unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap);
 
-    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals);
+    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals, 0);
 }
 
 static unsigned int
@@ -576,21 +841,102 @@ compress_page(const struct seqlz_tables* t, struct seqlz_state* st, const u8* sr
     return encoder_finish(&e, dst);
 }
 
-unsigned int seqlz_compress_coded(
-    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap) {
+#if SEQLZ_TOKEN_SETS > 1
+/* The sequences first, into scratch, then the token table that codes their tokens in the fewest bits,
+ * then the page with it. Two passes cost 6000 cycles per page: in one, the encoding runs while the
+ * matcher waits for its loads. */
+struct seq_collect {
+    struct seqlz_sequence* seq;
+    unsigned int n;
+};
+
+static ALWAYS_INLINE void collect_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, unsigned int off) {
+    struct seq_collect* c = ctx;
+
+    (void)in;
+    c->seq[c->n++] = (struct seqlz_sequence){(unsigned short)ll, (unsigned short)ml, (unsigned short)off};
+}
+
+_Static_assert(sizeof(struct seqlz_sequence) * SEQLZ_MAX_SEQUENCES <= SEQLZ_SCRATCH, "the sequences fit into the scratch");
+
+static unsigned int compress_page_sets(
+    const struct seqlz_tables* t, struct seqlz_state* st, const u8* src, void* dst, unsigned int dst_cap, void* scratch) {
+    struct seq_collect c = {(struct seqlz_sequence*)scratch, 0};
+    unsigned int bits[SEQLZ_TOKEN_SETS] = {0}, k, j, set = 0, last = 1, pos = 0;
+    struct encoder e;
+
+    if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
+        return 0;
+    match_page(st->table, src, collect_emit, &c);
+    for (k = 0; k < c.n; k++) {
+        const struct seqlz_sequence* q = &c.seq[k];
+        unsigned int extra, cls = q->match ? seqlz_off_class(q->offset, last, &extra) : 0U;
+        unsigned int tok = seqlz_token(q->literals, q->match, cls);
+
+        for (j = 0; j < SEQLZ_TOKEN_SETS; j++) {
+            u32 te = t->token[j].enc[tok];
+
+            bits[j] += te ? te >> 12 : (t->token[j].enc[SEQLZ_ESCAPE] >> 12) + SEQLZ_ESCAPE_BITS;
+        }
+        if (q->match)
+            last = q->offset;
+    }
+    for (j = 1; j < SEQLZ_TOKEN_SETS; j++)
+        if (bits[j] < bits[set])
+            set = j;
+    encoder_init(&e, t, dst, src + SEQLZ_PAGE);
+    e.tok = &t->token[set];
+    e.set = set;
+    for (k = 0; k < c.n; k++) {
+        encode_emit(&e, src + pos, c.seq[k].literals, c.seq[k].match, c.seq[k].offset);
+        pos += c.seq[k].literals + c.seq[k].match;
+    }
+    return encoder_finish(&e, dst);
+}
+#endif
+
+static unsigned int compress_coded(const struct seqlz_tables* t,
+                                   struct seqlz_state* st,
+                                   const void* src,
+                                   void* dst_v,
+                                   unsigned int dst_cap,
+                                   struct own_work* own,
+                                   void* sets_scratch) {
     u8* const d = dst_v;
-    unsigned int len = compress_page(t, st, src, dst_v, dst_cap), n_lit;
+#if SEQLZ_TOKEN_SETS > 1
+    unsigned int len = sets_scratch ? compress_page_sets(t, st, src, dst_v, dst_cap, sets_scratch)
+                                    : compress_page(t, st, src, dst_v, dst_cap);
+#else
+    unsigned int len = compress_page(t, st, src, dst_v, dst_cap);
+
+    (void)sets_scratch;
+#endif
+    unsigned int n_lit;
     u8* keep;
 
     if (len == 0)
         return 0;
-    n_lit = load16(d);
+    n_lit = load16(d) & SEQLZ_NLIT_MASK;
     /* the literals to the end of dst, behind where code_literals() puts the sequences' bitstream */
     if (len - SEQLZ_HEADER + SEQLZ_LIT_HEADER + 8U > SEQLZ_PAGE)
         return len;
     keep = d + 2U * SEQLZ_PAGE - n_lit;
     __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
-    return code_literals(t, d, len, keep, n_lit);
+    return code_literals(t, d, len, keep, n_lit, own);
+}
+
+/* The encoder's work for a page's own literal table, and before that the sequences for the choice of
+ * the token table, live in the decoder's scratch: zram's stream compresses and decompresses one after
+ * the other. */
+_Static_assert(sizeof(struct own_work) <= SEQLZ_SCRATCH, "the own table's work fits into the scratch");
+
+unsigned int seqlz_compress_coded(
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap, void* scratch) {
+#if SEQLZ_TOKEN_SETS > 1
+    return compress_coded(t, st, src, dst, dst_cap, (struct own_work*)scratch, scratch);
+#else
+    return compress_coded(t, st, src, dst, dst_cap, (struct own_work*)scratch, 0);
+#endif
 }
 
 unsigned int
@@ -702,9 +1048,63 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     u64 total = 0;
     const u16* lt;
 
-    if (src_len < SEQLZ_LIT_HEADER || n_lit > SEQLZ_PAGE || s[2] >= SEQLZ_LIT_SETS)
+    if (src_len < SEQLZ_LIT_HEADER || n_lit > SEQLZ_PAGE || (s[2] & ~SEQLZ_LIT_OWN) >= SEQLZ_LIT_SETS)
         return 0;
-    lt = t->lit[s[2]].decode;
+    lt = t->lit[s[2] & ~SEQLZ_LIT_OWN].decode;
+    if (s[2] & SEQLZ_LIT_OWN) {
+        /* EXPERIMENT: the page's own table, from its lengths, into scratch behind the literals */
+        u8* len = out + SEQLZ_PAGE + 48U;
+        struct lit_table* own = (struct lit_table*)(len + 256);
+        const u8* set = seqlz_lit_sets[s[2] & ~SEQLZ_LIT_OWN];
+        unsigned int h;
+
+        if (src_len < SEQLZ_LIT_HEADER + 2U)
+            return 0;
+        h = load16(s + SEQLZ_LIT_HEADER);
+        if (h < 3U || SEQLZ_LIT_HEADER + 2U + h > src_len)
+            return 0;
+        {
+            /* 4 streams side by side, byte k's length in stream k % 4 */
+            const u8* hp = s + SEQLZ_LIT_HEADER + 2U;
+            unsigned int z0 = hp[0], z1 = hp[1], z2 = hp[2];
+            struct bit_reader r0, r1, r2, r3;
+
+            if (h < 3U + z0 + z1 + z2)
+                return 0;
+            r0 = (struct bit_reader){hp + 3, hp + 3 + z0, 0, 0};
+            r1 = (struct bit_reader){hp + 3 + z0, hp + 3 + z0 + z1, 0, 0};
+            r2 = (struct bit_reader){hp + 3 + z0 + z1, hp + 3 + z0 + z1 + z2, 0, 0};
+            r3 = (struct bit_reader){hp + 3 + z0 + z1 + z2, hp + h, 0, 0};
+            for (k = 0; k < 256; k += 4) {
+                unsigned int e0, e1, e2, e3;
+
+                if ((k & 15U) == 0) {
+                    refill(&r0);
+                    refill(&r1);
+                    refill(&r2);
+                    refill(&r3);
+                }
+                e0 = t->hdr_decode[set[k] & 15U][r0.bits & 511U];
+                e1 = t->hdr_decode[set[k + 1] & 15U][r1.bits & 511U];
+                e2 = t->hdr_decode[set[k + 2] & 15U][r2.bits & 511U];
+                e3 = t->hdr_decode[set[k + 3] & 15U][r3.bits & 511U];
+                len[k] = (u8)(e0 >> 4);
+                len[k + 1] = (u8)(e1 >> 4);
+                len[k + 2] = (u8)(e2 >> 4);
+                len[k + 3] = (u8)(e3 >> 4);
+                drop(&r0, e0 & 15U);
+                drop(&r1, e1 & 15U);
+                drop(&r2, e2 & 15U);
+                drop(&r3, e3 & 15U);
+            }
+            if (r0.count < 0 || r1.count < 0 || r2.count < 0 || r3.count < 0)
+                return 0;
+        }
+        if (build_lit_decode(len, own->decode, (u8*)own->enc))
+            return 0;
+        lt = own->decode;
+        q += 2U + h;
+    }
     for (k = 0; k < sizeof(t->lit[0].decode); k += 64)
         __builtin_prefetch((const u8*)lt + k);
     for (k = 0; k < 8U; k++) {
@@ -713,7 +1113,7 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
         ip[k] = start[k];
         total += sz[k];
     }
-    if (SEQLZ_LIT_HEADER + total > src_len)
+    if ((u64)(q - s) + total > src_len)
         return 0;
     for (k = 0; k < n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {
         unsigned int j;
@@ -768,26 +1168,31 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end, *lit_bound;
     struct bit_reader br;
-    unsigned int n_lit, last = 1;
+    unsigned int n_lit, last = 1, head, set;
+    const u16* tok_decode;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
+    head = load16(s);
+    set = (head & 0x7fffU) / (SEQLZ_NLIT_MASK + 1U);
+    if (set >= SEQLZ_TOKEN_SETS)
+        return -1;
+    tok_decode = t->token[set].decode;
     {
         /* the decoder's tables, so that their misses overlap when they are cold */
         const u8* q;
 
-        for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
+        for (q = (const u8*)tok_decode; q < (const u8*)(tok_decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
             __builtin_prefetch(q);
         for (q = (const u8*)t->ll.decode; q < (const u8*)(t->ll.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
             __builtin_prefetch(q);
         for (q = (const u8*)t->ml.decode; q < (const u8*)(t->ml.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
             __builtin_prefetch(q);
     }
-    n_lit = load16(s);
-    if (n_lit & 0x8000U) {
+    n_lit = head & SEQLZ_NLIT_MASK;
+    if (head & 0x8000U) {
         const u8* q;
 
-        n_lit &= 0x7fffU;
         if (!scratch || !(q = decode_literals(t, s, src_len, n_lit, scratch)))
             return -1;
         br = (struct bit_reader){q, s_end, 0, 0};
@@ -813,7 +1218,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
          * of the offset, so its raw bits are known without a second lookup. */
         if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
             refill(&br);
-        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
+        tok = tok_decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
         if (tok >= (7U << 13)) {
             /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
             unsigned int idx;

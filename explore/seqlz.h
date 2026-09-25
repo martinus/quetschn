@@ -38,7 +38,8 @@
  * last sequence's token has ml - 4 = 0 and class 0.
  *
  * Page layout, all little endian:
- *   u16 literal bytes, literals, the bitstream (the rest)
+ *   u16 literal bytes (on 4 KiB pages bits 13 and 14 the token table, see SEQLZ_TOKEN_SETS), literals,
+ *   the bitstream (the rest)
  * No count of the sequences: the last one is the one whose literals fill the page, every other one
  * has a match behind its literals.
  *
@@ -149,7 +150,8 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
 /*
  * EXPERIMENT: the literals Huffman coded too, with one of SEQLZ_LIT_SETS static tables, the one that
  * codes them in the fewest bits, if that is smaller than the raw bytes by 1/16. Such a page starts
- * with SEQLZ_LIT_HEADER bytes: u16 0x8000 | literal bytes, u8 the table, 8 u16 bytes of the literals'
+ * with SEQLZ_LIT_HEADER bytes: u16 0x8000 | the token table << 13 | literal bytes, u8 the table (with
+ * SEQLZ_LIT_OWN for a page's own), 8 u16 bytes of the literals'
  * eight bitstreams (literal k in stream k % 8, most significant bit first, canonical codes of at most
  * SEQLZ_LIT_BITS bits); then those streams, then the sequences' bitstream. seqlz_decode_scratch()
  * decodes the literals into scratch first, SEQLZ_SCRATCH bytes; for any other page it is
@@ -162,7 +164,27 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 /* literals per stream and refill: a refill leaves 56 bits */
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 #define SEQLZ_LIT_HEADER 19U
-#define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U) /* 16 for the literal copies, 8 * rounds - 1 decoded past the end */
+/* One of SEQLZ_TOKEN_SETS token tables per page. On 4 KiB pages bits 13 and 14 of the u16
+ * at the start of a page name it: 0 the table of the lengths, 1 to 3 seqlz_token_sets. The literal count
+ * is the bits of SEQLZ_NLIT_MASK. */
+#if QUETSCHN_PAGE_BITS == 12
+#    define SEQLZ_TOKEN_SETS 4U
+#    define SEQLZ_NLIT_MASK 0x1fffU
+extern const unsigned char seqlz_token_sets[SEQLZ_TOKEN_SETS - 1][SEQLZ_TOKEN_SYMBOLS + 1];
+#else
+#    define SEQLZ_TOKEN_SETS 1U
+#    define SEQLZ_NLIT_MASK 0x7fffU
+#endif
+/* The table number has this bit when the page has its own literal table. The number then names the fixed table
+ * whose lengths are the context for the page's lengths. Behind the 19 bytes of the header: u16 bytes that follow for the
+ * lengths; u8 bytes of each of the first 3 of 4 streams; the 4 streams, stream j with the lengths of bytes j, j + 4, j + 8,
+ * ... (0 for a byte without a code), each coded with seqlz_lit_hdr[context], least significant bit first. Then the streams of
+ * the literals. */
+#define SEQLZ_LIT_OWN 0x40U
+extern const unsigned char seqlz_lit_hdr[SEQLZ_LIT_BITS + 1][SEQLZ_LIT_BITS + 1];
+/* 16 for the literal copies, 8 * rounds - 1 decoded past the end; then the lengths and the table of a
+ * page with its own, so the scratch needs 4-byte alignment */
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U + 256U + 3072U)
 unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 const struct seqlz_sequence* seq,
                                 unsigned int n,
@@ -171,10 +193,13 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 void* dst,
                                 unsigned int dst_cap);
 int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
-/* seqlz_compress(), then the literals coded as in seqlz_encode_coded() */
+/* seqlz_compress() with the token table that codes the page's tokens in the fewest bits
+ * (SEQLZ_TOKEN_SETS), then the literals coded as in seqlz_encode_coded(), or with the page's own table
+ * where that saves 16 bytes (SEQLZ_LIT_OWN). scratch: SEQLZ_SCRATCH bytes, 4-byte aligned, the same the
+ * decoder uses, for the encoder's work. */
 struct seqlz_state;
-unsigned int
-seqlz_compress_coded(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
+unsigned int seqlz_compress_coded(
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap, void* scratch);
 
 /* the token of a sequence, see above */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigned int cls) {

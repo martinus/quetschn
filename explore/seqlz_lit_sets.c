@@ -81,3 +81,21 @@ const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
      10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
      10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9},
 };
+
+/*
+ * EXPERIMENT: for pages with their own literal table (SEQLZ_LIT_OWN): the code lengths of the code for
+ * a byte's length in the page's table, 0 to 10, by the byte's length in the fixed table the header
+ * names, 1 to 10 (row 0 is not used). Trained on the parses of seqlz_compress_opt() on the resident
+ * pages.
+ */
+const unsigned char seqlz_lit_hdr[SEQLZ_LIT_BITS + 1][SEQLZ_LIT_BITS + 1] = {{4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3},
+                                                                             {4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3},
+                                                                             {7, 3, 1, 2, 5, 6, 6, 6, 5, 8, 8},
+                                                                             {5, 6, 2, 1, 3, 5, 5, 7, 8, 9, 9},
+                                                                             {4, 8, 4, 2, 2, 2, 4, 5, 6, 7, 8},
+                                                                             {5, 9, 9, 7, 3, 1, 2, 4, 6, 9, 9},
+                                                                             {5, 9, 9, 9, 7, 3, 1, 2, 4, 6, 9},
+                                                                             {3, 9, 9, 8, 7, 5, 2, 2, 2, 4, 6},
+                                                                             {2, 9, 9, 8, 7, 6, 5, 3, 2, 2, 4},
+                                                                             {1, 9, 9, 9, 9, 7, 6, 4, 2, 3, 5},
+                                                                             {1, 9, 9, 9, 9, 7, 6, 5, 3, 2, 4}};
