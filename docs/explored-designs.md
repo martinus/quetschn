@@ -1174,6 +1174,63 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## seqlz-fast-lit per page: its own literal table and one of 4 token tables
+
+`seqlz-fast-lit` gives a page its own literal table where that saves 16 bytes, and codes its tokens with
+the one of 4 token tables that codes them in the fewest bits. Both were rejected before for the old
+bars: the own table for its cold read p99 (#37), the token tables because the encoder has to know all
+tokens first, which cost the p99 of the writes. By the score of `PLAN.md` §1.1 both pay. In the kernel
+the page gets 2.6% and 6.6% smaller, 26.7 and 87.4 bytes, for 3.0 and 3.4 us more per page written;
+on the first dump that is less memory than `zstd` 3.
+
+Kernel VM, 20 000 pages per dump, one boot per dump, means over the pages, first dump / second dump:
+
+| | bytes per page | write | cold read | us per page written |
+| --- | --- | --- | --- | --- |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.17 / 5.79 | 2.80 / 2.84 | 6.12 / 6.75 |
+| `seqlz-fast-lit` before | 1035.3 / 1331.8 | 6.89 / 7.65 | 2.87 / 3.03 | 7.86 / 8.68 |
+| own literal tables | 1031.8 / 1274.5 | 8.08 / 8.99 | 2.89 / 3.14 | 9.06 / 10.06 |
+| 4 token tables | 1027.5 / 1299.3 | 8.61 / 9.62 | 2.77 / 2.93 | 9.55 / 10.62 |
+| both, kept | 1008.6 / 1244.4 | 9.87 / 11.02 | 2.85 / 3.09 | 10.84 / 12.08 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.64 / 14.57 | 5.34 / 5.65 | 15.45 / 16.49 |
+
+Over both dumps: the own tables 30.4 bytes for 1.29 us, 24 bytes per us; the token tables on top of them
+26.7 bytes for 1.9 us, 14; from there to `zstd` 3 21.6 bytes for 4.5 us, 4.8. On the first dump the own
+tables alone save 3.5 bytes in the kernel against 14.3 in the model: most savings stay within their
+zsmalloc class, both together push more pages into a smaller one, 26.7 against 3.5 + 7.8. The cold
+reads stay as they were. Per-CPU memory does not grow: the encoder's work for the own table, and before
+that the sequences for the choice of the token table, live in the decoder's scratch, which zram's stream
+uses only for decompression; `seqlz-fast-lit`'s context stays 15 664 bytes, below C5's 16 416.
+
+**The own table** is the format of #37: the lengths of all 256 bytes behind the header, coded by the
+length the page's fixed table gives the byte, in 4 streams. The encoder with #37's heap Huffman cost
+37 000 cycles more per page. Now: a histogram in 4 banks; Shannon's lengths, ceil(log2(n / count)) from
+`clz` and one compare; then as many codes of each length made longer or shorter as the code needs to be
+complete, decided per length and applied in one pass (10 000 cycles when made byte by byte); the
+lengths per stream summed in 8 registers; the encoder's half of the table only. 6200 to 6600 cycles
+more per page, and 3 and 5.5 bytes per page more than with Huffman's lengths. Pages below 256
+literals do not try.
+
+**The token tables**: bits 13 and 14 of the page's first u16 name the table, on 4 KiB pages where the
+literal count needs 13 bits (16 KiB pages keep one table). Table 0 is the table of all pages, which
+`seqlz-fast` and `seqlz-hc` use; tables 1 to 3 are `explore/seqlz_token_sets.c`, from `quetschn-seqlz-train
+--codec seqlz --token-sets`: k-means over the pages' tokens with table 0 fixed, 8 rounds, 6 seconds. The
+compressor first collects the matcher's sequences into the scratch, prices them with all 4 tables and
+then encodes with the cheapest: 7900 to 9100 cycles more per page, 5700 to 6400 of them for the two
+passes, because in one pass the encoding runs while the matcher waits for its loads. Estimated with
+ideal code lengths: 13 and 24 bytes per page with 4 tables, 18 and 29 with 8; measured in the model 14.7
+and 25.7. 8 tables would be 32 KiB of decode tables, not tried.
+
+**Found on the way**: the compressor codes the literals only if the page with raw literals fits into a
+page. A page that the matcher cannot shrink but whose literals have few different bytes stays raw; in
+the test of the own tables that was 28 of 100 pages of 24 different bytes with few copies.
+
+Tests: pages of 24 bytes as likely as each other get their own table and are under 5 bits per byte,
+pages drawn as a fixed table codes them do not; pages from random sequences are never larger than with
+token table 0 only and not all take table 0; the fuzz test decodes damaged pages of both kinds.
+Mutations, each caught: never an own table, the most expensive token table, the decoder always with
+token table 0.
+
 ## seqlz-fast-lit by the score: no budget, offsets in steps of 8
 
 By the score of `PLAN.md` §1.1, `seqlz-fast-lit` now codes the literals of every page where that pays,

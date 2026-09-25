@@ -1145,12 +1145,13 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
     auto rng = std::mt19937_64(23);
     auto out = std::vector<unsigned char>(4096);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto own_pages = 0;
     for (int round = 0; round < 20000; ++round) {
         CAPTURE(round);
         auto c = std::vector<unsigned char>();
         if (round % 2 == 0) {
-            // a coded header and random streams
-            c.resize(1 + rng() % 5000);
+            // a coded header and random streams, some short
+            c.resize(1 + rng() % (round % 8 == 0 ? 40 : 5000));
             for (auto& b : c) {
                 b = static_cast<unsigned char>(rng());
             }
@@ -1159,11 +1160,17 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
                 auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER);
                 c[0] = static_cast<unsigned char>(n_lit);
                 c[1] = static_cast<unsigned char>(0x80 | n_lit >> 8);
-                c[2] = static_cast<unsigned char>(rng() % (SEQLZ_LIT_SETS + 1));
+                c[2] = static_cast<unsigned char>(rng() % (SEQLZ_LIT_SETS + 1) | (rng() % 2 ? SEQLZ_LIT_OWN : 0));
                 for (unsigned k = 0; k < 8; ++k) {
                     auto const size = static_cast<unsigned>(rng() % (rest / 8 + 2));
                     c[3 + 2 * k] = static_cast<unsigned char>(size);
                     c[4 + 2 * k] = static_cast<unsigned char>(size >> 8);
+                }
+                if ((c[2] & SEQLZ_LIT_OWN) != 0 && rest >= 2) {
+                    // the bytes of the lengths, within the page
+                    auto const h = static_cast<unsigned>(rng() % (rest - 1));
+                    c[SEQLZ_LIT_HEADER] = static_cast<unsigned char>(h);
+                    c[SEQLZ_LIT_HEADER + 1] = static_cast<unsigned char>(h >> 8);
                 }
             }
         } else {
@@ -1174,8 +1181,10 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             }
             auto const p = page_with_literals_from(rng, round % 4, few);
             c = std::vector<unsigned char>(2 * 4096);
-            auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096);
+            // most with their own literal table
+            auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096, scratch.data());
             REQUIRE(len > 0);
+            own_pages += (c[1] & 0x80) != 0 && (c[2] & SEQLZ_LIT_OWN) != 0;
             c.resize(len);
             for (auto f = 1 + rng() % 8; f > 0; --f) {
                 c[rng() % c.size()] = static_cast<unsigned char>(rng());
@@ -1187,6 +1196,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
         auto const ret = seqlz_decode_scratch(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), scratch.data());
         CHECK((ret == 0 || ret == -1));
     }
+    CHECK(own_pages > 3000);
 }
 
 // A page of bytes drawn as literal table k codes them, with a few blocks copied from earlier in the
@@ -1226,7 +1236,7 @@ TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
             }
         }
         auto c = std::vector<unsigned char>(2 * 4096);
-        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096);
+        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096, scratch.data());
         REQUIRE(len > 0);
         coded_pages += (c[1] & 0x80) != 0 ? 1 : 0;
         REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
@@ -1241,6 +1251,8 @@ TEST_CASE("seqlz: the compressor codes the literals of every page where that pay
     auto rng = std::mt19937_64(3);
     auto c = std::vector<unsigned char>(2 * 4096);
     auto e = std::vector<unsigned char>(2 * 4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(4096);
     for (int round = 0; round < 20; ++round) {
         CAPTURE(round);
         auto const skewed = bytes_as_coded_by(rng, 0);
@@ -1253,10 +1265,12 @@ TEST_CASE("seqlz: the compressor codes the literals of every page where that pay
                 many[8 * r + 4 + k] = static_cast<unsigned char>(0xa5 + k);
             }
         }
-        auto const n_many = seqlz_compress_coded(t.get(), st.get(), many.data(), c.data(), 2 * 4096);
+        auto const n_many = seqlz_compress_coded(t.get(), st.get(), many.data(), c.data(), 2 * 4096, scratch.data());
         REQUIRE(n_many > 0);
         CHECK((c[1] & 0x80) != 0);
-        // the same bytes as seqlz_encode_coded() writes for the matcher's sequences
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), n_many, out.data(), scratch.data()) == 0);
+        CHECK(out == many);
+        // no more bytes than seqlz_encode_coded() writes for the matcher's sequences, with token table 0
         auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         auto const n = seqlz_find(st.get(), many.data(), seq.data());
         auto lits = std::vector<unsigned char>();
@@ -1270,7 +1284,100 @@ TEST_CASE("seqlz: the compressor codes the literals of every page where that pay
         CHECK(n > 400);
         auto const len =
             seqlz_encode_coded(t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), e.data(), 2 * 4096);
-        REQUIRE(len == n_many);
-        CHECK(std::equal(c.begin(), c.begin() + n_many, e.begin()));
+        REQUIRE(len > 0);
+        CHECK(n_many <= len);
     }
 }
+
+TEST_CASE("seqlz: a page gets its own literal table when no fixed table fits") {
+    auto const t = default_tables(seqlz_default_own);
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(43);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(4096);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    auto own = std::array<int, 2>{};
+    auto bytes_of = std::size_t{0};
+    for (int round = 0; round < 200; ++round) {
+        CAPTURE(round);
+        // odd rounds: bytes as a fixed table codes them; even: 24 bytes, as likely as each other, which
+        // no fixed table codes in 4.6 bits. A few blocks copied, the rest literals.
+        auto const fits = round % 2;
+        auto bytes = bytes_as_coded_by(rng, static_cast<unsigned>(round / 2) % SEQLZ_LIT_SETS);
+        if (!fits) {
+            auto few = std::vector<unsigned char>(24);
+            for (auto& b : few) {
+                b = static_cast<unsigned char>(rng());
+            }
+            for (auto& b : bytes) {
+                b = few[rng() % few.size()];
+            }
+        }
+        // enough copies that the page with raw literals fits into a page: only then are they coded
+        for (int k = 0; k < 8; ++k) {
+            auto const n = 150 + rng() % 100;
+            auto const to = 1 + rng() % (4096 - n);
+            auto const from = rng() % to;
+            for (std::size_t i = 0; i < n; ++i) {
+                bytes[to + i] = bytes[from + i];
+            }
+        }
+        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096, scratch.data());
+        REQUIRE(len > 0);
+        if ((c[1] & 0x80) != 0) {
+            own[static_cast<std::size_t>(fits)] += (c[2] & SEQLZ_LIT_OWN) != 0;
+        }
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == bytes);
+        if (!fits) {
+            bytes_of += len;
+        }
+    }
+    CHECK(own[0] == 100);
+    CHECK(own[1] == 0);
+    // 24 bytes in 4.6 bits: under 5 bits a byte with the page's own table
+    CHECK(bytes_of < 100 * 4096 * 5 / 8);
+}
+
+#if SEQLZ_TOKEN_SETS > 1
+TEST_CASE("seqlz: a page takes the token table that codes its tokens in the fewest bits") {
+    auto const t = default_tables(seqlz_default_own);
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(47);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(4096);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    auto one = std::vector<unsigned char>(2 * 4096);
+    auto sets = std::array<int, SEQLZ_TOKEN_SETS>{};
+    auto bytes_sets = std::size_t{0}, bytes_one = std::size_t{0};
+    for (int round = 0; round < 400; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096, scratch.data());
+        REQUIRE(len > 0);
+        ++sets[((c[0] | c[1] << 8) & 0x7fff) >> 13];
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == p.bytes);
+        // with token table 0 only, as seqlz_encode_coded() writes the matcher's sequences: never fewer bytes
+        auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+        auto const n = seqlz_find(st.get(), p.bytes.data(), seq.data());
+        auto lits = std::vector<unsigned char>();
+        auto pos = std::size_t{0};
+        for (unsigned i = 0; i < n; ++i) {
+            lits.insert(lits.end(),
+                        p.bytes.begin() + static_cast<std::ptrdiff_t>(pos),
+                        p.bytes.begin() + static_cast<std::ptrdiff_t>(pos + seq[i].literals));
+            pos += seq[i].literals + seq[i].match;
+        }
+        auto const len_one =
+            seqlz_encode_coded(t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), one.data(), 2 * 4096);
+        CHECK(len <= len_one);
+        bytes_sets += len;
+        bytes_one += len_one;
+    }
+    // not always table 0
+    CAPTURE(sets);
+    CHECK(sets[0] < 400);
+    CHECK(bytes_sets < bytes_one);
+}
+#endif
