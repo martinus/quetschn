@@ -157,7 +157,17 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_HEADER 19U
 /* seqlz_compress_coded() codes the literals only if 14 * sequences + literals is at most this */
 #define SEQLZ_LIT_BUDGET 5300U
-#define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U) /* 16 for the literal copies, 8 * rounds - 1 decoded past the end */
+/* Only from seqlz_compress_opt(): the table number has this bit when the page has its own literal
+ * table. The number then names the fixed table whose lengths are the context for the page's lengths.
+ * Behind the 19 bytes of the header: u16 bytes that follow for the lengths; u8 bytes of each of the
+ * first 3 of 4 streams; the 4 streams, stream j with the lengths of bytes j, j + 4, j + 8, ... (0 for
+ * a byte without a code), each coded with seqlz_lit_hdr[context], least significant bit first. Then
+ * the streams of the literals. */
+#define SEQLZ_LIT_OWN 0x40U
+extern const unsigned char seqlz_lit_hdr[SEQLZ_LIT_BITS + 1][SEQLZ_LIT_BITS + 1];
+/* 16 for the literal copies, 8 * rounds - 1 decoded past the end; then the lengths and the table of a
+ * page with its own, so the scratch needs 4-byte alignment */
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U + 256U + 3072U)
 unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 const struct seqlz_sequence* seq,
                                 unsigned int n,

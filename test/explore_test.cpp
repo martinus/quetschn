@@ -1132,12 +1132,14 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
     auto rng = std::mt19937_64(23);
     auto out = std::vector<unsigned char>(4096);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto work = std::vector<unsigned char>(seqlz_opt_work_size());
+    auto own_pages = 0;
     for (int round = 0; round < 20000; ++round) {
         CAPTURE(round);
         auto c = std::vector<unsigned char>();
         if (round % 2 == 0) {
-            // a coded header and random streams
-            c.resize(1 + rng() % 5000);
+            // a coded header and random streams, some short
+            c.resize(1 + rng() % (round % 8 == 0 ? 40 : 5000));
             for (auto& b : c) {
                 b = static_cast<unsigned char>(rng());
             }
@@ -1146,11 +1148,17 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
                 auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER);
                 c[0] = static_cast<unsigned char>(n_lit);
                 c[1] = static_cast<unsigned char>(0x80 | n_lit >> 8);
-                c[2] = static_cast<unsigned char>(rng() % (SEQLZ_LIT_SETS + 1));
+                c[2] = static_cast<unsigned char>(rng() % (SEQLZ_LIT_SETS + 1) | (rng() % 2 ? SEQLZ_LIT_OWN : 0));
                 for (unsigned k = 0; k < 8; ++k) {
                     auto const size = static_cast<unsigned>(rng() % (rest / 8 + 2));
                     c[3 + 2 * k] = static_cast<unsigned char>(size);
                     c[4 + 2 * k] = static_cast<unsigned char>(size >> 8);
+                }
+                if ((c[2] & SEQLZ_LIT_OWN) != 0 && rest >= 2) {
+                    // the bytes of the lengths, within the page
+                    auto const h = static_cast<unsigned>(rng() % (rest - 1));
+                    c[SEQLZ_LIT_HEADER] = static_cast<unsigned char>(h);
+                    c[SEQLZ_LIT_HEADER + 1] = static_cast<unsigned char>(h >> 8);
                 }
             }
         } else {
@@ -1161,8 +1169,13 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             }
             auto const p = page_with_literals_from(rng, round % 4, few);
             c = std::vector<unsigned char>(2 * 4096);
-            auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096);
+            // every other one from the parser, most of them with their own literal table
+            auto const len =
+                round % 4 == 1
+                    ? seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096)
+                    : seqlz_compress_opt(t.get(), p.bytes.data(), c.data(), 2 * 4096, scratch.data(), work.data(), 0);
             REQUIRE(len > 0);
+            own_pages += (c[1] & 0x80) != 0 && (c[2] & SEQLZ_LIT_OWN) != 0;
             c.resize(len);
             for (auto f = 1 + rng() % 8; f > 0; --f) {
                 c[rng() % c.size()] = static_cast<unsigned char>(rng());
@@ -1174,6 +1187,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
         auto const ret = seqlz_decode_scratch(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), scratch.data());
         CHECK((ret == 0 || ret == -1));
     }
+    CHECK(own_pages > 3000);
 }
 
 // A page of bytes drawn as literal table k codes them, with a few blocks copied from earlier in the
@@ -1338,4 +1352,53 @@ TEST_CASE("seqlz: the parser priced by the tables, pages come back and are small
     // about even.
     CHECK(opt_bytes[3] * 100 < greedy_bytes[3] * 93);
     CHECK(opt_bytes[0] + opt_bytes[1] + opt_bytes[2] < (greedy_bytes[0] + greedy_bytes[1] + greedy_bytes[2]) * 101 / 100);
+}
+
+TEST_CASE("seqlz: the parser gives a page its own literal table when no fixed table fits") {
+    auto const t = default_tables(seqlz_default_opt);
+    auto rng = std::mt19937_64(43);
+    auto work = std::vector<unsigned char>(seqlz_opt_work_size());
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(4096);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    auto own = std::array<int, 2>{};
+    auto bytes_of = std::size_t{0};
+    for (int round = 0; round < 200; ++round) {
+        CAPTURE(round);
+        // odd rounds: bytes as a fixed table codes them; even: 24 bytes, as likely as each other, which
+        // no fixed table codes in 4.6 bits. A few blocks copied, the rest literals.
+        auto const fits = round % 2;
+        auto bytes = bytes_as_coded_by(rng, static_cast<unsigned>(round / 2) % SEQLZ_LIT_SETS);
+        if (!fits) {
+            auto few = std::vector<unsigned char>(24);
+            for (auto& b : few) {
+                b = static_cast<unsigned char>(rng());
+            }
+            for (auto& b : bytes) {
+                b = few[rng() % few.size()];
+            }
+        }
+        for (int k = 0; k < 4; ++k) {
+            auto const n = 50 + rng() % 100;
+            auto const to = 1 + rng() % (4096 - n);
+            auto const from = rng() % to;
+            for (std::size_t i = 0; i < n; ++i) {
+                bytes[to + i] = bytes[from + i];
+            }
+        }
+        auto const len = seqlz_compress_opt(t.get(), bytes.data(), c.data(), 2 * 4096, scratch.data(), work.data(), 0);
+        REQUIRE(len > 0);
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == bytes);
+        if ((c[1] & 0x80) != 0) {
+            own[static_cast<std::size_t>(fits)] += (c[2] & SEQLZ_LIT_OWN) != 0;
+        }
+        if (!fits) {
+            bytes_of += len;
+        }
+    }
+    CHECK(own[0] == 100);
+    CHECK(own[1] == 0);
+    // 24 bytes in 4.6 bits: 2270 bytes a page with the own tables of this commit, under 5 bits a byte
+    CHECK(bytes_of < 100 * 4096 * 5 / 8);
 }
