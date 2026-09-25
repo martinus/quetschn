@@ -7,10 +7,14 @@ One row per log, e.g. one per zram dump, and four panels per row: cold reads, wa
 with the codecs that have the lowest score for some exchange rate. The logs have only sizes and
 timings, no page content.
 
-    ALGOS=lz4,lzo-rle,zstd,bytelz,seqlz,seqlz-lit,seqlz-lit+seqlz-opt \\
+    ALGOS=lz4,lzo-rle,zstd,seqlz-lit,seqlz-lit+seqlz-opt \\
         tools/zram-vm/run.sh <linux tree> <corpus> >first.log
     tools/plot-codecs.py --run "zram dump of 23 Sep=first.log" --run "zram dump of 24 Sep=second.log" \\
         --out codecs.png --out codecs.svg
+
+bytelz and seqlz (seqlz-fast) are not in the default run: on x86-64 no exchange rate makes them the
+best choice, they stay for arm64's little cores (docs/explored-designs.md). --skip leaves them out of a
+log that has them.
 
 Needs matplotlib and the Noto Sans font.
 """
@@ -57,7 +61,7 @@ ABOUT = {
 }
 
 
-def parse(path):
+def parse(path, skip=()):
     """Per codec: orig and mem of mm_stat (after recompression where there is one), the write, warm and
     cold read times as p50 / p90 / p99 / mean in ns, and the recompression time per page."""
     codecs = {}
@@ -66,6 +70,8 @@ def parse(path):
         if at < 0:
             continue
         algo, rest = line[at + 7 :].split(None, 1)
+        if algo in skip:
+            continue
         c = codecs.setdefault(NAMES.get(algo, algo), {})
         rest = rest.strip()
         times = {k: float(v) for k, v in re.findall(r"(p50|p90|p99|mean) (\d+)", rest)}
@@ -130,6 +136,7 @@ def main():
     ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (PLAN.md §1.1)")
     ap.add_argument("--clock", default="4.5 GHz", help="the fixed clock of the CPU the VM ran on, for the footer")
     ap.add_argument("--source", default=None, help="what was measured, for the footer; default git describe")
+    ap.add_argument("--skip", default="", help="zram's names of codecs to leave out, comma separated, e.g. bytelz,seqlz")
     args = ap.parse_args()
 
     r = args.reads_per_write
@@ -138,7 +145,7 @@ def main():
         title, sep, path = run.partition("=")
         if not sep:
             raise SystemExit(f"--run {run}: TITLE=LOG")
-        rows.append((title, parse(path)))
+        rows.append((title, parse(path, set(filter(None, args.skip.split(","))))))
     others = iter(OTHER_COLORS * 4)
     for _, codecs in rows:
         for name in codecs:
@@ -227,8 +234,8 @@ def main():
         f"Linux kernel in a VM, zram with zsmalloc, one device per codec, one boot per row ({args.source or git_source()}). "
         f"{cpu_model()}, one CPU at a fixed {args.clock}. Per page the median of 3 runs;\n"
         "each timed read and write comes after another page; cold: the compressed data flushed from the cache first. "
-        "bytelz and the seqlz codecs prefetch the compressed data in their zram backend, lz4, lzo-rle and zstd run as the "
-        "kernel has them.\n"
+        + ("bytelz and the seqlz codecs" if "bytelz" in names else "The seqlz codecs")
+        + " prefetch the compressed data in their zram backend, lz4, lzo-rle and zstd run as the kernel has them.\n"
         + (about + "\n" if about else "")
         + f"Score: PLAN.md §1.1, {r:g} reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which "
         "the faster codec starts to win. Ratio = uncompressed size / memory used by zsmalloc.",

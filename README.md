@@ -67,8 +67,8 @@ lowest score for some lambda. One boot of `tools/zram-vm/run.sh` per row; it nee
 Noto Sans font:
 
 ```sh
-ALGOS=lz4,lzo-rle,zstd,bytelz,seqlz,seqlz-lit,seqlz-lit+seqlz-opt tools/zram-vm/run.sh <linux tree> corpus/first >first.log
-ALGOS=lz4,lzo-rle,zstd,bytelz,seqlz,seqlz-lit,seqlz-lit+seqlz-opt tools/zram-vm/run.sh <linux tree> corpus/second >second.log
+ALGOS=lz4,lzo-rle,zstd,seqlz-lit,seqlz-lit+seqlz-opt tools/zram-vm/run.sh <linux tree> corpus/first >first.log
+ALGOS=lz4,lzo-rle,zstd,seqlz-lit,seqlz-lit+seqlz-opt tools/zram-vm/run.sh <linux tree> corpus/second >second.log
 tools/plot-codecs.py --run "first dump=first.log" --run "second dump=second.log" --out codecs.png --out codecs.svg
 ```
 
