@@ -1174,6 +1174,26 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## Pages without matches but with literals that code well: coded now
+
+`seqlz_compress_coded()` coded the literals only if the page with raw literals fitted into the first page
+of dst next to the bitstream parked behind it; pages of about a page of raw literals stayed raw, also
+where their literals code well, and zram stored them raw, 4096 bytes. Now such a page moves its literals
+and bitstream to the end of dst in one piece, the coded literals are written from the front, and where
+the literals stay raw the piece moves back. The compressor now writes the same bytes as
+`seqlz_encode_coded()` for every page of both dumps; before, it differed on 50 and 192 of 20 000.
+
+Zsmalloc cost in the model, 20 000 pages per dump: 24.09% to 24.04% and 31.15% to 30.98%, 2.1 and 6.9
+bytes per page, 826 and 715 bytes per page that changes, 0.25% and 0.96% of the pages. In the kernel VM,
+one boot per dump: 46 and 170 fewer pages stored raw (418 to 372, 737 to 567), the compressed data 43
+and 147 KB smaller; the memory zsmalloc uses 1331.8 to 1324.0 bytes per page on the second dump, on the
+first the same within one zspage (1035.3 against 1035.5). In loops over 2000 pages the compressor needs
+220 to 370 cycles more per page, 1%, the decoder the same within the noise.
+
+Tests: pages drawn as table 0 codes them, almost without repeats, are coded and below
+`huge_class_size`; random pages stay raw and whole. Mutations, each caught: the old limit (all 50 pages
+raw, above 3625 bytes), no move back where the literals stay raw (the random page does not decode).
+
 ## Per page: its own literal table and one of 4 token tables, measured, not kept
 
 *Built in #43, cut down in #44 (closed without merging), reverted in #45.* Both ways make the writes too
@@ -2154,8 +2174,5 @@ one multiply).
   does not get stuck. The `lzo-rle` route, the easiest merge.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
-* **Pages the matcher cannot shrink stay raw even when their literals code well**: the compressor codes
-  the literals only if the page with raw literals fits into a page (found in #43, see "Per page: its
-  own literal table and one of 4 token tables").
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently; `bytelz` and `seqlz-fast` stay for it.
