@@ -22,13 +22,14 @@ patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
 # seqlz and bytelz as zram backends, with lz4's -O3
 z="$work/src/drivers/block/zram"
 cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/backend_bytelz.c" "$here/backend_bytelz.h" \
+    "$here/backend_lz4page.c" "$here/backend_lz4page.h" "$here/../../explore/lz4page.c" "$here/../../explore/lz4page.h" \
     "$here/backend_seqlz_hc.c" "$here/backend_seqlz_hc.h" \
     "$here/../../explore/seqlz.c" "$here/../../explore/seqlz.h" "$here/../../explore/bytelz.c" \
     "$here/../../explore/bytelz.h" "$here/../../explore/page_lz.h" "$here/../../explore/seqlz_default_tables.c" \
     "$here/../../explore/seqlz_lit_sets.c" "$z/"
-sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"\n#include "backend_bytelz.h"\n#include "backend_seqlz_hc.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\t\&backend_bytelz,\n\t\&backend_seqlz_hc,\n\t\&backend_seqlz_hc_lit,\n\tNULL|' "$z/zcomp.c"
-printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o backend_bytelz.o bytelz.o backend_seqlz_hc.o\n' >>"$z/Makefile"
-printf 'CFLAGS_seqlz.o += -O3\nCFLAGS_bytelz.o += -O3\n' >>"$z/Makefile"
+sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"\n#include "backend_bytelz.h"\n#include "backend_seqlz_hc.h"\n#include "backend_lz4page.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\t\&backend_bytelz,\n\t\&backend_seqlz_hc,\n\t\&backend_seqlz_hc_lit,\n\t\&backend_lz4page,\n\t\&backend_lz4page_lazy,\n\t\&backend_lz4page_both,\n\tNULL|' "$z/zcomp.c"
+printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o backend_bytelz.o bytelz.o backend_seqlz_hc.o backend_lz4page.o lz4page.o\n' >>"$z/Makefile"
+printf 'CFLAGS_seqlz.o += -O3\nCFLAGS_bytelz.o += -O3\nCFLAGS_lz4page.o += -O3\n' >>"$z/Makefile"
 make -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \
     --enable DEVTMPFS --enable BLK_DEV_INITRD --enable ZRAM_MULTI_COMP --enable ZRAM_TRACK_ENTRY_ACTIME

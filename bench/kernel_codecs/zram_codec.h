@@ -81,6 +81,10 @@ extern const struct quetschn_codec quetschn_codec_seqlz_hc;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast;
 extern const struct quetschn_codec quetschn_codec_seqlz_hc_lit;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast_lit;
+extern const struct quetschn_codec quetschn_codec_lz4page;
+extern const struct quetschn_codec quetschn_codec_lz4page_2way;
+extern const struct quetschn_codec quetschn_codec_lz4page_lazy;
+extern const struct quetschn_codec quetschn_codec_lz4page_both;
 extern const struct quetschn_codec quetschn_codec_lz4_prefetch;
 
 /*
