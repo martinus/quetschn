@@ -1713,6 +1713,22 @@ Xpress Huffman 29.63% / 34.00%, compress 139 095 / 145 305, decompress 18 000 / 
 / 35.07%, compress 51 795 / 56 880, decompress 4680 / 5040. `seqlz-fast-lit` 25.87% / 32.78%, 4770 /
 5130. Windows' own compressor may parse better.
 
+**Two positions per step in the matcher**, as `zstd`'s fast mode: one 8-byte load gives the 5-byte
+windows of `pos` and `pos + 1`, both table entries and both last-offset checks are read before any
+store, one branch for all four. Compress cycles per page in the loop over 2000 pages, second dump /
+first dump, `seqlz-fast` 22 713 / 20 861 before:
+
+| variant | cycles | mispredictions per page |
+| --- | --- | --- |
+| pairs while fewer than 64 literals, the old loop after | 24 390 / 22 157 | 346 / 307 (296 / 275) |
+| always pairs, acceleration in steps of 2 | 22 569 / 21 752 | 338 / 301 |
+
+The sizes stay within 0.1 points. Whether one of two positions hits is less predictable than whether
+one does, and the loop waits for its branches and its chain of loads, not for instructions. Dropped;
+SWAR is already where it pays (the prices of all literal tables in one word, the bits of a stream from
+the low byte of the sum of its entries, 16 bytes compared per step, the pattern of short offsets from
+one multiply).
+
 **Answered by other results, not built:**
 
 * **Coding the literals later, without matching again**: the coding is about 4000 cycles per page of the
