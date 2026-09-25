@@ -208,9 +208,10 @@ def main():
         h = hull([p for p in points if not recompressed(p[2])])
         ax.plot([p[0] for p in h], [p[1] for p in h], color="#aaaaaa", lw=1.2, ls="--", zorder=1)
         for (t1, m1, _), (t2, m2, _) in zip(h, h[1:]):
-            rate = (m1 - m2) / 100 * 4096 / (t2 - t1)
-            ax.annotate(f"{rate:.0f} B/µs", ((t1 + t2) / 2, (m1 + m2) / 2), textcoords="offset points", xytext=(4, 4),
-                        fontsize=8, color="#777777")
+            # a rate between two codecs of the same time within the noise of a boot means nothing
+            label = "same time" if t2 - t1 < 0.05 else f"{(m1 - m2) / 100 * 4096 / (t2 - t1):.0f} B/µs"
+            ax.annotate(label, ((t1 + t2) / 2, (m1 + m2) / 2), textcoords="offset points", xytext=(4, 4), fontsize=8,
+                        color="#777777")
         for k, (t, m, name) in enumerate(p for p in points if recompressed(p[2]) and "recompress" in codecs[p[2]]):
             ax.annotate(f"+{codecs[name]['recompress'] / 1000:.0f} µs recompression per page, not counted", (t, m),
                         textcoords="offset points", xytext=(10, -14 - 12 * k), fontsize=8, color=STYLE[name][0])
