@@ -40,6 +40,49 @@ decision by the Android kernel team, made after the mainline merge. Phase 7 has 
 **Explicit non-goal:** beating `zstd` level 3 on ratio. If quetschn lands as "lz4-class latency at
 zstd-1-class ratio", that is a win.
 
+### 1.1 The score: memory against time, not bars
+
+C1 to C3 are bars for the merge argument, and they stay the numbers to report there. As a target for
+design choices they are cliffs: a design that saves 4% of memory fails because its p99 is 1 us above
+`lz4`'s, without asking what 1 us is worth or how often the page is read (#37). The designs are chosen
+by a score instead:
+
+- **bytes**: zsmalloc memory per stored page, `mem_used_total / pages` in the VM of §5 Phase 5, after
+  recompression where the device recompresses.
+- **time**: per page written to zram, `write + r * read + b * recompression`, each the **mean** over the
+  pages, in us. The mean, because it is the total time spent on the pages, and a burst of n swap-ins,
+  e.g. after switching back to an app, waits for n decompressions. p99 per page stays a guard against
+  pathological pages (C6), not a target.
+- **score**: `bytes + lambda * time`, lower is better, lambda in bytes per us.
+
+`r` is the number of reads per write. On a desktop with zram as the only swap it was 0.34: 3 146 179
+pages swapped in against 9 210 320 swapped out in 27.5 days (`pswpin` and `pswpout` of
+`/proc/vmstat`). It is one machine; a phone swaps differently and needs its own number. `b` weighs the
+time of recompression, which zram runs on idle pages when told to, against the time of reads and
+writes, which a task waits for or kswapd spends. `b = 1` counts every us the same; a recompression on
+an otherwise idle CPU costs energy and not latency, which would argue for less. The choice of `b` decides
+whether recompression pays at all, so every result states it.
+
+lambda is not fixed. `quetschn-score` reads the logs of `tools/zram-vm/run.sh` or of
+`quetschn-bench-*` and prints the codecs that have the lowest score for some lambda, the lower left
+convex hull of (time, bytes), with the exchange rate between neighbours: the lambda at which the
+faster one starts to win. A design is worth keeping if it is on the hull at a lambda that matters.
+
+First results, VM of §5 Phase 5, both dumps, `r = 0.34`, `b = 1` (docs/explored-designs.md, "The
+designs by the score"): the hull is `lzo-rle`, `seqlz` (`seqlz-fast`), `seqlz-fast-lit`, `zstd` 3. From
+`seqlz-fast-lit` to `zstd` 3 is 8 and 24 bytes per us, from `lzo-rle` to `seqlz-fast-lit` together
+about 220 and 210, so `seqlz-fast-lit` has the lowest score for any lambda from 24 to about 150 bytes
+per us on both dumps. Who runs `lz4` or `lzo-rle` instead of `zstd` says that lambda is above 8 to 24
+for them. Recompression with `seqlz-opt` is on the hull only for `b` of 0.03 and less.
+
+Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
+samples `pswpin` every 10 ms and groups the swap-ins into bursts; 9 minutes on the development machine
+saw 1 swap-in, with 56 GB free it does not swap. It needs a machine under memory pressure, a phone
+best.
+
+C5 and C6 stay hard limits: per-CPU memory is taken from every CPU whether it swaps or not, and an
+unsafe decoder is not a trade-off. C1 to C4 are reported for the merge argument.
+
 ---
 
 ## 2. Precedent: what actually gets a compressor into zram
@@ -408,7 +451,7 @@ All metrics exclude same-filled pages, because zram stores them before any codec
    and not the slowest 1% of *measurements*, which is mostly interrupts and timer noise.
 4. **Per-page compression latency**, same statistics.
 5. **Weighted roundtrip**, with the compression:decompression ratio measured from the actual workload
-   rather than assumed.
+   rather than assumed: the time of the score of §1.1, from the means.
 6. **Per-CPU workspace bytes.**
 7. **`perf` counters per page**: instructions, cycles, branch-misses, LLC-misses — these explain *why*
    a codec wins and make the eventual design argument credible.

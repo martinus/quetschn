@@ -20,6 +20,7 @@ using quetschn::corpus;
 using quetschn::percentile;
 using quetschn::run_codec;
 using quetschn::run_options;
+using quetschn::summarize_latency;
 using quetschn::zsmalloc_model;
 
 namespace {
@@ -448,6 +449,16 @@ TEST_CASE("harness: nearest-rank percentile") {
     CHECK(percentile(w, 99.9) == 1998);
     CHECK(percentile(w, 99.95) == 1999);
     CHECK_THROWS_AS((void)percentile({}, 50), std::invalid_argument);
+}
+
+TEST_CASE("harness: the latency summary has the mean, which a few slow pages move and the p50 does not") {
+    auto v = std::vector<double>(100, 1000.0);
+    v[3] = 51000.0;
+    auto const s = summarize_latency(v);
+    CHECK(s.p50 == 1000.0);
+    CHECK(s.mean == 1500.0);
+    CHECK(s.max == 51000.0);
+    CHECK(summarize_latency({}).mean == 0.0);
 }
 
 TEST_CASE("harness: a corpus written by the collector loads back unchanged") {

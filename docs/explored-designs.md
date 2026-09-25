@@ -2,8 +2,9 @@
 
 Every design idea that was measured, with the result, and why it was kept or dropped. The goal is
 `PLAN.md` §1: `lz4`-class decompression latency at `zstd -1`-class memory, measured as Σ zsmalloc
-cost (§3.1) and cold-cache p99 per page (§5.2). Add an entry for everything that gets measured, also
-and especially for what did not work.
+cost (§3.1) and cold-cache p99 per page (§5.2), and since the score of `PLAN.md` §1.1 as memory against
+the mean time per page, see [The designs by the score](#the-designs-by-the-score). Add an entry for
+everything that gets measured, also and especially for what did not work.
 
 Short version so far: the gap between `lz4` and `zstd -1` is mostly how the sequences are coded, see
 [Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from). A format built on that,
@@ -63,6 +64,94 @@ Two benchmarks, and a few rules that came from getting it wrong first:
 The latencies in the sections on the word model, byte shuffle and base + delta were measured before
 these three fixes, with boost on and one process. Their differences to `lz4` can be off by a few
 hundred ns; the Σ zsmalloc cost is exact in every section.
+
+## The designs by the score
+
+`PLAN.md` §1.1 replaces the bars C1 to C3 as the target with a score: zsmalloc bytes per page against
+the time per page written, `write + r * read + b * recompression`, means over the pages, with `r =
+0.34` reads per write from the development machine and `b` the weight of recompression. The designs on
+the lower left convex hull of (time, bytes) have the lowest `bytes + lambda * time` for some lambda;
+between neighbours the exchange rate in bytes per us is the lambda at which the faster one starts to
+win. `quetschn-score` computes it from the logs.
+
+**In the kernel `seqlz-fast-lit` has the lowest score for any lambda from 24 to 150 bytes per us.**
+VM of `tools/zram-vm/run.sh`, 20 000 pages per dump, one boot per dump for the 7 devices and one more
+per dump for #37, one CPU at a fixed 4.5 GHz; means over the pages of the median of 3 runs, cold reads
+with another page before and the compressed data flushed, first dump / second dump, times in us,
+`b = 1`:
+
+| codec | bytes per page | write | cold read | recompression | us per page written |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 1 450.4 / 1 754.5 | 5.28 / 5.76 | 2.55 / 2.58 | 0.0 / 0.0 | 6.15 / 6.64 |
+| `lzo-rle` | 1 361.1 / 1 678.5 | 5.14 / 5.72 | 2.80 / 2.92 | 0.0 / 0.0 | 6.09 / 6.71 |
+| `zstd` | 1 012.3 / 1 197.5 | 13.58 / 14.53 | 5.35 / 5.60 | 0.0 / 0.0 | 15.40 / 16.44 |
+| `bytelz` | 1 250.7 / 1 600.5 | 6.09 / 6.65 | 2.71 / 2.81 | 0.0 / 0.0 | 7.01 / 7.61 |
+| `seqlz` | 1 147.7 / 1 487.9 | 6.02 / 6.59 | 2.70 / 2.79 | 0.0 / 0.0 | 6.94 / 7.54 |
+| `seqlz-lit` | 1 079.9 / 1 398.6 | 6.48 / 7.06 | 2.65 / 2.95 | 0.0 / 0.0 | 7.38 / 8.06 |
+| `seqlz-lit+seqlz-opt` | 987.1 / 1 225.9 | 6.47 / 7.07 | 2.83 / 3.02 | 235.6 / 233.1 | 243.04 / 241.18 |
+| `seqlz-lit+seqlz-opt`, own tables (#37) | 973.6 / 1 175.6 | 6.42 / 7.07 | 3.00 / 3.31 | 245.2 / 243.7 | 252.65 / 251.89 |
+
+| `b = 1`, from the fastest to the smallest | first dump | second dump |
+| --- | --- | --- |
+| `lzo-rle` to `seqlz` | 213 bytes for 0.85 us, 252 per us | 191 bytes for 0.83 us, 229 per us |
+| `seqlz` to `seqlz-lit` | 68 bytes for 0.45 us, 152 per us | 89 bytes for 0.52 us, 172 per us |
+| `seqlz-lit` to `zstd` 3 | 68 bytes for 8.02 us, 8.4 per us | 201 bytes for 8.38 us, 24 per us |
+| `zstd` 3 to the own tables of #37, recompressed | 39 bytes for 237 us, 0.2 per us | 22 bytes for 235 us, 0.1 per us |
+
+`lz4` is on the hull of the second dump only, 76 bytes above `lzo-rle` for 0.07 us: the two are the
+same speed within the noise of one boot. `bytelz` is behind `seqlz` in both, and `seqlz-opt` with the
+fixed tables is not on the hull at any `b` below.
+
+**The weight of recompression decides whether recompression pays.** It takes 233 to 245 us per page,
+about 17 times a write with `zstd` 3. At `b = 0.1` the step from `zstd` 3 to the own tables is 2.3 and 1.4
+bytes per us, at `b = 0.03` the own tables follow `seqlz-lit` directly with 14 and 30 bytes per us,
+and `zstd` 3 drops off the hull; at `b = 0` they follow `lzo-rle` with 287 and 339 bytes per us, and
+recompression with `seqlz-opt` is the best choice for every lambda below that. Where recompression is on the hull,
+it is with the own tables of #37 and not the fixed ones: 13.5 and 50 bytes smaller, for 0.01 and 0.1
+us more of writes and reads per page and 10 us more of recompression. Whether that is worth it depends on how many
+pages get recompressed and what the CPU time of an idle CPU costs, energy on a phone and nothing much
+on a desktop. #37 stays closed until there is a number for that.
+
+**In userspace the hull is the same.** `quetschn-bench-interleaved`, 20 000 pages per dump, CPU 2 at
+4.5 GHz, the mean of each page's median, same-filled pages excluded, zsmalloc cost of the model, times
+in us:
+
+| codec | bytes per page | compress | cold decompress | us per page written |
+| --- | --- | --- | --- | --- |
+| `lz4:1` | 1 411.8 / 1 737.3 | 3.51 / 3.95 | 1.27 / 1.29 | 3.95 / 4.39 |
+| `lz4hc:9` | 1 257.1 / 1 560.0 | 36.89 / 31.00 | 1.04 / 1.07 | 37.25 / 31.37 |
+| `lzo` | 1 306.6 / 1 631.7 | 3.85 / 4.41 | 1.89 / 1.83 | 4.50 / 5.03 |
+| `lzo-rle` | 1 326.1 / 1 646.4 | 2.90 / 3.10 | 1.33 / 1.30 | 3.35 / 3.54 |
+| `zstd:-1` | 1 101.3 / 1 449.6 | 7.85 / 8.57 | 3.01 / 3.05 | 8.87 / 9.61 |
+| `zstd:3` | 964.6 / 1 163.0 | 12.44 / 13.84 | 3.90 / 4.14 | 13.77 / 15.25 |
+| `bdelta:1` | 2 888.6 / 3 404.7 | 3.40 / 3.02 | 0.51 / 0.46 | 3.57 / 3.17 |
+| `bytelz` | 1 212.8 / 1 574.7 | 4.72 / 5.30 | 1.57 / 1.65 | 5.26 / 5.86 |
+| `seqlz:1` | 1 125.1 / 1 449.9 | 6.86 / 7.88 | 1.91 / 2.08 | 7.51 / 8.59 |
+| `seqlz-fast` | 1 106.5 / 1 462.3 | 4.78 / 5.37 | 1.64 / 1.77 | 5.34 / 5.97 |
+| `seqlz-fast-lit` | 1 037.6 / 1 368.6 | 3.96 / 4.43 | 1.35 / 1.43 | 4.42 / 4.91 |
+| `seqlz-hc:3` | 1 049.2 / 1 350.5 | 17.51 / 19.83 | 1.61 / 1.76 | 18.05 / 20.43 |
+| `seqlz-hc-lit:3` | 978.8 / 1 231.6 | 13.22 / 14.68 | 1.34 / 1.49 | 13.68 / 15.19 |
+| `seqlz-opt` | 940.7 / 1 198.3 | 253.20 / 251.45 | 1.75 / 1.98 | 253.80 / 252.12 |
+| `shuffle-lz4:1` | 1 678.7 / 2 109.1 | 4.45 / 5.13 | 1.73 / 1.67 | 5.04 / 5.69 |
+| `spike-branchless` | 2 286.0 / 2 928.6 | 2.37 / 2.26 | 1.93 / 1.53 | 3.02 / 2.77 |
+| `spike-slots` | 2 286.0 / 2 928.6 | 1.47 / 1.45 | 1.19 / 0.99 | 1.87 / 1.79 |
+| `spike-switch` | 2 286.0 / 2 928.6 | 1.27 / 1.27 | 1.41 / 1.18 | 1.75 / 1.68 |
+| `spike-zeroskip` | 2 286.0 / 2 928.6 | 1.24 / 1.26 | 1.40 / 1.21 | 1.72 / 1.67 |
+| `zstd-nolit:3` | 1 058.4 / 1 357.5 | 8.49 / 9.69 | 2.42 / 2.58 | 9.32 / 10.57 |
+
+The hull, the same on both dumps up to `zstd` 3: `spike-zeroskip`, `lzo-rle` (590 and 687 bytes per us
+from the spike), `seqlz-fast-lit` (268 and 202), `zstd` 3 (7.8 and 19.9). Without zram and zsmalloc the
+times are 1.6 to 3 us shorter per page, so the rates are higher than in the VM, the order is the
+same. The spike decoders win only for lambda above 590 bytes per us. `zstd -1` is behind
+`seqlz-fast-lit` on both axes, `seqlz-hc-lit` just behind the line from `seqlz-fast-lit` to `zstd` 3
+(978.8 bytes for 13.68 us against 964.6 for 13.77), `lz4hc` 9 far behind. For some reason
+`seqlz-fast-lit` compresses faster than `seqlz-fast` here, 3.96 against 4.78 us on the first dump,
+where in the VM it is 6.48 against 6.02; not explained yet.
+
+The other designs in this file have no codec in the harness any more, only the size, or ticks from
+their own loops: the word model, BΔI, the shuffle, XOR, FSST, BPC, the pair matcher. None of them was
+dropped for a p99 alone; they were larger than a codec that was also faster, which the score does not
+change.
 
 ## Baselines
 
