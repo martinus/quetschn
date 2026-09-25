@@ -155,6 +155,8 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 /* literals per stream and refill: a refill leaves 56 bits */
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 #define SEQLZ_LIT_HEADER 19U
+/* seqlz_compress_coded() codes the literals only if 14 * sequences + literals is at most this */
+#define SEQLZ_LIT_BUDGET 5300U
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U) /* 16 for the literal copies, 8 * rounds - 1 decoded past the end */
 unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 const struct seqlz_sequence* seq,
@@ -164,7 +166,8 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 void* dst,
                                 unsigned int dst_cap);
 int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
-/* seqlz_compress(), then the literals coded as in seqlz_encode_coded() */
+/* seqlz_compress(), then the literals coded as in seqlz_encode_coded(), unless the page is over
+ * SEQLZ_LIT_BUDGET */
 struct seqlz_state;
 unsigned int
 seqlz_compress_coded(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);

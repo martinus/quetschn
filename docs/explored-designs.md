@@ -1077,6 +1077,66 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## seqlz-fast-lit within C3: a budget for coding the literals
+
+With a budget for the work per page, `seqlz-fast-lit` writes 1.16 and 1.17 times as long as `lz4` at
+p99, within C3, and needs 16.7% and 20.7% less memory than `lzo-rle` on the two dumps. Without the
+budget it needed 20.5% and 22.2% less, but wrote 1.29 and 1.31 times as long. `seqlz-fast` needs
+11.4% and 15.7% less.
+
+**The idea.** The p99 of the writes is a few pages, those with many sequences or many literals: they
+take long to match, and then long to code. The encoder knows both counts when the matcher is done. If
+14 * sequences + literals is more than `SEQLZ_LIT_BUDGET`, 5300, the literals stay raw. The weights
+come from a fit of the compress time per page in the quick benchmark: 14.8 ns per sequence, 1.05 ns
+per literal. `seqlz_encode_coded()`, which `seqlz-hc-lit` uses for recompression, has no budget.
+
+**Simulated first**, with the per-page times of the quick benchmark on the second dump, write time
+plus 2800 ns of zram as an estimate of the kernel's, p99 against `lz4`'s: `seqlz-fast` 35.70% and
+1.182, `seqlz-fast-lit` 31.89% and 1.216. With the measured compress time of the coded page as the
+rule, the best any predictor can do: at 8000 ns 32.16% and 1.187. With the matcher's own time plus
+0.43 ns per literal: at 7000 ns 33.09% and 1.190. With the counts, fitted on half the pages and judged
+on the other half: 33.57% and 1.190. With the literals and the bytes of the sequences' bitstream
+instead of the sequences, which `code_literals()` knows without a counter: 34.36% and 1.190, worse.
+The counts need no clock and give the same output on every machine.
+
+**The budget in the kernel**, 20 000 pages per dump, p99 of the writes against `lz4`'s in the same boot:
+
+| budget | first dump: used by zsmalloc, write p99 | second dump |
+| --- | --- | --- |
+| none | 21 184 512, 1.31 | 26 673 152, 1.29 |
+| 6500 | 21 274 624, 1.28 | 26 755 072, 1.26 |
+| 5800 | 21 487 616, 1.22 | 27 316 224, 1.23 |
+| 5300 | 21 598 208, 1.17 | 27 971 584, 1.15 |
+| `seqlz-fast` | 22 953 984, 1.12 | 29 757 440, 1.11 |
+
+All candidates with the budget of 5300, one boot per dump, other page first, p50 / p99 in ns:
+
+| second dump | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 35 090 432 | +4.5% | 2510 / 4800 | 1920 / 3569 | 5991 / 9510 |
+| `lzo-rle` | 33 570 816 | | 2680 / 5580 | 2049 / 3591 | 5859 / 9790 |
+| `seqlz-fast` | 29 757 440 | -11.4% | 2659 / 4371 | 2230 / 3791 | 6899 / 10 501 |
+| `seqlz-fast-lit` | 27 971 584 | -16.7% | 2800 / 4330 | 2400 / 3729 | 7580 / 11 000 |
+| `zstd` | 23 949 312 | -28.7% | 5741 / 9591 | 4930 / 7491 | 14 730 / 23 931 |
+
+| first dump | used by zsmalloc | vs `lzo-rle` | read, cold | read, warm | write |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 29 007 872 | +6.6% | 2480 / 4649 | 1951 / 3560 | 5450 / 9240 |
+| `lzo-rle` | 27 222 016 | | 2660 / 5261 | 2050 / 3580 | 5180 / 9560 |
+| `seqlz-fast` | 22 953 984 | -15.7% | 2580 / 4331 | 2171 / 3891 | 6229 / 10 280 |
+| `seqlz-fast-lit` | 21 598 208 | -20.7% | 2659 / 4310 | 2310 / 3870 | 6820 / 10 819 |
+| `zstd` | 20 246 528 | -25.6% | 5471 / 9570 | 4630 / 7689 | 13 771 / 23 240 |
+
+The reads get a bit faster at p99 too, the pages with the most literals to decode are the ones that
+stay raw: cold p99 4330 and 4310 ns against 4551 and 4390 without the budget, and 7% to 10% below
+`lz4`'s. At p50 `seqlz-fast-lit` reads 7% and 12% slower than `lz4`. The budget keeps 58% and 77% of
+the memory that coding all pages saves. It was chosen with some room to C3's 1.2, because the writes
+of the same code differ by about 100 ns at p99 from boot to boot.
+
+Tests: a page with the same skewed literals once in a long run with a few matches and once as 512
+records of 4 literals and 4 bytes that repeat, one sequence each, 14 * 512 + 2048 over the budget:
+the first is coded, the second not, and `seqlz_encode_coded()` without a budget codes the second.
+Mutation, caught: a weight of 1 instead of 14 per sequence.
 ## seqlz-opt: a parser that knows seqlz's costs, zstd's memory at lz4's read speed
 
 `seqlz-opt` writes the same format as `seqlz-fast-lit`, with the same decoder, but finds the sequences
@@ -1172,6 +1232,7 @@ Tests: the parser's pages from four kinds of page come back; on pages of words f
 60, where the first match found is often not the cheapest, they are 8.5% smaller than the greedy
 matcher's with the same tables, the bound is 7%. Mutations, each caught: only the longest length of
 each match (5.4%), a chain of 1 (5.6%).
+||||||| 35941e9
 
 ## seqlz-fast-lit: one of 8 literal tables per page
 
@@ -1395,6 +1456,34 @@ the XOR loads the bytes just before `d`, which the match before has often just s
 the loop over 2000 pages with the data in the cache it is only 3% slower (8964 against 8678 cycles).
 The writes pay for the XOR literals and their prices on every page, whether the XOR wins or not: 12%
 more compress cycles. Dropped.
+
+**FSST for the literals, priced and measured, dropped.** FSST (Fast Static Symbol Table, Boncz et al.,
+VLDB 2020, [cwida/fsst](https://github.com/cwida/fsst)) codes up to 255 symbols of 1 to 8 bytes as
+one byte each: the encoder writes one byte per symbol without packing bits, the decoder copies 8 bytes
+per code without a bit reader. That could have helped the writes and the literal decoding at the same
+time. With the reference library, compiled without AVX-512, on the literals of `seqlz-fast`'s matcher,
+tables trained on the resident pages, priced with the zsmalloc model:
+
+| | first dump | second dump |
+| --- | --- | --- |
+| literals raw (`seqlz-fast`) | 26.74% | 35.08% |
+| 8 Huffman tables (`seqlz-fast-lit`) | 24.55% | 31.33% |
+| 1 FSST table, library's sample of 32 KB | 26.50% | 34.62% |
+| 8 FSST tables, one per group of pages with the same Huffman table | 25.64% | 32.99% |
+| the same, trained on samples of 4 MB | 25.46% | 32.97% |
+
+FSST gets about 40% of what the Huffman tables get. With ideal static code lengths, Huffman on the
+bytes needs 6.708 and 6.466 bits per literal, FSST alone 7.421 and 7.247, and Huffman on FSST's codes
+6.729 and 6.506: no better than on the bytes. What is left of a page after the matcher has no
+multi-byte structure worth a symbol, the gain is all in how uneven the single bytes are, and a code
+of 8 bits cannot use that. It is not faster either: 7.7 to 8.0 TSC ticks per literal to encode and
+2.9 to 3.1 to decode with the library, where the 8 Huffman streams decode in about 1.1 cycles per
+literal. The symbols are short, about 1.1 bytes, and many bytes need the escape.
+
+**Tunstall codes** (fixed length codes for strings of bytes, the other byte aligned choice), bounded
+from the byte distribution of each group of resident pages: with codes of 12 bits 7.6 to 9.3 bits per
+byte, with 16 bits (a table of 64K entries) 7.1 to 7.9, where the entropy is 6.1 to 6.7. Dropped
+without building.
 
 ## 16 KiB pages
 

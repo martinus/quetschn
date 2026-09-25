@@ -259,6 +259,7 @@ struct encoder {
     u8* lit;           /* literals */
     const u8* src_end; /* the 16-byte literal copies may read up to here */
     unsigned int last; /* the last offset */
+    unsigned int n_seq;
 };
 
 /* v has n bits, n < 64 - cnt */
@@ -347,11 +348,12 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
             put_len_value(e, &t->ml, ml - 4 - SEQLZ_ML_CAP);
         enc_flush(e);
         e->last = off;
+        e->n_seq++;
     }
 }
 
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
-    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1};
+    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, 0};
 }
 
 /* the last bits, the header, and the bitstream moved in behind the literals */
@@ -434,8 +436,13 @@ static void store_tail(u8* p, u64 w, unsigned int n) {
 
 /* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
  * literals somewhere that the coded ones do not overwrite. Returns the new length. */
-static unsigned int
-code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals) {
+static unsigned int code_literals(const struct seqlz_tables* t,
+                                  u8* d,
+                                  unsigned int len,
+                                  const u8* literals,
+                                  unsigned int n_literals,
+                                  unsigned int n_seq,
+                                  unsigned int budget) {
     const u64 lanes = 0x00ff00ff00ff00ffULL;
     unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, sizes[8];
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
@@ -444,6 +451,13 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
     u8* q[9];
     const struct lit_table* lt;
 
+    /* A page that took long to compress keeps its literals raw: coding them costs about as much per
+     * literal as matching costs per 14th of a sequence, and these pages are the p99 of the writes.
+     * In the kernel with SEQLZ_LIT_BUDGET, writes 1.15 and 1.17 times as long as lz4's at p99 instead
+     * of 1.29 and 1.31, for 58% and 77% of the memory that coding all pages saves
+     * (docs/explored-designs.md). */
+    if (14U * n_seq + n_literals > budget)
+        return len;
     /* the bits of each stream in each table, 25 literals of a stream per sum of 8-bit lanes */
     for (k = 0; k < n_literals;) {
         u64 x[8][LIT_COST_WORDS] = {{0}};
@@ -558,13 +572,30 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 unsigned int dst_cap) {
     unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap);
 
-    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals);
+    /* no budget: for recompression, where the time to compress matters less */
+    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals, n, ~0U);
+}
+
+static unsigned int compress_page(const struct seqlz_tables* t,
+                                  struct seqlz_state* st,
+                                  const u8* src,
+                                  void* dst,
+                                  unsigned int dst_cap,
+                                  unsigned int* n_seq) {
+    struct encoder e;
+
+    if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
+        return 0;
+    encoder_init(&e, t, dst, src + SEQLZ_PAGE);
+    match_page(st->table, src, encode_emit, &e);
+    *n_seq = e.n_seq;
+    return encoder_finish(&e, dst);
 }
 
 unsigned int seqlz_compress_coded(
     const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap) {
     u8* const d = dst_v;
-    unsigned int len = seqlz_compress(t, st, src, dst_v, dst_cap), n_lit;
+    unsigned int n_seq = 0, len = compress_page(t, st, src, dst_v, dst_cap, &n_seq), n_lit;
     u8* keep;
 
     if (len == 0)
@@ -575,19 +606,14 @@ unsigned int seqlz_compress_coded(
         return len;
     keep = d + 2U * SEQLZ_PAGE - n_lit;
     __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
-    return code_literals(t, d, len, keep, n_lit);
+    return code_literals(t, d, len, keep, n_lit, n_seq, SEQLZ_LIT_BUDGET);
 }
 
 unsigned int
-seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src_v, void* dst, unsigned int dst_cap) {
-    const u8* const src = src_v;
-    struct encoder e;
+seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap) {
+    unsigned int n_seq;
 
-    if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
-        return 0;
-    encoder_init(&e, t, dst, src + SEQLZ_PAGE);
-    match_page(st->table, src, encode_emit, &e);
-    return encoder_finish(&e, dst);
+    return compress_page(t, st, src, dst, dst_cap, &n_seq);
 }
 
 /* ---- decoder ---- */

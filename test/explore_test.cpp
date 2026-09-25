@@ -1176,6 +1176,21 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
     }
 }
 
+// A page of bytes drawn as literal table k codes them, with a few blocks copied from earlier in the
+// page: few sequences and many literals that pay to code, below SEQLZ_LIT_BUDGET.
+std::vector<unsigned char> skewed_page(std::mt19937_64& rng) {
+    auto bytes = bytes_as_coded_by(rng, static_cast<unsigned>(rng() % SEQLZ_LIT_SETS));
+    for (int k = 0; k < 8; ++k) {
+        auto const len = 50 + rng() % 250;
+        auto const to = 1 + rng() % (4096 - len);
+        auto const from = rng() % to;
+        for (std::size_t i = 0; i < len; ++i) {
+            bytes[to + i] = bytes[from + i];
+        }
+    }
+    return bytes;
+}
+
 TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
@@ -1185,21 +1200,69 @@ TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
     auto coded_pages = 0;
     for (int round = 0; round < 800; ++round) {
         CAPTURE(round);
-        auto p = random_seqlz_page(rng, round % 4);
-        // most bytes zero, so that coding the literals pays
-        for (auto& b : p.bytes) {
-            if (rng() % 4 != 0) {
-                b = 0;
+        auto bytes = std::vector<unsigned char>();
+        if (round % 2 == 0) {
+            bytes = skewed_page(rng);
+        } else {
+            // most bytes zero: many sequences, mostly over the budget
+            bytes = random_seqlz_page(rng, round % 4).bytes;
+            for (auto& b : bytes) {
+                if (rng() % 4 != 0) {
+                    b = 0;
+                }
             }
         }
         auto c = std::vector<unsigned char>(2 * 4096);
-        auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096);
+        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096);
         REQUIRE(len > 0);
         coded_pages += (c[1] & 0x80) != 0 ? 1 : 0;
         REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
-        CHECK(out == p.bytes);
+        CHECK(out == bytes);
     }
-    CHECK(coded_pages > 400);
+    CHECK(coded_pages > 350);
+}
+
+TEST_CASE("seqlz: the compressor codes the literals of a page only within SEQLZ_LIT_BUDGET") {
+    auto const t = default_tables(seqlz_default_own);
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(3);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    for (int round = 0; round < 20; ++round) {
+        CAPTURE(round);
+        auto const skewed = bytes_as_coded_by(rng, 0);
+        // the same literals: in one run with a few matches, and as 512 records of 4 of them and 4 bytes
+        // that are the same in every record, one sequence each: 14 * 512 + 2048 is over the budget
+        auto few = skewed_page(rng);
+        auto many = std::vector<unsigned char>(4096);
+        for (std::size_t r = 0; r < 512; ++r) {
+            for (std::size_t k = 0; k < 4; ++k) {
+                many[8 * r + k] = skewed[4 * r + k];
+                many[8 * r + 4 + k] = static_cast<unsigned char>(0xa5 + k);
+            }
+        }
+        auto const n_few = seqlz_compress_coded(t.get(), st.get(), few.data(), c.data(), 2 * 4096);
+        REQUIRE(n_few > 0);
+        CHECK((c[1] & 0x80) != 0);
+        auto const n_many = seqlz_compress_coded(t.get(), st.get(), many.data(), c.data(), 2 * 4096);
+        REQUIRE(n_many > 0);
+        CHECK((c[1] & 0x80) == 0);
+        // without the budget the records pay to code, see seqlz_encode_coded(): so it is the budget
+        auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+        auto const n = seqlz_find(st.get(), many.data(), seq.data());
+        auto lits = std::vector<unsigned char>();
+        auto pos = std::size_t{0};
+        for (unsigned i = 0; i < n; ++i) {
+            lits.insert(lits.end(),
+                        many.begin() + static_cast<std::ptrdiff_t>(pos),
+                        many.begin() + static_cast<std::ptrdiff_t>(pos + seq[i].literals));
+            pos += seq[i].literals + seq[i].match;
+        }
+        CHECK(n > 400);
+        auto const len =
+            seqlz_encode_coded(t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), c.data(), 2 * 4096);
+        REQUIRE(len > 0);
+        CHECK((c[1] & 0x80) != 0);
+    }
 }
 
 // A page of words from a vocabulary of 60 random words of 3 to 12 bytes: many overlapping matches, where

@@ -18,11 +18,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <functional>
 #include <iterator>
-#include <cstdlib>
 #include <memory>
 #include <random>
 #include <span>
@@ -361,7 +361,9 @@ int main(int argc, char** argv) {
             own_matcher ? std::string("seqlz") : std::string(codec->name) + " level " + std::to_string(params.level);
         auto sequences = std::vector<quetschn::sequence>(); // of one page, reused
         auto opt_tables = std::unique_ptr<seqlz_tables, void (*)(seqlz_tables*)>(
-            static_cast<seqlz_tables*>(std::malloc(seqlz_tables_size())), [](seqlz_tables* p) { std::free(p); });
+            static_cast<seqlz_tables*>(std::malloc(seqlz_tables_size())), [](seqlz_tables* p) {
+                std::free(p);
+            });
         if (seqlz_tables_init(opt_tables.get(), &seqlz_default_lz4hc) != 0) {
             throw std::runtime_error("lz4hc tables");
         }
@@ -392,8 +394,9 @@ int main(int argc, char** argv) {
             ++pages;
             if (own_matcher) {
                 // seqlz's own matcher, as seqlz-fast uses it, or the parser for recompression
-                auto const n = opt_parser ? seqlz_parse_opt(opt_tables.get(), src.data(), opt_work.data(), opt_set(src), seqs.data())
-                                          : seqlz_find(state.get(), src.data(), seqs.data());
+                auto const n = opt_parser
+                                   ? seqlz_parse_opt(opt_tables.get(), src.data(), opt_work.data(), opt_set(src), seqs.data())
+                                   : seqlz_find(state.get(), src.data(), seqs.data());
                 sequences.clear();
                 for (unsigned k = 0; k < n; ++k) {
                     sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});
