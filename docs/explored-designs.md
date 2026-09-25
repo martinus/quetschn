@@ -589,7 +589,14 @@ Compressing, `lz4` 16 860 (17 105), `seqlz-fast` 20 687 (21 025). So with clang 
 
 ## bytelz: `seqlz-fast`'s matcher, a byte oriented format
 
-*Open. Close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
+*Kept for arm64, out of the default comparison.* In the kernel VM of 25 September no exchange rate makes
+`bytelz` the best choice on either dump (see [The designs by the score](#the-designs-by-the-score)); the
+same holds for `seqlz-fast` on the second dump, and on the first only from 172 to 211 bytes per us. Both
+stay for the little cores of arm64, where a byte format or raw literals may beat the Huffman coded ones
+of `seqlz-fast-lit`; if they are not the best choice there either, `bytelz` goes. `tools/plot-codecs.py`
+and its run in the README leave both out.
+
+*Earlier: close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
 `explore/bytelz.c`, format in `explore/bytelz.h`, codec `bytelz`. The matcher and the literal and match
 copies are shared with `seqlz` in `explore/page_lz.h`.
 
@@ -2005,4 +2012,4 @@ one multiply).
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
-  differently.
+  differently; `bytelz` and `seqlz-fast` stay for it.
