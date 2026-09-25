@@ -73,7 +73,9 @@ designs by the score"): the hull is `lzo-rle`, `seqlz` (`seqlz-fast`), `seqlz-fa
 `seqlz-fast-lit` to `zstd` 3 is 8 and 24 bytes per us, from `lzo-rle` to `seqlz-fast-lit` together
 about 220 and 210, so `seqlz-fast-lit` has the lowest score for any lambda from 24 to about 150 bytes
 per us on both dumps. Who runs `lz4` or `lzo-rle` instead of `zstd` says that lambda is above 8 to 24
-for them. Recompression with `seqlz-opt` is on the hull only for `b` of 0.03 and less.
+for them. Recompression is not pursued: with `zstd` it pays only where the CPU time of an idle machine
+counts for less, and makes each read of a recompressed page 2.3 us slower; `seqlz-opt` is removed
+(docs/explored-designs.md, "Recompression, measured, not pursued").
 
 Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
 samples `pswpin` every 10 ms and groups the swap-ins into bursts; 9 minutes on the development machine

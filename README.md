@@ -63,12 +63,13 @@ against `compress + r * cold decompress`, the means, and which codecs have the l
 
 `tools/plot-codecs.py` draws the chart of the codecs from the kernel VM: per dump memory against the
 latency of cold reads, warm reads and writes, and against the score, with the codecs that have the
-lowest score for some lambda. One boot of `tools/zram-vm/run.sh` per row; it needs matplotlib and the
+lowest score for some lambda. A device `a+b`, e.g. `seqlz-lit+zstd`, is written with `a` and then
+recompressed by zram with `b`. One boot of `tools/zram-vm/run.sh` per row; it needs matplotlib and the
 Noto Sans font:
 
 ```sh
-ALGOS=lz4,lzo-rle,zstd,seqlz-lit,seqlz-lit+seqlz-opt tools/zram-vm/run.sh <linux tree> corpus/first >first.log
-ALGOS=lz4,lzo-rle,zstd,seqlz-lit,seqlz-lit+seqlz-opt tools/zram-vm/run.sh <linux tree> corpus/second >second.log
+ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >first.log
+ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/second >second.log
 tools/plot-codecs.py --run "first dump=first.log" --run "second dump=second.log" --out codecs.png --out codecs.svg
 ```
 

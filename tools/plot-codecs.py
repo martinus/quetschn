@@ -7,7 +7,7 @@ One row per log, e.g. one per zram dump, and four panels per row: cold reads, wa
 with the codecs that have the lowest score for some exchange rate. The logs have only sizes and
 timings, no page content.
 
-    ALGOS=lz4,lzo-rle,zstd,seqlz-lit,seqlz-lit+seqlz-opt \\
+    ALGOS=lz4,lzo-rle,zstd,seqlz-lit \\
         tools/zram-vm/run.sh <linux tree> <corpus> >first.log
     tools/plot-codecs.py --run "zram dump of 23 Sep=first.log" --run "zram dump of 24 Sep=second.log" \\
         --out codecs.png --out codecs.svg
@@ -39,7 +39,6 @@ NAMES = {
     "bytelz": "bytelz",
     "seqlz": "seqlz-fast",
     "seqlz-lit": "seqlz-fast-lit",
-    "seqlz-lit+seqlz-opt": "seqlz-opt, recompressed",
 }
 STYLE = {
     "lz4": ("#7f7f7f", "o"),
@@ -48,17 +47,24 @@ STYLE = {
     "bytelz": ("#e67e22", "^"),
     "seqlz-fast": ("#1f6fd1", "o"),
     "seqlz-fast-lit": ("#17a2b8", "v"),
-    "seqlz-opt, recompressed": ("#2e9e44", "P"),
 }
-OTHER_COLORS = ["#c0392b", "#16a085", "#d35400", "#7d3c98", "#2c3e50"]
-MAIN = ("seqlz-fast-lit", "seqlz-opt, recompressed")
-RECOMPRESSED = "seqlz-opt, recompressed"
+OTHER_COLORS = ["#2e9e44", "#c0392b", "#16a085", "#d35400", "#2c3e50"]
+MAIN = ("seqlz-fast-lit",)
 # what the footer says about a codec, if it is in the chart
 ABOUT = {
     "seqlz-fast-lit": "seqlz-fast-lit: literals coded with one of 8 static tables per page, offsets in steps of 8 in their own classes (#40).",
-    RECOMPRESSED: "seqlz-opt, recompressed: written with seqlz-fast-lit (so its writes are those), then all pages recompressed by zram "
-    "as idle pages with seqlz-opt (#34), compacted, then read.",
 }
+
+
+def name_of(algo):
+    """The chart's name of a zram device: primary+secondary, the primary recompressed with the other, is
+    "primary + secondary"."""
+    primary, plus, secondary = algo.partition("+")
+    return f"{NAMES.get(primary, primary)} + {secondary}" if plus else NAMES.get(algo, algo)
+
+
+def recompressed(name):
+    return " + " in name
 
 
 def parse(path, skip=()):
@@ -72,7 +78,7 @@ def parse(path, skip=()):
         algo, rest = line[at + 7 :].split(None, 1)
         if algo in skip:
             continue
-        c = codecs.setdefault(NAMES.get(algo, algo), {})
+        c = codecs.setdefault(name_of(algo), {})
         rest = rest.strip()
         times = {k: float(v) for k, v in re.findall(r"(p50|p90|p99|mean) (\d+)", rest)}
         if rest.startswith("mm_stat"):
@@ -198,17 +204,16 @@ def main():
             points.append((t, mem_pct[name], name))
             ax.plot(t, mem_pct[name], marker=marker, ms=10 if name in MAIN else 8, color=color, mec="white", mew=0.8,
                     zorder=4)
-        # the recompressed one is left out of the hull: its recompression is not in its time
-        h = hull([p for p in points if p[2] != RECOMPRESSED])
+        # the recompressed ones are left out of the hull: their recompression is not in their time
+        h = hull([p for p in points if not recompressed(p[2])])
         ax.plot([p[0] for p in h], [p[1] for p in h], color="#aaaaaa", lw=1.2, ls="--", zorder=1)
         for (t1, m1, _), (t2, m2, _) in zip(h, h[1:]):
             rate = (m1 - m2) / 100 * 4096 / (t2 - t1)
             ax.annotate(f"{rate:.0f} B/µs", ((t1 + t2) / 2, (m1 + m2) / 2), textcoords="offset points", xytext=(4, 4),
                         fontsize=8, color="#777777")
-        for t, m, name in points:
-            if name == RECOMPRESSED and "recompress" in codecs[name]:
-                ax.annotate(f"+{codecs[name]['recompress'] / 1000:.0f} µs recompression\nper page, not counted", (t, m),
-                            textcoords="offset points", xytext=(10, -22), fontsize=8, color=STYLE[name][0])
+        for k, (t, m, name) in enumerate(p for p in points if recompressed(p[2]) and "recompress" in codecs[p[2]]):
+            ax.annotate(f"+{codecs[name]['recompress'] / 1000:.0f} µs recompression per page, not counted", (t, m),
+                        textcoords="offset points", xytext=(10, -14 - 12 * k), fontsize=8, color=STYLE[name][0])
         ax.set_xlim(0, max(20, math.ceil(max(p[0] for p in points) * 1.1)))
         ax.set_xlabel(f"time per page written: write + {r:g} × cold read,\nmeans, µs (dashed: best for some exchange rate)")
         if row == 0:
@@ -227,7 +232,9 @@ def main():
     fig.legend(handles=handles, loc="upper center", ncol=len(names), frameon=False, bbox_to_anchor=(0.5, 1 - 0.42 / height))
     fig.suptitle("zram codecs: memory against latency, lower left is better", fontsize=15, fontweight="bold",
                  y=1 - 0.05 / height)
-    about = " ".join(ABOUT[n] for n in names if n in ABOUT)
+    about = " ".join([ABOUT[n] for n in names if n in ABOUT] + (
+        ["A + B: written with A (so its writes are A's), then all pages recompressed with B by zram as idle pages, "
+         "compacted, then read."] if any(recompressed(n) for n in names) else []))
     fig.text(
         0.01,
         0.01,
