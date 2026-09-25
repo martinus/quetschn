@@ -1300,6 +1300,34 @@ the loop over 2000 pages with the data in the cache it is only 3% slower (8964 a
 The writes pay for the XOR literals and their prices on every page, whether the XOR wins or not: 12%
 more compress cycles. Dropped.
 
+**FSST for the literals, priced and measured, dropped.** FSST (Fast Static Symbol Table, Boncz et al.,
+VLDB 2020, [cwida/fsst](https://github.com/cwida/fsst)) codes up to 255 symbols of 1 to 8 bytes as
+one byte each: the encoder writes one byte per symbol without packing bits, the decoder copies 8 bytes
+per code without a bit reader. That could have helped the writes and the literal decoding at the same
+time. With the reference library, compiled without AVX-512, on the literals of `seqlz-fast`'s matcher,
+tables trained on the resident pages, priced with the zsmalloc model:
+
+| | first dump | second dump |
+| --- | --- | --- |
+| literals raw (`seqlz-fast`) | 26.74% | 35.08% |
+| 8 Huffman tables (`seqlz-fast-lit`) | 24.55% | 31.33% |
+| 1 FSST table, library's sample of 32 KB | 26.50% | 34.62% |
+| 8 FSST tables, one per group of pages with the same Huffman table | 25.64% | 32.99% |
+| the same, trained on samples of 4 MB | 25.46% | 32.97% |
+
+FSST gets about 40% of what the Huffman tables get. With ideal static code lengths, Huffman on the
+bytes needs 6.708 and 6.466 bits per literal, FSST alone 7.421 and 7.247, and Huffman on FSST's codes
+6.729 and 6.506: no better than on the bytes. What is left of a page after the matcher has no
+multi-byte structure worth a symbol, the gain is all in how uneven the single bytes are, and a code
+of 8 bits cannot use that. It is not faster either: 7.7 to 8.0 TSC ticks per literal to encode and
+2.9 to 3.1 to decode with the library, where the 8 Huffman streams decode in about 1.1 cycles per
+literal. The symbols are short, about 1.1 bytes, and many bytes need the escape.
+
+**Tunstall codes** (fixed length codes for strings of bytes, the other byte aligned choice), bounded
+from the byte distribution of each group of resident pages: with codes of 12 bits 7.6 to 9.3 bits per
+byte, with 16 bits (a table of 64K entries) 7.1 to 7.9, where the entropy is 6.1 to 6.7. Dropped
+without building.
+
 ## 16 KiB pages
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
