@@ -71,7 +71,7 @@ static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, s
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
 	len = seqlz_compress_coded(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
-				   req->dst_len, ((struct sz_ctx *)ctx->context)->scratch);
+				   req->dst_len);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
