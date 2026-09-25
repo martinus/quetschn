@@ -424,11 +424,16 @@ latency_summary summarize_latency(std::vector<double> const& values) {
     if (values.empty()) {
         return {};
     }
+    auto sum = 0.0;
+    for (auto v : values) {
+        sum += v;
+    }
     return {percentile(values, 50),
             percentile(values, 90),
             percentile(values, 99),
             percentile(values, 99.9),
-            percentile(values, 100)};
+            percentile(values, 100),
+            sum / static_cast<double>(values.size())};
 }
 
 run_summary summarize(run_result const& r, std::size_t page_size) {

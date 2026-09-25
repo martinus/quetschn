@@ -119,7 +119,7 @@ std::string cpu_model() {
 }
 
 void print_latency(char const* what, quetschn::latency_summary const& l) {
-    std::printf("%-22s %9.0f %9.0f %9.0f %9.0f %9.0f\n", what, l.p50, l.p90, l.p99, l.p999, l.max);
+    std::printf("%-22s %9.0f %9.0f %9.0f %9.0f %9.0f %9.0f\n", what, l.p50, l.p90, l.p99, l.p999, l.max, l.mean);
 }
 
 // the lines of [p, p + n) out of all caches, like the harness's cold measurement
@@ -231,7 +231,7 @@ int decode_loop(quetschn::corpus const& c,
         medians[i] = per_page[loops / 2];
     }
     auto const lat = quetschn::summarize_latency(medians);
-    std::printf("%s: %s per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f ns\n",
+    std::printf("%s: %s per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f mean %.0f ns\n",
                 codec.name,
                 time_compress ? "compress"
                 : cold        ? "cold decode"
@@ -240,7 +240,8 @@ int decode_loop(quetschn::corpus const& c,
                 lat.p50,
                 lat.p90,
                 lat.p99,
-                lat.p999);
+                lat.p999,
+                lat.mean);
     std::printf("%s: %zu pages, %u loops, checksum %llu\n", codec.name, pages, loops, static_cast<unsigned long long>(sum));
     if (!out_file.empty()) {
         auto* f = std::fopen(out_file.c_str(), "w");
@@ -414,7 +415,7 @@ int main(int argc, char** argv) {
                         dict_path.empty() ? "none" : dict_path.c_str(),
                         opts.dict.size());
             if (opts.measure_time) {
-                std::printf("\n%-22s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max");
+                std::printf("\n%-22s %9s %9s %9s %9s %9s %9s\n", "latency ns", "p50", "p90", "p99", "p99.9", "max", "mean");
                 print_latency("compress", s.compress);
                 print_latency("decompress warm", s.decompress);
                 print_latency("decompress cold", s.decompress_cold);

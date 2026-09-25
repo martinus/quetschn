@@ -46,13 +46,19 @@ target_link_libraries(quetschn-sample-corpus PRIVATE quetschn_collect quetschn_w
 add_executable(quetschn-import-raw tools/collect/import_raw_main.cpp)
 target_link_libraries(quetschn-import-raw PRIVATE quetschn_collect quetschn_warnings)
 
-add_library(quetschn_bench STATIC bench/zsmalloc_cost.cpp bench/harness.cpp bench/compare.cpp)
+add_library(quetschn_bench STATIC bench/zsmalloc_cost.cpp bench/harness.cpp bench/compare.cpp bench/score.cpp)
 target_include_directories(quetschn_bench PUBLIC bench)
 find_package(Threads REQUIRED)
 target_link_libraries(quetschn_bench PUBLIC quetschn_collect Threads::Threads PRIVATE quetschn_warnings)
 
 add_executable(quetschn-compare bench/compare_main.cpp)
 target_link_libraries(quetschn-compare PRIVATE quetschn_bench quetschn_warnings)
+
+add_executable(quetschn-score bench/score_main.cpp)
+target_link_libraries(quetschn-score PRIVATE quetschn_bench quetschn_warnings)
+
+add_executable(quetschn-swap-bursts tools/swap-bursts.c)
+target_link_libraries(quetschn-swap-bursts PRIVATE quetschn_warnings)
 
 # Phase 2b decoder spike, see spike/wk64.h. Built here with our warnings for the tests, and in
 # cmake/kernel_codecs.cmake a second time with the kernel's flags for the benchmark.
@@ -80,7 +86,7 @@ if(BUILD_TESTING)
 
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
                                  test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp
-                                 test/compare_test.cpp test/spike_test.cpp
+                                 test/compare_test.cpp test/score_test.cpp test/spike_test.cpp
                                  test/explore_test.cpp)
     target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_spike quetschn_explore quetschn_warnings
                                                 doctest::doctest)

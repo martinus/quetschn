@@ -6,8 +6,8 @@
 // device after the other, warm and with the compressed data or also the destination flushed from the
 // cache first. Each timed read comes after a read of the same page, or of another one, which does not
 // let the branch predictor learn the page first. Before that, the writes of each page, timed, after a
-// write of the same or another page. Prints p50 / p90 / p99 over the pages of the median of 3 runs per
-// page.
+// write of the same or another page. Prints p50 / p90 / p99 and the mean over the pages of the median
+// of 3 runs per page.
 #define _GNU_SOURCE
 #include <fcntl.h>
 #include <stdio.h>
@@ -37,6 +37,14 @@ static long long now(void) {
 static int cmp(const void* a, const void* b) {
     long long x = *(const long long*)a, y = *(const long long*)b;
     return x < y ? -1 : x > y;
+}
+
+/* the mean over the pages of their median times: what a burst of swap-ins waits for, per page */
+static long long mean(const long long* x, size_t n) {
+    long long sum = 0;
+    for (size_t i = 0; i < n; i++)
+        sum += x[i];
+    return n ? sum / (long long)n : 0;
 }
 
 static void flush(void* p, size_t n) {
@@ -123,12 +131,13 @@ int main(void) {
                 med[i] = x[REPS / 2];
             }
             qsort(med, n, sizeof med[0], cmp);
-            printf("RESULT %-8s write, %-20s: p50 %lld p90 %lld p99 %lld ns\n",
+            printf("RESULT %-8s write, %-20s: p50 %lld p90 %lld p99 %lld mean %lld ns\n",
                    algos[a],
                    v == 0 ? "same page before" : "other page before",
                    med[n / 2],
                    med[n * 9 / 10],
-                   med[n * 99 / 100]);
+                   med[n * 99 / 100],
+                   mean(med, n));
             free(med);
         }
         free(w);
@@ -188,13 +197,14 @@ int main(void) {
                 med[i] = v[REPS / 2];
             }
             qsort(med, n, sizeof med[0], cmp);
-            printf("RESULT %-8s %-26s prefetch %d: p50 %lld p90 %lld p99 %lld ns\n",
+            printf("RESULT %-8s %-26s prefetch %d: p50 %lld p90 %lld p99 %lld mean %lld ns\n",
                    algos[which % (size_t)n_algos],
                    conds[c],
                    modes[which / (size_t)n_algos],
                    med[n / 2],
                    med[n * 9 / 10],
-                   med[n * 99 / 100]);
+                   med[n * 99 / 100],
+                   mean(med, n));
             free(med);
         }
     }

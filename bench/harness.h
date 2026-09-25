@@ -82,6 +82,7 @@ struct latency_summary {
     double p99 = 0.0;
     double p999 = 0.0;
     double max = 0.0;
+    double mean = 0.0; // what a burst of swap-ins waits for, per page
 };
 
 [[nodiscard]] latency_summary summarize_latency(std::vector<double> const& values);

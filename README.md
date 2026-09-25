@@ -49,6 +49,18 @@ It prints how much Σ zsmalloc cost the candidate saves, how many pages get chea
 and the difference of the latency percentiles. Every number has a 95% confidence interval from a
 bootstrap that resamples pages, the same pages for both runs.
 
+`quetschn-score` puts memory against time per page, the score of `PLAN.md` §1.1: bytes per page
+against `compress + r * cold decompress`, the means, and which codecs have the lowest `bytes + lambda
+* time` for some lambda. It reads the output of `quetschn-bench-*` with timing, or of
+`tools/zram-vm/run.sh`, where recompression counts too. `r` is the reads per write,
+`quetschn-swap-bursts` measures it on a running machine, and how large the bursts of swap-ins are:
+
+```sh
+./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-fast-lit --corpus corpus/test --cpu 2 >run.txt
+./build/quetschn-score --reads-per-write 0.34 run.txt
+./build/quetschn-swap-bursts --seconds 3600
+```
+
 `quetschn-bench-spike-switch`, `-branchless`, `-zeroskip` and `-slots` run the decoder latency spike
 of `PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
 
