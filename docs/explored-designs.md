@@ -144,9 +144,10 @@ from the spike), `seqlz-fast-lit` (268 and 202), `zstd` 3 (7.8 and 19.9). Withou
 times are 1.6 to 3 us shorter per page, so the rates are higher than in the VM, the order is the
 same. The spike decoders win only for lambda above 590 bytes per us. `zstd -1` is behind
 `seqlz-fast-lit` on both axes, `seqlz-hc-lit` just behind the line from `seqlz-fast-lit` to `zstd` 3
-(978.8 bytes for 13.68 us against 964.6 for 13.77), `lz4hc` 9 far behind. For some reason
-`seqlz-fast-lit` compresses faster than `seqlz-fast` here, 3.96 against 4.78 us on the first dump,
-where in the VM it is 6.48 against 6.02; not explained yet.
+(978.8 bytes for 13.68 us against 964.6 for 13.77), `lz4hc` 9 far behind. `seqlz-fast-lit`
+compresses faster than `seqlz-fast` here, 3.96 against 4.78 us on the first dump, where in the VM it
+is 6.48 against 6.02: the harness times compression by the codec's position in the list, see
+[seqlz-fast-lit by the score](#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8).
 
 The other designs in this file have no codec in the harness any more, only the size, or ticks from
 their own loops: the word model, BΔI, the shuffle, XOR, FSST, BPC, the pair matcher. None of them was
@@ -1166,7 +1167,89 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## seqlz-fast-lit by the score: no budget, offsets in steps of 8
+
+By the score of `PLAN.md` §1.1, `seqlz-fast-lit` now codes the literals of every page where that pays,
+and has two more offset classes for offsets that are multiples of 8. In the kernel that is 4.1% and
+4.8% less memory than before, 44.6 and 66.8 bytes per page, for 0.19 and 0.41 us more per page
+written, 235 and 163 bytes per us. `zstd` 3 is still 3.1 and 17.2 bytes per us further. Four ideas
+were measured, two are kept. Where the dumps disagree, the decision is over both together: the mean
+bytes and time of the two.
+
+Kernel VM, 20 000 pages per dump, one CPU at a fixed 4.5 GHz, means over the pages, first dump /
+second dump, times in us; the first three rows are from one boot per dump, the others from two more,
+where `lzo-rle` came out within 0.03 us of the first:
+
+| | bytes per page | write | cold read | us per page written |
+| --- | --- | --- | --- | --- |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.10 / 5.69 | 2.76 / 2.88 | 6.04 / 6.66 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.39 / 14.39 | 5.31 / 5.56 | 15.20 / 16.28 |
+| `seqlz-fast-lit` before | 1079.9 / 1398.6 | 6.55 / 7.08 | 2.84 / 2.90 | 7.52 / 8.07 |
+| without the budget | 1059.2 / 1333.7 | 6.60 / 7.30 | 2.72 / 2.82 | 7.53 / 8.26 |
+| and offsets in steps of 8, kept | 1035.3 / 1331.8 | 6.78 / 7.50 | 2.72 / 2.87 | 7.71 / 8.48 |
+| and 16 literal tables | 1033.2 / 1323.8 | 7.06 / 7.81 | 2.98 / 3.15 | 8.07 / 8.88 |
+
+**Without the budget: 21 and 65 bytes per page, kept.** The budget of #33 kept the literals of pages
+with many sequences raw, for C3's p99 of the writes. By the score it cost memory for nothing: on the
+first dump the time is the same within the noise, on the second 0.19 us more for 65 bytes, 340 bytes
+per us. The reads get faster, 2.72 against 2.84 and 2.82 against 2.90 us, the pages are smaller.
+`SEQLZ_LIT_BUDGET` is gone.
+
+**Offsets in steps of 8: 24 and 2 bytes per page, kept.** Memory pages are full of 8-byte aligned
+data: of the offsets from 16 to 255 that are not the last one, 72% and 56% are multiples of 8, of those
+from 256 on 62% and 41%. The low 3 bits of an offset carry 1.8 and 2.4 of their 3 bits. The two new
+classes send such offsets divided by 8, in 5 and 9 bits instead of 8 and 12, which is what LZX's
+aligned offset blocks and LZMA's align bits do with a model; here the class is in the token, so the
+decoder still has one table lookup per sequence and one more shift. The token has 3072 symbols instead
+of 2048, the escape needs 12 bits, and its code got shorter, 4 bits instead of 5: 7 more mispredictions
+per page from escaped tokens. Estimated from the offsets alone 17 and 8 bytes per page, measured with
+the zsmalloc model 19.0 and 7.4 (the tables retrained, which alone changes nothing: the trainer gives
+exactly today's tables for today's format), in the kernel 24 and 1.9. In loops over 2000 pages the
+compressor needs 450 to 650 cycles more per page, the decoder 330 to 440: 57 and 110 bytes per us in
+userspace. On the second dump in the kernel it is little, 1.9 bytes for 0.22 us, 8.6 bytes per us,
+below the step to `zstd` 3 there (17). Over both dumps: 13 bytes for 0.20 us, 65 per us, against 10
+for the step from it to `zstd` 3.
+
+**Contexts for the literals, as Brotli's context modeling: 5 to 18 bytes per page, dropped.** Priced
+with ideal code lengths, tables per fixed table and context trained on the resident pages, measured on
+the dumps, on top of the 8 tables per page. 4 classes of context (0, below 32, below 128, the rest):
+the byte before in the page 17.6 and 11.9 bytes per page, the literal before 12.6 and 9.4, the literal
+8 before 8.7 and 9.5. Only the last fits the decoder, which decodes the literals in 8 streams before
+the sequences and so knows neither the byte before in the page nor the literal before in another
+stream. It needs 4 times the decode tables, 64 KiB, and a table choice in each stream's chain. With 2
+classes, zero or not: 10.7 and 9.8, 5.0 and 5.5, 4.8 and 6.1. 16 tables get as much without changing
+the decoder, see below.
+
+**16 literal tables instead of 8: 2 and 8 bytes per page, dropped, at the edge.** In the model 7.3 and
+8.5 bytes, in loops 1300 to 1640 compress cycles more; in the kernel twice the decode tables make the
+cold reads 0.26 and 0.28 us slower: 5.6 and 20 bytes per us, over both dumps 13 against 10 for the step
+from it to `zstd` 3. On the hull only for lambda from 10 to 13, within the noise of one boot, for twice
+the decode tables in the cache of every CPU that reads.
+
+**The 2 newest positions per hash, the longer match wins: 11 bytes per page, dropped.** The same 8 KiB
+table as 2 x 2048 entries, so C5 does not change. In the model 10.9 and 11.1 bytes per page, 4400 to
+4700 compress cycles more, 1 us, the decoder 80 to 140 cycles faster: about 11 bytes per us, better than
+the step to `zstd` 3 on the first dump (3.1), worse on the second (17.2), at the edge over both (10).
+Not measured in the kernel.
+
+**The interleaved harness times compression by position.** `quetschn-bench-interleaved` measured
+`seqlz-fast-lit` without the budget 1.1 us faster than with it, which is impossible, it does more.
+The codec first in `--codecs` compresses up to 1.5 us slower than it does later in the list, also with
+the input flushed before each timed compression, so it is not the input in the cache but where each
+codec's buffers are. The userspace table in "The designs by the score" has this error in its
+compression times, and it explains `seqlz-fast-lit` compressing faster than `seqlz-fast` there. The
+decisions here use `perf stat` over loops of one codec per process, and the kernel VM.
+
+Tests: a page of 512 records of 4 literals and 4 equal bytes, one sequence each, which the budget kept
+raw, now has its literals coded and is byte for byte what `seqlz_encode_coded()` writes for the same
+sequences; the classes of offsets 8, 16, 248, 256, 4088; the reference encoder of the format test
+writes the new classes. Mutations, each caught: raw literals for pages of more than 1500 literals (the
+new test), the encoder without the new classes (the format test and the parser's bound on words), the
+decoder without the shift (every roundtrip).
+
 ## seqlz-fast-lit within C3: a budget for coding the literals
+
+*Gone since the score: see [seqlz-fast-lit by the score](#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8).*
 
 With a budget for the work per page, `seqlz-fast-lit` writes 1.16 and 1.17 times as long as `lz4` at
 p99, within C3, and needs 16.7% and 20.7% less memory than `lzo-rle` on the two dumps. Without the
