@@ -1316,7 +1316,52 @@ Tests: a page with the same skewed literals once in a long run with a few matche
 records of 4 literals and 4 bytes that repeat, one sequence each, 14 * 512 + 2048 over the budget:
 the first is coded, the second not, and `seqlz_encode_coded()` without a budget codes the second.
 Mutation, caught: a weight of 1 instead of 14 per sequence.
+## Recompression, measured, not pursued
+
+*`seqlz-opt` is removed. The project focuses on `seqlz-fast-lit` (#42).* With zram's recompression the
+pages are written with `seqlz-fast-lit`, and idle pages are compressed again with a second algorithm
+later. By the score of `PLAN.md` §1.1 recompression with `seqlz-opt` takes 237 us per page for 59 and
+106 bytes: 0.3 and 0.4 bytes per us, where the step from `seqlz-fast-lit` to `zstd` 3 for every write
+is 3 and 17. At 237 us it would have to save 700 to 4000 bytes per page to compete, more than the
+page. A better ratio does not fix that, only a much cheaper recompression.
+
+Kernel VM, 20 000 pages per dump, one boot per dump, written with `seqlz-fast-lit`, all pages
+recompressed as idle, compacted, then read, means over the pages, first dump / second dump:
+
+| | bytes per page | recompression | cold read |
+| --- | --- | --- | --- |
+| `seqlz-fast-lit` | 1035.3 / 1331.8 | | 2.90 / 3.13 us |
+| recompressed with `seqlz-opt` | 975.9 / 1225.7 | 237 / 237 us | 2.89 / 3.12 us |
+| recompressed with `seqlz-hc-lit` | 1001.1 / 1254.2 | 20 / 23 us | 2.86 / 3.09 us |
+| recompressed with `zstd` 3 | 983.9 / 1184.2 | 14 / 16 us | 3.94 / 4.68 us |
+| `zstd` 3 for every write | 1012.3 / 1197.5 | | 5.18 / 5.36 us |
+
+`zstd` recompresses 16 times as fast as `seqlz-opt`, and gets less memory than `zstd` for every write:
+zram keeps the recompressed page only if it is smaller, so each page gets the smaller of the two. With
+the time of recompression at full weight it is the next step after `seqlz-fast-lit` on the first dump,
+3.5 bytes per us, on the second writing with `zstd` is better (17); at a tenth of the weight it is 30
+and 72 bytes per us. But each read of a recompressed page is about 2.3 us slower, twice as long, and
+recompressed pages are the idle ones: they come back when a program that was not used for a while is
+used again, all at once, while someone waits. The score counts every read the same and cannot see
+that. `seqlz-hc-lit` keeps the reads at `seqlz`'s speed, but saves less than `zstd` on both dumps for
+more time. In loops over 2000 pages the recompressors need, compared with `seqlz-fast-lit`:
+
+| | saved per page | compress cycles | bytes per us |
+| --- | --- | --- | --- |
+| `seqlz-hc-lit` 3 | 37 / 73 | 71 000 / 89 000 | 2.4 / 3.7 |
+| `seqlz-hc-lit` 9 | 41 / 77 | 179 000 / 157 000 | 1.0 / 2.2 |
+| `seqlz-opt` | 67 / 102 | 1 074 000 / 1 058 000 | 0.3 / 0.4 |
+| `zstd` 3 | 33 / 136 | 54 000 / 58 000 | 2.7 / 10.5 |
+| `zstd` 9 | 66 / 179 | 302 000 / 323 000 | 1.0 / 2.5 |
+| `zstd` 19 | 107 / 230 | 3 260 000 / 3 158 000 | 0.15 / 0.3 |
+
+A much better ratio for idle pages would come from outside the codec: neighbouring pages together, 8%
+to 9% with `zstd` in blocks of 16 KiB, or deltas against a similar page, 2.3 to 3.9 points (see the
+ideas of #29 and #31). Both are zram's work.
+
 ## seqlz-opt: a parser that knows seqlz's costs, zstd's memory at lz4's read speed
+
+*Removed in #42, see [Recompression, measured, not pursued](#recompression-measured-not-pursued).*
 
 `seqlz-opt` writes the same format as `seqlz-fast-lit`, with the same decoder, but finds the sequences
 with a parser that prices every choice by the code lengths of the tables. In the kernel it needs 2.6%
