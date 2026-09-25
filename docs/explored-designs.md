@@ -1232,7 +1232,85 @@ Tests: the parser's pages from four kinds of page come back; on pages of words f
 60, where the first match found is often not the cheapest, they are 8.5% smaller than the greedy
 matcher's with the same tables, the bound is 7%. Mutations, each caught: only the longest length of
 each match (5.4%), a chain of 1 (5.6%).
-||||||| 35941e9
+
+## seqlz-opt with a literal table per page: less memory than `zstd`, slower reads, not kept
+
+Built on the branch `feat/page-tables` (#37), not merged: `seqlz-opt` codes the literals of a page with
+a table of its own when that saves at least 16 bytes, otherwise with one of the 8 fixed tables as
+before. After zram's recompression that is 1.4% and 4.1% less memory than before, and 3.8% and 1.8%
+less than `zstd` 3. The price is the reads: 17% and 34% of the pages get their own table, the mean
+decode goes up by 10% and 13%, most of it for building the table. In the kernel p99 of a cold read goes
+from 4809 to 5849 ns and from 5180 to 6020 ns, `lz4` has 4870 and 5080, `zstd` 9360 and 9630. Only
+`seqlz-opt` writes such pages: `seqlz-fast-lit` decodes in 8193 and 7752 cycles per page, 8203 and 7740
+before.
+
+Not kept because the gain is small for what it costs: 1.4% and 4.1%, only on the pages recompression
+reaches, for cold reads above `lz4`'s at p99, about 300 more lines in `seqlz.c`, a Huffman header the
+decoder parses from untrusted input, and 3.3 KB more scratch per CPU on every seqlz device. The
+recompressed pages are idle and rarely read, which speaks for it. The device's own literal tables
+(see the ideas of #29 and #31) gained 1.7 points on the second dump without a slower decoder.
+
+Kernel VM, 20 000 pages per dump, one boot per dump, written with `seqlz-fast-lit`, all pages
+recompressed as idle with `seqlz-opt`, compacted, then read; p50 / p99 in ns, cold is the compressed
+data flushed with another page read before:
+
+| | used by zsmalloc | read, cold | read, warm | recompress per page |
+| --- | --- | --- | --- | --- |
+| first dump: `lz4` | 29 007 872 | 2510 / 4870 | 1951 / 3539 | |
+| recompressed, fixed tables (before) | 19 742 720 | 2770 / 4809 | 2290 / 4100 | about 234 us |
+| recompressed, own tables | 19 472 384 | 2870 / 5849 | 2339 / 4790 | 246 us |
+| `zstd` 3 | 20 246 528 | 5440 / 9360 | 4600 / 7530 | |
+| second dump: `lz4` | 35 090 432 | 2560 / 5080 | 1930 / 3540 | |
+| recompressed, fixed tables (before) | 24 518 656 | 3020 / 5180 | 2480 / 4030 | about 234 us |
+| recompressed, own tables | 23 511 040 | 3259 / 6020 | 2609 / 4710 | 243 us |
+| `zstd` 3 | 23 949 312 | 5749 / 9630 | 4930 / 7430 | |
+
+The rows "before" are from the chart run of the budget and the parser. In the model, 20 000 pages per
+dump, zsmalloc cost: `seqlz-opt` 18 568 409 to 18 291 496 bytes (23.0% to 22.6%) and 23 467 675 to
+22 446 498 (29.3% to 28.0%), `zstd` 3 19 038 669 (23.5%) and 22 775 569 (28.4%). With a histogram and
+Huffman lengths per page, no bytes for the lengths, a first estimate had 22.73% to 22.29% and 28.75%
+to 27.33%: the lengths cost about a third of the gain.
+
+**The format.** Bit 0x40 of the table number (`SEQLZ_LIT_OWN`) says that the page has its own table.
+Behind the header come the code lengths of all 256 bytes, 0 for a byte without a code, then the
+streams as before. The length of byte `b` is coded with a small Huffman code chosen by the length the
+page's fixed table gives `b`: a byte that is short in the fixed table is mostly short in the page's own
+too. The 11 codes for the 11 possible lengths (`seqlz_lit_hdr`) are trained on the resident pages. The
+lengths take 64 bytes per page on average. They are in 4 streams, byte `b`'s in stream `b % 4`, so that
+the decoder has 4 chains of lookups instead of one; the sizes of the first 3 take 3 bytes. The encoder
+builds the code with a heap, limits it to 10 bits and prices the page with it. The decoder builds a
+canonical table from the lengths in its scratch, which grows by 3.3 KB to 7472 bytes; that makes
+`seqlz-fast-lit`'s per-CPU context 15 664 bytes instead of 12 336, still below C5's 16 416.
+
+**The decoder.** Cycles per page decoding, 2000 pages per dump in a loop, the compressed data in the
+L3, one CPU at a fixed 4.5 GHz, median of 5 runs, second dump / first dump:
+
+| variant | cycles per page | memory in the model |
+| --- | --- | --- |
+| before, fixed tables only | 8468 / 7702 | 29.3% / 23.0% |
+| own tables, the lengths in one stream, the table filled symbol by symbol | 11 628 / 9905 | 27.9% / 22.6% |
+| the table filled in canonical order, 64-bit stores for the short codes | 10 805 / 9316 | |
+| the lengths in 4 streams | 10 163 / 8788 | 28.0% / 22.6% |
+| the table counted and sorted in 4 banks of 64 bytes | 9810 / 8625 | 22 436 300 / 18 284 375 bytes |
+| only if it saves 16 bytes | 9585 / 8505 | 22 446 498 / 18 291 496 |
+| 48 bytes | 9382 / 8183 | 22 494 867 / 18 340 748 |
+| 96 bytes | 9164 / 7973 | 22 575 216 / 18 415 240 |
+
+With one stream the lengths were a chain of 256 lookups, each waiting for the length of the one
+before. The banks split the other chain, in the counting sort: neighbours with the same length
+incremented the same counter. zsmalloc's size classes are 16 bytes apart, so a smaller saving mostly
+buys nothing; above 16 bytes every byte saved costs time. Tried and not kept: 8 banks of 32 (9501 /
+8527, within the noise on the first dump and 1.1 KB on the stack of the read), filling the table length
+by length so that the branches predict (9649 / 8444), refilling the short streams of the lengths from
+the rest of the page and checking at the end (9502 / 8401). Measured alone on the pages with their own
+table, the build takes 2917 of 14 836 ticks per page.
+
+Tests on the branch: pages of 24 bytes as likely as each other all get their own table and come back, under 5 bits
+per byte; pages drawn as a fixed table codes them never get one. Mutations, each caught: never an own
+table (0 of 100 pages, 374 180 bytes against the bound of 256 000), the lengths of stream 2 read for
+stream 1 (the decoder rejects the page). The fuzz test decodes the parser's pages with bytes replaced
+and random headers with the bit set; with short headers it found that the decoder read the 3 sizes
+before checking that the lengths have 3 bytes.
 
 ## seqlz-fast-lit: one of 8 literal tables per page
 
