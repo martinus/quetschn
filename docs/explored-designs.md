@@ -2040,6 +2040,39 @@ encoder, so for independent 4 KiB pages both sides reset them for every page.
 * In the same run the 768 KiB resets made the cold decodes of the other codecs slower too (`lz4` cold
   p99 3480 instead of about 2700 ns), so a codec with a large working area needs its own run.
 
+## lz4's format from a compressor for pages, measured, not kept
+
+*Code on the branch `feat/lz4page`, not merged.* The lzo-rle route: no new decoder, a compressor that
+writes `lz4`'s block format for pages, read by the kernel's `LZ4_decompress_safe()` as it is. It gets at
+best `lzo-rle`'s memory, for twice the write time, where `seqlz-fast-lit` writes about as fast as its
+cheapest variant with 25% less memory. What it does bring: the same decoder reads its pages 5% to 10%
+faster than `lz4`'s own, fewer and longer sequences.
+
+`lz4page` is `seqlz_find`'s matcher, the last offset and a hash of 5 bytes, writing `lz4`'s format with
+its rules for the end of a block (the last 5 bytes are literals, the last match starts at least 12
+bytes before the end); `-2way` keeps the 2 newest positions per hash, `-lazy` takes the match at the
+next position where it is longer by more than one byte. Kernel VM, 20 000 pages per dump, one boot per
+dump, means over the pages, first dump / second dump:
+
+| | bytes per page | write | cold read | us per page written |
+| --- | --- | --- | --- | --- |
+| `lz4` | 1450.4 / 1754.5 | 5.24 / 5.73 | 2.48 / 2.52 | 6.09 / 6.59 |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.10 / 5.67 | 2.75 / 2.88 | 6.03 / 6.65 |
+| `lz4page` | 1429.7 / 1737.1 | 6.69 / 7.20 | 2.36 / 2.41 | 7.49 / 8.02 |
+| `lz4page-lazy` | 1404.9 / 1711.5 | 8.16 / 8.65 | 2.30 / 2.33 | 8.94 / 9.45 |
+| `lz4page-2way` and `-lazy` | 1376.3 / 1682.0 | 10.24 / 10.83 | 2.29 / 2.27 | 11.02 / 11.60 |
+| `seqlz-fast-lit` | 1035.3 / 1331.8 | 6.76 / 7.49 | 3.01 / 3.21 | 7.79 / 8.58 |
+
+In the model on 20 000 pages: `lz4` 34.5% and 42.4%, `lzo-rle` 32.4% and 40.2%, `lz4page` 33.9% and
+41.9%, with 2 positions per hash 33.3% and 41.2%, lazy 33.4% and 41.2%, both 32.8% and 40.6%, `lz4hc` 3
+31.3% and 38.6%, `lz4hc` 9 30.7% and 38.1%. In loops over 2000 pages, second dump / first dump: `lz4`
+compresses in 19 400 / 17 500 cycles, `lzo-rle` 18 600 / 16 200, `lz4page` 22 800 / 20 900, both options
+37 100 / 34 800, `lz4hc` 3 70 900 / 63 600; `lz4`'s decoder reads `lz4`'s pages in 5300 / 5200 cycles,
+`lz4page`'s in 4800 / 4900, with both options 4600 / 4700, `lzo-rle`'s decoder its own in 7700 / 6800.
+By the score none of them is on the hull: `lzo-rle` is as fast and smaller, `seqlz-fast-lit` far smaller.
+`lz4`'s format has a byte per token and two per offset; better matches within it end near `lzo-rle`,
+which gets there with a format that spends fewer bytes on short matches.
+
 ## `lz4` with a dictionary
 
 *A baseline, not a candidate. Kept in the comparison because zram supports it.* Details in
@@ -2170,8 +2203,6 @@ one multiply).
   must not get slower.
 * **Word model + a path for runs and long repeats.** Where the word model loses to `lz4` is exactly
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
-* **`lz4` tuned for 4 KiB pages:** offsets limited to the page, word-aligned matches, a parser that
-  does not get stuck. The `lzo-rle` route, the easiest merge.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
