@@ -1725,6 +1725,14 @@ lanes every 25 literals of a stream, before a lane could overflow. One lane per 
 size of each stream is known before it is written. The first version, a histogram and 8 * 256
 products, cost 1400 ns on pages with few literals.
 
+*Pricing a sample, not kept.* Choosing the table from every 4th literal cannot save much: the sizes of
+the streams must be exact before they are written, which is a pass over all literals with the chosen
+table, and that costs about as much as pricing all 8 at once. Measured by replacing the pricing with
+that pass for table 0, compress cycles per page in the loop over 2000 pages: 26 560 against 26 880 on
+the second dump, 24 310 to 24 510 against 24 150 to 24 230 on the first, where table 0 codes other pages.
+The pricing is at most 400 cycles, 1.5% of a write; coding the literals all together is 2700 to 3200
+cycles more than `seqlz-fast`'s 23 660 and 21 430, most of it writing the streams.
+
 **Writing the streams is what costs.** In the kernel, pricing alone costs 30 to 40 ns per write: a
 build that prices and then stores the page with raw literals wrote in 6920 / 10 529 ns, `seqlz-fast`
 in 6890 / 10 490. A build that encoded the streams into a scratch buffer and threw them away wrote as
