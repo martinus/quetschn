@@ -1274,3 +1274,34 @@ TEST_CASE("seqlz: the compressor codes the literals of every page where that pay
         CHECK(std::equal(c.begin(), c.begin() + n_many, e.begin()));
     }
 }
+
+TEST_CASE("seqlz: a page without matches but with literals that code well gets them coded") {
+    auto const t = default_tables(seqlz_default_own);
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(59);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(4096);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    for (int round = 0; round < 50; ++round) {
+        CAPTURE(round);
+        // bytes as table 0 codes them, almost no repeats of 5 bytes: the raw literals are about a page,
+        // their bitstream does not fit next to them in the first page of dst
+        auto const bytes = bytes_as_coded_by(rng, 0);
+        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096);
+        REQUIRE(len > 0);
+        CHECK((c[1] & 0x80) != 0);
+        CHECK(len < 3625); // below zram's huge_class_size, not stored raw
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == bytes);
+        // random bytes do not code: the page stays raw, and whole
+        auto random = std::vector<unsigned char>(4096);
+        for (auto& b : random) {
+            b = static_cast<unsigned char>(rng());
+        }
+        auto const rlen = seqlz_compress_coded(t.get(), st.get(), random.data(), c.data(), 2 * 4096);
+        REQUIRE(rlen > 0);
+        CHECK((c[1] & 0x80) == 0);
+        REQUIRE(seqlz_decode(t.get(), c.data(), rlen, out.data()) == 0);
+        CHECK(out == random);
+    }
+}

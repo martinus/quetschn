@@ -434,9 +434,10 @@ static void store_tail(u8* p, u64 w, unsigned int n) {
 }
 
 /* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
- * literals somewhere that the coded ones do not overwrite. Returns the new length. */
+ * literals somewhere that the coded ones do not overwrite. park is where its sequences' bitstream
+ * already is, behind that, or 0: then it goes behind the first page of d. Returns the new length. */
 static unsigned int
-code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals) {
+code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals, u8* park) {
     const u64 lanes = 0x00ff00ff00ff00ffULL;
     unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, sizes[8];
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
@@ -487,8 +488,15 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
     if (coded + SEQLZ_LIT_HEADER >= n_literals - n_literals / 16U)
         return len;
     seq_bytes = len - SEQLZ_HEADER - n_literals;
-    /* the sequences' bitstream out of the way, behind where it would ever be */
-    __builtin_memmove(d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER + n_literals, seq_bytes);
+    if (!park) {
+        /* the sequences' bitstream out of the way, behind where it would ever be */
+        park = d + SEQLZ_HEADER + SEQLZ_PAGE + 16U;
+        __builtin_memmove(park, d + SEQLZ_HEADER + n_literals, seq_bytes);
+    } else if (SEQLZ_LIT_HEADER + coded + 16U > (unsigned int)(literals - d)) {
+        /* the coded literals, and the stores up to 16 bytes behind them, must stay in front of the
+         * literals they come from; saving 1/16 makes sure of it for a page, this is for the reader */
+        return len;
+    }
     q[0] = d + SEQLZ_LIT_HEADER;
     for (j = 0; j < 8U; j++)
         q[j + 1] = q[j] + sizes[j];
@@ -549,7 +557,7 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
     for (j = 0; j < 8U; j++)
         store16(d + 3 + 2 * j, sizes[j]);
     coded += SEQLZ_LIT_HEADER;
-    __builtin_memmove(d + coded, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, seq_bytes);
+    __builtin_memmove(d + coded, park, seq_bytes);
     return coded + seq_bytes;
 }
 
@@ -562,7 +570,7 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 unsigned int dst_cap) {
     unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap);
 
-    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals);
+    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals, 0);
 }
 
 static unsigned int
@@ -579,18 +587,30 @@ compress_page(const struct seqlz_tables* t, struct seqlz_state* st, const u8* sr
 unsigned int seqlz_compress_coded(
     const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap) {
     u8* const d = dst_v;
-    unsigned int len = compress_page(t, st, src, dst_v, dst_cap), n_lit;
+    unsigned int len = compress_page(t, st, src, dst_v, dst_cap), n_lit, body;
     u8* keep;
 
     if (len == 0)
         return 0;
     n_lit = load16(d);
-    /* the literals to the end of dst, behind where code_literals() puts the sequences' bitstream */
-    if (len - SEQLZ_HEADER + SEQLZ_LIT_HEADER + 8U > SEQLZ_PAGE)
-        return len;
-    keep = d + 2U * SEQLZ_PAGE - n_lit;
-    __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
-    return code_literals(t, d, len, keep, n_lit);
+    body = len - SEQLZ_HEADER;
+    if (body + SEQLZ_LIT_HEADER + 8U <= SEQLZ_PAGE) {
+        /* the literals to the end of dst, behind where code_literals() puts the sequences' bitstream */
+        keep = d + 2U * SEQLZ_PAGE - n_lit;
+        __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
+        return code_literals(t, d, len, keep, n_lit, 0);
+    }
+    /* Raw literals of about a page: those and the bitstream do not fit apart, they go to the end of
+     * dst together, in one move. The coded literals are written from the front, and they are shorter.
+     * Before, such pages stayed raw, also where their literals code well, 1% of the pages of a dump
+     * (docs/explored-designs.md). The move overwrites the raw page's end: where the literals stay raw,
+     * it goes back. */
+    keep = d + 2U * SEQLZ_PAGE - body;
+    __builtin_memmove(keep, d + SEQLZ_HEADER, body);
+    len = code_literals(t, d, len, keep, n_lit, keep + n_lit);
+    if (!(d[1] & 0x80U))
+        __builtin_memmove(d + SEQLZ_HEADER, keep, body);
+    return len;
 }
 
 unsigned int
