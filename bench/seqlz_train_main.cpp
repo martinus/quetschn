@@ -18,12 +18,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <memory>
 #include <random>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -276,7 +278,7 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>] [--blob <file>]\n"
+                 "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc|seqlz|opt] [--level <n>] [--blob <file>]\n"
                  "                           [--lit-sets]\n"
                  "\n"
                  "Counts seqlz's symbols over the matches of --codec (default lz4; seqlz is its own matcher) on\n"
@@ -293,6 +295,7 @@ int main(int argc, char** argv) {
     auto blob = std::string();
     auto const* codec = &quetschn_codec_lz4;
     auto own_matcher = false;
+    auto opt_parser = false; // seqlz_parse_opt() with the tables of lz4hc's matches
     auto want_lit_sets = false;
     int level = QUETSCHN_LEVEL_DEFAULT;
     for (int i = 1; i < argc; ++i) {
@@ -308,6 +311,9 @@ int main(int argc, char** argv) {
             auto const name = std::string_view(argv[++i]);
             if (name == "seqlz") {
                 own_matcher = true;
+            } else if (name == "opt") {
+                own_matcher = true;
+                opt_parser = true;
             } else if (name == "lz4hc") {
                 codec = &quetschn_codec_lz4hc;
             } else if (name != "lz4") {
@@ -354,6 +360,30 @@ int main(int argc, char** argv) {
         auto const matcher =
             own_matcher ? std::string("seqlz") : std::string(codec->name) + " level " + std::to_string(params.level);
         auto sequences = std::vector<quetschn::sequence>(); // of one page, reused
+        auto opt_tables = std::unique_ptr<seqlz_tables, void (*)(seqlz_tables*)>(
+            static_cast<seqlz_tables*>(std::malloc(seqlz_tables_size())), [](seqlz_tables* p) {
+                std::free(p);
+            });
+        if (seqlz_tables_init(opt_tables.get(), &seqlz_default_lz4hc) != 0) {
+            throw std::runtime_error("lz4hc tables");
+        }
+        auto opt_work = std::vector<unsigned char>(seqlz_opt_work_size());
+        // the literal table that codes the whole page in the fewest bits
+        auto opt_set = [](std::span<std::byte const> page) {
+            auto best = 0U;
+            auto best_bits = ~0UL;
+            for (unsigned s = 0; s < SEQLZ_LIT_SETS; ++s) {
+                auto b = 0UL;
+                for (auto x : page) {
+                    b += seqlz_lit_sets[s][static_cast<unsigned char>(x)];
+                }
+                if (b < best_bits) {
+                    best = s;
+                    best_bits = b;
+                }
+            }
+            return best;
+        };
         auto pages = std::size_t{0};
         auto page_lits = std::vector<std::array<double, 256>>(); // per page with more than 64 literals
         for (std::size_t i = 0; i < c.size(); ++i) {
@@ -363,8 +393,10 @@ int main(int argc, char** argv) {
             }
             ++pages;
             if (own_matcher) {
-                // seqlz's own matcher, as seqlz-fast uses it
-                auto const n = seqlz_find(state.get(), src.data(), seqs.data());
+                // seqlz's own matcher, as seqlz-fast uses it, or the parser for recompression
+                auto const n = opt_parser
+                                   ? seqlz_parse_opt(opt_tables.get(), src.data(), opt_work.data(), opt_set(src), seqs.data())
+                                   : seqlz_find(state.get(), src.data(), seqs.data());
                 sequences.clear();
                 for (unsigned k = 0; k < n; ++k) {
                     sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});

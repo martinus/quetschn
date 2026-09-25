@@ -1264,3 +1264,78 @@ TEST_CASE("seqlz: the compressor codes the literals of a page only within SEQLZ_
         CHECK((c[1] & 0x80) != 0);
     }
 }
+
+// A page of words from a vocabulary of 60 random words of 3 to 12 bytes: many overlapping matches, where
+// taking the first one found is often not the cheapest.
+std::vector<unsigned char> words_page(std::mt19937_64& rng) {
+    auto words = std::vector<std::vector<unsigned char>>(60);
+    for (auto& w : words) {
+        w.resize(3 + rng() % 10);
+        for (auto& b : w) {
+            b = static_cast<unsigned char>('a' + rng() % 26);
+        }
+    }
+    auto bytes = std::vector<unsigned char>();
+    while (bytes.size() < 4096) {
+        auto const& w = words[rng() % words.size()];
+        bytes.insert(bytes.end(), w.begin(), w.end());
+        bytes.push_back(' ');
+    }
+    bytes.resize(4096);
+    return bytes;
+}
+
+TEST_CASE("seqlz: the parser priced by the tables, pages come back and are smaller than the greedy matcher's") {
+    auto const t = default_tables(seqlz_default_opt);
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(41);
+    auto work = std::vector<unsigned char>(seqlz_opt_work_size());
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(4096);
+    auto c = std::vector<unsigned char>(2 * 4096);
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto opt_bytes = std::array<std::size_t, 4>{}, greedy_bytes = std::array<std::size_t, 4>{};
+    for (int round = 0; round < 300; ++round) {
+        CAPTURE(round);
+        auto bytes = std::vector<unsigned char>();
+        switch (round % 4) {
+        case 3:
+            bytes = words_page(rng);
+            break;
+        case 0:
+            bytes =
+                page_with_literals_from(rng, 2, bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS)).bytes;
+            break;
+        case 1:
+            bytes = random_seqlz_page(rng, round % 4).bytes;
+            break;
+        default:
+            // runs and repeats: the long matches the parser takes as they are
+            bytes = random_seqlz_page(rng, 2).bytes;
+            std::fill(bytes.begin() + 1000, bytes.begin() + 3000, static_cast<unsigned char>(rng()));
+        }
+        auto const set = static_cast<unsigned>(rng() % SEQLZ_LIT_SETS);
+        auto const len = seqlz_compress_opt(t.get(), bytes.data(), c.data(), 2 * 4096, scratch.data(), work.data(), set);
+        REQUIRE(len > 0);
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == bytes);
+        opt_bytes[static_cast<std::size_t>(round % 4)] += len;
+        // the greedy matcher's sequences, coded with the same tables
+        auto const n = seqlz_find(st.get(), bytes.data(), seq.data());
+        auto lits = std::vector<unsigned char>();
+        auto pos = std::size_t{0};
+        for (unsigned i = 0; i < n; ++i) {
+            lits.insert(lits.end(),
+                        bytes.begin() + static_cast<std::ptrdiff_t>(pos),
+                        bytes.begin() + static_cast<std::ptrdiff_t>(pos + seq[i].literals));
+            pos += seq[i].literals + seq[i].match;
+        }
+        greedy_bytes[static_cast<std::size_t>(round % 4)] +=
+            seqlz_encode_coded(t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), c.data(), 2 * 4096);
+    }
+    // The words: 8.5% smaller with the tables of this commit. Only the longest length of each match,
+    // or a chain of 1, still get 5.4% and 5.6%, so the bound is 7%. The others, mostly random bytes,
+    // about even.
+    CHECK(opt_bytes[3] * 100 < greedy_bytes[3] * 93);
+    CHECK(opt_bytes[0] + opt_bytes[1] + opt_bytes[2] < (greedy_bytes[0] + greedy_bytes[1] + greedy_bytes[2]) * 101 / 100);
+}

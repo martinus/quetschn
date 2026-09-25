@@ -944,3 +944,196 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         return -1;
     return 0;
 }
+
+/* ---- EXPERIMENT: a parser that knows seqlz's costs, for recompression ---- */
+
+/* bits of a length value, see seqlz.h */
+static unsigned int value_bits(const struct value_table* t, unsigned int v) {
+    unsigned int extra, s = seqlz_len_symbol(v, &extra) & (ENC_LEN_SYMBOLS - 1U);
+
+    return (t->enc[s] >> 16 & 15U) + extra;
+}
+
+/* bits of token and raw offset bits by min(ll, 15), ml - 4 up to 31 and the class, per parse */
+struct opt_prices {
+    u8 bits[SEQLZ_LL_CAP + 1][SEQLZ_ML_CAP + 1][4];
+};
+
+static void opt_prices_init(const struct seqlz_tables* t, struct opt_prices* p) {
+    unsigned int ll, m, cls, len;
+
+    for (ll = 0; ll <= SEQLZ_LL_CAP; ll++)
+        for (m = 0; m <= SEQLZ_ML_CAP; m++)
+            for (cls = 0; cls < 4U; cls++) {
+                (void)token_code(t, seqlz_token(ll, m + 4U, cls), &len);
+                p->bits[ll][m][cls] = (u8)(len + SEQLZ_RAW_BITS(cls));
+            }
+}
+
+struct opt_node {
+    u32 price;    /* bits to get here */
+    u16 ll, last; /* literals since the last match, the offset of the last match */
+    u16 len, off; /* how we got here: a match of len at offset off, or len 0 for a literal */
+};
+
+#ifndef OPT_ENOUGH
+#    define OPT_ENOUGH 256U
+#endif
+#ifndef OPT_CHAIN
+#    define OPT_CHAIN 16U
+#endif
+#define OPT_HASH_BITS 14U
+
+/*
+ * The cheapest parse by the code lengths of the tables, forward: at each position the literal and the
+ * matches from a hash chain of 4 bytes and the last offset, each length from 4 to the longest, priced
+ * with the token for the literals since the last match. One state per position, the cheapest.
+ * work: seqlz_opt_work_size() bytes. Returns the length of the page, coded as seqlz_encode_coded().
+ */
+unsigned int seqlz_parse_opt(
+    const struct seqlz_tables* t, const void* src_v, void* work, unsigned int lit_set, struct seqlz_sequence* seq) {
+    const u8* const src = src_v;
+    struct opt_node* const node = work;
+    u16* const head = (u16*)(node + SEQLZ_PAGE + 1);
+    u16* const prev = head + (1U << OPT_HASH_BITS);
+    u16* const back = prev + SEQLZ_PAGE; /* the ends of the matches, from the end of the page */
+    struct opt_prices* const prices = (struct opt_prices*)(back + SEQLZ_MAX_SEQUENCES + 1U); /* not on the stack */
+    const u8* const lit_len = seqlz_lit_sets[lit_set % SEQLZ_LIT_SETS];
+    unsigned int i, n, k;
+
+    opt_prices_init(t, prices);
+    for (i = 0; i <= SEQLZ_PAGE; i++)
+        node[i].price = ~0U;
+    node[0] = (struct opt_node){0, 0, 1, 0, 0};
+    for (i = 0; i < (1U << OPT_HASH_BITS); i++)
+        head[i] = 0xffffU;
+    for (i = 0; i < SEQLZ_PAGE; i++) {
+        const struct opt_node here = node[i];
+        unsigned int c, cand[OPT_CHAIN + 1], nc = 0, best_len = 3;
+
+        /* the literal */
+        c = here.price + lit_len[src[i]];
+        if (c < node[i + 1].price)
+            node[i + 1] = (struct opt_node){c, (u16)(here.ll + 1U), here.last, 0, 0};
+        if (i + 4U > SEQLZ_PAGE)
+            continue;
+        /* candidates: the last offset first, then the chain, only ones that are longer */
+        if (here.last <= i)
+            cand[nc++] = here.last;
+        {
+            u32 h = (load32(src + i) * 2654435761U) >> (32U - OPT_HASH_BITS);
+            unsigned int p = head[h], steps = 0;
+
+            while (p != 0xffffU && steps++ < OPT_CHAIN) {
+                cand[nc++] = i - p;
+                p = prev[p];
+            }
+            prev[i] = head[h];
+            head[h] = (u16)i;
+        }
+        for (k = 0; k < nc; k++) {
+            unsigned int off = cand[k], len, l, cls;
+
+            if (off == 0 || load32(src + i) != load32(src + i - off))
+                continue;
+            len = 4U + count(src + i + 4, src + i - off + 4, src + SEQLZ_PAGE);
+            if (len <= best_len && off != here.last)
+                continue;
+            if (len > best_len)
+                best_len = len;
+            cls = off == here.last ? 0U : off < 16U ? 1U : off < 256U ? 2U : 3U;
+            {
+                /* each length up to the token's cap from the table, above it only the longest */
+                unsigned int llc = here.ll < SEQLZ_LL_CAP ? here.ll : SEQLZ_LL_CAP;
+                unsigned int base = here.price + (here.ll >= SEQLZ_LL_CAP ? value_bits(&t->ll, here.ll - SEQLZ_LL_CAP) : 0U);
+                unsigned int top = len < SEQLZ_ML_CAP + 4U ? len : SEQLZ_ML_CAP + 3U;
+
+                for (l = 4; l <= top; l++) {
+                    c = base + prices->bits[llc][l - 4U][cls];
+                    if (c < node[i + l].price)
+                        node[i + l] = (struct opt_node){c, 0, (u16)off, (u16)l, (u16)off};
+                }
+                if (len >= SEQLZ_ML_CAP + 4U) {
+                    c = base + prices->bits[llc][SEQLZ_ML_CAP][cls] + value_bits(&t->ml, len - 4U - SEQLZ_ML_CAP);
+                    if (c < node[i + len].price)
+                        node[i + len] = (struct opt_node){c, 0, (u16)off, (u16)len, (u16)off};
+                }
+            }
+        }
+        /* A match this long is taken as it is: the positions inside it are only put into the chains,
+         * not searched. Without that, runs cost milliseconds, each position counting the run again
+         * for every candidate. */
+        if (best_len >= OPT_ENOUGH) {
+            unsigned int j, end = i + best_len;
+
+            for (j = i + 1; j < end && j + 4U <= SEQLZ_PAGE; j++) {
+                u32 h = (load32(src + j) * 2654435761U) >> (32U - OPT_HASH_BITS);
+
+                prev[j] = head[h];
+                head[h] = (u16)j;
+            }
+            i = end - 1U;
+        }
+    }
+    /* back from the end: the last sequence is the literals up to the end */
+    n = 0;
+    {
+        unsigned int pos = SEQLZ_PAGE;
+        unsigned int nb = 0;
+
+        while (pos > 0) {
+            if (node[pos].len == 0) {
+                pos--;
+                continue;
+            }
+            back[nb++] = (u16)pos;
+            pos -= node[pos].len;
+        }
+        /* forward: literals between matches */
+        pos = 0;
+        for (k = nb; k-- > 0;) {
+            unsigned int end = back[k], ml = node[end].len, start = end - ml;
+
+            seq[n].literals = (u16)(start - pos);
+            seq[n].match = (u16)ml;
+            seq[n].offset = node[end].off;
+            n++;
+            pos = end;
+        }
+        seq[n].literals = (u16)(SEQLZ_PAGE - pos);
+        seq[n].match = 0;
+        seq[n].offset = 0;
+        n++;
+    }
+    return n;
+}
+
+unsigned int seqlz_compress_opt(const struct seqlz_tables* t,
+                                const void* src_v,
+                                void* dst,
+                                unsigned int dst_cap,
+                                void* scratch,
+                                void* work,
+                                unsigned int lit_set) {
+    const u8* const src = src_v;
+    struct seqlz_sequence* const seq =
+        (struct seqlz_sequence*)((u8*)work + sizeof(struct opt_node) * (SEQLZ_PAGE + 1) +
+                                 sizeof(u16) * ((1U << OPT_HASH_BITS) + SEQLZ_PAGE + SEQLZ_MAX_SEQUENCES + 1U) +
+                                 sizeof(struct opt_prices));
+    u8* const lits = (u8*)(seq + SEQLZ_MAX_SEQUENCES);
+    unsigned int n = seqlz_parse_opt(t, src, work, lit_set, seq), i, pos = 0, n_lit = 0;
+
+    for (i = 0; i < n; i++) {
+        __builtin_memcpy(lits + n_lit, src + pos, seq[i].literals);
+        n_lit += seq[i].literals;
+        pos += seq[i].literals + seq[i].match;
+    }
+    (void)scratch;
+    return seqlz_encode_coded(t, seq, n, lits, n_lit, dst, dst_cap);
+}
+
+__SIZE_TYPE__ seqlz_opt_work_size(void) {
+    return sizeof(struct opt_node) * (SEQLZ_PAGE + 1) +
+           sizeof(u16) * ((1U << OPT_HASH_BITS) + SEQLZ_PAGE + SEQLZ_MAX_SEQUENCES + 1U) + sizeof(struct opt_prices) +
+           sizeof(struct seqlz_sequence) * SEQLZ_MAX_SEQUENCES + SEQLZ_PAGE;
+}

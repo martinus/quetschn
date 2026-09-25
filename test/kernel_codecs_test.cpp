@@ -122,6 +122,7 @@ std::vector<quetschn_codec const*> codecs() {
             &quetschn_codec_seqlz_fast,
             &quetschn_codec_seqlz_hc_lit,
             &quetschn_codec_seqlz_fast_lit,
+            &quetschn_codec_seqlz_opt,
             &quetschn_codec_bytelz};
 }
 

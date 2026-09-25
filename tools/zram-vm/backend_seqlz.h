@@ -6,5 +6,6 @@
 
 extern const struct zcomp_ops backend_seqlz;
 extern const struct zcomp_ops backend_seqlz_lit;
+extern const struct zcomp_ops backend_seqlz_opt;
 
 #endif
