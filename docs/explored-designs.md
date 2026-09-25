@@ -1174,9 +1174,44 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
-## seqlz-fast-lit per page: its own literal table and one of 4 token tables
+## seqlz-fast-lit per page: its own literal table, where it gets the page into a smaller class
 
-`seqlz-fast-lit` gives a page its own literal table where that saves 16 bytes, and codes its tokens with
+*Since #44 only the own literal table: the token tables are gone and a page tries its own table only
+where a sample says it can pay.* Both together wrote 43% slower; that is too much for 2.6% and 6.6% of
+memory. Without the token tables and with the check below, in the kernel VM, one boot per dump, against
+the same code without own tables:
+
+| | bytes per page | write | cold read | us per page written |
+| --- | --- | --- | --- | --- |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.13 / 5.69 | 2.74 / 2.86 | 6.06 / 6.66 |
+| `seqlz-fast-lit`, fixed tables only | 1035.3 / 1331.8 | 6.82 / 7.54 | 2.88 / 3.06 | 7.80 / 8.58 |
+| `seqlz-fast-lit`, own tables, kept | 1032.6 / 1271.2 | 7.70 / 8.65 | 2.84 / 3.13 | 8.66 / 9.72 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.45 / 14.27 | 5.27 / 5.58 | 15.24 / 16.17 |
+
+The writes are 13% and 15% slower, the pages 2.7 and 60.6 bytes smaller, 0.3% and 4.6%: 53 bytes per us
+on the second dump, 3 on the first. The own table is for pages like the second dump's.
+
+**The check.** Every page with 256 literals and more built the whole table before, and most did not use
+it. Now bank 0 of the histogram, every 4th literal, comes first, and Shannon's lengths of that sample
+with 64 bytes for the lengths, about what they take, give an estimate of the page with its own table.
+Only if that is in a smaller class of 16 bytes, zsmalloc's step at these sizes, than the page with the
+fixed table, the rest of the histogram and the table follow; the final choice is the same rule with the
+exact sizes. Compress cycles per page in the loop over 2000 pages, second dump / first dump, and
+what the model loses against no check:
+
+| | cycles more than without own tables | bytes per page more |
+| --- | --- | --- |
+| no check | 7500 / 6700 | |
+| saves 16 bytes with 40 bytes for the lengths | 6500 / 5300 | 2.2 / 2.0 |
+| ... with 64 bytes | 4800 / 3800 | 3.7 / 3.8 |
+| ... with 96 bytes | 4200 / 3000 | 5.4 / 6.5 |
+| smaller class with 64 bytes, kept | 5500 / 3800 | 3.2 / 3.2 |
+| ... with 80 bytes | 4400 / 3600 | 4.1 / 4.7 |
+
+The token tables would need a stream of their own to be chosen without a second pass, which changes the
+format and gives the decoder a second bit reader; not tried.
+
+**Before #44**, in #43, `seqlz-fast-lit` gave a page its own literal table where that saves 16 bytes, and coded its tokens with
 the one of 4 token tables that codes them in the fewest bits. Both were rejected before for the old
 bars: the own table for its cold read p99 (#37), the token tables because the encoder has to know all
 tokens first, which cost the p99 of the writes. By the score of `PLAN.md` §1.1 both pay. In the kernel
@@ -1191,7 +1226,7 @@ Kernel VM, 20 000 pages per dump, one boot per dump, means over the pages, first
 | `seqlz-fast-lit` before | 1035.3 / 1331.8 | 6.89 / 7.65 | 2.87 / 3.03 | 7.86 / 8.68 |
 | own literal tables | 1031.8 / 1274.5 | 8.08 / 8.99 | 2.89 / 3.14 | 9.06 / 10.06 |
 | 4 token tables | 1027.5 / 1299.3 | 8.61 / 9.62 | 2.77 / 2.93 | 9.55 / 10.62 |
-| both, kept | 1008.6 / 1244.4 | 9.87 / 11.02 | 2.85 / 3.09 | 10.84 / 12.08 |
+| both, #43, not kept since #44 | 1008.6 / 1244.4 | 9.87 / 11.02 | 2.85 / 3.09 | 10.84 / 12.08 |
 | `zstd` 3 | 1012.3 / 1197.5 | 13.64 / 14.57 | 5.34 / 5.65 | 15.45 / 16.49 |
 
 Over both dumps: the own tables 30.4 bytes for 1.29 us, 24 bytes per us; the token tables on top of them

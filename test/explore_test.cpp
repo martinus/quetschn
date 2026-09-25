@@ -1339,45 +1339,44 @@ TEST_CASE("seqlz: a page gets its own literal table when no fixed table fits") {
     CHECK(bytes_of < 100 * 4096 * 5 / 8);
 }
 
-#if SEQLZ_TOKEN_SETS > 1
-TEST_CASE("seqlz: a page takes the token table that codes its tokens in the fewest bits") {
+TEST_CASE("seqlz: a page gets its own literal table only where that puts it into a smaller zsmalloc class") {
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
-    auto rng = std::mt19937_64(47);
+    auto rng = std::mt19937_64(53);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
-    auto out = std::vector<unsigned char>(4096);
     auto c = std::vector<unsigned char>(2 * 4096);
-    auto one = std::vector<unsigned char>(2 * 4096);
-    auto sets = std::array<int, SEQLZ_TOKEN_SETS>{};
-    auto bytes_sets = std::size_t{0}, bytes_one = std::size_t{0};
-    for (int round = 0; round < 400; ++round) {
+    auto f = std::vector<unsigned char>(2 * 4096);
+    auto own = 0, smaller = 0;
+    for (int round = 0; round < 2000; ++round) {
         CAPTURE(round);
-        auto const p = random_seqlz_page(rng, round % 4);
-        auto const len = seqlz_compress_coded(t.get(), st.get(), p.bytes.data(), c.data(), 2 * 4096, scratch.data());
-        REQUIRE(len > 0);
-        ++sets[((c[0] | c[1] << 8) & 0x7fff) >> 13];
-        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
-        CHECK(out == p.bytes);
-        // with token table 0 only, as seqlz_encode_coded() writes the matcher's sequences: never fewer bytes
-        auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
-        auto const n = seqlz_find(st.get(), p.bytes.data(), seq.data());
-        auto lits = std::vector<unsigned char>();
-        auto pos = std::size_t{0};
-        for (unsigned i = 0; i < n; ++i) {
-            lits.insert(lits.end(),
-                        p.bytes.begin() + static_cast<std::ptrdiff_t>(pos),
-                        p.bytes.begin() + static_cast<std::ptrdiff_t>(pos + seq[i].literals));
-            pos += seq[i].literals + seq[i].match;
+        // literals from a fixed table, a few bytes of them replaced by others: from no gain at all to
+        // some, so that many pages are close to a class boundary
+        auto bytes = bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS);
+        auto const other = static_cast<unsigned char>(rng());
+        for (auto& b : bytes) {
+            if (rng() % 64 < static_cast<unsigned>(round % 32)) {
+                b = other;
+            }
         }
-        auto const len_one =
-            seqlz_encode_coded(t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), one.data(), 2 * 4096);
-        CHECK(len <= len_one);
-        bytes_sets += len;
-        bytes_one += len_one;
+        for (int k = 0; k < 8; ++k) {
+            auto const n = 150 + rng() % 100;
+            auto const to = 1 + rng() % (4096 - n);
+            auto const from = rng() % to;
+            for (std::size_t i = 0; i < n; ++i) {
+                bytes[to + i] = bytes[from + i];
+            }
+        }
+        auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096, scratch.data());
+        auto const len_fixed = seqlz_compress_coded(t.get(), st.get(), bytes.data(), f.data(), 2 * 4096, nullptr);
+        REQUIRE(len > 0);
+        REQUIRE(len_fixed > 0);
+        if ((c[1] & 0x80) != 0 && (c[2] & SEQLZ_LIT_OWN) != 0) {
+            ++own;
+            CHECK((len + 15) / 16 < (len_fixed + 15) / 16);
+        }
+        smaller += len < len_fixed;
     }
-    // not always table 0
-    CAPTURE(sets);
-    CHECK(sets[0] < 400);
-    CHECK(bytes_sets < bytes_one);
+    CHECK(own > 200);
+    // own tables only where they save: never a page that is larger for it
+    CHECK(smaller == own);
 }
-#endif

@@ -276,83 +276,6 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
     return sorted;
 }
 
-#if SEQLZ_TOKEN_SETS > 1
-// The token tables 1 to SEQLZ_TOKEN_SETS - 1, one of them or the fixed table 0 chosen per page:
-// k-means over the pages' tokens, each page to the table that codes them in the fewest bits, each
-// table from its pages. Table 0 stays the table of all pages, which the codecs with one table use.
-std::vector<std::vector<unsigned char>> token_sets(std::vector<std::vector<unsigned short>> const& pages,
-                                                   std::vector<unsigned char> const& fixed) {
-    auto const k_sets = std::size_t{SEQLZ_TOKEN_SETS};
-    auto bits = [](std::vector<unsigned char> const& l, std::vector<unsigned short> const& p) {
-        auto b = 0.0;
-        for (auto t : p) {
-            b += l[t] != 0 ? l[t] : l[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS;
-        }
-        return b;
-    };
-    // start: the pages by their share of tokens that repeat the last offset (class 0)
-    auto order = std::vector<std::size_t>(pages.size());
-    auto share = std::vector<double>(pages.size());
-    for (std::size_t i = 0; i < pages.size(); ++i) {
-        order[i] = i;
-        auto r = 0.0;
-        for (auto t : pages[i]) {
-            r += t < (1U << (SEQLZ_LL_BITS + SEQLZ_ML_BITS)) ? 1.0 : 0.0;
-        }
-        share[i] = pages[i].empty() ? 0.0 : r / static_cast<double>(pages[i].size());
-    }
-    std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {
-        return share[a] < share[b];
-    });
-    auto assign = std::vector<std::size_t>(pages.size());
-    for (std::size_t r = 0; r < order.size(); ++r) {
-        assign[order[r]] = 1 + r * (k_sets - 1) / order.size();
-    }
-    auto sets = std::vector<std::vector<unsigned char>>(k_sets, fixed);
-    for (int round = 0; round < 8; ++round) {
-        for (std::size_t k = 1; k < k_sets; ++k) {
-            auto counts = std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 0.0);
-            auto used = std::size_t{0};
-            for (std::size_t i = 0; i < pages.size(); ++i) {
-                if (assign[i] == k) {
-                    ++used;
-                    for (auto t : pages[i]) {
-                        counts[t] += 1;
-                    }
-                }
-            }
-            if (used > 0) {
-                sets[k] = token_lengths(counts);
-            }
-        }
-        auto total = 0.0;
-        auto per_set = std::vector<std::size_t>(k_sets);
-        for (std::size_t i = 0; i < pages.size(); ++i) {
-            auto best = bits(sets[0], pages[i]);
-            assign[i] = 0;
-            for (std::size_t k = 1; k < k_sets; ++k) {
-                auto const b = bits(sets[k], pages[i]);
-                if (b < best) {
-                    best = b;
-                    assign[i] = k;
-                }
-            }
-            total += best;
-            ++per_set[assign[i]];
-        }
-        std::fprintf(stderr,
-                     "round %d: %.1f token bytes per page, pages per table",
-                     round,
-                     total / 8 / static_cast<double>(pages.size()));
-        for (auto n : per_set) {
-            std::fprintf(stderr, " %zu", n);
-        }
-        std::fprintf(stderr, "\n");
-    }
-    return {sets.begin() + 1, sets.end()};
-}
-#endif
-
 void usage() {
     std::fprintf(stderr,
                  "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>] [--blob <file>]\n"
@@ -362,8 +285,7 @@ void usage() {
                  "every page. Prints the\n"
                  "code lengths as a C initializer, or writes them to --blob for zram's dictionary parameter.\n"
                  "--lit-sets prints the literal tables of explore/seqlz_lit_sets.c instead, from the pages with\n"
-                 "more than 64 literals. --token-sets prints the token tables 1 to 3 of explore/seqlz_token_sets.c,\n"
-                 "with --codec seqlz.\n");
+                 "more than 64 literals.\n");
 }
 
 } // namespace
@@ -374,7 +296,6 @@ int main(int argc, char** argv) {
     auto const* codec = &quetschn_codec_lz4;
     auto own_matcher = false;
     auto want_lit_sets = false;
-    auto want_token_sets = false;
     int level = QUETSCHN_LEVEL_DEFAULT;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
@@ -383,8 +304,6 @@ int main(int argc, char** argv) {
             base = argv[++i];
         } else if (arg == "--lit-sets") {
             want_lit_sets = true;
-        } else if (arg == "--token-sets") {
-            want_token_sets = true;
         } else if (arg == "--blob" && has_value) {
             blob = argv[++i];
         } else if (arg == "--codec" && has_value) {
@@ -439,7 +358,6 @@ int main(int argc, char** argv) {
         auto sequences = std::vector<quetschn::sequence>(); // of one page, reused
         auto pages = std::size_t{0};
         auto page_lits = std::vector<std::array<double, 256>>(); // per page with more than 64 literals
-        auto page_tokens = std::vector<std::vector<unsigned short>>();
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const src = c.page(i);
             if (quetschn::analyze_page(src).same_filled) {
@@ -480,11 +398,9 @@ int main(int argc, char** argv) {
             // the same symbols and the same repeat offset as seqlz_encode()
             auto last = 1U;
             auto extra = 0U;
-            page_tokens.emplace_back();
             for (auto const& s : sequences) {
                 auto const cls = s.match == 0 ? 0U : seqlz_off_class(s.offset, last, &extra);
                 token[seqlz_token(s.literals, s.match, cls)] += 1;
-                page_tokens.back().push_back(static_cast<unsigned short>(seqlz_token(s.literals, s.match, cls)));
                 if (s.literals >= SEQLZ_LL_CAP) {
                     ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
                 }
@@ -523,27 +439,6 @@ int main(int argc, char** argv) {
 
         auto lengths = seqlz_lengths{};
         auto const l_token = token_lengths(token);
-        if (want_token_sets) {
-#if SEQLZ_TOKEN_SETS > 1
-            auto const sets = token_sets(page_tokens, l_token);
-            std::printf("/* tables 1 to %u, trained on %zu pages of %s, %s */\n{\n",
-                        SEQLZ_TOKEN_SETS - 1,
-                        pages,
-                        base.c_str(),
-                        matcher.c_str());
-            for (auto const& l : sets) {
-                std::printf("    {");
-                for (std::size_t k = 0; k < l.size(); ++k) {
-                    std::printf("%s%u", k == 0 ? "" : ", ", l[k]);
-                }
-                std::printf("},\n");
-            }
-            std::printf("}\n");
-            return 0;
-#else
-            throw std::runtime_error("one token table on this page size");
-#endif
-        }
         auto const l_ll = code_lengths(ll, SEQLZ_MAX_BITS);
         auto const l_ml = code_lengths(ml, SEQLZ_MAX_BITS);
         std::copy(l_token.begin(), l_token.end(), lengths.token);

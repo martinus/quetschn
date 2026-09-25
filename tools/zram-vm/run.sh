@@ -25,9 +25,9 @@ cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/backend_bytelz.c" "$he
     "$here/backend_seqlz_hc.c" "$here/backend_seqlz_hc.h" \
     "$here/../../explore/seqlz.c" "$here/../../explore/seqlz.h" "$here/../../explore/bytelz.c" \
     "$here/../../explore/bytelz.h" "$here/../../explore/page_lz.h" "$here/../../explore/seqlz_default_tables.c" \
-    "$here/../../explore/seqlz_lit_sets.c" "$here/../../explore/seqlz_token_sets.c" "$z/"
+    "$here/../../explore/seqlz_lit_sets.c" "$z/"
 sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"\n#include "backend_bytelz.h"\n#include "backend_seqlz_hc.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\t\&backend_bytelz,\n\t\&backend_seqlz_hc,\n\t\&backend_seqlz_hc_lit,\n\tNULL|' "$z/zcomp.c"
-printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o seqlz_token_sets.o backend_bytelz.o bytelz.o backend_seqlz_hc.o\n' >>"$z/Makefile"
+printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o backend_bytelz.o bytelz.o backend_seqlz_hc.o\n' >>"$z/Makefile"
 printf 'CFLAGS_seqlz.o += -O3\nCFLAGS_bytelz.o += -O3\n' >>"$z/Makefile"
 make -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \
