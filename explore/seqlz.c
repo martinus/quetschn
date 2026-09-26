@@ -726,7 +726,7 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
         return 0;
     lt = t->lit[s[2]].decode;
     for (k = 0; k < sizeof(t->lit[0].decode); k += 64)
-        __builtin_prefetch((const u8*)lt + k);
+        PAGE_LZ_PREFETCH((const u8*)lt + k);
     for (k = 0; k < 8U; k++) {
         sz[k] = load16(s + 3 + 2 * k);
         start[k] = q + total;
@@ -797,11 +797,11 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         const u8* q;
 
         for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
-            __builtin_prefetch(q);
+            PAGE_LZ_PREFETCH(q);
         for (q = (const u8*)t->ll.decode; q < (const u8*)(t->ll.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
-            __builtin_prefetch(q);
+            PAGE_LZ_PREFETCH(q);
         for (q = (const u8*)t->ml.decode; q < (const u8*)(t->ml.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
-            __builtin_prefetch(q);
+            PAGE_LZ_PREFETCH(q);
     }
     n_lit = load16(s);
     if (n_lit & 0x8000U) {
