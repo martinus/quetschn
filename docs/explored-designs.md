@@ -1194,6 +1194,27 @@ Tests: pages drawn as table 0 codes them, almost without repeats, are coded and 
 `huge_class_size`; random pages stay raw and whole. Mutations, each caught: the old limit (all 50 pages
 raw, above 3625 bytes), no move back where the literals stay raw (the random page does not decode).
 
+## seqlz-fast-lit faster at the same memory: five tries, none kept
+
+Where the time goes, in loops over 2000 pages of the second dump: compressing 26 900 cycles per page,
+77% of it in the matcher with the sequences' encoder inlined, 19% in coding the literals; `lz4` needs
+19 400, `seqlz-fast` without coded literals 23 700. Decoding 9300 cycles, 31 700 instructions and 147
+mispredictions per page, `lz4` 5300, 13 500 and 95; 18% of it decoding the literals, the rest the
+sequences. The matcher waits for its chain of hash, table and candidate; the decoder is bound by its
+instructions, at 3.4 per cycle. Each try against the same code without it, same bytes out:
+
+| try | what | result |
+| --- | --- | --- |
+| the matcher's way back into the literals 8 bytes at a time | a load of 8 bytes before the position and before the match, XOR, count the zero bytes, instead of a loop byte by byte | 1400 to 1800 cycles more per page, 7000 instructions more, no fewer mispredictions: the first byte usually differs, and that branch predicts |
+| the literals raw where coding keeps the page in its zsmalloc class | saves the writing of the streams and the decoding | 35 and 59 of 10 695 and 11 991 coded pages: the 1/16 the coding has to save already keeps them out |
+| the literal table from a sample | see "The encoder prices all 8 tables at once" | at most 400 cycles, 1.5% of a write |
+| the token table's entries as 32 bits, everything the decoder needs precomputed | raw bits and shift of the offset, lengths, a new offset, a flag for the fast path; 8 KiB instead of 4 | 9545 against 9289 cycles to decode |
+| the sequences in batches of 32, zstd's way | first the bits of 32 sequences into an array, then their copies | 12 190 against 9280 and 11 060 against 8430 cycles: in one loop the copies run while the chain of the bits waits |
+
+The codec is at its knee for this design: what is left takes a design change, e.g. fewer bits to
+decode per sequence, or an architecture where the balance is different (arm64's little cores, not
+measured yet).
+
 ## Per page: its own literal table and one of 4 token tables, measured, not kept
 
 *Built in #43, cut down in #44 (closed without merging), reverted in #45.* Both ways make the writes too
