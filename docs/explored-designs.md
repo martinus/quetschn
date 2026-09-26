@@ -1194,6 +1194,29 @@ Tests: pages drawn as table 0 codes them, almost without repeats, are coded and 
 `huge_class_size`; random pages stay raw and whole. Mutations, each caught: the old limit (all 50 pages
 raw, above 3625 bytes), no move back where the literals stay raw (the random page does not decode).
 
+## A kernel built with clang: seqlz-fast-lit's cold reads 10% slower, p99 above lz4's
+
+Android builds its kernels with clang. `tools/zram-vm/run.sh` takes `LLVM=1` for that. Kernel VM, 20 000
+pages per dump, one boot per dump and compiler, the same code, gcc 16.2.1 / clang 22.1.8, ns:
+
+| | cold read p50 | cold read p99 | cold read mean | write p50 | write p99 |
+| --- | --- | --- | --- | --- | --- |
+| first dump: `lz4` | 2520 / 2480 | 4880 / 4629 | 2574 / 2503 | 5440 / 5450 | 9180 / 9330 |
+| `lzo-rle` | 2710 / 2729 | 5550 / 5010 | 2832 / 2778 | 5179 / 5430 | 9500 / 10 331 |
+| `zstd` 3 | 5460 / 6430 | 9650 / 12 240 | 5302 / 6262 | 14 220 / 13 891 | 23 851 / 23 730 |
+| `seqlz-fast-lit` | 2990 / 3300 | 4960 / 6070 | 2999 / 3308 | 7101 / 6899 | 12 540 / 12 049 |
+| second dump: `lz4` | 2550 / 2489 | 4890 / 4720 | 2580 / 2526 | 5970 / 5980 | 9461 / 9610 |
+| `lzo-rle` | 2740 / 2789 | 5629 / 5451 | 2886 / 2899 | 5820 / 6130 | 9720 / 10 540 |
+| `zstd` 3 | 5720 / 5910 | 9449 / 10 000 | 5504 / 5678 | 14 640 / 14 891 | 23 480 / 24 450 |
+| `seqlz-fast-lit` | 3230 / 3540 | 5181 / 6539 | 3186 / 3578 | 7970 / 7729 | 12 699 / 12 219 |
+
+With gcc, `seqlz-fast-lit`'s cold p99 is about `lz4`'s; with clang it is 22% and 26% above its gcc p99
+and 1.4 and 1.8 us above `lz4`'s, which clang makes a bit faster. Its writes get 3% faster. In
+userspace, warm, with the kernel's flags for each compiler, decoding takes the same with both (9301
+against 9335 cycles on the second dump), `lz4` 8% less with clang: so it is the cold reads, or a
+flag of the kernel's build that the userspace build does not have. Not explained yet; for C2 clang
+is the compiler that counts.
+
 ## seqlz-fast-lit faster at the same memory: five tries, none kept
 
 Where the time goes, in loops over 2000 pages of the second dump: compressing 26 900 cycles per page,
@@ -2234,5 +2257,7 @@ one multiply).
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
+* **Why `seqlz-fast-lit` reads cold 10% slower from a kernel built with clang**, p99 22% to 26%, see
+  "A kernel built with clang". Android's kernels are built with clang.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently; `bytelz` and `seqlz-fast` stay for it.
