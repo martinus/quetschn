@@ -1194,7 +1194,7 @@ Tests: pages drawn as table 0 codes them, almost without repeats, are coded and 
 `huge_class_size`; random pages stay raw and whole. Mutations, each caught: the old limit (all 50 pages
 raw, above 3625 bytes), no move back where the literals stay raw (the random page does not decode).
 
-## A kernel built with clang: seqlz-fast-lit's cold reads 10% slower, p99 above lz4's
+## A kernel built with clang dropped the decoder's prefetches: fixed, p99 back at gcc's
 
 Android builds its kernels with clang. `tools/zram-vm/run.sh` takes `LLVM=1` for that. Kernel VM, 20 000
 pages per dump, one boot per dump and compiler, the same code, gcc 16.2.1 / clang 22.1.8, ns:
@@ -1210,12 +1210,48 @@ pages per dump, one boot per dump and compiler, the same code, gcc 16.2.1 / clan
 | `zstd` 3 | 5720 / 5910 | 9449 / 10 000 | 5504 / 5678 | 14 640 / 14 891 | 23 480 / 24 450 |
 | `seqlz-fast-lit` | 3230 / 3540 | 5181 / 6539 | 3186 / 3578 | 7970 / 7729 | 12 699 / 12 219 |
 
-With gcc, `seqlz-fast-lit`'s cold p99 is about `lz4`'s; with clang it is 22% and 26% above its gcc p99
-and 1.4 and 1.8 us above `lz4`'s, which clang makes a bit faster. Its writes get 3% faster. In
-userspace, warm, with the kernel's flags for each compiler, decoding takes the same with both (9301
-against 9335 cycles on the second dump), `lz4` 8% less with clang: so it is the cold reads, or a
-flag of the kernel's build that the userspace build does not have. Not explained yet; for C2 clang
-is the compiler that counts.
+With gcc, `seqlz-fast-lit`'s cold p99 was about `lz4`'s; with clang it was 22% and 26% above its gcc
+p99 and 1.4 and 1.8 us above `lz4`'s. Its writes got 3% faster.
+
+The logs had the reason: with only the compressed data flushed, the backend's prefetch of it (mode 8)
+takes gcc's p99 on the first dump from 5530 ns down to 4520 ns, with clang modes 0, 2 and 8 all gave
+5690 to 5701 ns. The clang kernel had no prefetch at all, 0 `prefetcht0` in `seqlz.o` against 36 with
+gcc. On x86-64 the kernel's `prefetch()` is `__builtin_prefetch`, only 32-bit x86 has its own inline
+assembly, and the kernel builds with `-mno-sse`. Without SSE, clang drops `__builtin_prefetch` without a
+warning, gcc still emits `prefetcht0`. That is not only ours: the whole gcc `vmlinux` has 811
+`prefetcht0`, the clang one 141, about 100 of them ours after the fix. arm64 has its own `prefetch()`
+in inline assembly, so Android phones should not have this; x86-64 kernels built with clang have it,
+e.g. ChromeOS.
+
+`PAGE_LZ_PREFETCH` in `explore/page_lz.h` is `prefetcht0` in inline assembly on x86-64 without SSE,
+and `__builtin_prefetch` everywhere else. The decoder, the backends and `zram-prefetch.patch` use it,
+and the `kernel_seqlz_prefetch` test fails when the kernel-flags build of `seqlz.c` has no
+`prefetcht0`. With it, ns, gcc / clang, one boot each:
+
+| `seqlz-fast-lit` | warm p50 | cold read p50 | cold read p99 | cold read mean |
+| --- | --- | --- | --- | --- |
+| first dump, before | 2470 / 2590 | 2990 / 3300 | 4960 / 6070 | 2999 / 3308 |
+| first dump, prefetch fixed | 2440 / 2539 | 2960 / 3091 | 4899 / 4990 | 2976 / 3074 |
+| second dump, before | 2680 / 2810 | 3230 / 3540 | 5181 / 6539 | 3186 / 3578 |
+| second dump, prefetch fixed | 2680 / 2760 | 3230 / 3320 | 5180 / 5220 | 3186 / 3263 |
+
+clang's p99 is within 40 to 91 ns of gcc's now, gcc's own numbers did not move. At cold p50
+`seqlz-fast-lit` is still 131 and 90 ns slower with clang, while `lz4` is 39 and 69 ns faster with it.
+Three boots with gcc gave 2990, 2960 and 2980 ns for `seqlz-fast-lit`'s cold p50 on the first dump, but
+one boot of `zstd` with clang was 18% slower than the next with nothing of `zstd` changed, so a single
+boot can be off.
+
+Where the last 90 to 131 ns go: `perf kvm` on the host, `cycles:G` with a fixed period of 50 000,
+`nokaslr` for the guest's symbols, one boot per compiler with only `seqlz-fast-lit`, 1.44 million
+decodes each, half of them the untimed reads before. `seqlz_decode_scratch` takes 2.6% more cycles with
+clang, 93 cycles or 21 ns per decode; `decode_literals` takes the same. The rest is the kernel's own
+read path: with clang `lz4`'s decoder is about 100 ns faster in userspace, 5366 against 4897 cycles,
+but its reads in the VM only 39 to 69 ns, so the path around the decoder loses 30 to 60 ns with clang,
+for every codec.
+
+Tried for the 21 ns: clang keeps the table prefetches of `seqlz_decode_scratch` as loops, where their
+samples were its largest extra cost; with a count known at compile time it unrolls all 96. Cold mean
+3121 and 3285 ns against 3074 and 3263 ns with the loops: no gain, not kept.
 
 ## seqlz-fast-lit faster at the same memory: five tries, none kept
 
@@ -2257,7 +2293,9 @@ one multiply).
   where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
-* **Why `seqlz-fast-lit` reads cold 10% slower from a kernel built with clang**, p99 22% to 26%, see
-  "A kernel built with clang". Android's kernels are built with clang.
+* **The last 21 ns of `seqlz_decode_scratch` with clang**, see "A kernel built with clang". The hot
+  loop in userspace is as fast with both compilers, it only shows in the VM.
+* **`prefetch()` in x86-64 kernels built with clang**: dropped everywhere, 811 `prefetcht0` in the gcc
+  `vmlinux` against 141. For the kernel, not for this repository.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently; `bytelz` and `seqlz-fast` stay for it.
