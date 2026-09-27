@@ -23,6 +23,14 @@ typedef unsigned char u8;
 
 #define ALWAYS_INLINE inline __attribute__((always_inline))
 
+/* Prefetch for reading. Without SSE, as the kernel builds x86-64, clang drops __builtin_prefetch and
+ * the kernel's prefetch() with it, gcc does not. Every x86-64 CPU has prefetcht0. */
+#if defined(__x86_64__) && !defined(__SSE__)
+#    define PAGE_LZ_PREFETCH(p) __asm__("prefetcht0 %0" : : "m"(*(const char*)(p)))
+#else
+#    define PAGE_LZ_PREFETCH(p) __builtin_prefetch(p)
+#endif
+
 static inline void store16(u8* p, unsigned int v) {
     p[0] = (u8)v;
     p[1] = (u8)(v >> 8);

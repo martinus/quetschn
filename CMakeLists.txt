@@ -96,6 +96,12 @@ if(BUILD_TESTING)
                                                     quetschn_kernel_explore quetschn_kernel_explore_zstd
                                                     quetschn_kernel_seqlz)
         target_compile_definitions(quetschn_test PRIVATE QUETSCHN_HAVE_KERNEL_CODECS)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+            add_test(NAME kernel_seqlz_prefetch
+                     COMMAND ${CMAKE_COMMAND} -DOBJDUMP=${CMAKE_OBJDUMP}
+                             "-DOBJECTS=$<JOIN:$<TARGET_OBJECTS:quetschn_kernel_seqlz>,|>"
+                             -P ${CMAKE_SOURCE_DIR}/cmake/check_prefetch.cmake)
+        endif()
     endif()
     add_test(NAME quetschn_test COMMAND quetschn_test)
 endif()

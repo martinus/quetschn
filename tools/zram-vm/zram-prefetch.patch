@@ -25,7 +25,7 @@
  static int read_compressed_page(struct zram *zram, struct page *page,
  				unsigned long index)
  {
-@@ -2116,6 +2126,22 @@
+@@ -2116,6 +2126,23 @@
  	src = zs_obj_read_begin(zram->mem_pool, handle, size,
  				zstrm->local_copy);
  	dst = kmap_local_page(page);
@@ -41,9 +41,10 @@
 +		if (what & 1)
 +			for (p = (char *)dst; p < (char *)dst + PAGE_SIZE; p += L1_CACHE_BYTES)
 +				prefetchw(p);
++		/* not prefetch(): on x86-64 that is __builtin_prefetch, which clang drops without SSE */
 +		if (what & 2)
 +			for (p = (char *)src + L1_CACHE_BYTES; p < (char *)src + size; p += L1_CACHE_BYTES)
-+				prefetch(p);
++				asm("prefetcht0 %0" : : "m"(*p));
 +	}
  	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
  	kunmap_local(dst);
