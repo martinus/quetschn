@@ -160,9 +160,10 @@ public:
         : m_codec(codec)
         , m_slot_size(4 * page_size)
         , m_compressed(block_pages * 4 * page_size + page_size)
-        , m_restored(2 * page_size) {
-        m_params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
-        m_params.dict_size = opts.dict.size();
+        , m_restored(2 * page_size)
+        , m_dict(opts.dict) {
+        m_params.dict = m_dict.empty() ? nullptr : m_dict.data();
+        m_params.dict_size = m_dict.size();
         m_params.level = opts.level;
         m_params.page_size = static_cast<unsigned int>(page_size);
         if (codec.setup_params(&m_params) != 0) {
@@ -246,6 +247,9 @@ private:
     std::vector<std::byte> m_compressed;
     std::byte* m_compressed_base = nullptr;
     std::vector<std::byte> m_restored;
+    // zram's lz4 and zstd keep pointers into the dictionary, so it lives as long as the params. A copy,
+    // because the caller's options may be gone before the instance is.
+    std::vector<std::byte> m_dict;
 };
 
 } // namespace
