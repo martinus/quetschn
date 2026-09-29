@@ -142,8 +142,25 @@ int pad_decompress(
     return src_len < 8 ? -1 : trim_decompress(p, s, src, src_len - 8, dst, dst_len);
 }
 
+// Like zram's lz4 and zstd, uses the dictionary by reference on every page, not a copy made in
+// setup_params. Fails when the bytes changed: the tests pass a dictionary of dict_byte only.
+constexpr unsigned char dict_byte = 0xa5;
+
+int dict_compress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    auto const* d = static_cast<unsigned char const*>(p->dict);
+    for (std::size_t i = 0; i < p->dict_size; ++i) {
+        if (d[i] != dict_byte) {
+            return -1;
+        }
+    }
+    return trim_compress(p, s, src, src_len, dst, dst_len);
+}
+
 quetschn_codec const trim_codec{
     "trim", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, trim_decompress};
+quetschn_codec const dict_codec{
+    "dict", trim_setup_params, trim_release_params, trim_create, trim_destroy, dict_compress, trim_decompress};
 quetschn_codec const pad_codec{
     "pad", trim_setup_params, trim_release_params, trim_create, trim_destroy, pad_compress, pad_decompress};
 quetschn_codec const broken_codec{
@@ -251,6 +268,19 @@ TEST_CASE("harness: level and dictionary reach the codec, and its memory is repo
         (void)run_codec(c, trim_codec, model, untimed(10)), doctest::Contains("zram rejects"), std::invalid_argument);
     CHECK_THROWS_WITH_AS(
         (void)run_codec(c, failing_create_codec, model, untimed()), doctest::Contains("create failed"), std::runtime_error);
+}
+
+TEST_CASE("harness: the dictionary stays valid for the whole run") {
+    // zram keeps the dictionary for as long as the device lives, and lz4 and zstd read it on every page.
+    // glibc writes its free list into freed memory and ASan reports the read, so a dictionary freed
+    // after setup_params fails here with both.
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100), page_with_prefix(200)});
+    auto const dict = std::vector<std::byte>(1000, std::byte{dict_byte});
+
+    CHECK(run_codec(c, dict_codec, model, untimed(QUETSCHN_LEVEL_DEFAULT, dict)).pages.size() == 2);
+    auto const codecs = std::array<quetschn_codec const*, 2>{&dict_codec, &dict_codec};
+    CHECK(quetschn::run_interleaved(c, codecs, model, untimed(QUETSCHN_LEVEL_DEFAULT, dict)).size() == 2);
 }
 
 TEST_CASE("harness: what was set up is released, also when the run fails") {
