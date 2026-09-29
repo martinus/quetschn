@@ -2171,8 +2171,25 @@ which gets there with a format that spends fewer bytes on short matches.
 * The dictionary gains 2.72% on the pages it helps and loses 0.35% on the others. In the extreme case
   an 8-byte dictionary makes a periodic page 1543 bytes instead of 49: the greedy parse gets stuck in
   a chain of short matches. Reported as [lz4/lz4#1805](https://github.com/lz4/lz4/issues/1805).
-* Not measured yet: a dictionary trained on swapped pages, which needs a second zram dump
-  (`tools/bench-dict.sh`).
+* Trained on swapped pages helps even less. `tools/bench-dict.sh` with a 64 KiB dictionary trained
+  on the zram dump of 24th September (191 644 pages, without the 114 141 that are also in the next
+  dump), measured on the dump of 28th September (1 981 898 pages), CPU 2 fixed at 4.5 GHz, 5 runs
+  per page. Σ zsmalloc cost against the same codec without the dictionary, 95% interval below 0.02%:
+
+  | codec | Σ cost | with dict | stored raw | compress p99 ns | cold p50 / p99 ns |
+  | --- | --- | --- | --- | --- | --- |
+  | `lz4` | 39.6% | 39.3%, saves 0.70% | 75 905 / 77 488 | 4440 / 9260 | 1520 / 2920, 1380 / 2700 |
+  | `lzo-rle` | 38.0% | | 79 875 | 5550 | 1640 / 3240 |
+  | `zstd -1` | 33.5% | 33.9%, costs 1.27% more | 74 155 / 74 738 | 9840 / 12 020 | 3430 / 5950, 2890 / 5230 |
+  | `zstd 3` | 27.3% | 29.3%, costs 6.97% more | 53 401 / 53 506 | 19 440 / 27 910 | 4620 / 7710, 4200 / 7020 |
+
+  `lz4` with the dictionary still needs 3.48% more than `lzo-rle`, and its compress p99 doubles.
+  `seqlz-fast-lit` on the same dump, quick benchmark: 31.3%, 17.6% less than `lzo-rle`, 20.4% less
+  than `lz4` with the dictionary and 6.5% less than `zstd -1`.
+* The first run of `tools/bench-dict.sh` read a freed dictionary: `run_interleaved` copied the
+  options per codec, and `codec_instance` kept a pointer into the copy. `zstd -1` then failed its
+  roundtrip, `lz4` looked 0.19% worse than it is. The numbers above are from the fixed harness; the
+  ones before were measured with `run_codec` before `40f4392` and are not affected.
 
 ## The ideas of #29 and #31, measured
 
