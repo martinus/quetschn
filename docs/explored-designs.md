@@ -1174,6 +1174,28 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## A literal table per half or quarter of the literals: nothing, not built
+
+*Measured offline, not built.* Today a page codes all its literals with one of the 8 tables. The
+idea: the first half of the literals with one table, the second half with another, in case a page
+mixes, e.g. text and pointers. Model of the encoder, `seqlz-fast-lit`'s matcher, the 8 streams as
+now, so a change of table adds no bits at the end of a stream, one byte of header per extra table,
+the 1/16 rule on the whole; with one table the model gives exactly the real sizes, 967.3 and 1257.9
+bytes per page. 20 000 pages of each dump, zsmalloc estimated as steps of 16 bytes:
+
+| tables per page | first dump | second dump |
+| --- | --- | --- |
+| 1, now | 967.3 | 1257.9 |
+| 2, one per half | 966.8, -0.05% | 1257.8, -0.01% |
+| 4, one per quarter | 966.6, -0.07% | 1258.3, +0.03% |
+
+The zsmalloc estimate moves the same. The literals of a page mostly fit the same table from the
+start to the end, and a half has fewer literals to pay for its table byte. Where the literal tables
+have room is in the tables themselves, see #57.
+
+Not a bound: every literal with the shortest of its 8 codes gives 12.4% and 10.7% fewer bits, but
+those lengths do not satisfy the Kraft inequality, no code has them.
+
 ## seqlz simplified: the same bytes, 800 lines less, compressing 4% faster
 
 `seqlz-fast` and `seqlz-fast-lit` are the codecs that are left; `seqlz`, `seqlz-hc` and
