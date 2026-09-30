@@ -190,16 +190,38 @@ score](explored-designs.md#the-designs-by-the-score).
 ![The seqlz page format](plots/seqlz-format.svg)
 
 Like `lz4`, `seqlz` describes a page as sequences. Unlike `lz4`, it Huffman codes them with tables
-that are compiled in. A compressed page is one of two kinds:
+that are compiled in. The chart shows the two kinds a compressed page can have, in the two top rows.
+The rows below it zoom into the bitstream, which is the same in both kinds.
 
 | kind of page | layout |
 | --- | --- |
-| **raw literals** | `u16` number of literals · the literals · the bitstream of the sequences |
-| **coded literals** | `u16` `0x8000` \| number of literals · `u8` which literal table · 8 × `u16` stream sizes · 8 literal streams · the bitstream of the sequences |
+| **raw literals** | `u16` number of literals, bit `0x8000` not set · the literals · the bitstream of the sequences |
+| **coded literals** | `u16` number of literals \| `0x8000` · `u8` which literal table · 8 × `u16` stream sizes · 8 literal streams · the bitstream of the sequences |
 
-So the literals of all sequences are stored together, in front, and the rest of each sequence is in
-the bitstream behind them. The bitstream holds the sequences one after the other, read least
-significant bit first. Each sequence has up to four parts in it:
+The literals of all sequences are stored together, in front, and the rest of each sequence is in the
+bitstream behind them.
+
+> [!IMPORTANT]
+> **The encoder decides, for every page.** After the matcher, `seqlz-fast-lit` counts how many bytes
+> the page's literals would take in each of the 8 literal tables and takes the smallest. It writes
+> the coded kind only if those streams and the 17 more bytes of header are smaller than the raw
+> literals minus 1/16. For `n` literals and `coded` bytes of streams, that is `coded + 19 < n - n /
+> 16` in [`code_literals()`](../explore/seqlz.c). Else the page keeps its raw literals. That is 50%
+> to 69% coded pages on my dumps. `seqlz-fast` never codes literals, so all its pages are of the raw
+> kind.
+>
+> **The decoder sees the kind in the first 2 bytes.** A page has at most 4096 literals, so the
+> number needs 13 bits and bit `0x8000` of the `u16` is free: set means coded literals. The other
+> bits are the number of literals in both kinds.
+
+The bitstream has no length of its own: it goes to the end of the compressed page, and zram stores
+that page's size. Two kinds of page never reach the decoder of `seqlz` at all: a page filled with
+one repeated value, which zram stores as just that value, and a page that `seqlz` cannot compress
+below 3625 bytes, which zram stores as it is. On a read zram copies such a page back without calling
+the codec.
+
+The bitstream holds the sequences one after the other, read least significant bit first. Each
+sequence has up to four parts in it:
 
 | part | bits | what it says |
 | --- | --- | --- |
