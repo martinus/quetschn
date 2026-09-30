@@ -2208,9 +2208,71 @@ harness, but in the loop (`perf stat`) 1.32 times its cycles (95 419 against 72 
 1.24; there `seqlz-fast` mispredicted 1608 times per page against `lz4`'s 1192, a gap it does not
 have on 4 KiB pages. The branch stack showed why: for 16 KiB, gcc turned the encoder's offset class
 into branches, because of the extra bits of class 3. With the raw bits from a packed constant: 1176
-mispredictions, 92 362 cycles, 1.28 times `lz4`. Not looked into yet: the page, the output and the
-16 KiB hash table share a 32 KiB L1 in the harness, and the matcher's step was tuned on 4 KiB pages.
+mispredictions, 92 362 cycles, 1.28 times `lz4`. The page, the output and the 16 KiB hash table share
+a 32 KiB L1 in the harness, and the matcher's step was tuned on 4 KiB pages: both looked into in
+[16 KiB pages, tuned](#16-kib-pages-tuned-the-literals-decoded-into-the-page-c5-holds-again).
 
+## 16 KiB pages, tuned: the literals decoded into the page, C5 holds again
+
+*In `explore/seqlz.c`.* With 16 KiB pages `seqlz-fast-lit` needed 32 816 bytes per CPU, twice
+`lz4`'s 16 440: C5, a hard limit, did not hold. Half of it was the scratch the decoder decoded the
+coded literals into, a page and 48 bytes. Now they are decoded into the end of the output page, and
+the scratch is gone: 16 384 bytes per CPU with 16 KiB pages, 8192 instead of 12 336 with 4 KiB
+pages. The two open questions of the section above cost nothing to answer: at 16 KiB the matcher
+without its step is as fast as with it, and a smaller hash table is not faster.
+
+![16 KiB pages](plots/pages-16k.svg)
+
+**Into the page.** The output reaches the literals only with its last byte: between the output and
+the unread literals there are always exactly the match bytes still to come. So the copies of 16 and
+more bytes are safe while that gap has 64 bytes, and only the last few sequences of a page copy
+exactly. `decode_literals()` writes its last block of 40 literals through a buffer on the stack, so
+that nothing is written behind them. The first version chose the limit of the output, the page or
+the unread literals, in every sequence: 5% and 6% more decode cycles on 4 KiB pages. The loop over
+the sequences is now an inline function with that choice as a constant, called once for pages with
+coded literals and once for the others, so each gets its own loop without the choice.
+
+Decode cycles per page, loops over all pages, the median of 5 processes:
+
+| | 4 KiB, first dump | 4 KiB, second dump | 16 KiB |
+| --- | --- | --- | --- |
+| scratch | 8669 | 9525 | 34 515 |
+| in the page, one loop | 9163 | 10 113 | 35 512 |
+| in the page, two loops (kept) | 8612 | 9503 | 33 536 |
+
+**In the kernel it is not free.** Kernel VM, 4 KiB pages, 2 boots each against the 2 boots of the
+matcher without its step, `r = 0.34`, first dump / second dump: cold reads 2.95, 2.94 / 3.12, 3.14
+us before, 3.03, 3.02 / 3.25, 3.22 us after, 0.08 and 0.10 us slower; cold read p99 4860, 4850 /
+5050, 5080 ns before, 4970, 4960 / 5280, 5240 after, still below `lzo-rle`'s 5331 and 5739. Writes
+and memory are the same. Per page written that is 0.04 and 0.06 us more. Prefetching the lines the
+literals go to did not change the cycles of the cold loop. What makes the kernel slower is not
+known: in the kernel the output page is cold, where the scratch was warm, and the decoder has two
+loops instead of one. With 4 KiB pages the scratch fit into C5 anyway, so keeping it there and
+decoding into the page only with 16 KiB pages would be faster, for two ways of decoding in the code.
+One way was kept.
+
+**At 16 KiB nothing else is left to tune.** `resident-16k`, 2088 pages of 16 KiB, the tables trained
+on them, so the sizes are optimistic; cycles as above, one run:
+
+| | bytes per page | compress cycles | decode cycles |
+| --- | --- | --- | --- |
+| `lz4` | 5675.6 | 72 196 | 21 610 |
+| `seqlz-fast-lit`, `main` | 3877.7 | 99 220 | 34 186 |
+| without the step | 3873.8 | 97 931 | 34 374 |
+| ... and a 12-bit hash table, 8 KiB | 3882.9 | 97 938 | 34 255 |
+| ... and the literals in the page (kept) | 3873.8 | 97 931 | 33 608 |
+| `zstd` 3 | 3846.3 | | |
+
+Compressing takes 1.36 times `lz4`'s cycles and decoding 1.56 times, about the proportions of 4 KiB
+pages. The 12-bit table is 9 bytes per page larger and no faster, the 16 KiB table stays. A 14-bit
+table, 32 KiB, would break C5 again. There is no 16 KiB kernel on x86-64, so none of this is
+measured in the kernel with 16 KiB pages.
+
+Tests: every page with coded literals of the random pages decodes into an output of exactly a page,
+filled with other bytes first, so that ASan sees any write behind it. Mutations, each caught: the
+fast path with 16 bytes of room to the literals instead of 64 (a crash), the copies of the literals
+and of the matches bounded by the page and not by the literals (3 tests each), the last block of
+literals written straight into the page (ASan, a write behind the page).
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.

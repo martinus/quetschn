@@ -18,7 +18,6 @@ struct szhc_ctx {
 	unsigned char *lz4;
 	struct seqlz_sequence *seq;
 	unsigned char *literals;
-	unsigned char *scratch; /* the decoded literals of seqlz-hc-lit */
 };
 
 static int szhc_setup_params(struct zcomp_params *params)
@@ -51,7 +50,6 @@ static void szhc_destroy(struct zcomp_ctx *ctx)
 	kfree(c->lz4);
 	kfree(c->seq);
 	kfree(c->literals);
-	kfree(c->scratch);
 	kfree(c);
 	ctx->context = NULL;
 }
@@ -67,8 +65,7 @@ static int szhc_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 	c->lz4 = kmalloc(2 * SEQLZ_PAGE, GFP_KERNEL);
 	c->seq = kmalloc_array(SEQLZ_MAX_SEQUENCES, sizeof(*c->seq), GFP_KERNEL);
 	c->literals = kmalloc(SEQLZ_PAGE, GFP_KERNEL);
-	c->scratch = kmalloc(SEQLZ_SCRATCH, GFP_KERNEL);
-	if (!c->mem || !c->lz4 || !c->seq || !c->literals || !c->scratch) {
+	if (!c->mem || !c->lz4 || !c->seq || !c->literals) {
 		szhc_destroy(ctx);
 		return -ENOMEM;
 	}
@@ -158,14 +155,11 @@ static int szhc_compress_coded(struct zcomp_params *params, struct zcomp_ctx *ct
 
 static int szhc_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
-	struct szhc_ctx *c = ctx->context;
-
 	/* EXPERIMENT: the compressed data requested first, here instead of in zram_drv.c */
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			PAGE_LZ_PREFETCH((const char *)req->src + q);
-	if (req->dst_len < SEQLZ_PAGE ||
-	    seqlz_decode_scratch(params->drv_data, req->src, req->src_len, req->dst, c->scratch))
+	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst))
 		return -EINVAL;
 	return 0;
 }
