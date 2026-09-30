@@ -468,7 +468,10 @@ first match it finds.
 
 The table has 4096 slots of 2 bytes, 8 KiB, and each slot holds one position in the page. At every
 position the matcher reads 8 bytes and hashes the lowest 5 of them into a slot number of 12 bits,
-with a multiplication and a shift, the hash of `zstd`.
+with a multiplication and a shift, the hash of `zstd`: `v << 24` keeps the 5 bytes, the
+multiplication by an odd constant mixes them, and the top 12 bits of the product, which depend on
+all 40 bits of the input, are the slot. A change in any of the 5 bytes moves the slot, e.g. `10 00
+56 34 12` goes to slot 1533 and `20 00 56 34 12` to 1305.
 
 * **Looking up** reads the one slot. The position in it is only a candidate: the matcher compares 4
   bytes there with the 4 bytes at the current position, and only if they are equal it is a match.
