@@ -1174,6 +1174,30 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## Both kept changes against the other codecs: the same time per page, less memory per CPU
+
+The matcher without its step and the literals decoded into the page, together, in one boot per dump
+with `lz4`, `lzo-rle` and `zstd` 3, against `main`'s `seqlz-fast-lit` in a boot of its own. Kernel
+VM, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, `r = 0.34`, means, times in us, first dump /
+second dump:
+
+![seqlz-fast-lit with the kept changes against the other codecs](plots/codecs-kept.svg)
+
+| | bytes per page | write | cold read | us per page written |
+| --- | --- | --- | --- | --- |
+| `lz4` | 1450.4 / 1754.5 | 5.25 / 5.74 | 2.55 / 2.60 | 6.12 / 6.62 |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.06 / 5.65 | 2.80 / 2.85 | 6.01 / 6.62 |
+| `seqlz-fast-lit`, `main` | 1035.5 / 1324.0 | 6.70 / 7.43 | 2.98 / 3.12 | 7.71 / 8.49 |
+| `seqlz-fast-lit`, both changes | 1038.7 / 1321.6 | 6.63 / 7.37 | 3.12 / 3.34 | 7.69 / 8.51 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.25 / 14.41 | 5.29 / 5.57 | 15.05 / 16.31 |
+
+In this mix the writes gain only 0.07 and 0.06 us, where the boots with `lzo-rle` and `seqlz-lit`
+alone showed 0.21 and 0.25, and the cold reads lose 0.14 and 0.22 us, where those boots showed 0.08
+and 0.10. `lzo-rle` is 0.03 and 0.06 us slower to write in the branch's boot than in `main`'s, so
+part of it is the boot. Per page written the two changes cancel out: 7.69 against 7.71 and 8.51
+against 8.49 us. What is left is the memory per CPU, 8192 instead of 12 336 bytes, and with 16 KiB
+pages 16 384 instead of 32 816, below `lz4`'s 16 440. The price of the literals in the page on 4 KiB
+pages is what the matcher's change won.
 ## The matcher without its step: writes 3% faster, kept
 
 *In `explore/page_lz.h`, `match_page()`, for `seqlz` and `bytelz`.* The matcher now tries every
