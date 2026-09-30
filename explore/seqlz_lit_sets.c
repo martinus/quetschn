@@ -2,7 +2,7 @@
 /*
  * EXPERIMENT: the literal tables of pages with coded literals, one chosen per page. Trained on the
  * resident pages of the development machine, not on the zram dumps the benchmarks measure, with
- *   quetschn-seqlz-train --corpus resident --codec seqlz --lit-sets
+ *   quetschn-seqlz-train --corpus resident --lit-sets
  * k-means over the literal histograms of the pages with seqlz-fast's matcher: each page goes to the
  * table that codes its literals in the fewest bits, each table is the code of its pages' literals. The
  * most used table first.

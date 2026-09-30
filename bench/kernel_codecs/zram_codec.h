@@ -76,10 +76,7 @@ extern const struct quetschn_codec quetschn_codec_spike_slots;
 extern const struct quetschn_codec quetschn_codec_shuffle_lz4;
 extern const struct quetschn_codec quetschn_codec_bdelta;
 extern const struct quetschn_codec quetschn_codec_zstd_nolit;
-extern const struct quetschn_codec quetschn_codec_seqlz;
-extern const struct quetschn_codec quetschn_codec_seqlz_hc;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast;
-extern const struct quetschn_codec quetschn_codec_seqlz_hc_lit;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast_lit;
 extern const struct quetschn_codec quetschn_codec_lz4_prefetch;
 

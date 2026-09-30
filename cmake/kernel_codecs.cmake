@@ -111,22 +111,20 @@ target_include_directories(quetschn_kernel_spike PRIVATE "${CMAKE_SOURCE_DIR}/sp
 quetschn_kernel_codec(quetschn_kernel_explore lib/lz4 -O3 explore/shuffle.c explore/bdelta.c explore/zram_explore.c)
 target_include_directories(quetschn_kernel_explore PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 target_link_libraries(quetschn_kernel_explore PUBLIC quetschn_kernel_lz4)
-# seqlz: lz4's or lz4hc's matches, Huffman coded sequences with static tables
+# seqlz and bytelz: their own matcher, with lz4's flags; seqlz's sequences Huffman coded with static tables
 quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c
                       explore/zram_seqlz.c explore/bytelz.c explore/zram_bytelz.c)
 target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/explore")
-target_link_libraries(quetschn_kernel_seqlz PUBLIC quetschn_kernel_lz4)
-add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp bench/lz_analysis.cpp)
+add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp)
 target_include_directories(quetschn-seqlz-train PRIVATE explore)
-target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_seqlz
-                                                  quetschn_warnings)
+target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_seqlz quetschn_warnings)
 
 # zstd without Huffman coded literals, with lib/zstd's flags (no -O3)
 quetschn_kernel_codec(quetschn_kernel_explore_zstd lib/zstd "" explore/zstd_nolit.c)
 target_link_libraries(quetschn_kernel_explore_zstd PUBLIC quetschn_kernel_zstd)
 
 foreach(codec lz4 lz4hc lzo lzo_rle zstd spike_switch spike_branchless spike_zeroskip spike_slots shuffle_lz4 bdelta
-              zstd_nolit seqlz seqlz_hc seqlz_fast bytelz)
+              zstd_nolit seqlz_fast seqlz_fast_lit bytelz)
     string(REPLACE "_" "-" name ${codec})
     if(codec MATCHES "^lz4")
         set(lib quetschn_kernel_lz4)
