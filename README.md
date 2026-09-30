@@ -3,6 +3,8 @@
 Fast compression for memory pages, built for Linux zram.
 
 See [PLAN.md](PLAN.md) for the goal, the evidence behind it, and the plan.
+[docs/seqlz.md](docs/seqlz.md) describes the codec so far: the format, the encoder and decoder, and why
+each choice was made.
 
 ## Build and test
 
