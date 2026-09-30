@@ -42,6 +42,7 @@ decided it. The history of every idea, also of the ones that failed, is in
 | **`ll`** | literal length: how many literals a sequence has, 0 or more |
 | **`ml`** | match length: how many bytes the match copies, 4 or more |
 | **matcher** | the first half of the compressor: it walks through the page and looks for matches. It decides where the matches are, and the bytes between them are the literals |
+| **hash table** | the matcher's table of 4096 positions, one per hash of 5 bytes; a slot keeps only the newest position, see [the encoder](#the-hash-table-is-a-cache-not-a-map) |
 | **greedy** | a matcher that takes a match as soon as it finds one, without checking whether a match that starts a byte later would be longer |
 | **encoder** | the second half of the compressor: it writes the matcher's sequences and literals in the format |
 | **decoder** | turns a compressed page back into its 4096 bytes |
@@ -462,6 +463,40 @@ first match it finds.
    addition per literal for all 8 tables. If it saves 1/16, the 8 streams are written, four at a
    time, each with its bits in a register. See [the
    literals](#the-literals-one-table-per-page-in-8-streams).
+
+### The hash table is a cache, not a map
+
+The table has 4096 slots of 2 bytes, 8 KiB, and each slot holds one position in the page. At every
+position the matcher reads 8 bytes and hashes the lowest 5 of them into a slot number of 12 bits,
+with a multiplication and a shift, the hash of `zstd`.
+
+* **Looking up** reads the one slot. The position in it is only a candidate: the matcher compares 4
+  bytes there with the 4 bytes at the current position, and only if they are equal it is a match.
+* **Inserting** writes the current position into the slot and overwrites what was there. There is no
+  probing, no second slot and no list of older positions.
+
+Two different byte strings with the same hash overwrite each other, and the older one is lost. That
+costs a match now and then, never a wrong result, because every candidate is compared first. It
+keeps the matcher at one load and one store per position, without a loop. Positions inside a match
+are not inserted, only the one 2 bytes before its end, and the table is cleared for each page, so
+all its positions are in the current page.
+
+Keeping more was measured, and each way costs about as much time as it saves memory:
+
+| variant | memory, first / second dump | compress cycles per page |
+| --- | --- | --- |
+| today | 24.6% / 31.8% | about 22 500 |
+| twice the slots, 16 KiB, more work memory than `lz4` | 24.4% / 31.6% | 1.2% more with an older matcher |
+| half the slots, 4 KiB | 0.2% more bytes | the same with an older matcher |
+| 1 older position per slot, the longer match wins | 24.4% / 31.5% | 26 400 |
+| 3 older positions per slot | 24.2% / 31.4% | 28 400 |
+
+These are from before the matcher lost its step, the differences between the rows are what counts.
+
+So collisions are not what the matcher misses. It misses older places with the same bytes, which
+only a search through more positions finds. The hash covers 5 bytes and not 4 because a table on 4
+bytes finds many more matches of 4 bytes, which with coded literals cost about as much as their 4
+literals; those from the last offset are still found without the table.
 
 zram hands the codec a buffer of two pages, and that is always enough: the most bits per page byte
 are sequences of 4-byte matches without literals, 23 bits each, 2948 bytes for a page.
