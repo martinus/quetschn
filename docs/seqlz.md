@@ -45,6 +45,8 @@ decided it. The history of every idea, also of the ones that failed, is in
 | **greedy** | a matcher that takes a match as soon as it finds one, without checking whether a match that starts a byte later would be longer |
 | **encoder** | the second half of the compressor: it writes the matcher's sequences and literals in the format |
 | **decoder** | turns a compressed page back into its 4096 bytes |
+| **stream** | coded literals are split into 8 streams, literal `k` into stream `k % 8`, all coded with the same table |
+| **scratch** | work memory of the codec; the decoder decodes coded literals into it, 4144 bytes per CPU |
 | **offset class** | one of 6 ways to store the offset, e.g. "the same as the match before", in 0 bits |
 | **token** | one Huffman coded symbol for `ll`, `ml` and the offset class of a sequence |
 | **Huffman code** | a code where frequent symbols get few bits and rare ones many; see below |
@@ -209,13 +211,13 @@ The literals of all sequences are stored together, in front, and the rest of eac
 bitstream behind them.
 
 > [!IMPORTANT]
-> **The encoder decides, for every page.** After the matcher, `seqlz-fast-lit` counts how many bytes
-> the page's literals would take in each of the 8 literal tables and takes the smallest. It writes
-> the coded kind only if those streams and the 17 more bytes of header are smaller than the raw
-> literals minus 1/16. For `n` literals and `coded` bytes of streams, that is `coded + 19 < n - n /
-> 16` in [`code_literals()`](../explore/seqlz.c). Else the page keeps its raw literals. That is 50%
-> to 69% coded pages on my dumps. `seqlz-fast` never codes literals, so all its pages are of the raw
-> kind.
+> **The encoder decides, for every page.** After the matcher, `seqlz-fast-lit` finds the one literal
+> table that codes all literals of the page in the fewest bits, see [the
+> literals](#the-literals-one-table-per-page-in-8-streams). It writes the coded kind only if those
+> streams and the 17 more bytes of header are smaller than the raw literals minus 1/16. For `n`
+> literals and `coded` bytes of streams, that is `coded + 19 < n - n / 16` in
+> [`code_literals()`](../explore/seqlz.c). Else the page keeps its raw literals. That is 50% to 69%
+> coded pages on my dumps. `seqlz-fast` never codes literals, so all its pages are of the raw kind.
 >
 > **The decoder sees the kind in the first 2 bytes.** A page has at most 4096 literals, so the
 > number needs 13 bits and bit `0x8000` of the `u16` is free: set means coded literals. The other
@@ -296,11 +298,80 @@ The most frequent tokens have 4 bits: token 49 is "1 literal, a match of 7 bytes
 match before", exactly the pointer array from the start: `1 + 16 × 3 + 512 × 0 = 49`, and no offset
 bits.
 
-### The literals
+### The literals: one table per page, in 8 streams
 
-**Literals** stay raw, or are Huffman coded with one of 8 fixed tables, the one that fits the page
-best, if that saves at least 1/16 of them. Coded literals are split into 8 streams, literal `k` into
-stream `k % 8`, so that the decoder can work on 8 of them at the same time.
+A page's literals are stored raw, or all of them are Huffman coded with **one** of 8 fixed tables.
+The encoder chooses once per page, not per literal and not per sequence, and the choice costs one
+byte of header, the table's number. A choice per literal would need 3 more bits for every literal,
+just to say which table.
+
+The 8 tables are compiled in. They were trained on the resident pages of running programs: k-means
+puts pages with similar literals into one group, and each table is the Huffman code of one group,
+see [explored-designs.md](explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page). So
+the tables are quite different. Code lengths in bits of a few bytes:
+
+| byte | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `00` | 2 | 3 | 3 | 2 | 3 | 4 | 2 | 6 |
+| `20`, a space | 6 | 5 | 5 | 7 | 5 | 6 | 7 | 8 |
+| `65`, the letter `e` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
+| `ff` | 7 | 8 | 7 | 6 | 9 | 9 | 4 | 9 |
+
+Table 4 gives `e` 4 bits, so it fits text. Table 6 gives `ff` 4 bits, it fits pages with many of
+them. In table 7 most bytes cost about the same.
+
+**Finding the smallest table is one addition per literal.** For each of the 256 byte values the
+encoder has a 64-bit number with the byte's code lengths in all 8 tables, one table per byte of the
+number. Adding up these numbers for all literals of the page gives the bits of the page's literals
+in all 8 tables at once. E.g. for the literals `65 20 65 00`:
+
+| literal | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `65` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
+| `20` | 6 | 5 | 5 | 7 | 5 | 6 | 7 | 8 |
+| `65` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
+| `00` | 2 | 3 | 3 | 2 | 3 | 4 | 2 | 6 |
+| **sum** | 20 | 18 | 24 | 25 | **16** | 20 | 27 | 26 |
+
+Each row is one 64-bit addition for the CPU, not 8. Table 4 wins with 16 bits, where the raw bytes
+are 32. A byte of the sum holds at most 255, and a code has at most 10 bits, so every 25 literals
+the sums move into 16-bit lanes before they can overflow. This costs at most 400 cycles per page,
+about 1.5% of a write, and 30 to 40 ns per write in the kernel. Writing the coded literals
+afterwards costs much more, about 0.6 ns per literal. The table with the smallest sum is used if it
+saves 1/16, see [the two kinds of page](#the-format-lz4s-sequences-coded-like-zstds).
+
+**8 streams, all with the same table.** The coded literals are dealt out like cards: literal 0 goes
+into stream 0, literal 1 into stream 1, and so on up to literal 7 in stream 7. Literal 8 goes into
+stream 0 again:
+
+```text
+the page's literals:  L0  L1  L2  L3  L4  L5  L6  L7  L8  L9  L10 L11 ...
+stream 0:             L0  L8  L16 L24 ...
+stream 1:             L1  L9  L17 L25 ...
+stream 2:             L2  L10 L18 L26 ...
+...
+stream 7:             L7  L15 L23 L31 ...
+```
+
+The streams are there only for the speed of the decoder. A Huffman code has no fixed length, so the
+decoder knows where a literal starts only after it has decoded the one before. In one stream that is
+a chain: look up, shift, look up, shift, and every step waits for the one before. 8 streams are 8
+chains that do not wait for each other, and a CPU works on them side by side. With 4 streams a
+literal took 2.9 cycles to decode, and 8 streams made the decoding of a page 4% faster again.
+
+**Where each stream starts and ends.** The header has the size of each stream in bytes, 8 × `u16`.
+Stream 0 starts right after the 19 bytes of header, stream 1 where stream 0 ends, and so on; the
+sequences' bitstream starts where stream 7 ends. A stream ends with the bits of its last literal,
+filled up to a whole byte. How many literals a stream has follows from the number of literals in the
+header: stream `k` has literals `k`, `k + 8`, `k + 16` and so on, as long as they are below that
+number.
+
+**Decoding them.** Before the first sequence, the decoder decodes all literals of the page into a
+scratch buffer, 8 at a time: literal `i` comes from stream `i % 8`. For each literal it looks up the
+next 10 bits of its stream in the table, a table of 1024 entries with the byte and its code length,
+writes the byte, and moves that stream on by the code length. Then the literals are in the scratch
+in their order, as if they had been raw. The loop over the sequences copies them from there, the
+same way for both kinds of page.
 
 ## Why it needs less memory: offsets and literals
 
@@ -379,10 +450,10 @@ first match it finds.
    branch, and hands the sequence to the encoder right away. Matcher and encoder are one loop.
 3. The encoder writes the literals to the front of the output and the sequences' bits behind the
    room of a page, with a 64-bit accumulator that is flushed once per sequence.
-4. At the end, the literal coder counts the bits of the literals in all 8 tables at once: per byte
-   its 8 code lengths are the 8 lanes of one 64-bit number, one addition per literal. If the best
-   table saves 1/16, the 8 streams are written, four at a time, each with its accumulator in a
-   register.
+4. At the end, the literal coder finds the table with the fewest bits for the page's literals, one
+   addition per literal for all 8 tables. If it saves 1/16, the 8 streams are written, four at a
+   time, each with its bits in a register. See [the
+   literals](#the-literals-one-table-per-page-in-8-streams).
 
 zram hands the codec a buffer of two pages, and that is always enough: the most bits per page byte
 are sequences of 4-byte matches without literals, 23 bits each, 2948 bytes for a page.
@@ -415,7 +486,8 @@ Per sequence the decoder:
 <summary>Coded literals, and matches that overlap themselves</summary>
 
 Coded literals are decoded first, into a scratch of a page, by 8 independent chains: per literal a
-table lookup of 10 bits, a shift and a store. The sequences then take them from there.
+table lookup of 10 bits, a shift and a store, see [the
+literals](#the-literals-one-table-per-page-in-8-streams). The sequences then take them from there.
 
 A match with an offset below 8 overlaps itself: its first bytes are also its source. For those the
 decoder builds the first 8 bytes in a register and stores them in steps of the largest multiple of
