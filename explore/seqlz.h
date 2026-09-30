@@ -89,9 +89,11 @@ static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_
 /* classes 4 and 5 send the offset divided by 8 */
 #define SEQLZ_OFF_SHIFT(cls) (((cls) >> 2) * 3U)
 
-/* the class of an offset and its raw bits, see above; offsets are below the page size */
+/* The class of an offset and its raw bits, see above; offsets are below the page size. Without a
+ * branch: the encoder calls it for every match. */
 static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last, unsigned int* raw_bits) {
-    unsigned int cls = off == last ? 0U : off < 16 ? 1U : (off & 7U) == 0 ? (off < 256 ? 4U : 5U) : off < 256 ? 2U : 3U;
+    unsigned int is_new = (off == last) - 1U, aligned = (off >= 16U) & ((off & 7U) == 0);
+    unsigned int cls = (1U + (off >= 16U) + (off >= 256U) + 2U * aligned) & is_new;
 
     *raw_bits = SEQLZ_RAW_BITS(cls);
     return cls;

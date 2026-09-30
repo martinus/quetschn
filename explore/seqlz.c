@@ -21,7 +21,7 @@ _Static_assert(PAGE_LZ_PAGE == SEQLZ_PAGE && PAGE_LZ_HASH_BITS == SEQLZ_HASH_BIT
 
 struct value_table {
     u32 decode[1U << SEQLZ_MAX_BITS];
-    u32 enc[ENC_LEN_SYMBOLS]; /* code | length << 16, see build() */
+    u32 enc[ENC_LEN_SYMBOLS]; /* code | length << 16 */
 };
 
 struct token_table {
@@ -29,8 +29,6 @@ struct token_table {
     u16 enc[SEQLZ_TOKEN_SYMBOLS + 1]; /* code | length << 12: 4 KiB in L1 next to the hash table */
 };
 
-/* The literals' streams are read most significant bit first, so the codes are not reversed and the
- * decode table is indexed by the next SEQLZ_LIT_BITS bits from the top. */
 struct lit_table {
     u16 decode[1U << SEQLZ_LIT_BITS]; /* code length | symbol << 8 */
     u32 enc[256];                     /* code length | code << 8 */
@@ -77,33 +75,20 @@ static u32 token_entry(unsigned int s) {
 }
 
 /*
- * Canonical Huffman codes from the code lengths, bit reversed, and the decode table with 1 << bits
- * entries of entry(symbol) | code length. -1 if a length is longer than bits, or the codes are not a
- * complete prefix code: over-subscribed, with gaps, or none at all.
+ * The first canonical code of each length, from n code lengths of at most bits bits; 0 is no code. -1
+ * if a length is longer, or the codes are not a complete prefix code: over-subscribed, with gaps, or
+ * none at all. Complete codes fill the decode table exactly, so every bit pattern starts a code and the
+ * decoder does not check for one that does not. Huffman codes are complete.
  */
-static int build(const u8* len,
-                 unsigned int n,
-                 unsigned int bits,
-                 u32 (*entry)(unsigned int),
-                 u32* enc,
-                 u16* enc16,
-                 u32* decode32,
-                 u16* decode16) {
-    unsigned int count[16] = {0}, next[17], c = 0, used = 0, s, l, k;
+static int first_codes(const u8* len, unsigned int n, unsigned int bits, unsigned int next[16]) {
+    unsigned int count[16] = {0}, s, l, k = 0, c = 0;
 
-    if (bits > 15)
-        return -1;
     for (s = 0; s < n; s++) {
         if (len[s] > bits)
             return -1;
         count[len[s]]++;
-        used += len[s] != 0;
     }
-    if (used == 0)
-        return -1;
-    /* Kraft: the codes must fill the bits bits exactly. Then every bit pattern starts a code, and the
-     * decoder does not need to check for one that does not. Huffman codes are complete. */
-    for (l = 1, k = 0; l <= bits; l++)
+    for (l = 1; l <= bits; l++)
         k += count[l] << (bits - l);
     if (k != (1U << bits))
         return -1;
@@ -112,58 +97,58 @@ static int build(const u8* len,
         c = (c + count[l - 1]) << 1;
         next[l] = c;
     }
-    for (k = 0; k < (1U << bits); k++) {
-        if (decode32)
-            decode32[k] = 0;
-        else
-            decode16[k] = 0;
-    }
-    for (s = 0; s < n; s++) {
-        unsigned int r;
+    return 0;
+}
 
-        l = len[s];
-        if (enc)
-            enc[s] = 0;
-        else
-            enc16[s] = 0;
+/* The token's codes, bit reversed for the bitstream read least significant bit first, and its decode
+ * table: token_entry() | code length at every index whose low bits are the code. */
+static int build_token(const u8* len, struct token_table* t) {
+    unsigned int next[16], s, k;
+
+    if (first_codes(len, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, next))
+        return -1;
+    for (s = 0; s <= SEQLZ_TOKEN_SYMBOLS; s++) {
+        unsigned int l = len[s], r;
+
         if (l == 0)
             continue;
         r = reverse(next[l]++, l);
-        if (enc)
-            enc[s] = r | l << 16;
-        else
-            enc16[s] = (u16)(r | l << 12);
-        for (k = r; k < (1U << bits); k += 1U << l) {
-            if (decode32)
-                decode32[k] = entry(s) | l;
-            else
-                decode16[k] = (u16)(entry(s) | l);
-        }
+        t->enc[s] = (u16)(r | l << 12);
+        for (k = r; k < (1U << SEQLZ_TOKEN_BITS); k += 1U << l)
+            t->decode[k] = (u16)(token_entry(s) | l);
     }
     return 0;
 }
 
-/* canonical codes and the decode table of a literal table, not reversed; -1 as build() */
-static int build_lit(const u8* len, struct lit_table* t) {
-    unsigned int count[16] = {0}, next[17], c = 0, s, l, k;
+/* the same for the length values, with length_entry() */
+static int build_values(const u8* len, struct value_table* t) {
+    unsigned int next[16], s, k;
 
-    for (s = 0; s < 256; s++) {
-        if (len[s] > SEQLZ_LIT_BITS)
-            return -1;
-        count[len[s]]++;
-    }
-    for (l = 1, k = 0; l <= SEQLZ_LIT_BITS; l++)
-        k += count[l] << (SEQLZ_LIT_BITS - l);
-    if (k != (1U << SEQLZ_LIT_BITS))
+    if (first_codes(len, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, next))
         return -1;
-    count[0] = 0;
-    for (l = 1; l <= SEQLZ_LIT_BITS; l++) {
-        c = (c + count[l - 1]) << 1;
-        next[l] = c;
+    for (s = 0; s < SEQLZ_LEN_SYMBOLS; s++) {
+        unsigned int l = len[s], r;
+
+        if (l == 0)
+            continue;
+        r = reverse(next[l]++, l);
+        t->enc[s] = r | l << 16;
+        for (k = r; k < (1U << SEQLZ_MAX_BITS); k += 1U << l)
+            t->decode[k] = length_entry(s) | l;
     }
+    return 0;
+}
+
+/* A literal table's codes, not reversed: the literals' streams are read most significant bit first,
+ * so the decode table is indexed by the next SEQLZ_LIT_BITS bits from the top. */
+static int build_lit(const u8* len, struct lit_table* t) {
+    unsigned int next[16], s, k;
+
+    if (first_codes(len, 256, SEQLZ_LIT_BITS, next))
+        return -1;
     for (s = 0; s < 256; s++) {
-        l = len[s];
-        t->enc[s] = 0;
+        unsigned int l = len[s], c;
+
         if (l == 0)
             continue;
         c = next[l]++;
@@ -179,10 +164,9 @@ int seqlz_all_symbols(const struct seqlz_tables* t) {
 }
 
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths) {
-    __builtin_memset(t, 0, sizeof(*t)); /* also the encoder's entries behind the last symbol */
-    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, token_entry, 0, t->token.enc, 0, t->token.decode) ||
-        build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, 0, t->ll.decode, 0) ||
-        build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, 0, t->ml.decode, 0))
+    /* zero: the codes of symbols without one, and the encoder's entries behind the last symbol */
+    __builtin_memset(t, 0, sizeof(*t));
+    if (build_token(lengths->token, &t->token) || build_values(lengths->ll, &t->ll) || build_values(lengths->ml, &t->ml))
         return -1;
     {
         /* the literal tables are compiled in, seqlz_lit_sets */
@@ -210,8 +194,6 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
     }
     return 0;
 }
-
-/* ---- shared by matcher, encoder and decoder ---- */
 
 /* ---- matcher, see page_lz.h ---- */
 
@@ -330,12 +312,8 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         return;
     }
     {
-        /* The class of the offset without a branch: 0 the last offset, 1 below 256 in 8 bits, 2 in 12.
-         * Token and offset in one put, the length values after them. */
-        unsigned int is_new = (off == e->last) - 1U, big = off >= 256U;
-        unsigned int aligned = (off >= 16U) & ((off & 7U) == 0);
-        unsigned int cls = (1U + (off >= 16U) + big + 2U * aligned) & is_new;
-        unsigned int raw_bits = SEQLZ_RAW_BITS(cls);
+        /* token and offset in one put, the length values after them */
+        unsigned int raw_bits, cls = seqlz_off_class(off, e->last, &raw_bits);
         unsigned int tlen;
         u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
 
@@ -433,22 +411,24 @@ static void store_tail(u8* p, u64 w, unsigned int n) {
         p[k] = b[k];
 }
 
-/* A raw page of len bytes in d turned into one with coded literals, if that pays; literals are its
- * literals somewhere that the coded ones do not overwrite. park is where its sequences' bitstream
- * already is, behind that, or 0: then it goes behind the first page of d. Returns the new length. */
-static unsigned int
-code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* literals, unsigned int n_literals, u8* park) {
+/*
+ * The raw page of len bytes in d, as the encoder writes it, turned into one with coded literals where
+ * that saves at least 1/16 of them: decoding coded literals costs time per byte, and coding them where
+ * they save anything saved less than 0.1 points more. Returns the new length, len if the literals stay
+ * raw. d has two pages: the literals and the bitstream are moved to its end, the coded literals are
+ * written from the front, and the bitstream is moved in behind them.
+ */
+static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned int len) {
     const u64 lanes = 0x00ff00ff00ff00ffULL;
-    unsigned int bits = ~0U, k, j, coded, seq_bytes, set = 0, sizes[8];
+    const unsigned int n_literals = load16(d), body = len - SEQLZ_HEADER;
+    const u8* literals = d + SEQLZ_HEADER;
+    unsigned int bits = ~0U, k, j, coded, set = 0, sizes[8];
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
     u64 even[8][LIT_COST_WORDS] = {{0}}, odd[8][LIT_COST_WORDS] = {{0}};
     unsigned int w;
     u8* q[9];
     const struct lit_table* lt;
 
-    /* Every page, also those that took long to compress: a budget for the work per page kept C3's
-     * p99, but by the score of PLAN.md §1.1 coding all pages is worth 340 bytes per us of the time
-     * per page written (docs/explored-designs.md). */
     /* the bits of each stream in each table, 25 literals of a stream per sum of 8-bit lanes */
     for (k = 0; k < n_literals;) {
         u64 x[8][LIT_COST_WORDS] = {{0}};
@@ -483,20 +463,14 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
         sizes[j] = (((unsigned int)((set & 1U ? odd : even)[j][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) + 7U) / 8U;
         coded += sizes[j];
     }
-    /* only if it saves at least 1/16: decoding coded literals costs time per byte, and coding them
-     * whenever they save anything saved less than 0.1 points more (docs/explored-designs.md) */
     if (coded + SEQLZ_LIT_HEADER >= n_literals - n_literals / 16U)
         return len;
-    seq_bytes = len - SEQLZ_HEADER - n_literals;
-    if (!park) {
-        /* the sequences' bitstream out of the way, behind where it would ever be */
-        park = d + SEQLZ_HEADER + SEQLZ_PAGE + 16U;
-        __builtin_memmove(park, d + SEQLZ_HEADER + n_literals, seq_bytes);
-    } else if (SEQLZ_LIT_HEADER + coded + 16U > (unsigned int)(literals - d)) {
-        /* the coded literals, and the stores up to 16 bytes behind them, must stay in front of the
-         * literals they come from; saving 1/16 makes sure of it for a page, this is for the reader */
+    /* The coded literals, and the stores up to 16 bytes behind them, must stay in front of the moved
+     * literals they come from; saving 1/16 makes sure of it for a page, this is for the reader. */
+    if (SEQLZ_LIT_HEADER + coded + 16U > 2U * SEQLZ_PAGE - body)
         return len;
-    }
+    literals = d + 2U * SEQLZ_PAGE - body;
+    __builtin_memmove(d + 2U * SEQLZ_PAGE - body, d + SEQLZ_HEADER, body);
     q[0] = d + SEQLZ_LIT_HEADER;
     for (j = 0; j < 8U; j++)
         q[j + 1] = q[j] + sizes[j];
@@ -557,8 +531,8 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
     for (j = 0; j < 8U; j++)
         store16(d + 3 + 2 * j, sizes[j]);
     coded += SEQLZ_LIT_HEADER;
-    __builtin_memmove(d + coded, park, seq_bytes);
-    return coded + seq_bytes;
+    __builtin_memmove(d + coded, literals + n_literals, body - n_literals);
+    return coded + body - n_literals;
 }
 
 unsigned int seqlz_encode(const struct seqlz_tables* t,
@@ -571,7 +545,7 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
                           int coded) {
     unsigned int len = encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
 
-    return len == 0 || !coded ? len : code_literals(t, dst, len, literals, n_literals, 0);
+    return len == 0 || !coded ? len : code_literals(t, dst, len);
 }
 
 static unsigned int
@@ -586,32 +560,10 @@ compress_page(const struct seqlz_tables* t, struct seqlz_state* st, const u8* sr
 }
 
 unsigned int seqlz_compress(
-    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap, int coded) {
-    u8* const d = dst_v;
-    unsigned int len = compress_page(t, st, src, dst_v, dst_cap), n_lit, body;
-    u8* keep;
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap, int coded) {
+    unsigned int len = compress_page(t, st, src, dst, dst_cap);
 
-    if (len == 0 || !coded)
-        return len;
-    n_lit = load16(d);
-    body = len - SEQLZ_HEADER;
-    if (body + SEQLZ_LIT_HEADER + 8U <= SEQLZ_PAGE) {
-        /* the literals to the end of dst, behind where code_literals() puts the sequences' bitstream */
-        keep = d + 2U * SEQLZ_PAGE - n_lit;
-        __builtin_memcpy(keep, d + SEQLZ_HEADER, n_lit);
-        return code_literals(t, d, len, keep, n_lit, 0);
-    }
-    /* Raw literals of about a page: those and the bitstream do not fit apart, they go to the end of
-     * dst together, in one move. The coded literals are written from the front, and they are shorter.
-     * Before, such pages stayed raw, also where their literals code well, 1% of the pages of a dump
-     * (docs/explored-designs.md). The move overwrites the raw page's end: where the literals stay raw,
-     * it goes back. */
-    keep = d + 2U * SEQLZ_PAGE - body;
-    __builtin_memmove(keep, d + SEQLZ_HEADER, body);
-    len = code_literals(t, d, len, keep, n_lit, keep + n_lit);
-    if (!(d[1] & 0x80U))
-        __builtin_memmove(d + SEQLZ_HEADER, keep, body);
-    return len;
+    return len == 0 || !coded ? len : code_literals(t, dst, len);
 }
 
 /* ---- decoder ---- */
