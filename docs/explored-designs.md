@@ -1174,6 +1174,97 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## The token's table by the offset before it: 3 and 12 bytes per page, not kept
+
+*Built on the branch `feat/token-context`, not merged: by the score it pays, but not enough for 3
+token tables, 20 KiB more per device and a slower decoder.* The token got 3 Huffman tables instead
+of 1, and the offset class of the token before picked the table: after the last offset again (class
+0), after an aligned offset (classes 4 and 5), after any other (classes 1 to 3, and the page's first
+token). Pages have runs of sequences of the same shape, arrays of structs, where the offset of the
+sequence before says a lot about the next token. In the kernel VM the pages got 3.3 and 12.5 bytes
+smaller, for 0.11 and 0.24 us more per page written in the boot against `main`, about 45 bytes per
+us over both dumps. The step from `seqlz-fast-lit` to `zstd` 3 is 10, so by the score it pays. But
+it is 0.3% and 0.9% of the memory, for three times the token tables in encoder and decoder, a
+trainer that counts per context, and cold reads 0.13 to 0.21 us slower in every boot.
+
+**Priced first**, with ideal code lengths of the tokens of `seqlz-fast`'s matcher, tables trained on
+the resident pages, bytes per page on the 20 000 pages of the first dump and of the dump of 28th
+September:
+
+| context of the token | first dump | 28th September |
+| --- | --- | --- |
+| none | 192.0 | 239.5 |
+| last offset or not | -3.4 | -4.3 |
+| the class of the last offset in 3 groups (built) | -6.4 | -11.8 |
+| the class of the last offset, 6 of them and the first token | -9.8 | -19.4 |
+| ll of the sequence before 0 or not | -1.9 | -1.6 |
+| 3 groups and ll 0 or not | -7.8 | -12.1 |
+
+All 6 classes would need 6 decode tables of 4 KiB, 24 KiB, where the second decoder round found that
+the tables have to stay in L1. 3 groups need 12 KiB. The trainer (`quetschn-seqlz-train`) counts the
+tokens per context and limits each table as before, so each gets its own escape. With the same
+table in all 3 contexts the pages are byte for byte those of `main`, and `main`'s trainer gives
+exactly `main`'s tables, so the difference below is the contexts alone.
+
+**Sizes**, zsmalloc cost in the model, 20 000 pages per dump, bytes per page:
+
+| codec | first dump | 24th September | 28th September |
+| --- | --- | --- | --- |
+| `seqlz-fast-lit` | 995.0 to 988.7 | 1291.7 to 1282.3 | 1279.8 to 1266.0 |
+| `seqlz-hc-lit` 3 | 959.9 to 952.1 | 1226.2 to 1214.5 | 1188.1 to 1173.3 |
+
+With 16 KiB pages (`resident-16k`, trained on the same pages, so optimistic) `seqlz-fast-lit` goes
+from 23.7% to 23.5%, `seqlz-hc-lit` from 22.2% to 22.0%. Fewer tokens are escaped than with one table,
+12.1 instead of 14.4 per page on the first dump and 21.4 instead of 26.6 on the second. Per device the
+tables need 59 664 bytes instead of 39 184; per CPU nothing changes.
+
+**Kernel VM**, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, one boot per row, `r = 0.34`, times
+in us, first dump / second dump (24th September). The three rows of this change are the same code
+for writes and differ only in how much of the token tables the decoder prefetches, 12 KiB, only the
+4 KiB of the first token's table, or nothing:
+
+| | bytes per page | write | cold read | us per page written |
+| --- | --- | --- | --- | --- |
+| `lzo-rle`, all boots | 1361.1 / 1678.5 | 4.99 to 5.04 / 5.58 to 5.60 | 2.78 to 2.79 / 2.91 | |
+| `seqlz-fast-lit`, `main` | 1035.5 / 1324.0 | 6.68 / 7.42 | 2.97 / 3.18 | 7.69 / 8.50 |
+| contexts, 12 KiB prefetched | 1032.2 / 1311.5 | 6.73 / 7.62 | 3.12 / 3.31 | 7.80 / 8.74 |
+| contexts, 4 KiB prefetched | 1032.2 / 1311.5 | 6.77 / 7.50 | 3.18 / 3.33 | 7.85 / 8.63 |
+| contexts, no token table prefetched | 1032.2 / 1311.5 | 6.72 / 7.49 | 3.15 / 3.34 | 7.79 / 8.62 |
+
+In the kernel the first dump saves less than in the model, 3.3 instead of 6.3 bytes: the whole
+difference is 16 pages of zsmalloc memory, 20 709 376 against 20 643 840 bytes. The reads are 0.13 to
+0.21 us slower in every boot, the writes 0.04 to 0.20 us, and the writes of the same code already
+differ by 0.13 us between boots. Cold reads at p99 (the score's row, zram's prefetch on) went from
+4871 to 5020 ns and from 5090 to 5200 ns, still below `lzo-rle`'s 5331 and 5739.
+
+**Where the time goes.** Loops over 2000 pages with `perf stat`, first dump: decoding needs 30 030
+instead of 28 718 instructions per page and about 500 cycles more, with 130 instead of 135
+mispredictions; compressing 70 892 instead of 70 080 instructions and about 550 cycles more, 2.3%.
+In the decoder 480 of the instructions are the prefetch of 8 KiB more table, the rest is the table
+of the context: gcc keeps the class across the copies of the sequence and spills it. Tried and
+slower:
+
+* **A pointer to the context's table**, computed from the class: 30 212 instructions per page. With
+  an empty `asm` so that gcc computes it where the class is known: 31 096.
+* **The index of the table from the class's shift**, `TOKEN_CTX_INDEX >> 4 * cls`, the same shift by
+  4 * class that `SEQLZ_RAW_BITS()` needs: 30 030, the best of them. Pinned with an empty `asm` as well: 31 070.
+* **The encoder's codes as `[token][context]`**, so that the context goes into the address as it is:
+  71 903 instead of 70 892 instructions to compress, and more cycles. The encoder keeps a pointer to
+  the context's row.
+
+**Priced alongside, not built:**
+
+* **A second, stronger attempt for pages at or above `huge_class_size`**, zram's cliff at 3625
+  bytes: `seqlz-hc-lit` 3 stores 355 pages of the first dump raw where `seqlz-fast-lit` stores 372,
+  and 637 of the dump of 28th September instead of 650, less than 0.5 bytes per page.
+* **Offsets in steps of 4**, the multiples of 4 that are not multiples of 8, from 16 on: 9.5 and
+  16.8 per page, at most 2.4 and 4.2 bytes per page before the larger token.
+* **The literal table chosen from the first 128 literals**, so that the literals could be coded
+  while the matcher runs and not in a pass after it: 4.5 and 4.3 bytes per page more than the best
+  table (16 literals: 12.4 and 16.6, 256: 2.6 and 2.0). Only worth building if the coding in the
+  matcher's loop saves more than about 0.2 us, and so far every split or merge of those two loops
+  was slower.
+
 ## Pages without matches but with literals that code well: coded now
 
 `seqlz_compress_coded()` coded the literals only if the page with raw literals fitted into the first page
