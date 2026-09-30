@@ -64,12 +64,14 @@ Almost every fast compressor, `lz4`, `lzo`, `zstd` and `seqlz` included, is buil
 The compressor walks through the page. When the next bytes appeared before, it writes a **match**:
 go back `offset` bytes and copy `ml` bytes. When they did not, it writes them as they are, as
 **literals**. Memory pages are full of repeats, because programs store arrays of similar things.
-Here are the first 24 bytes of a page that holds an array of pointers, each 16 bytes after the one
-before:
+Here are the first 24 bytes of a page that holds an array of pointers, each pointing 16 bytes
+further than the one before. The bytes follow each other in memory, here one pointer per line:
 
 ```text
-10 00 56 34 12 7f 00 00   20 00 56 34 12 7f 00 00   30 00 56 34 12 7f 00 00   ...
-└── pointer 1 ────────┘   └── pointer 2 ────────┘   └── pointer 3 ────────┘
+pointer 1:  10 00 56 34 12 7f 00 00
+pointer 2:  20 00 56 34 12 7f 00 00
+pointer 3:  30 00 56 34 12 7f 00 00
+...
 ```
 
 Every pointer differs from the one before in its first byte, and every 16th in the second byte too.
