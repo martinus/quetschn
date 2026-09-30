@@ -31,6 +31,11 @@
  *   ll >= 15:           ll - 15 follows as a length value; ml - 4 >= 31: ml - 4 - 31
  *   length value v:     v < 16 is the symbol itself; otherwise b = bit_width(v) - 1, the symbol is 12 +
  *                       b, and the b low bits of v follow as extra bits
+ * The token has one Huffman table per group of the offset class of the token before it: after the last
+ * offset again (class 0), after an aligned offset (classes 4 and 5), and after any other offset
+ * (classes 1 to 3), which is also the table of a page's first token. Pages have runs of sequences of
+ * the same shape, e.g. arrays of structs, and the offset of the sequence before tells the decoder which
+ * kind of run it is in (docs/explored-designs.md, "The token's table by the offset before it").
  * The length values of ll and of ml have Huffman tables of at most SEQLZ_MAX_BITS bits. Everything goes
  * into one bitstream, read least significant bit first: per sequence the token, the offset, then the
  * length values if any, each symbol followed by its extra bits. One stream and not three, because the
@@ -71,11 +76,17 @@ extern "C" {
 #define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U)    /* the same for ml - 4 */
 #define SEQLZ_LEN_SYMBOLS (13U + QUETSCHN_PAGE_BITS) /* 16 direct values, then buckets 4 to page bits */
 #define SEQLZ_HEADER 2U
+/* The token tables, and the one for the token after a token of offset class cls, see above: 0 after
+ * class 0, 1 after 4 and 5, 2 after 1 to 3. From a packed constant, without a branch. */
+#define SEQLZ_TOKEN_CTX 3U
+#define SEQLZ_TOKEN_CTX_OF(cls) ((0x5A8U >> (2U * (cls))) & 3U)
+#define SEQLZ_TOKEN_CTX_FIRST 2U
 
-/* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 2099 bytes. */
+/* The code lengths of the tables, 0 for a symbol that never occurs. This is what training produces and
+ * what zram's dictionary parameter can carry: 9269 bytes. */
 struct seqlz_lengths {
-    unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
+    /* per context, see SEQLZ_TOKEN_CTX; the last one is the escape, see SEQLZ_ESCAPE */
+    unsigned char token[SEQLZ_TOKEN_CTX][SEQLZ_TOKEN_SYMBOLS + 1];
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
     unsigned char ml[SEQLZ_LEN_SYMBOLS];
 };

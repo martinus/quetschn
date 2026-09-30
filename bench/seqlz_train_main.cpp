@@ -2,8 +2,9 @@
 //
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
 // lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
-// SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 2099 bytes that zram's dictionary parameter can carry. With --lit-sets the literal tables of
+// SEQLZ_MAX_BITS bits, the tokens in one table per context (SEQLZ_TOKEN_CTX). Writes a C initializer
+// for explore/seqlz_default_tables.c, or with --blob the 9269 bytes that zram's dictionary parameter
+// can carry. With --lit-sets the literal tables of
 // explore/seqlz_lit_sets.c instead.
 
 #include "harness.h"
@@ -346,7 +347,7 @@ int main(int argc, char** argv) {
         }
 
         // start at 1: a symbol that never occurs here must still get a code
-        auto token = std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 1.0);
+        auto token = std::vector<std::vector<double>>(SEQLZ_TOKEN_CTX, std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 1.0));
         auto ll = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto ml = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
@@ -398,9 +399,11 @@ int main(int argc, char** argv) {
             // the same symbols and the same repeat offset as seqlz_encode()
             auto last = 1U;
             auto extra = 0U;
+            auto ctx = SEQLZ_TOKEN_CTX_FIRST;
             for (auto const& s : sequences) {
                 auto const cls = s.match == 0 ? 0U : seqlz_off_class(s.offset, last, &extra);
-                token[seqlz_token(s.literals, s.match, cls)] += 1;
+                token[ctx][seqlz_token(s.literals, s.match, cls)] += 1;
+                ctx = SEQLZ_TOKEN_CTX_OF(cls);
                 if (s.literals >= SEQLZ_LL_CAP) {
                     ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
                 }
@@ -438,10 +441,12 @@ int main(int argc, char** argv) {
         }
 
         auto lengths = seqlz_lengths{};
-        auto const l_token = token_lengths(token);
+        for (unsigned k = 0; k < SEQLZ_TOKEN_CTX; ++k) {
+            auto const l_token = token_lengths(token[k]);
+            std::copy(l_token.begin(), l_token.end(), lengths.token[k]);
+        }
         auto const l_ll = code_lengths(ll, SEQLZ_MAX_BITS);
         auto const l_ml = code_lengths(ml, SEQLZ_MAX_BITS);
-        std::copy(l_token.begin(), l_token.end(), lengths.token);
         std::copy(l_ll.begin(), l_ll.end(), lengths.ll);
         std::copy(l_ml.begin(), l_ml.end(), lengths.ml);
 
@@ -454,15 +459,24 @@ int main(int argc, char** argv) {
             std::printf("%zu pages, %s, %zu bytes to %s\n", pages, matcher.c_str(), sizeof(lengths), blob.c_str());
             return 0;
         }
-        auto print = [](char const* name, unsigned char const* l, unsigned n) {
-            std::printf("    .%s = {", name);
+        auto values = [](unsigned char const* l, unsigned n) {
+            std::printf("{");
             for (unsigned i = 0; i < n; ++i) {
                 std::printf("%s%u", i == 0 ? "" : ", ", l[i]);
             }
-            std::printf("},\n");
+            std::printf("}");
+        };
+        auto print = [&](char const* name, unsigned char const* l, unsigned n) {
+            std::printf("    .%s = ", name);
+            values(l, n);
+            std::printf(",\n");
         };
         std::printf("/* trained on %zu pages of %s, %s */\n{\n", pages, base.c_str(), matcher.c_str());
-        print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
+        std::printf("    .token = {");
+        for (unsigned k = 0; k < SEQLZ_TOKEN_CTX; ++k) {
+            values(lengths.token[k], SEQLZ_TOKEN_SYMBOLS + 1);
+            std::printf(k + 1 < SEQLZ_TOKEN_CTX ? ", " : "},\n");
+        }
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);
         std::printf("}\n");

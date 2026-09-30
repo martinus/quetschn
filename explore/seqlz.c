@@ -24,9 +24,12 @@ struct value_table {
     u32 enc[ENC_LEN_SYMBOLS]; /* code | length << 16, see build() */
 };
 
+/* One per context, see SEQLZ_TOKEN_CTX. The encoder indexes them through a pointer to the row of the
+ * context, the decoder through a pointer to all of them and an index: the bounds sanitizer does not
+ * check pointers, and the compiler cannot prove that the context is below SEQLZ_TOKEN_CTX. */
 struct token_table {
-    u16 decode[1U << SEQLZ_TOKEN_BITS];
-    u16 enc[SEQLZ_TOKEN_SYMBOLS + 1]; /* code | length << 12: 4 KiB in L1 next to the hash table */
+    u16 decode[SEQLZ_TOKEN_CTX][1U << SEQLZ_TOKEN_BITS];
+    u16 enc[SEQLZ_TOKEN_CTX][SEQLZ_TOKEN_SYMBOLS + 1]; /* code | length << 12 */
 };
 
 /* The literals' streams are read most significant bit first, so the codes are not reversed and the
@@ -179,9 +182,20 @@ int seqlz_all_symbols(const struct seqlz_tables* t) {
 }
 
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths) {
+    unsigned int c;
+
     __builtin_memset(t, 0, sizeof(*t)); /* also the encoder's entries behind the last symbol */
-    if (build(lengths->token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, token_entry, 0, t->token.enc, 0, t->token.decode) ||
-        build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, 0, t->ll.decode, 0) ||
+    for (c = 0; c < SEQLZ_TOKEN_CTX; c++)
+        if (build(lengths->token[c],
+                  SEQLZ_TOKEN_SYMBOLS + 1,
+                  SEQLZ_TOKEN_BITS,
+                  token_entry,
+                  0,
+                  t->token.enc[c],
+                  0,
+                  t->token.decode[c]))
+            return -1;
+    if (build(lengths->ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ll.enc, 0, t->ll.decode, 0) ||
         build(lengths->ml, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, length_entry, t->ml.enc, 0, t->ml.decode, 0))
         return -1;
     {
@@ -195,13 +209,15 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
             t->lit_cost[k % 256][k / 256 / 8] |= (u64)seqlz_lit_sets[k / 256][k % 256] << (8U * (k / 256 % 8));
     }
     {
-        /* every token has a code or the escape has one, every length value has one */
+        /* every token has a code or the escape has one, in every context, every length value has one */
         unsigned int k, all = 1;
 
-        for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
-            all &= lengths->token[k] != 0 || lengths->token[SEQLZ_ESCAPE] != 0;
-        /* an escaped token and a 12-bit offset in at most 31 bits, the encoder's bound */
-        all &= lengths->token[SEQLZ_ESCAPE] <= SEQLZ_MAX_ESCAPE_LEN;
+        for (c = 0; c < SEQLZ_TOKEN_CTX; c++) {
+            for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
+                all &= lengths->token[c][k] != 0 || lengths->token[c][SEQLZ_ESCAPE] != 0;
+            /* an escaped token and a 12-bit offset in at most 31 bits, the encoder's bound */
+            all &= lengths->token[c][SEQLZ_ESCAPE] <= SEQLZ_MAX_ESCAPE_LEN;
+        }
         for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
             all &= lengths->ll[k] != 0 && lengths->ml[k] != 0;
         for (k = 0; k < 256 * SEQLZ_LIT_SETS; k++)
@@ -259,6 +275,7 @@ struct encoder {
     u8* lit;           /* literals */
     const u8* src_end; /* the 16-byte literal copies may read up to here */
     unsigned int last; /* the last offset */
+    const u16* tenc;   /* the token codes of the context, t->token.enc[] */
 };
 
 /* v has n bits, n < 64 - cnt */
@@ -288,15 +305,16 @@ static ALWAYS_INLINE void put_len_value(struct encoder* e, const struct value_ta
     enc_put_code(e, t->enc[s], v, extra);
 }
 
-/* the code of a token and its length; the escape and the token for a token without a code */
-static ALWAYS_INLINE u32 token_code(const struct seqlz_tables* t, unsigned int tok, unsigned int* len) {
-    u32 te = t->token.enc[tok], ee;
+/* the code of a token in the codes of its context and its length; the escape and the token for a token
+ * without a code */
+static ALWAYS_INLINE u32 token_code(const u16* enc, unsigned int tok, unsigned int* len) {
+    u32 te = enc[tok], ee;
 
     if (te != 0) {
         *len = te >> 12;
         return te & 0xfffU;
     }
-    ee = t->token.enc[SEQLZ_ESCAPE];
+    ee = enc[SEQLZ_ESCAPE];
     *len = (ee >> 12) + SEQLZ_ESCAPE_BITS;
     return (ee & 0xfffU) | tok << (ee >> 12);
 }
@@ -321,7 +339,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
     if (ml == 0) {
         /* the last sequence */
         unsigned int tlen;
-        u32 code = token_code(t, seqlz_token(ll, 0, 0), &tlen);
+        u32 code = token_code(e->tenc, seqlz_token(ll, 0, 0), &tlen);
 
         enc_put(e, code, tlen);
         if (ll >= SEQLZ_LL_CAP)
@@ -337,7 +355,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         unsigned int cls = (1U + (off >= 16U) + big + 2U * aligned) & is_new;
         unsigned int raw_bits = SEQLZ_RAW_BITS(cls);
         unsigned int tlen;
-        u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
+        u32 code = token_code(e->tenc, seqlz_token(ll, ml, cls), &tlen);
 
         enc_put(e, code | (u64)((off >> SEQLZ_OFF_SHIFT(cls)) & ((1U << raw_bits) - 1U)) << tlen, tlen + raw_bits);
         if (ll >= SEQLZ_LL_CAP) {
@@ -348,11 +366,13 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
             put_len_value(e, &t->ml, ml - 4 - SEQLZ_ML_CAP);
         enc_flush(e);
         e->last = off;
+        e->tenc = t->token.enc[0] + SEQLZ_TOKEN_CTX_OF(cls) * (SEQLZ_TOKEN_SYMBOLS + 1U);
     }
 }
 
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
-    *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1};
+    *e = (struct encoder){
+        t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1, t->token.enc[SEQLZ_TOKEN_CTX_FIRST]};
 }
 
 /* the last bits, the header, and the bitstream moved in behind the literals */
@@ -620,6 +640,14 @@ seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void*
 
 /* ---- decoder ---- */
 
+/* The start of the token table of the context after a token of class cls, in entries of all token
+ * tables: TOKEN_CTX_INDEX >> 4 * cls, the 2 bits of the context shifted by SEQLZ_TOKEN_BITS. With the
+ * shift by 4 * cls that SEQLZ_RAW_BITS() needs anyway. */
+#define TOKEN_CTX_AT(c) ((u64)SEQLZ_TOKEN_CTX_OF(c) << (SEQLZ_TOKEN_BITS + 4U * (c)))
+#define TOKEN_CTX_INDEX \
+    (TOKEN_CTX_AT(0) | TOKEN_CTX_AT(1) | TOKEN_CTX_AT(2) | TOKEN_CTX_AT(3) | TOKEN_CTX_AT(4) | TOKEN_CTX_AT(5))
+_Static_assert(SEQLZ_OFF_CLASSES == 6 && SEQLZ_TOKEN_CTX <= 4, "TOKEN_CTX_INDEX has 6 classes of 2 bits");
+
 /*
  * Least significant bit first. Refill loads 8 bytes at once while at least 8 are left in the stream,
  * and byte by byte at the end, so it never reads past the stream. Past the end it shifts in zeros and
@@ -787,6 +815,8 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
     u8* d = dst;
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end, *lit_bound;
+    const u16* td = t->token.decode[0];                          /* all token tables */
+    unsigned int ti = SEQLZ_TOKEN_CTX_FIRST << SEQLZ_TOKEN_BITS; /* the context's table in td */
     struct bit_reader br;
     unsigned int n_lit, last = 1;
 
@@ -796,7 +826,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
         /* the decoder's tables, so that their misses overlap when they are cold */
         const u8* q;
 
-        for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
+        for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + SEQLZ_TOKEN_CTX); q += 64)
             PAGE_LZ_PREFETCH(q);
         for (q = (const u8*)t->ll.decode; q < (const u8*)(t->ll.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
             PAGE_LZ_PREFETCH(q);
@@ -833,7 +863,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
          * of the offset, so its raw bits are known without a second lookup. */
         if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
             refill(&br);
-        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
+        tok = td[ti | (br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U))];
         if (tok >= (7U << 13)) {
             /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
             unsigned int idx;
@@ -854,6 +884,7 @@ int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned
 
             drop(&br, n_tok + raw_bits);
             off = (raw & is_new) | (last & ~is_new);
+            ti = (unsigned int)(TOKEN_CTX_INDEX >> (4U * cls)) & (3U << SEQLZ_TOKEN_BITS);
         }
         nl = (tok >> 4) & 15U;
         len = ((tok >> 8) & 31U) + 4U;

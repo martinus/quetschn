@@ -324,6 +324,13 @@ TEST_CASE("seqlz: the token holds ll and ml - 4 up to their caps and the offset 
     CHECK(bits == 9);
     CHECK(seqlz_off_class(4088, 9, &bits) == 5);
     CHECK(seqlz_off_class(4088, 4088, &bits) == 0);
+    // the token's table after a token of each class: the last offset, aligned, any other
+    CHECK(SEQLZ_TOKEN_CTX_OF(0) == 0);
+    CHECK(SEQLZ_TOKEN_CTX_OF(1) == 2);
+    CHECK(SEQLZ_TOKEN_CTX_OF(2) == 2);
+    CHECK(SEQLZ_TOKEN_CTX_OF(3) == 2);
+    CHECK(SEQLZ_TOKEN_CTX_OF(4) == 1);
+    CHECK(SEQLZ_TOKEN_CTX_OF(5) == 1);
 }
 
 TEST_CASE("seqlz: a sequence with long lengths and a large offset needs more bits than one refill") {
@@ -369,44 +376,45 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     // A complete code: the tokens with 11 bits, then the first ones 10 bits, then 9, until they fill
-    // the 11-bit table exactly.
+    // the 11-bit table exactly. In the middle context, every context is checked.
     l = seqlz_default_lz4;
+    auto& tok = l.token[1];
     auto complete = [&] {
         // tokens 3 to 2047 and the escape with 11 bits, the others without a code: they take the escape
-        std::memset(l.token, 0, sizeof(l.token));
-        std::memset(l.token + 3, 11, 2045);
-        l.token[SEQLZ_ESCAPE] = 11;
+        std::memset(tok, 0, sizeof(tok));
+        std::memset(tok + 3, 11, 2045);
+        tok[SEQLZ_ESCAPE] = 11;
         auto units = 2046U; // the tokens and the escape
         for (unsigned bits = 10; units < 2048; --bits) {
-            for (unsigned i = 3; i < sizeof(l.token) && units < 2048; ++i) {
+            for (unsigned i = 3; i < sizeof(tok) && units < 2048; ++i) {
                 units += 1U << (10 - bits);
-                l.token[i] = static_cast<unsigned char>(bits);
+                tok[i] = static_cast<unsigned char>(bits);
             }
         }
     };
     auto with_bits = [&](unsigned char bits, unsigned nth) {
-        auto* p = std::find(l.token, l.token + sizeof(l.token), bits);
+        auto* p = std::find(tok, tok + sizeof(tok), bits);
         for (unsigned k = 0; k < nth; ++k) {
-            p = std::find(p + 1, l.token + sizeof(l.token), bits);
+            p = std::find(p + 1, tok + sizeof(tok), bits);
         }
-        REQUIRE(p != l.token + sizeof(l.token));
-        return static_cast<std::size_t>(p - l.token);
+        REQUIRE(p != tok + sizeof(tok));
+        return static_cast<std::size_t>(p - tok);
     };
     complete();
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.token[with_bits(10, 0)] = 11;
+    tok[with_bits(10, 0)] = 11;
     CHECK(seqlz_tables_init(t.get(), &l) == -1); // a gap of one 11-bit code
     complete();
-    l.token[with_bits(11, 0)] = 12;
+    tok[with_bits(11, 0)] = 12;
     CHECK(seqlz_tables_init(t.get(), &l) == -1); // longer than 11 bits
     // A complete code, and then one of 12 bits more: the Kraft sum over 11 bits is still complete,
     // only the length check stops the 12-bit code.
     complete();
     auto const a = with_bits(10, 0), b = with_bits(10, 1);
-    l.token[a] = 0;
-    l.token[b] = 9;
+    tok[a] = 0;
+    tok[b] = 9;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.token[a] = 12;
+    tok[a] = 12;
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     // a gap: every bit pattern must start a code, the decoder does not check
     l = seqlz_default_lz4;
@@ -643,7 +651,10 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         }
         return out;
     };
-    auto const token = codes(lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
+    auto token = std::vector<std::vector<unsigned>>();
+    for (auto const& t : lengths.token) {
+        token.push_back(codes(t, SEQLZ_TOKEN_SYMBOLS + 1));
+    }
     auto const ll = codes(lengths.ll, SEQLZ_LEN_SYMBOLS);
     auto const ml = codes(lengths.ml, SEQLZ_LEN_SYMBOLS);
 
@@ -663,6 +674,9 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         put(v - (1U << b), b);
     };
     auto last_offset = 1U;
+    // the token's table: after the last offset again 0, after an aligned one 1, after any other and
+    // for the first token 2
+    auto ctx = 2U;
     for (std::size_t i = 0; i < seq.size(); ++i) {
         auto const last = i + 1 == seq.size();
         auto const l = static_cast<unsigned>(seq[i].literals);
@@ -674,13 +688,14 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         auto const cls = last || o == last_offset ? 0U : o < 16 ? 1U : o < 256 ? (aligned ? 4U : 2U) : (aligned ? 5U : 3U);
         auto const tok = std::min(l, SEQLZ_LL_CAP) + ((m == 0 ? 0U : std::min(m - 4U, SEQLZ_ML_CAP)) << SEQLZ_LL_BITS) +
                          (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
-        if (lengths.token[tok] != 0) {
-            put(token[tok], lengths.token[tok]);
+        if (lengths.token[ctx][tok] != 0) {
+            put(token[ctx][tok], lengths.token[ctx][tok]);
         } else {
             // no code: the escape, then the token in 12 bits
-            put(token[SEQLZ_ESCAPE], lengths.token[SEQLZ_ESCAPE]);
+            put(token[ctx][SEQLZ_ESCAPE], lengths.token[ctx][SEQLZ_ESCAPE]);
             put(tok, SEQLZ_ESCAPE_BITS);
         }
+        ctx = cls == 0 ? 0U : cls >= 4 ? 1U : 2U;
         put(cls >= 4 ? o / 8 : o, std::array<unsigned, 6>{0, 4, 8, 12, 5, 9}[cls]);
         if (l >= SEQLZ_LL_CAP) {
             value(ll, lengths.ll, l - SEQLZ_LL_CAP);
