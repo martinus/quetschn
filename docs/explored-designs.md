@@ -1174,39 +1174,44 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
-## Both kept changes against the other codecs: the same time per page, less memory per CPU
+## The matcher without its step against the other codecs: 0.02 to 0.05 us per page less
 
-The matcher without its step and the literals decoded into the page, together, in one boot per dump
-with `lz4`, `lzo-rle` and `zstd` 3, against `main`'s `seqlz-fast-lit` in a boot of its own. Kernel
-VM, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, `r = 0.34`, means, times in us, first dump /
-second dump:
+The matcher without its step in one boot per dump with `lz4`, `lzo-rle` and `zstd` 3, twice, against
+`main`'s `seqlz-fast-lit` in two boots of its own. Kernel VM, 20 000 pages per dump, CPU 2 at a
+fixed 4.5 GHz, `r = 0.34`, means, times in us, first dump / second dump, the two boots separated by
+a comma:
 
-![seqlz-fast-lit with the kept changes against the other codecs](plots/codecs-kept.svg)
+![seqlz-fast-lit with the matcher without its step against the other codecs](plots/codecs-matcher.svg)
 
-| | bytes per page | write | cold read | us per page written |
-| --- | --- | --- | --- | --- |
-| `lz4` | 1450.4 / 1754.5 | 5.25 / 5.74 | 2.55 / 2.60 | 6.12 / 6.62 |
-| `lzo-rle` | 1361.1 / 1678.5 | 5.06 / 5.65 | 2.80 / 2.85 | 6.01 / 6.62 |
-| `seqlz-fast-lit`, `main` | 1035.5 / 1324.0 | 6.70 / 7.43 | 2.98 / 3.12 | 7.71 / 8.49 |
-| `seqlz-fast-lit`, both changes | 1038.7 / 1321.6 | 6.63 / 7.37 | 3.12 / 3.34 | 7.69 / 8.51 |
-| `zstd` 3 | 1012.3 / 1197.5 | 13.25 / 14.41 | 5.29 / 5.57 | 15.05 / 16.31 |
+| | bytes per page | write | cold read | us per page written | write p99, ns |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 1450.4 / 1754.5 | 5.26, 5.26 / 5.75, 5.73 | 2.53, 2.57 / 2.54, 2.54 | 6.12, 6.13 / 6.61, 6.59 | |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.06, 5.08 / 5.66, 5.64 | 2.79, 2.75 / 2.86, 2.84 | 6.01, 6.02 / 6.63, 6.60 | |
+| `seqlz-fast-lit`, `main` | 1035.5 / 1324.0 | 6.70, 6.69 / 7.43, 7.40 | 2.98, 2.98 / 3.12, 3.13 | 7.71, 7.71 / 8.49, 8.46 | 12 260, 12 220 / 12 341, 12 289 |
+| without the step | 1038.7 / 1321.6 | 6.65, 6.63 / 7.39, 7.35 | 2.98, 2.97 / 3.17, 3.17 | 7.67, 7.64 / 8.47, 8.43 | 11 720, 11 580 / 11 909, 11 690 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.28, 13.39 / 14.36, 14.36 | 5.26, 5.29 / 5.51, 5.51 | 15.07, 15.19 / 16.23, 16.24 | |
 
-In this mix the writes gain only 0.07 and 0.06 us, where the boots with `lzo-rle` and `seqlz-lit`
-alone showed 0.21 and 0.25, and the cold reads lose 0.14 and 0.22 us, where those boots showed 0.08
-and 0.10. `lzo-rle` is 0.03 and 0.06 us slower to write in the branch's boot than in `main`'s, so
-part of it is the boot. Per page written the two changes cancel out: 7.69 against 7.71 and 8.51
-against 8.49 us. What is left is the memory per CPU, 8192 instead of 12 336 bytes, and with 16 KiB
-pages 16 384 instead of 32 816, below `lz4`'s 16 440. The price of the literals in the page on 4 KiB
-pages is what the matcher's change won.
-## The matcher without its step: writes 3% faster, kept
+With all four codecs in a boot the writes gain 0.05 us, less than the 0.21 and 0.25 us of the boots
+with `lzo-rle` and `seqlz-lit` alone, and write p99 4% to 5%. `lzo-rle` writes 0.05 to 0.07 us
+slower in these boots than in `main`'s, which have only it and `seqlz-lit`, so part of the
+difference is the mix of codecs in a boot. Per page written it is 0.02 to 0.05 us less, for 3.2
+bytes more and 2.4 bytes less per page: small, always in the same direction, and the matcher has
+less code.
+
+**With the literals in the page as well**, in one boot per dump with the other codecs, the two
+changes cancelled out: writes 6.63 and 7.37 us against 6.70 and 7.43, cold reads 3.12 and 3.34 us
+against 2.98 and 3.12, 7.69 against 7.71 and 8.51 against 8.49 us per page written. That is why the
+literals in the page were reverted, see "16 KiB pages, tuned".
+## The matcher without its step: writes 1% to 3% faster, kept
 
 *In `explore/page_lz.h`, `match_page()`, for `seqlz` and `bytelz`.* The matcher now tries every
 position. Before, like `lz4`'s acceleration, the step to the next position grew with the literals
 since the last match, `1 + (pos - anchor) >> 6`, so incompressible pages went by fast. Without it
 the pages that compress are 5% faster to write, and in the kernel VM `seqlz-fast-lit` writes 0.21
-and 0.25 us faster per page, 3%, at 3.2 bytes more and 2.4 bytes less per page. Cold reads stay the
-same. The price is the pages that zram stores raw: they take 2.3 us longer each, the whole page is
-searched.
+and 0.25 us faster per page, 3%, at 3.2 bytes more and 2.4 bytes less per page, in boots with
+`lzo-rle` and `seqlz-lit` alone; in boots with all four codecs 0.05 us, see the section above. Cold
+reads stay the same. The price is the pages that zram stores raw: they take 2.3 us longer each, the
+whole page is searched.
 
 ![The matcher variants against main](plots/matcher-no-step.svg)
 
@@ -2234,16 +2239,20 @@ have on 4 KiB pages. The branch stack showed why: for 16 KiB, gcc turned the enc
 into branches, because of the extra bits of class 3. With the raw bits from a packed constant: 1176
 mispredictions, 92 362 cycles, 1.28 times `lz4`. The page, the output and the 16 KiB hash table share
 a 32 KiB L1 in the harness, and the matcher's step was tuned on 4 KiB pages: both looked into in
-[16 KiB pages, tuned](#16-kib-pages-tuned-the-literals-decoded-into-the-page-c5-holds-again).
+[16 KiB pages, tuned](#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept).
 
-## 16 KiB pages, tuned: the literals decoded into the page, C5 holds again
+## 16 KiB pages, tuned: C5 does not hold, the literals in the page would fix it, not kept
 
-*In `explore/seqlz.c`.* With 16 KiB pages `seqlz-fast-lit` needed 32 816 bytes per CPU, twice
-`lz4`'s 16 440: C5, a hard limit, did not hold. Half of it was the scratch the decoder decoded the
-coded literals into, a page and 48 bytes. Now they are decoded into the end of the output page, and
-the scratch is gone: 16 384 bytes per CPU with 16 KiB pages, 8192 instead of 12 336 with 4 KiB
-pages. The two open questions of the section above cost nothing to answer: at 16 KiB the matcher
-without its step is as fast as with it, and a smaller hash table is not faster.
+*Built, measured, reverted; the code is in the history of `feat/codec-ideas` (`bfb8e19`).* With 16
+KiB pages `seqlz-fast-lit` needs 32 816 bytes per CPU, twice `lz4`'s 16 440: C5, a hard limit, does
+not hold. Half of it is the scratch the decoder decodes the coded literals into, a page and 48
+bytes. Decoding them into the end of the output page instead removes the scratch: 16 384 bytes per
+CPU with 16 KiB pages, 8192 instead of 12 336 with 4 KiB pages. It is not kept, because on 4 KiB
+pages it made cold reads 0.08 to 0.22 us slower in the kernel, for memory that C5 does not need
+there; decoding into the page only with 16 KiB pages would mean two ways of decoding in the code,
+and 16 KiB pages cannot be measured in a kernel on x86-64. The two open questions of the section
+above cost nothing to answer: at 16 KiB the matcher without its step is as fast as with it, and a
+smaller hash table is not faster.
 
 ![16 KiB pages](plots/pages-16k.svg)
 
@@ -2262,18 +2271,20 @@ Decode cycles per page, loops over all pages, the median of 5 processes:
 | --- | --- | --- | --- |
 | scratch | 8669 | 9525 | 34 515 |
 | in the page, one loop | 9163 | 10 113 | 35 512 |
-| in the page, two loops (kept) | 8612 | 9503 | 33 536 |
+| in the page, two loops | 8612 | 9503 | 33 536 |
 
 **In the kernel it is not free.** Kernel VM, 4 KiB pages, 2 boots each against the 2 boots of the
 matcher without its step, `r = 0.34`, first dump / second dump: cold reads 2.95, 2.94 / 3.12, 3.14
 us before, 3.03, 3.02 / 3.25, 3.22 us after, 0.08 and 0.10 us slower; cold read p99 4860, 4850 /
 5050, 5080 ns before, 4970, 4960 / 5280, 5240 after, still below `lzo-rle`'s 5331 and 5739. Writes
-and memory are the same. Per page written that is 0.04 and 0.06 us more. Prefetching the lines the
-literals go to did not change the cycles of the cold loop. What makes the kernel slower is not
-known: in the kernel the output page is cold, where the scratch was warm, and the decoder has two
-loops instead of one. With 4 KiB pages the scratch fit into C5 anyway, so keeping it there and
-decoding into the page only with 16 KiB pages would be faster, for two ways of decoding in the code.
-One way was kept.
+and memory are the same. Per page written that is 0.04 and 0.06 us more. In a boot with `lz4`,
+`lzo-rle` and `zstd` 3 as well it was 0.14 and 0.22 us per cold read, see "The matcher without its
+step against the other codecs". Prefetching the lines the literals go to did not change the cycles
+of the cold loop. What makes the kernel slower is not known: in the kernel the output page is cold,
+where the scratch was warm, and the decoder has two loops instead of one. With 4 KiB pages the
+scratch fit into C5 anyway, so keeping it there and decoding into the page only with 16 KiB pages
+would be faster, for two ways of decoding in the code. The literals in the page were built this way
+and then reverted, see the top of this section.
 
 **At 16 KiB nothing else is left to tune.** `resident-16k`, 2088 pages of 16 KiB, the tables trained
 on them, so the sizes are optimistic; cycles as above, one run:
@@ -2284,7 +2295,7 @@ on them, so the sizes are optimistic; cycles as above, one run:
 | `seqlz-fast-lit`, `main` | 3877.7 | 99 220 | 34 186 |
 | without the step | 3873.8 | 97 931 | 34 374 |
 | ... and a 12-bit hash table, 8 KiB | 3882.9 | 97 938 | 34 255 |
-| ... and the literals in the page (kept) | 3873.8 | 97 931 | 33 608 |
+| ... and the literals in the page | 3873.8 | 97 931 | 33 608 |
 | `zstd` 3 | 3846.3 | | |
 
 Compressing takes 1.36 times `lz4`'s cycles and decoding 1.56 times, about the proportions of 4 KiB
@@ -2292,11 +2303,12 @@ pages. The 12-bit table is 9 bytes per page larger and no faster, the 16 KiB tab
 table, 32 KiB, would break C5 again. There is no 16 KiB kernel on x86-64, so none of this is
 measured in the kernel with 16 KiB pages.
 
-Tests: every page with coded literals of the random pages decodes into an output of exactly a page,
-filled with other bytes first, so that ASan sees any write behind it. Mutations, each caught: the
-fast path with 16 bytes of room to the literals instead of 64 (a crash), the copies of the literals
-and of the matches bounded by the page and not by the literals (3 tests each), the last block of
-literals written straight into the page (ASan, a write behind the page).
+Tests on the branch, gone with the revert: every page with coded literals of the random pages
+decodes into an output of exactly a page, filled with other bytes first, so that ASan sees any write
+behind it. Mutations, each caught: the fast path with 16 bytes of room to the literals instead of 64
+(a crash), the copies of the literals and of the matches bounded by the page and not by the literals
+(3 tests each), the last block of literals written straight into the page (ASan, a write behind the
+page).
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
@@ -2598,8 +2610,9 @@ one multiply).
   but it must not get slower. What is left of the gap is the search for older and longer matches,
   and every way to search more measured so far costs more than it saves; see "The matcher without
   its step".
-* **Why the literals in the page make cold reads slower in the kernel**, 0.08 and 0.10 us, where the
-  loop in userspace is as fast; see "16 KiB pages, tuned".
+* **C5 with 16 KiB pages**: `seqlz-fast-lit` needs 32 816 bytes per CPU, `lz4` 16 440. Decoding the
+  literals into the page fixes it and was built, but made cold reads on 4 KiB pages slower in the
+  kernel, for a reason not found; see "16 KiB pages, tuned". To decide with a kernel on 16 KiB pages.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
 * **The last 21 ns of `seqlz_decode` with clang**, see "A kernel built with clang". The hot
