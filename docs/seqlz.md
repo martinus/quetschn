@@ -357,7 +357,10 @@ The streams are there only for the speed of the decoder. A Huffman code has no f
 decoder knows where a literal starts only after it has decoded the one before. In one stream that is
 a chain: look up, shift, look up, shift, and every step waits for the one before. 8 streams are 8
 chains that do not wait for each other, and a CPU works on them side by side. With 4 streams a
-literal took 2.9 cycles to decode, and 8 streams made the decoding of a page 4% faster again.
+literal took 2.9 cycles to decode, and 8 streams made the decoding of a page 4% faster again. The
+streams cost no bits: a literal's code depends only on the literal, not on its neighbours, so it has
+the same length in any stream. What they cost is the header, 2 bytes for the size of each stream,
+and up to 7 bits at the end of each: going from 4 to 8 streams cost 0.1 to 0.2 points of memory.
 
 > [!NOTE]
 > **The 8 streams have nothing to do with the 8 tables.** All 8 streams of a page are coded with the
