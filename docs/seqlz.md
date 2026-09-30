@@ -584,46 +584,47 @@ things make the difference, each measured:
 
 ## The choices, with their numbers
 
-Each choice was measured against the alternative; the numbers are from
-[explored-designs.md](explored-designs.md), 4 KiB pages.
+Each choice was measured against the alternative in the second column; the numbers are from
+[explored-designs.md](explored-designs.md), 4 KiB pages. Where a row has two numbers, they are the
+first and the second dump. A point of memory is 1% of the uncompressed page, 41 bytes.
 
 <details open>
 <summary><b>The format</b></summary>
 
-| choice | against | why |
-| --- | --- | --- |
-| `ll`, `ml` and the offset class in one token | separate symbols | two table lookups per sequence instead of three: 22% fewer decode cycles, and less memory |
-| the offset class in the token, raw bits after it | a Huffman coded offset bucket | one lookup per sequence: 8758 to 8168 decode cycles, for 0.4 points of memory |
-| token codes of at most 11 bits, 4 KiB table | 12 bits, 8 KiB | cold p99 5070 to 4350 ns: the decoder's tables have to stay in L1 |
-| rare tokens escaped | a code for every token | 11 bits have room for 2048 codes, there are 3072 tokens |
-| match lengths up to 34 in the token | up to 18 | with 15 values, every fifth match needed a length value, and that branch mispredicted (commit `f0381e7`) |
-| one repeat offset | three, as `zstd` | keeping three in order cost 17% of the decode cycles; the other two were 11% of the matches, 0.2 points |
-| multiples of 8 in classes of their own | plain offsets | 24 and 2 bytes per page less in the kernel, for 0.2 µs per page written |
-| only complete Huffman codes | checks for invalid codes | the checks were 6% of the decoder's instructions |
+| choice | instead of | gain | price |
+| --- | --- | --- | --- |
+| `ll`, `ml` and the offset class in one token | a symbol each | 22% fewer decode cycles, and less memory | |
+| the offset class in the token, raw offset bits after it | the offset's size Huffman coded on its own | 7% fewer decode cycles, 8168 instead of 8758 per page: one table lookup per sequence | 0.4 points of memory |
+| token codes of at most 11 bits, a 4 KiB table | 12 bits, an 8 KiB table | the slowest 1% of cold reads take 4350 instead of 5070 ns: the smaller table stays in the L1 cache | none measured in memory |
+| rare tokens escaped | a code for every token | needed: 11 bits have room for 2048 codes, there are 3072 tokens | 16 bits for a rare token |
+| match lengths up to 34 in the token | up to 18 | a length value after 8.5% of the matches instead of 18.7%, and fewer mispredicted branches: 9180 instead of 9400 decode cycles | |
+| one repeat offset | three, as in `zstd` | 17% fewer decode cycles | 0.2 points of memory: the other two were 11% of the matches |
+| two classes for offsets that are multiples of 8 | only plain offsets | 24 and 2 bytes less memory per page in the kernel | 0.2 µs more time per page written |
+| only complete Huffman codes | checks for invalid codes | 6% fewer instructions in the decoder | |
 
 </details>
 
 <details>
 <summary><b>The literals</b></summary>
 
-| choice | against | why |
-| --- | --- | --- |
-| static tables | a table per page | 13% and 15% slower writes for 0.3% and 4.6% less memory |
-| one of 8 literal tables per page | one | 89% and 76% of the way from `lz4`'s to `zstd`'s memory in the kernel |
-| literals in 8 streams | 4 | 2.9 cycles per literal with 4; 9070 to 8676 decode cycles per page |
-| coded only if they save 1/16 | whenever they save anything | less than 0.1 points of memory more, for decode time on every such page |
+| choice | instead of | gain | price |
+| --- | --- | --- | --- |
+| static tables | a table built for each page | 13% and 15% faster writes | 0.3% and 4.6% more memory |
+| one of 8 literal tables per page | one table for all pages | pages 10.2% and 12.5% smaller than without coded literals, where one table gives 7.3% and 6.3% | 8 tables of 2 KiB to decode with |
+| literals in 8 streams | 4 streams | 4% fewer decode cycles, 8676 instead of 9070 per page | 8 more bytes of header: 0.1 to 0.2 points |
+| literals coded only if that saves 1/16 of them | coded whenever it saves anything | no decoding of literals on pages where it saves only a few bytes | less than 0.1 points of memory |
 
 </details>
 
 <details>
 <summary><b>The matcher</b></summary>
 
-| choice | against | why |
-| --- | --- | --- |
-| a hash of 5 bytes | 4 bytes | 5% fewer compress cycles for 0.6 points, 10% less write time at p99 in the kernel |
-| the last offset checked at every position | only the table | 0.5 points of memory |
-| the hash table cleared for each page | checking each entry's age | 7% faster |
-| every position tried | `lz4`'s growing step | writes 1% to 3% faster in the kernel |
+| choice | instead of | gain | price |
+| --- | --- | --- | --- |
+| a hash of 5 bytes | 4 bytes | 5% fewer compress cycles, and the slowest 1% of writes 10% faster in the kernel | 0.6 points of memory |
+| the last offset checked at every position | only the hash table | 0.5 points less memory | |
+| the hash table cleared for each page | checking each entry's age | compressing 7% faster | |
+| every position tried | `lz4`'s growing step after long runs without a match | writes 1% to 3% faster in the kernel | pages zram stores uncompressed take 2.3 µs longer |
 
 </details>
 
