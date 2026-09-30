@@ -1359,8 +1359,12 @@ again.
 * **The longer of the two candidates** where the last offset and the table both hit at different
   places, instead of always the last offset: 969.4 / 1259.7 bytes per page against 968.4 / 1258.8,
   offline on 20 000 pages of the first two dumps; only if the table's match is longer by more than 2
-  bytes 968.1 / 1258.2, by more than 4 968.2 / 1258.3. The last offset's 0 bits make up for the
-  shorter match. Cycles not measured, it needs a second `count()`.
+  bytes 968.1 / 1258.2, by more than 8, 16 or 32 bytes 968.3 / 1258.5 to 1258.7. Per page both hit
+  at different places 23.5 / 20.8 times, the table's match is longer in 2.6 / 3.2 of them, longer by
+  more than 8 bytes in 0.45 / 0.61, and a match of 96 bytes or more from the table against 8 or
+  fewer from the last offset comes once in 70 / 125 pages. Where it does, the greedy matcher finds
+  the rest right behind the short match, for one more sequence, and the last offset's 0 bits make up
+  for most of that. Cycles not measured, it needs a second `count()`.
 * **A minimum length for the table's matches**, shorter ones stay literals and the search goes on at
   the next position; matches at the last offset as before. Offline, 20 000 pages of the first two
   dumps, 968.4 / 1258.8 bytes per page today: at least 5 bytes 968.0 / 1258.6, 6 bytes 984.3 /
