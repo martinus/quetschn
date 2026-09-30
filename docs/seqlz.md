@@ -179,11 +179,13 @@ and 9.5 and `zstd` 23.2 and 23.7. Per CPU it needs 12 336 bytes of work memory, 
 
 There is no fastest codec here, there is a pareto front: nothing beats `seqlz-fast-lit` on memory
 without taking twice its time, and nothing beats it on time without taking 27% to 40% more memory.
-By the score it is the best choice for anyone who values a microsecond per page at 24 to about 150
-bytes of memory per page, see [the designs by the
-score](explored-designs.md#the-designs-by-the-score).
+By the [score](../PLAN.md#11-the-score-memory-against-time-not-bars) it is the best choice for
+anyone who values a microsecond per page written at 16 to about 200 bytes of memory per page, on
+both dumps. The rightmost column of the chart below shows where that comes from: `zstd` saves 3 and
+16 bytes per page for each µs more than `seqlz-fast-lit`, and `seqlz-fast-lit` saves 208 and 201
+bytes per page for each µs more than `lzo-rle`.
 
-![Memory against latency for all codecs](plots/codecs-branch.svg)
+![Memory against latency for all codecs](plots/seqlz-codecs.svg)
 
 ## The format: lz4's sequences, coded like zstd's
 
