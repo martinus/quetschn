@@ -370,13 +370,13 @@ static unsigned int encoder_finish(struct encoder* e, u8* d) {
     return SEQLZ_HEADER + n_lit + bytes;
 }
 
-unsigned int seqlz_encode(const struct seqlz_tables* t,
-                          const struct seqlz_sequence* seq,
-                          unsigned int n,
-                          const unsigned char* literals,
-                          unsigned int n_literals,
-                          void* dst,
-                          unsigned int dst_cap) {
+static unsigned int encode_raw(const struct seqlz_tables* t,
+                               const struct seqlz_sequence* seq,
+                               unsigned int n,
+                               const unsigned char* literals,
+                               unsigned int n_literals,
+                               void* dst,
+                               unsigned int dst_cap) {
     const u8* in = literals;
     struct encoder e;
     unsigned int i;
@@ -561,16 +561,17 @@ code_literals(const struct seqlz_tables* t, u8* d, unsigned int len, const u8* l
     return coded + seq_bytes;
 }
 
-unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
-                                const struct seqlz_sequence* seq,
-                                unsigned int n,
-                                const unsigned char* literals,
-                                unsigned int n_literals,
-                                void* dst,
-                                unsigned int dst_cap) {
-    unsigned int len = seqlz_encode(t, seq, n, literals, n_literals, dst, dst_cap);
+unsigned int seqlz_encode(const struct seqlz_tables* t,
+                          const struct seqlz_sequence* seq,
+                          unsigned int n,
+                          const unsigned char* literals,
+                          unsigned int n_literals,
+                          void* dst,
+                          unsigned int dst_cap,
+                          int coded) {
+    unsigned int len = encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
 
-    return len == 0 ? 0 : code_literals(t, dst, len, literals, n_literals, 0);
+    return len == 0 || !coded ? len : code_literals(t, dst, len, literals, n_literals, 0);
 }
 
 static unsigned int
@@ -584,14 +585,14 @@ compress_page(const struct seqlz_tables* t, struct seqlz_state* st, const u8* sr
     return encoder_finish(&e, dst);
 }
 
-unsigned int seqlz_compress_coded(
-    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap) {
+unsigned int seqlz_compress(
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst_v, unsigned int dst_cap, int coded) {
     u8* const d = dst_v;
     unsigned int len = compress_page(t, st, src, dst_v, dst_cap), n_lit, body;
     u8* keep;
 
-    if (len == 0)
-        return 0;
+    if (len == 0 || !coded)
+        return len;
     n_lit = load16(d);
     body = len - SEQLZ_HEADER;
     if (body + SEQLZ_LIT_HEADER + 8U <= SEQLZ_PAGE) {
@@ -611,11 +612,6 @@ unsigned int seqlz_compress_coded(
     if (!(d[1] & 0x80U))
         __builtin_memmove(d + SEQLZ_HEADER, keep, body);
     return len;
-}
-
-unsigned int
-seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap) {
-    return compress_page(t, st, src, dst, dst_cap);
 }
 
 /* ---- decoder ---- */
@@ -707,7 +703,7 @@ static __attribute__((__noinline__, __cold__)) u64 lit_load_tail(const u8* ip, c
         (bits) <<= e_ & 63U; /* the code length; the symbol is above bit 6 */ \
     } while (0)
 
-/* The coded literals of a page into out, see seqlz_encode_coded(). Returns where the sequences'
+/* The coded literals of a page into out, see seqlz_encode(). Returns where the sequences'
  * bitstream starts, 0 if the page is not valid. Not inlined: in the loop over the sequences its
  * registers made seqlz-fast's pages 12% slower. */
 static __attribute__((__noinline__, __aligned__(64))) const u8*
@@ -777,11 +773,7 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     return q + total;
 }
 
-int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst) {
-    return seqlz_decode_scratch(t, src, src_len, dst, 0);
-}
-
-int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
+int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
     const u8* s = src;
     const u8* const s_end = s + src_len;
     u8* d = dst;

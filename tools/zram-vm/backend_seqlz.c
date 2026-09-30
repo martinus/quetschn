@@ -57,7 +57,7 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
 	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
-			     req->dst_len);
+			     req->dst_len, 0);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -70,8 +70,8 @@ static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, s
 
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
-	len = seqlz_compress_coded(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
-				   req->dst_len);
+	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
+				   req->dst_len, 1);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -84,7 +84,7 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			PAGE_LZ_PREFETCH((const char *)req->src + q);
-	if (req->dst_len < SEQLZ_PAGE || seqlz_decode_scratch(params->drv_data, req->src, req->src_len, req->dst,
+	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst,
 							      ((struct sz_ctx *)ctx->context)->scratch))
 		return -EINVAL;
 	return 0;

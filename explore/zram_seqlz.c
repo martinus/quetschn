@@ -55,7 +55,7 @@ static int fast_compress(struct quetschn_params* p,
 
     if (src_len != SEQLZ_PAGE)
         return -1;
-    len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len);
+    len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len, 0);
     if (!len)
         return -1;
     *dst_len = len;
@@ -71,7 +71,7 @@ static int fast_decompress(struct quetschn_params* p,
                            unsigned int* dst_len) {
     (void)s;
     quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
-    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst))
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst, 0))
         return -1;
     *dst_len = SEQLZ_PAGE;
     return 0;
@@ -110,7 +110,7 @@ static int fast_lit_compress(struct quetschn_params* p,
 
     if (src_len != SEQLZ_PAGE)
         return -1;
-    len = seqlz_compress_coded(p->drv_data, &c->st, src, dst, *dst_len);
+    len = seqlz_compress(p->drv_data, &c->st, src, dst, *dst_len, 1);
     if (!len)
         return -1;
     *dst_len = len;
@@ -126,7 +126,7 @@ static int fast_lit_decompress(struct quetschn_params* p,
     struct fast_lit_ctx* c = s->context;
 
     quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
-    if (*dst_len < SEQLZ_PAGE || seqlz_decode_scratch(p->drv_data, src, src_len, dst, c->scratch))
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst, c->scratch))
         return -1;
     *dst_len = SEQLZ_PAGE;
     return 0;
