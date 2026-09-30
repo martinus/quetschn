@@ -359,6 +359,11 @@ a chain: look up, shift, look up, shift, and every step waits for the one before
 chains that do not wait for each other, and a CPU works on them side by side. With 4 streams a
 literal took 2.9 cycles to decode, and 8 streams made the decoding of a page 4% faster again.
 
+> [!NOTE]
+> **The 8 streams have nothing to do with the 8 tables.** All 8 streams of a page are coded with the
+> page's one table. That both are 8 is a coincidence: the number of tables was chosen for memory, 16
+> tables saved only 0.1 to 0.3 points more, and the number of streams for the decoder's speed.
+
 **Where each stream starts and ends.** The header has the size of each stream in bytes, 8 × `u16`.
 Stream 0 starts right after the 19 bytes of header, stream 1 where stream 0 ends, and so on; the
 sequences' bitstream starts where stream 7 ends. A stream ends with the bits of its last literal,
