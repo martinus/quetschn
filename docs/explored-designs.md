@@ -1174,7 +1174,7 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
-## A literal table per half or quarter of the literals: nothing, not built
+## A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built
 
 *Measured offline, not built.* Today a page codes all its literals with one of the 8 tables. The
 idea: the first half of the literals with one table, the second half with another, in case a page
@@ -1188,10 +1188,14 @@ bytes per page. 20 000 pages of each dump, zsmalloc estimated as steps of 16 byt
 | 1, now | 967.3 | 1257.9 |
 | 2, one per half | 966.8, -0.05% | 1257.8, -0.01% |
 | 4, one per quarter | 966.6, -0.07% | 1258.3, +0.03% |
+| 2, both numbers in the table's byte, which has 5 bits free | 966.0, -0.13% | 1257.1, -0.07% |
+| 4, 12 bits of table numbers, one byte more | 965.2, -0.22% | 1256.8, -0.09% |
 
-The zsmalloc estimate moves the same. The literals of a page mostly fit the same table from the
-start to the end, and a half has fewer literals to pay for its table byte. Where the literal tables
-have room is in the tables themselves, see #57.
+The zsmalloc estimate moves the same. Even with the table numbers packed it is 0.8 to 2.1 bytes per
+page, 0.02 to 0.05 points, where 16 tables for 0.1 to 0.3 points were not kept either. The literals
+of a page mostly fit the same table from the start to the end, and without the packing a half has
+too few literals to pay for its byte of table number. Where the literal tables have room is in the
+tables themselves, see #57; tables trained on half pages might split better, not measured.
 
 Not a bound: every literal with the shortest of its 8 codes gives 12.4% and 10.7% fewer bits, but
 those lengths do not satisfy the Kraft inequality, no code has them.
