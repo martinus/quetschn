@@ -2570,15 +2570,18 @@ one multiply).
 
 * **A faster decoder for seqlz**, see its section. The format has the memory, the decoder has to get
   to `lz4`'s speed.
-* **A better matcher for seqlz-fast**: `lz4hc` level 3's matches give 25.2% against 26.4%, but it
-  must not get slower.
-* **Word model + a path for runs and long repeats.** Where the word model loses to `lz4` is exactly
-  where `lz4` copies long matches. `PLAN.md` Phase 3, candidate 3.
+* **A better matcher for seqlz-fast**: `lz4hc` level 3's matches still give 3% to 7% fewer bytes,
+  but it must not get slower. What is left of the gap is the search for older and longer matches,
+  and every way to search more measured so far costs more than it saves; see "The matcher without
+  its step".
+* **Why the literals in the page make cold reads slower in the kernel**, 0.08 and 0.10 us, where the
+  loop in userspace is as fast; see "16 KiB pages, tuned".
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
-* **The last 21 ns of `seqlz_decode_scratch` with clang**, see "A kernel built with clang". The hot
+* **The last 21 ns of `seqlz_decode` with clang**, see "A kernel built with clang". The hot
   loop in userspace is as fast with both compilers, it only shows in the VM.
 * **`prefetch()` in x86-64 kernels built with clang**: dropped everywhere, 811 `prefetcht0` in the gcc
   `vmlinux` against 141. For the kernel, not for this repository.
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
-  differently; `bytelz` and `seqlz-fast` stay for it.
+  differently; `bytelz` and `seqlz-fast` stay for it. Also nothing with 16 KiB pages is measured in a
+  kernel: x86-64 has none, the phones do.
