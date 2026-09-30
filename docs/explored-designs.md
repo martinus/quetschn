@@ -1174,6 +1174,34 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## Offset classes from a histogram: today's are close, two more give 0.1 points at most
+
+*Searched offline, not built.* Class 3, offsets from 256 to 4095 that are no multiple of 8, is not
+rare: 10.9%, 22.6% and 30.4% of the matches on the three dumps, and 24%, 42% and 50% of the offset
+bits. Its offsets are small more often than evenly spread ones: 56% to 61% are below 1024, where an
+even spread would give 20%. So a search over layouts: the repeat class stays, the other classes have
+boundaries at powers of two, optionally a second family for multiples of 4 or 8, the raw bits as now
+or with the class's start subtracted. Cost per sequence: the cross-entropy of the token, `ll`, `ml -
+4` and the class, with probabilities from the 12.2 million sequences of the resident pages, plus the
+raw bits, priced on 20 000 pages of each dump. 29 539 layouts, 9 seconds. For today's layout the
+model gives 12.875 and 15.268 bits per sequence, the encoder spends 13.1 and 15.5: about 0.2 bits
+optimistic, it knows no 11-bit limit and no escapes.
+
+| layout | bits per sequence | against today |
+| --- | --- | --- |
+| today: 1-15, 16-255, 256-4095, multiples of 8 16-255, 256-4095 | 12.875 / 15.268 | |
+| best of 6 classes: the same with 511 instead of 255 | 12.862 / 15.227 | -0.03 |
+| best of 8 classes, raw bits as today | 12.770 / 15.158 | -0.11 |
+| best of 8 classes, the class's start subtracted: 1-15, 16-255, 256-2047, 2048-4095, multiples of 8 16-255, 256-2047, 2048-4095 | 12.737 / 15.106 | -0.15 |
+
+With 6 classes the token pays for nearly everything narrower classes save in raw bits: 0.7 bytes per
+page. Splitting class 3 alone is in the search and is not worth it either. Two more classes give 3.5
+and 4.4 bytes per page, about 0.1 points, and that is an upper bound: 4096 tokens instead of 3072
+for the same 2048 codes of the 11-bit table means more escapes, which the model does not count. The
+subtracted start costs the decoder one addition per sequence. Multiples of 4 are in none of the best
+layouts. Not built on its own; a change of the classes needs new tables anyway, so it belongs to
+#57.
+
 ## A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built
 
 *Measured offline, not built.* Today a page codes all its literals with one of the 8 tables. The
