@@ -2651,6 +2651,20 @@ one multiply).
 * **C5 with 16 KiB pages**: `seqlz-fast-lit` needs 32 816 bytes per CPU, `lz4` 16 440. Decoding the
   literals into the page fixes it and was built, but made cold reads on 4 KiB pages slower in the
   kernel, for a reason not found; see "16 KiB pages, tuned". To decide with a kernel on 16 KiB pages.
+* **Work memory in zram's own buffer.** Every stream of zram has a buffer of 2 pages,
+  `zstrm->buffer`: the codec's output when writing, unused when reading. The output needs at most a
+  page, from 3625 bytes on zram stores the page as it is, so the hash table could live in the rest
+  of it, with no change to zram. On 4 KiB pages that leaves 4 KiB, a table of 11 bits: 970.1 instead
+  of 968.4 and 1261.0 instead of 1258.8 bytes per page on the two dumps, offline, pages of 3625
+  bytes and more counted as 4096; the speed is not measured. The encoder needs another layout for
+  that, e.g. the bitstream from the end of the first page downwards until it meets the literals. The
+  decoder's scratch could go into the same buffer when reading, as warm as the scratch now, but
+  `zcomp_decompress()` does not pass the buffer: that is a change to zram. Both together take the 12
+  336 bytes per CPU to about 0 on 4 KiB pages, and the 32 816 on 16 KiB pages too, where the buffer
+  has room for the 16 KiB table and a page of output without a smaller table. That would fix C5 with
+  16 KiB pages without the slower cold reads of decoding into the page. The page that is compressed
+  is no place for any of this: it stays in the swap cache, and a task may read it while zram writes
+  it.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
 * **The last 21 ns of `seqlz_decode` with clang**, see "A kernel built with clang". The hot
