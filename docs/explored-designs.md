@@ -1197,6 +1197,14 @@ of a page mostly fit the same table from the start to the end, and without the p
 too few literals to pay for its byte of table number. Where the literal tables have room is in the
 tables themselves, see #57; tables trained on half pages might split better, not measured.
 
+*The table number in the first `u16` instead of its own byte*, measured the same way: the count of
+literals as `n % 4096`, 0 for 4096, since every page has at least one literal, leaves bits 12 to 14
+free for it. 966.5 instead of 967.3 and 1257.1 instead of 1257.9 bytes per page, 0.08% and 0.06%,
+55.0% and 61.7% of the pages coded instead of 54.1% and 61.1%. Cheap in the decoder, a few
+instructions per page, but it does not fit 16 KiB pages, where the count needs 14 bits, and it takes
+the free bits of the coded pages. Not built on its own; it could come along with a format change of
+#57.
+
 Not a bound: every literal with the shortest of its 8 codes gives 12.4% and 10.7% fewer bits, but
 those lengths do not satisfy the Kraft inequality, no code has them.
 
