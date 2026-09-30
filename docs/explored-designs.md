@@ -1247,7 +1247,8 @@ slower:
 * **A pointer to the context's table**, computed from the class: 30 212 instructions per page. With
   an empty `asm` so that gcc computes it where the class is known: 31 096.
 * **The index of the table from the class's shift**, `TOKEN_CTX_INDEX >> 4 * cls`, the same shift by
-  4 * class that `SEQLZ_RAW_BITS()` needs: 30 030, the best of them. Pinned with an empty `asm` as well: 31 070.
+  4 * class that `SEQLZ_RAW_BITS()` needs: 30 030, the best of them. Pinned with an empty `asm` as
+  well: 31 070.
 * **The encoder's codes as `[token][context]`**, so that the context goes into the address as it is:
   71 903 instead of 70 892 instructions to compress, and more cycles. The encoder keeps a pointer to
   the context's row.
@@ -1259,11 +1260,30 @@ slower:
   and 637 of the dump of 28th September instead of 650, less than 0.5 bytes per page.
 * **Offsets in steps of 4**, the multiples of 4 that are not multiples of 8, from 16 on: 9.5 and
   16.8 per page, at most 2.4 and 4.2 bytes per page before the larger token.
-* **The literal table chosen from the first 128 literals**, so that the literals could be coded
-  while the matcher runs and not in a pass after it: 4.5 and 4.3 bytes per page more than the best
-  table (16 literals: 12.4 and 16.6, 256: 2.6 and 2.0). Only worth building if the coding in the
-  matcher's loop saves more than about 0.2 us, and so far every split or merge of those two loops
-  was slower.
+
+**The literals coded in the matcher's loop, measured, dropped.** `seqlz-fast-lit` codes the literals
+in a pass after the matcher. With the literal table chosen from the first 128 literals, they could be
+coded while the matcher runs, in the cycles it waits for its loads. The table from the first 128
+literals costs 4.5 and 4.3 bytes per page against the best table (from 16 literals 12.4 and 16.6,
+from 256 2.6 and 2.0), on the first dump and the dump of 28th September. The coding in the matcher's
+loop, measured without the rest of the idea: each run's literals coded with literal table 0 into the
+8 streams, `encode_emit()` of `seqlz-fast`, the streams thrown away, their bits checked against the
+literals on every page. Compress loop over 2000 pages, `perf stat`, the difference of 22 and 11 loops,
+the median of 5 processes, per page, first dump / second dump:
+
+| | cycles | instructions | mispredictions |
+| --- | --- | --- | --- |
+| `seqlz-fast`, no coded literals | 21 353 / 23 341 | 58 607 / 64 046 | 277 / 300 |
+| `seqlz-fast-lit`, the pass after the matcher | 24 298 / 26 945 | 70 074 / 79 935 | 292 / 315 |
+| coded in the matcher's loop | 26 375 / 29 604 | 78 302 / 89 693 | 348 / 380 |
+| ... runs up to 4 literals without a branch | 28 699 / 32 168 | 90 713 / 103 482 | 341 / 375 |
+
+In the matcher's loop the coding costs 5022 and 6263 cycles more than `seqlz-fast`, the pass after it
+2945 and 3604, and that still lacks the choice of the table, the literals that stay raw and moving
+the streams together. The 8 streams do not fit into the registers of the matcher's loop, so each
+literal loads and stores its stream's state: 28 instructions per literal instead of 16. Coding runs
+of up to 4 literals without a branch, the codes past the run with 0 bits and the streams flushed at
+the end of the run, needs even more instructions and saves only 7 mispredictions per page.
 
 ## Pages without matches but with literals that code well: coded now
 
