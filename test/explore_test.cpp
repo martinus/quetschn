@@ -938,10 +938,11 @@ TEST_CASE("bytelz: any input is safe for the decoder") {
     }
 }
 
-TEST_CASE("seqlz: pages with coded literals come back, decoded in the page alone, and are safe to decode") {
+TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and are safe to decode") {
     auto const t = default_tables(seqlz_default_lz4hc);
     auto rng = std::mt19937_64(89);
     auto out = std::vector<unsigned char>(4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto coded_pages = 0;
     auto shortest = std::array<unsigned char, 256>{};
     for (unsigned k = 0; k < 256; ++k) {
@@ -980,15 +981,14 @@ TEST_CASE("seqlz: pages with coded literals come back, decoded in the page alone
         c.resize(len);
         auto const coded = (c[1] & 0x80) != 0 && len > 1;
         coded_pages += coded ? 1 : 0;
-        // the literals are decoded into the end of out, exactly a page, so ASan sees any write behind it
-        std::fill(out.begin(), out.end(), static_cast<unsigned char>(0xa5));
-        REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data()) == 0);
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == p.bytes);
+        CHECK(seqlz_decode(t.get(), c.data(), len, out.data()) == (coded ? -1 : 0));
         // flipped bits: never unsafe
         for (int f = 0; f < 3; ++f) {
             c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
         }
-        auto const ret = seqlz_decode(t.get(), c.data(), len, out.data());
+        auto const ret = seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data());
         CHECK((ret == 0 || ret == -1));
     }
     CHECK(coded_pages > 1000);
@@ -1175,6 +1175,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(23);
     auto out = std::vector<unsigned char>(4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     for (int round = 0; round < 20000; ++round) {
         CAPTURE(round);
         auto c = std::vector<unsigned char>();
@@ -1214,7 +1215,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
                 c.resize(1 + rng() % c.size());
             }
         }
-        auto const ret = seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data());
+        auto const ret = seqlz_decode_scratch(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), scratch.data());
         CHECK((ret == 0 || ret == -1));
     }
 }
@@ -1239,6 +1240,7 @@ TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(97);
     auto out = std::vector<unsigned char>(4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto coded_pages = 0;
     for (int round = 0; round < 800; ++round) {
         CAPTURE(round);
@@ -1258,7 +1260,7 @@ TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
         auto const len = seqlz_compress_coded(t.get(), st.get(), bytes.data(), c.data(), 2 * 4096);
         REQUIRE(len > 0);
         coded_pages += (c[1] & 0x80) != 0 ? 1 : 0;
-        REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data()) == 0);
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == bytes);
     }
     CHECK(coded_pages > 350);
@@ -1308,6 +1310,7 @@ TEST_CASE("seqlz: a page without matches but with literals that code well gets t
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(59);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto out = std::vector<unsigned char>(4096);
     auto c = std::vector<unsigned char>(2 * 4096);
     for (int round = 0; round < 50; ++round) {
@@ -1319,7 +1322,7 @@ TEST_CASE("seqlz: a page without matches but with literals that code well gets t
         REQUIRE(len > 0);
         CHECK((c[1] & 0x80) != 0);
         CHECK(len < 3625); // below zram's huge_class_size, not stored raw
-        REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data()) == 0);
+        REQUIRE(seqlz_decode_scratch(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == bytes);
         // random bytes do not code: the page stays raw, and whole
         auto random = std::vector<unsigned char>(4096);

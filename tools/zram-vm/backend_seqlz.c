@@ -32,10 +32,15 @@ static void sz_release_params(struct zcomp_params *params)
 	params->drv_data = NULL;
 }
 
-/* the matcher's hash table */
+/* the hash table, and the scratch for seqlz-fast-lit's literals */
+struct sz_ctx {
+	struct seqlz_state st;
+	unsigned char scratch[SEQLZ_SCRATCH];
+};
+
 static int sz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	ctx->context = kzalloc(sizeof(struct seqlz_state), GFP_KERNEL);
+	ctx->context = kzalloc(sizeof(struct sz_ctx), GFP_KERNEL);
 	return ctx->context ? 0 : -ENOMEM;
 }
 
@@ -51,7 +56,8 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
-	len = seqlz_compress(params->drv_data, ctx->context, req->src, req->dst, req->dst_len);
+	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
+			     req->dst_len);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -64,7 +70,8 @@ static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, s
 
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
-	len = seqlz_compress_coded(params->drv_data, ctx->context, req->src, req->dst, req->dst_len);
+	len = seqlz_compress_coded(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
+				   req->dst_len);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -77,7 +84,8 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			PAGE_LZ_PREFETCH((const char *)req->src + q);
-	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst))
+	if (req->dst_len < SEQLZ_PAGE || seqlz_decode_scratch(params->drv_data, req->src, req->src_len, req->dst,
+							      ((struct sz_ctx *)ctx->context)->scratch))
 		return -EINVAL;
 	return 0;
 }

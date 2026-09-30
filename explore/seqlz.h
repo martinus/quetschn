@@ -142,8 +142,8 @@ unsigned int seqlz_encode(const struct seqlz_tables* t,
                           unsigned int dst_cap);
 
 /* 0 on success, -1 if src is not a valid page for these tables. Never reads outside
- * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE). Also pages with coded literals,
- * see seqlz_encode_coded(). */
+ * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE). A page with coded literals is
+ * not valid here, see seqlz_decode_scratch(). */
 int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst);
 
 /*
@@ -151,10 +151,9 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
  * codes them in the fewest bits, if that is smaller than the raw bytes by 1/16. Such a page starts
  * with SEQLZ_LIT_HEADER bytes: u16 0x8000 | literal bytes, u8 the table, 8 u16 bytes of the literals'
  * eight bitstreams (literal k in stream k % 8, most significant bit first, canonical codes of at most
- * SEQLZ_LIT_BITS bits); then those streams, then the sequences' bitstream. seqlz_decode() decodes the
- * literals into the end of dst first, where the output reaches them only with its last byte: between
- * the output and the unread literals there are always exactly the match bytes still to come. So it
- * needs no scratch, which was a page per CPU (docs/explored-designs.md, "16 KiB pages, tuned").
+ * SEQLZ_LIT_BITS bits); then those streams, then the sequences' bitstream. seqlz_decode_scratch()
+ * decodes the literals into scratch first, SEQLZ_SCRATCH bytes; for any other page it is
+ * seqlz_decode().
  */
 #define SEQLZ_LIT_BITS 10U
 #define SEQLZ_LIT_SETS 8U
@@ -163,6 +162,7 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 /* literals per stream and refill: a refill leaves 56 bits */
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 #define SEQLZ_LIT_HEADER 19U
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U) /* 16 for the literal copies, 8 * rounds - 1 decoded past the end */
 unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 const struct seqlz_sequence* seq,
                                 unsigned int n,
@@ -170,6 +170,7 @@ unsigned int seqlz_encode_coded(const struct seqlz_tables* t,
                                 unsigned int n_literals,
                                 void* dst,
                                 unsigned int dst_cap);
+int seqlz_decode_scratch(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
 /* seqlz_compress(), then the literals coded as in seqlz_encode_coded() */
 struct seqlz_state;
 unsigned int
