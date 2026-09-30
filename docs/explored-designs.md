@@ -1174,6 +1174,70 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## The matcher without its step: writes 3% faster, kept
+
+*In `explore/page_lz.h`, `match_page()`, for `seqlz` and `bytelz`.* The matcher now tries every
+position. Before, like `lz4`'s acceleration, the step to the next position grew with the literals
+since the last match, `1 + (pos - anchor) >> 6`, so incompressible pages went by fast. Without it
+the pages that compress are 5% faster to write, and in the kernel VM `seqlz-fast-lit` writes 0.21
+and 0.25 us faster per page, 3%, at 3.2 bytes more and 2.4 bytes less per page. Cold reads stay the
+same. The price is the pages that zram stores raw: they take 2.3 us longer each, the whole page is
+searched.
+
+![The matcher variants against main](plots/matcher-no-step.svg)
+
+**Kernel VM**, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, `main` and the change in 2 boots
+each, `r = 0.34`, means over the pages, times in us, first dump / second dump:
+
+| | bytes per page | write | cold read | us per page written | write p99 |
+| --- | --- | --- | --- | --- | --- |
+| `seqlz-fast-lit`, `main` | 1035.5 / 1324.0 | 6.68, 6.69 / 7.42, 7.44 | 2.97, 2.94 / 3.18, 3.14 | 7.69 / 8.50 | 12 200 / 12 400 ns |
+| without the step | 1038.7 / 1321.6 | 6.47, 6.48 / 7.19, 7.19 | 2.95, 2.94 / 3.12, 3.14 | 7.48 / 8.25 | 11 330 / 11 460 ns |
+
+Boots of the same code differ by at most 0.02 us, `lzo-rle` in all 8 boots by 0.03. Against `lz4`'s
+write p99 from older boots, 9240 and 9600 ns, write p99 goes from 1.32 and 1.29 times to 1.23 and
+1.19. In the model the first dump gets 2.0 bytes smaller; in the kernel zsmalloc needs 3.2 bytes
+more for it, within the 16 byte steps of its classes.
+
+**Why it is faster.** Not because of the positions it visits: starting the step after 1024 literals
+instead of 64 visits the same positions on almost every page and writes the same bytes as no step,
+but is slower than `main`. The step needs `anchor` in the loop for positions without a match, and
+the matcher's loop has no register to spare; without it the loop runs more instructions in fewer
+cycles. A step behind a branch that only starts after 64 literals (`__builtin_expect`), the same
+positions as `main`, was as slow as `main` too. Compress loop over 20 000 pages, the median of 5
+runs per page, the mean over the pages, page and output cold, first dump / second dump:
+
+| step after | bytes per page | mean compress | p99 | pages stored raw: mean / max |
+| --- | --- | --- | --- | --- |
+| 64 literals (`main`) | 995.0 / 1291.7 | 5126 / 5820 ns | 10 390 / 10 500 ns | 2275 / 9340, 2232 / 8220 ns |
+| 128 | 993.7 / 1289.2 | 5155 / 5853 ns | 10 520 / 10 570 ns | 2619 / 14 030, 2501 / 8480 ns |
+| 256 | 993.3 / 1288.3 | 5200 / 5906 ns | 10 530 / 10 570 ns | 3070 / 8150, 2971 / 8540 ns |
+| 1024 | 993.0 / 1287.9 | 5230 / 5982 ns | 10 530 / 10 620 ns | 4660 / 8470, 4507 / 8480 ns |
+| never (kept) | 993.0 / 1287.9 | 4933 / 5580 ns | 9530 / 9730 ns | 4951 / 7980, 4927 / 7380 ns |
+
+In cycles per page (`perf stat`, loops over 2000 pages, the median of 5 processes), compressing
+takes 22 932 instead of 23 979 and 25 561 instead of 26 719, with 1170 and 2840 more instructions;
+the matcher alone (`seqlz-fast`, first dump) 20 073 instead of 21 035. Decoding the new sequences
+takes 8669 instead of 8521 and 9523 instead of 9310 cycles, with 70 more instructions per page; in
+the kernel the cold reads show no difference. `bytelz` uses the same matcher and was not measured
+again.
+
+**Two more ideas for the matcher, measured, not kept:**
+
+* **Offset 8 as a third candidate**, next to the last offset and the table, in the same branch:
+  994.8 / 1291.4 / 1279.8 bytes per page on the three dumps against 995.0 / 1291.7 / 1279.8, 300 and
+  500 cycles more. The table already finds these matches.
+* **The start of each match into the table**, as `zstd`'s fast mode does, next to the position 2
+  before its end: 995.2 / 1288.6 / 1276.4 bytes per page for 600 and 500 cycles more, 29 bytes per
+  us on the second dump and nothing on the first.
+
+`seqlz-hc-lit` 3, `lz4hc`'s matches, needs 959.9 / 1226.2 / 1188.1 bytes per page for 77 786 and 87
+491 cycles: the rest of the gap to it is the search for older and longer matches, which the entries
+above already priced (2 positions per hash, hash chains, lazy matching).
+
+Tests: a page with a match of 8 bytes at offset 20 and, 600 to 615 bytes later, a repeat of exactly
+4 bytes at the same offset, which only the check of the last offset finds and only at its first
+byte. Mutation, caught: the step back in (the repeat is lost at p = 600).
 ## The token's table by the offset before it: 3 and 12 bytes per page, not kept
 
 *Built on the branch `feat/token-context`, not merged: by the score it pays, but not enough for 3

@@ -547,6 +547,37 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
     }
 }
 
+TEST_CASE("seqlz: the matcher looks at every position, also far behind the last match") {
+    // Random bytes with a match of 8 bytes at offset 20 at the start, and at p, 600 to 615 bytes into the
+    // page, a repeat of exactly 4 bytes at the same offset, with other bytes around it. Only the check of
+    // the last offset finds 4 bytes, and only at p: one position later 3 are left. lz4's step, which
+    // grows with the literals since the last match, jumps over most of these positions.
+    auto state = std::make_unique<seqlz_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto rng = std::mt19937_64(71);
+    for (unsigned p = 600; p < 616; ++p) {
+        CAPTURE(p);
+        auto bytes = std::vector<unsigned char>(4096);
+        for (auto& b : bytes) {
+            b = static_cast<unsigned char>(rng());
+        }
+        std::copy_n(bytes.begin() + 4, 8, bytes.begin() + 24);
+        bytes[23] = static_cast<unsigned char>(bytes[3] + 1);
+        bytes[32] = static_cast<unsigned char>(bytes[12] + 1);
+        std::copy_n(bytes.begin() + p - 20, 4, bytes.begin() + p);
+        bytes[p - 1] = static_cast<unsigned char>(bytes[p - 21] + 1);
+        bytes[p + 4] = static_cast<unsigned char>(bytes[p - 16] + 1);
+        auto const n = seqlz_find(state.get(), bytes.data(), seq.data());
+        REQUIRE(n == 3);
+        CHECK(seq[0].literals == 24);
+        CHECK(seq[0].match == 8);
+        CHECK(seq[0].offset == 20);
+        CHECK(seq[1].literals == p - 32);
+        CHECK(seq[1].match == 4);
+        CHECK(seq[1].offset == 20);
+    }
+}
+
 TEST_CASE("seqlz: the most bits per page fit into two pages, less than two pages is an error") {
     // The most bits per page byte: matches of 4 bytes without literals, each with an offset that is not
     // one of the last three. 12 literals, then 1021 such matches cycling through 4 offsets.

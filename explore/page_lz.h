@@ -100,10 +100,11 @@ typedef void (*emit_fn)(void* ctx, const u8* literals, unsigned int ll, unsigned
  * Greedy, like lz4's fast mode: at every position the last offset and one candidate from a hash of 5
  * bytes. With 5 instead of 4 the matcher finds fewer sequences: 5% fewer compress cycles for 0.6 points
  * of memory, and in the kernel 10% less write time at p99 (docs/explored-designs.md). Matches of 4
- * bytes still come from the last offset. Without a match the step grows with the distance to the last
- * match, like lz4's acceleration, so incompressible pages go by fast. Each sequence goes to emit as
- * soon as it is found; inlined with the encoder that is one pass over the page, and the same matcher
- * feeds seqlz_find.
+ * bytes still come from the last offset. Every position is tried, without lz4's growing step after a
+ * long run without a match: the step needed the start of the literals in the loop, and without it the
+ * pages that compress were 5% faster, the ones zram stores raw 2.3 us slower (docs/explored-designs.md,
+ * "The matcher without its step"). Each sequence goes to emit as soon as it is found; inlined with the
+ * encoder that is one pass over the page, and the same matcher feeds seqlz_find.
  */
 static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_fn emit, void* ctx) {
     /* positions, not pointers: the end is a constant, and the position for the table is at hand */
@@ -124,7 +125,7 @@ static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_
 
         table[h] = (unsigned short)pos;
         if (!(rep_hit | cand_hit)) {
-            pos += 1U + ((pos - anchor) >> 6);
+            pos++;
             continue;
         }
         m = rep_hit ? pos - last : cand;
