@@ -256,7 +256,7 @@ seqlz_page random_seqlz_page(std::mt19937_64& rng, int kind) {
     }
 }
 
-std::unique_ptr<seqlz_tables, void (*)(seqlz_tables*)> default_tables(seqlz_lengths const& lengths = seqlz_default_lz4) {
+std::unique_ptr<seqlz_tables, void (*)(seqlz_tables*)> default_tables(seqlz_lengths const& lengths = seqlz_default_own) {
     auto* t = static_cast<seqlz_tables*>(::operator new(seqlz_tables_size()));
     REQUIRE(seqlz_tables_init(t, &lengths) == 0);
     return {t, [](seqlz_tables* p) {
@@ -356,21 +356,21 @@ TEST_CASE("seqlz: a sequence with long lengths and a large offset needs more bit
 
 TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     auto t = default_tables();
-    auto l = seqlz_default_lz4;
+    auto l = seqlz_default_own;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
     l.ll[0] = 10; // longer than SEQLZ_MAX_BITS
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
-    l = seqlz_default_lz4;
+    l = seqlz_default_own;
     l.ml[0] = 1; // together with the others more codes than fit: over-subscribed
     l.ml[1] = 1;
     l.ml[2] = 1;
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
-    l = seqlz_default_lz4;
+    l = seqlz_default_own;
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     // A complete code: the tokens with 11 bits, then the first ones 10 bits, then 9, until they fill
     // the 11-bit table exactly.
-    l = seqlz_default_lz4;
+    l = seqlz_default_own;
     auto complete = [&] {
         // tokens 3 to 2047 and the escape with 11 bits, the others without a code: they take the escape
         std::memset(l.token, 0, sizeof(l.token));
@@ -409,7 +409,7 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     l.token[a] = 12;
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     // a gap: every bit pattern must start a code, the decoder does not check
-    l = seqlz_default_lz4;
+    l = seqlz_default_own;
     auto const shortest = std::min_element(l.ll, l.ll + SEQLZ_LEN_SYMBOLS);
     *shortest = static_cast<unsigned char>(*shortest + 1);
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
@@ -754,7 +754,7 @@ TEST_CASE("seqlz: the encoder writes the format as seqlz.h describes it") {
                                       got.data(),
                                       2 * 4096);
         got.resize(len);
-        CHECK(got == reference_encode(seqlz_default_lz4, p.sequences, p.literals));
+        CHECK(got == reference_encode(seqlz_default_own, p.sequences, p.literals));
     }
 }
 
@@ -768,7 +768,7 @@ TEST_CASE("seqlz: sequences that need more literals than the header has are reje
     for (unsigned n = 2; n < 80; ++n) {
         CAPTURE(n);
         auto const seq = std::vector<seqlz_sequence>(n, seqlz_sequence{10, 4, 1});
-        auto const encoded = reference_encode(seqlz_default_lz4, seq, literals);
+        auto const encoded = reference_encode(seqlz_default_own, seq, literals);
         auto const c = std::make_unique<unsigned char[]>(encoded.size());
         std::copy(encoded.begin(), encoded.end(), c.get());
         CHECK(seqlz_decode(t.get(), c.get(), static_cast<unsigned>(encoded.size()), out.data()) == -1);
@@ -939,7 +939,7 @@ TEST_CASE("bytelz: any input is safe for the decoder") {
 }
 
 TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and are safe to decode") {
-    auto const t = default_tables(seqlz_default_lz4hc);
+    auto const t = default_tables(seqlz_default_own);
     auto rng = std::mt19937_64(89);
     auto out = std::vector<unsigned char>(4096);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
@@ -1041,7 +1041,7 @@ std::vector<unsigned char> encode_coded(seqlz_tables const* t, seqlz_page const&
 }
 
 TEST_CASE("seqlz: coded literals use the literal table with the fewest bits for them") {
-    auto const t = default_tables(seqlz_default_lz4hc);
+    auto const t = default_tables(seqlz_default_own);
     auto rng = std::mt19937_64(5);
     auto chosen = std::array<int, SEQLZ_LIT_SETS>{};
     for (int round = 0; round < 400; ++round) {
@@ -1107,7 +1107,7 @@ std::vector<std::vector<std::pair<unsigned, unsigned char>>> canonical_codes(uns
 }
 
 TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most significant bit first") {
-    auto const t = default_tables(seqlz_default_lz4hc);
+    auto const t = default_tables(seqlz_default_own);
     auto rng = std::mt19937_64(11);
     auto checked = 0;
     for (int round = 0; round < 300; ++round) {

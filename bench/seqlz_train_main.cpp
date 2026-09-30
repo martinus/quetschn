@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of lz4 or
-// lz4hc on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
+// Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of seqlz's own
+// matcher on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
 // 2099 bytes that zram's dictionary parameter can carry. With --lit-sets the literal tables of
 // explore/seqlz_lit_sets.c instead.
 
 #include "harness.h"
-#include "kernel_codecs/zram_codec.h"
-#include "lz_analysis.h"
 #include "page_stats.h"
 #include "seqlz.h"
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -278,12 +275,10 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>] [--blob <file>]\n"
-                 "                           [--lit-sets]\n"
+                 "usage: quetschn-seqlz-train --corpus <base> [--blob <file>] [--lit-sets]\n"
                  "\n"
-                 "Counts seqlz's symbols over the matches of --codec (default lz4; seqlz is its own matcher) on\n"
-                 "every page. Prints the\n"
-                 "code lengths as a C initializer, or writes them to --blob for zram's dictionary parameter.\n"
+                 "Counts seqlz's symbols over the matches of its own matcher on every page. Prints the code\n"
+                 "lengths as a C initializer, or writes them to --blob for zram's dictionary parameter.\n"
                  "--lit-sets prints the literal tables of explore/seqlz_lit_sets.c instead, from the pages with\n"
                  "more than 64 literals.\n");
 }
@@ -293,10 +288,7 @@ void usage() {
 int main(int argc, char** argv) {
     auto base = std::string();
     auto blob = std::string();
-    auto const* codec = &quetschn_codec_lz4;
-    auto own_matcher = false;
     auto want_lit_sets = false;
-    int level = QUETSCHN_LEVEL_DEFAULT;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
@@ -306,23 +298,6 @@ int main(int argc, char** argv) {
             want_lit_sets = true;
         } else if (arg == "--blob" && has_value) {
             blob = argv[++i];
-        } else if (arg == "--codec" && has_value) {
-            auto const name = std::string_view(argv[++i]);
-            if (name == "seqlz") {
-                own_matcher = true;
-            } else if (name == "lz4hc") {
-                codec = &quetschn_codec_lz4hc;
-            } else if (name != "lz4") {
-                usage();
-                return 2;
-            }
-        } else if (arg == "--level" && has_value) {
-            auto const v = std::string_view(argv[++i]);
-            auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), level);
-            if (ec != std::errc{} || ptr != v.data() + v.size()) {
-                usage();
-                return 2;
-            }
         } else {
             usage();
             return 2;
@@ -334,28 +309,16 @@ int main(int argc, char** argv) {
     }
     try {
         auto const c = quetschn::load_corpus(base);
-        auto params = quetschn_params{};
-        params.level = level;
-        params.page_size = static_cast<unsigned int>(c.page_size);
-        if (codec->setup_params(&params) != 0) {
-            throw std::invalid_argument(std::string(codec->name) + " rejects level " + std::to_string(level));
+        if (c.page_size != SEQLZ_PAGE) {
+            throw std::invalid_argument("the corpus has pages of " + std::to_string(c.page_size) + " bytes, this build " +
+                                        std::to_string(SEQLZ_PAGE));
         }
-        auto stream = quetschn_stream{};
-        if (codec->create(&params, &stream) != 0) {
-            throw std::runtime_error(std::string(codec->name) + ": create failed");
-        }
-
         // start at 1: a symbol that never occurs here must still get a code
         auto token = std::vector<double>(SEQLZ_TOKEN_SYMBOLS, 1.0);
         auto ll = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
         auto ml = std::vector<double>(SEQLZ_LEN_SYMBOLS, 1.0);
-        auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto state = std::make_unique<seqlz_state>();
-        auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
-        // what the tables are for, in the output
-        auto const matcher =
-            own_matcher ? std::string("seqlz") : std::string(codec->name) + " level " + std::to_string(params.level);
-        auto sequences = std::vector<quetschn::sequence>(); // of one page, reused
+        auto buffer = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         auto pages = std::size_t{0};
         auto page_lits = std::vector<std::array<double, 256>>(); // per page with more than 64 literals
         for (std::size_t i = 0; i < c.size(); ++i) {
@@ -364,21 +327,7 @@ int main(int argc, char** argv) {
                 continue;
             }
             ++pages;
-            if (own_matcher) {
-                // seqlz's own matcher, as seqlz-fast uses it
-                auto const n = seqlz_find(state.get(), src.data(), seqs.data());
-                sequences.clear();
-                for (unsigned k = 0; k < n; ++k) {
-                    sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});
-                }
-            } else {
-                auto len = static_cast<unsigned int>(dst.size());
-                if (codec->compress(&params, &stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) !=
-                    0) {
-                    throw std::runtime_error(std::string(codec->name) + ": compress failed");
-                }
-                sequences = quetschn::parse_lz4(dst.data(), len).sequences;
-            }
+            auto const sequences = std::span(buffer.data(), seqlz_find(state.get(), src.data(), buffer.data()));
             // the literal bytes, for pages with coded literals
             {
                 auto in = std::size_t{0};
@@ -407,25 +356,22 @@ int main(int argc, char** argv) {
                 if (s.match == 0) {
                     continue;
                 }
-                if (s.match - 4 >= SEQLZ_ML_CAP) {
-                    ml[seqlz_len_symbol(s.match - 4 - SEQLZ_ML_CAP, &extra)] += 1;
+                if (s.match - 4U >= SEQLZ_ML_CAP) {
+                    ml[seqlz_len_symbol(s.match - 4U - SEQLZ_ML_CAP, &extra)] += 1;
                 }
                 last = s.offset;
             }
         }
-        codec->destroy(&stream);
-        codec->release_params(&params);
 
         if (want_lit_sets) {
             auto const sets = lit_sets(page_lits);
             std::printf("/* %u tables of at most %u bits, trained on the %zu pages with more than 64 literals of %zu "
-                        "pages of %s, %s */\n{\n",
+                        "pages of %s, seqlz */\n{\n",
                         SEQLZ_LIT_SETS,
                         SEQLZ_LIT_BITS,
                         page_lits.size(),
                         pages,
-                        base.c_str(),
-                        matcher.c_str());
+                        base.c_str());
             for (auto const& l : sets) {
                 std::printf("    {");
                 for (std::size_t s = 0; s < l.size(); ++s) {
@@ -451,7 +397,7 @@ int main(int argc, char** argv) {
             if (!out) {
                 throw std::runtime_error("cannot write " + blob);
             }
-            std::printf("%zu pages, %s, %zu bytes to %s\n", pages, matcher.c_str(), sizeof(lengths), blob.c_str());
+            std::printf("%zu pages, seqlz, %zu bytes to %s\n", pages, sizeof(lengths), blob.c_str());
             return 0;
         }
         auto print = [](char const* name, unsigned char const* l, unsigned n) {
@@ -461,7 +407,7 @@ int main(int argc, char** argv) {
             }
             std::printf("},\n");
         };
-        std::printf("/* trained on %zu pages of %s, %s */\n{\n", pages, base.c_str(), matcher.c_str());
+        std::printf("/* trained on %zu pages of %s, seqlz */\n{\n", pages, base.c_str());
         print("token", lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
         print("ll", lengths.ll, SEQLZ_LEN_SYMBOLS);
         print("ml", lengths.ml, SEQLZ_LEN_SYMBOLS);

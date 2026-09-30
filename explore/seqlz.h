@@ -208,9 +208,7 @@ unsigned int
 seqlz_compress(const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap);
 
 /* The tables compiled in, trained on resident pages (explore/seqlz_default_tables.c). */
-extern const struct seqlz_lengths seqlz_default_lz4;
-extern const struct seqlz_lengths seqlz_default_lz4hc;
-extern const struct seqlz_lengths seqlz_default_own; /* for seqlz_compress, its own matcher */
+extern const struct seqlz_lengths seqlz_default_own;
 
 #ifdef __cplusplus
 }
