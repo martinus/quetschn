@@ -1174,6 +1174,42 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## seqlz simplified: the same bytes, 800 lines less, compressing 4% faster
+
+`seqlz-fast` and `seqlz-fast-lit` are the codecs that are left; `seqlz`, `seqlz-hc` and
+`seqlz-hc-lit`, which coded the matches of the kernel's `lz4` and `lz4hc` again, are gone with their
+backends, their table sets and the trainer's `lz4` paths. Their numbers stay in this file.
+`seqlz_encode()`, `seqlz_compress()` and `seqlz_decode()` are one function each: the literals coded
+or not is a flag, the scratch for coded literals an argument, 0 for pages without them. Inside, the
+tables are built by one function per kind of table, the offset class is one branch-free function,
+and the literal coder prices the literals where the encoder wrote them and moves literals and
+bitstream to the end of the buffer only if coding pays, once. Before, every coded page copied the
+literals and moved the bitstream twice, and pages of about a page of literals had their own way.
+1066 lines removed, 259 added.
+
+The compressed bytes are the same for every page of the three dumps and of the 16 KiB corpus, both
+codecs, and so are the tables in memory: checked with a hash of each page's output and of the tables
+against the code before. Loops over 2000 pages per dump, the median of 5 processes, cycles per page:
+
+| | first dump | second dump |
+| --- | --- | --- |
+| compress, `seqlz-fast-lit` | 23 779 to 22 759 | 26 670 to 25 602 |
+| compress, `seqlz-fast` | 21 018 to 20 158 | 23 037 to 22 185 |
+| decode, `seqlz-fast-lit` | 8607 to 8583 | 9476 to 9351 |
+
+`seqlz-fast` has no coded literals and runs the same instructions (60 054 and 60 077 per page), so
+its 4% are the placement of the code. Kernel VM, two boots each with `lz4`, `lzo-rle` and `zstd` 3,
+against the two boots of the matcher without its step above, first dump / second dump, us: writes
+6.65, 6.63 / 7.39, 7.35 before, 6.56, 6.59 / 7.29, 7.29 after; cold reads 2.98, 2.97 / 3.17, 3.17
+before, 2.99, 3.04 / 3.23, 3.23 after; per page written 7.67, 7.64 / 8.47, 8.43 before, 7.58, 7.62 /
+8.39, 8.39 after. Write p99 11 720, 11 580 / 11 909, 11 690 ns before, 11 511, 11 630 / 11 650, 11
+690 after. The reads are 0.03 to 0.06 us slower although the decoder's code did not change and
+decodes in the same cycles in the loop; the placement of the code in the kernel moved reads by 250
+ns before, see "A kernel built with clang dropped the decoder's prefetches".
+
+The trainer on the resident pages gives other token and length tables than the compiled-in ones now,
+because the matcher without its step finds other sequences; with the old matcher it gives exactly
+the compiled-in ones. Retraining changes the bytes and is left for its own measurement.
 ## The matcher without its step against the other codecs: 0.02 to 0.05 us per page less
 
 The matcher without its step in one boot per dump with `lz4`, `lzo-rle` and `zstd` 3, twice, against
