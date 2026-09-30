@@ -1351,7 +1351,7 @@ takes 8669 instead of 8521 and 9523 instead of 9310 cycles, with 70 more instruc
 the kernel the cold reads show no difference. `bytelz` uses the same matcher and was not measured
 again.
 
-**Three more ideas for the matcher, measured, not kept:**
+**Four more ideas for the matcher, measured, not kept:**
 
 * **Offset 8 as a third candidate**, next to the last offset and the table, in the same branch:
   994.8 / 1291.4 / 1279.8 bytes per page on the three dumps against 995.0 / 1291.7 / 1279.8, 300 and
@@ -1361,6 +1361,13 @@ again.
   offline on 20 000 pages of the first two dumps; only if the table's match is longer by more than 2
   bytes 968.1 / 1258.2, by more than 4 968.2 / 1258.3. The last offset's 0 bits make up for the
   shorter match. Cycles not measured, it needs a second `count()`.
+* **A minimum length for the table's matches**, shorter ones stay literals and the search goes on at
+  the next position; matches at the last offset as before. Offline, 20 000 pages of the first two
+  dumps, 968.4 / 1258.8 bytes per page today: at least 5 bytes 968.0 / 1258.6, 6 bytes 984.3 /
+  1272.9, 8 bytes 1118.6 / 1367.7. Only for offsets from 256 on that are no multiple of 8, class 3:
+  at least 6 bytes 968.9 / 1256.9, 8 bytes 972.2 / 1262.5. Even a match of 5 bytes at a 12-bit
+  offset, about 21 bits, is cheaper than its 5 literals, about 35, and a byte later there is rarely
+  a longer one.
 * **The start of each match into the table**, as `zstd`'s fast mode does, next to the position 2
   before its end: 995.2 / 1288.6 / 1276.4 bytes per page for 600 and 500 cycles more, 29 bytes per
   us on the second dump and nothing on the first.
