@@ -1187,6 +1187,8 @@ bitstream to the end of the buffer only if coding pays, once. Before, every code
 literals and moved the bitstream twice, and pages of about a page of literals had their own way.
 1066 lines removed, 259 added.
 
+![seqlz-fast-lit with the matcher without its step and simplified, against the other codecs](plots/codecs-branch.svg)
+
 The compressed bytes are the same for every page of the three dumps and of the 16 KiB corpus, both
 codecs, and so are the tables in memory: checked with a hash of each page's output and of the tables
 against the code before. Loops over 2000 pages per dump, the median of 5 processes, cycles per page:
