@@ -1174,6 +1174,68 @@ against 2080 / 4540 ns. With a table of 1024 entries (4 KiB) 8620 cycles and no 
 loop exits now depend on the literals, and the short pages decode their literals mostly one stream
 after the other.
 
+## Offset classes from a histogram: today's are close, two more give 0.1 points at most
+
+*Searched offline, not built.* Class 3, offsets from 256 to 4095 that are no multiple of 8, is not
+rare: 10.9%, 22.6% and 30.4% of the matches on the three dumps, and 24%, 42% and 50% of the offset
+bits. Its offsets are small more often than evenly spread ones: 56% to 61% are below 1024, where an
+even spread would give 20%. So a search over layouts: the repeat class stays, the other classes have
+boundaries at powers of two, optionally a second family for multiples of 4 or 8, the raw bits as now
+or with the class's start subtracted. Cost per sequence: the cross-entropy of the token, `ll`, `ml -
+4` and the class, with probabilities from the 12.2 million sequences of the resident pages, plus the
+raw bits, priced on 20 000 pages of each dump. 29 539 layouts, 9 seconds. For today's layout the
+model gives 12.875 and 15.268 bits per sequence, the encoder spends 13.1 and 15.5: about 0.2 bits
+optimistic, it knows no 11-bit limit and no escapes.
+
+| layout | bits per sequence | against today |
+| --- | --- | --- |
+| today: 1-15, 16-255, 256-4095, multiples of 8 16-255, 256-4095 | 12.875 / 15.268 | |
+| best of 6 classes: the same with 511 instead of 255 | 12.862 / 15.227 | -0.03 |
+| best of 8 classes, raw bits as today | 12.770 / 15.158 | -0.11 |
+| best of 8 classes, the class's start subtracted: 1-15, 16-255, 256-2047, 2048-4095, multiples of 8 16-255, 256-2047, 2048-4095 | 12.737 / 15.106 | -0.15 |
+
+With 6 classes the token pays for nearly everything narrower classes save in raw bits: 0.7 bytes per
+page. Splitting class 3 alone is in the search and is not worth it either. Two more classes give 3.5
+and 4.4 bytes per page, about 0.1 points, and that is an upper bound: 4096 tokens instead of 3072
+for the same 2048 codes of the 11-bit table means more escapes, which the model does not count. The
+subtracted start costs the decoder one addition per sequence. Multiples of 4 are in none of the best
+layouts. Not built on its own; a change of the classes needs new tables anyway, so it belongs to
+#57.
+
+## A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built
+
+*Measured offline, not built.* Today a page codes all its literals with one of the 8 tables. The
+idea: the first half of the literals with one table, the second half with another, in case a page
+mixes, e.g. text and pointers. Model of the encoder, `seqlz-fast-lit`'s matcher, the 8 streams as
+now, so a change of table adds no bits at the end of a stream, one byte of header per extra table,
+the 1/16 rule on the whole; with one table the model gives exactly the real sizes, 967.3 and 1257.9
+bytes per page. 20 000 pages of each dump, zsmalloc estimated as steps of 16 bytes:
+
+| tables per page | first dump | second dump |
+| --- | --- | --- |
+| 1, now | 967.3 | 1257.9 |
+| 2, one per half | 966.8, -0.05% | 1257.8, -0.01% |
+| 4, one per quarter | 966.6, -0.07% | 1258.3, +0.03% |
+| 2, both numbers in the table's byte, which has 5 bits free | 966.0, -0.13% | 1257.1, -0.07% |
+| 4, 12 bits of table numbers, one byte more | 965.2, -0.22% | 1256.8, -0.09% |
+
+The zsmalloc estimate moves the same. Even with the table numbers packed it is 0.8 to 2.1 bytes per
+page, 0.02 to 0.05 points, where 16 tables for 0.1 to 0.3 points were not kept either. The literals
+of a page mostly fit the same table from the start to the end, and without the packing a half has
+too few literals to pay for its byte of table number. Where the literal tables have room is in the
+tables themselves, see #57; tables trained on half pages might split better, not measured.
+
+*The table number in the first `u16` instead of its own byte*, measured the same way: the count of
+literals as `n % 4096`, 0 for 4096, since every page has at least one literal, leaves bits 12 to 14
+free for it. 966.5 instead of 967.3 and 1257.1 instead of 1257.9 bytes per page, 0.08% and 0.06%,
+55.0% and 61.7% of the pages coded instead of 54.1% and 61.1%. Cheap in the decoder, a few
+instructions per page, but it does not fit 16 KiB pages, where the count needs 14 bits, and it takes
+the free bits of the coded pages. Not built on its own; it could come along with a format change of
+#57.
+
+Not a bound: every literal with the shortest of its 8 codes gives 12.4% and 10.7% fewer bits, but
+those lengths do not satisfy the Kraft inequality, no code has them.
+
 ## seqlz simplified: the same bytes, 800 lines less, compressing 4% faster
 
 `seqlz-fast` and `seqlz-fast-lit` are the codecs that are left; `seqlz`, `seqlz-hc` and
@@ -1289,11 +1351,27 @@ takes 8669 instead of 8521 and 9523 instead of 9310 cycles, with 70 more instruc
 the kernel the cold reads show no difference. `bytelz` uses the same matcher and was not measured
 again.
 
-**Two more ideas for the matcher, measured, not kept:**
+**Four more ideas for the matcher, measured, not kept:**
 
 * **Offset 8 as a third candidate**, next to the last offset and the table, in the same branch:
   994.8 / 1291.4 / 1279.8 bytes per page on the three dumps against 995.0 / 1291.7 / 1279.8, 300 and
   500 cycles more. The table already finds these matches.
+* **The longer of the two candidates** where the last offset and the table both hit at different
+  places, instead of always the last offset: 969.4 / 1259.7 bytes per page against 968.4 / 1258.8,
+  offline on 20 000 pages of the first two dumps; only if the table's match is longer by more than 2
+  bytes 968.1 / 1258.2, by more than 8, 16 or 32 bytes 968.3 / 1258.5 to 1258.7. Per page both hit
+  at different places 23.5 / 20.8 times, the table's match is longer in 2.6 / 3.2 of them, longer by
+  more than 8 bytes in 0.45 / 0.61, and a match of 96 bytes or more from the table against 8 or
+  fewer from the last offset comes once in 70 / 125 pages. Where it does, the greedy matcher finds
+  the rest right behind the short match, for one more sequence, and the last offset's 0 bits make up
+  for most of that. Cycles not measured, it needs a second `count()`.
+* **A minimum length for the table's matches**, shorter ones stay literals and the search goes on at
+  the next position; matches at the last offset as before. Offline, 20 000 pages of the first two
+  dumps, 968.4 / 1258.8 bytes per page today: at least 5 bytes 968.0 / 1258.6, 6 bytes 984.3 /
+  1272.9, 8 bytes 1118.6 / 1367.7. Only for offsets from 256 on that are no multiple of 8, class 3:
+  at least 6 bytes 968.9 / 1256.9, 8 bytes 972.2 / 1262.5. Even a match of 5 bytes at a 12-bit
+  offset, about 21 bits, is cheaper than its 5 literals, about 35, and a byte later there is rarely
+  a longer one.
 * **The start of each match into the table**, as `zstd`'s fast mode does, next to the position 2
   before its end: 995.2 / 1288.6 / 1276.4 bytes per page for 600 and 500 cycles more, 29 bytes per
   us on the second dump and nothing on the first.
@@ -2651,6 +2729,20 @@ one multiply).
 * **C5 with 16 KiB pages**: `seqlz-fast-lit` needs 32 816 bytes per CPU, `lz4` 16 440. Decoding the
   literals into the page fixes it and was built, but made cold reads on 4 KiB pages slower in the
   kernel, for a reason not found; see "16 KiB pages, tuned". To decide with a kernel on 16 KiB pages.
+* **Work memory in zram's own buffer.** Every stream of zram has a buffer of 2 pages,
+  `zstrm->buffer`: the codec's output when writing, unused when reading. The output needs at most a
+  page, from 3625 bytes on zram stores the page as it is, so the hash table could live in the rest
+  of it, with no change to zram. On 4 KiB pages that leaves 4 KiB, a table of 11 bits: 970.1 instead
+  of 968.4 and 1261.0 instead of 1258.8 bytes per page on the two dumps, offline, pages of 3625
+  bytes and more counted as 4096; the speed is not measured. The encoder needs another layout for
+  that, e.g. the bitstream from the end of the first page downwards until it meets the literals. The
+  decoder's scratch could go into the same buffer when reading, as warm as the scratch now, but
+  `zcomp_decompress()` does not pass the buffer: that is a change to zram. Both together take the 12
+  336 bytes per CPU to about 0 on 4 KiB pages, and the 32 816 on 16 KiB pages too, where the buffer
+  has room for the 16 KiB table and a page of output without a smaller table. That would fix C5 with
+  16 KiB pages without the slower cold reads of decoding into the page. The page that is compressed
+  is no place for any of this: it stays in the swap cache, and a task may read it while zram writes
+  it.
 * **The device's own literal tables** and **deltas against similar pages**, see the ideas of #29 and
   #31: both measured, neither built.
 * **The last 21 ns of `seqlz_decode` with clang**, see "A kernel built with clang". The hot
