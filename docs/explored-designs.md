@@ -2240,6 +2240,35 @@ What was learned:
 * `lz4` stays faster on pages it compresses below 512 bytes, 73% zero words: it copies long matches,
   the word model visits every tag.
 
+## The word model with a path for runs: not even `lz4`'s memory, not built
+
+*Priced with a bound, not built.* `PLAN.md` Phase 3, candidate 3: the word model of the spike, plus
+a path for runs and long repeats, where the word model loses to `lz4`. A bound that no real format
+of this kind can beat: every match of at least L bytes that `seqlz`'s matcher finds costs 3 bytes,
+and every 8-byte word not wholly inside such a match costs what the model of `spike/wk64.h` pays for
+it (2-bit tag, 4-bit index for exact and partial words, 4 or 8 bytes), its table updated by those
+words only. Without repeats the bound gives 2260 and 2915 bytes per page where the spike measures
+2286 and 2929, so it is the spike's model. Throwaway code, not in the repository.
+
+![The word model with a path for runs](plots/word-model-runs.svg)
+
+| bytes per page, 20 000 pages | 23rd September | 24th September | 28th September |
+| --- | --- | --- | --- |
+| word model (`spike-slots`) | 2286.0 | 2928.6 | 3170.5 |
+| ... repeats from 64 bytes almost free | 1930.0 | 2677.3 | 2970.9 |
+| ... from 32 bytes | 1796.3 | 2526.1 | 2620.1 |
+| ... from 16 bytes | 1700.3 | 2286.5 | 2310.5 |
+| ... from 8 bytes | 1673.0 | 2237.4 | 2203.3 |
+| `lz4` | 1411.8 | 1737.3 | 1619.2 |
+| `seqlz-fast-lit` | 993.0 | 1287.9 | 1277.5 |
+
+Even with every repeat of 8 bytes and more for 3 bytes, the word model needs more memory than `lz4`,
+and 68% to 74% more than `seqlz-fast-lit`. What it lacks is not the long repeats but the short
+matches at any byte offset and the entropy coding. The smaller of the bound from 8 bytes and
+`seqlz-fast-lit` per page, one mode per page, would save 0.04, 0.01 and 0.01 bytes per page: the
+bound is smaller on 51, 19 and 8 of the pages. So the word model stays what it is on the hull, the
+fastest point for exchange rates above about 590 bytes per us, and a path for runs could only make
+it slower there.
 ## Byte shuffle + `lz4`
 
 *Dropped as a codec. The per-page result is a hint for later.* Code: `explore/shuffle.c`,
