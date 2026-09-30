@@ -35,12 +35,16 @@ decided it. The history of every idea, also of the ones that failed, is in
 | word | meaning |
 | --- | --- |
 | **page** | 4096 bytes of memory, the unit the kernel swaps out and zram compresses |
-| **literal** | a byte stored as it is, because the compressor found no earlier copy of it |
+| **literal** | a byte stored as it is, because the matcher found no earlier copy of it |
 | **match** | "copy `ml` bytes from `offset` bytes back": bytes that appeared earlier in the page |
 | **offset** | how many bytes back the copy of a match starts |
 | **sequence** | `ll` literals followed by one match; the compressor turns a page into a list of sequences |
 | **`ll`** | literal length: how many literals a sequence has, 0 or more |
 | **`ml`** | match length: how many bytes the match copies, 4 or more |
+| **matcher** | the first half of the compressor: it walks through the page and looks for matches. It decides where the matches are, and the bytes between them are the literals |
+| **greedy** | a matcher that takes a match as soon as it finds one, without checking whether a match that starts a byte later would be longer |
+| **encoder** | the second half of the compressor: it writes the matcher's sequences and literals in the format |
+| **decoder** | turns a compressed page back into its 4096 bytes |
 | **offset class** | one of 6 ways to store the offset, e.g. "the same as the match before", in 0 bits |
 | **token** | one Huffman coded symbol for `ll`, `ml` and the offset class of a sequence |
 | **Huffman code** | a code where frequent symbols get few bits and rare ones many; see below |
@@ -61,11 +65,12 @@ Almost every fast compressor, `lz4`, `lzo`, `zstd` and `seqlz` included, is buil
 
 ### Idea 1: say "that again" instead of repeating bytes
 
-The compressor walks through the page. When the next bytes appeared before, it writes a **match**:
-go back `offset` bytes and copy `ml` bytes. When they did not, it writes them as they are, as
-**literals**. Memory pages are full of repeats, because programs store arrays of similar things.
-Here are the first 24 bytes of a page that holds an array of pointers, each pointing 16 bytes
-further than the one before. The bytes follow each other in memory, here one pointer per line:
+The part of the compressor that finds repeats is the **matcher**. It walks through the page. When
+the next bytes appeared before, it takes a **match**: go back `offset` bytes and copy `ml` bytes.
+When they did not, the bytes stay as they are, as **literals**. Memory pages are full of repeats,
+because programs store arrays of similar things. Here are the first 24 bytes of a page that holds an
+array of pointers, each pointing 16 bytes further than the one before. The bytes follow each other
+in memory, here one pointer per line:
 
 ```text
 pointer 1:  10 00 56 34 12 7f 00 00
