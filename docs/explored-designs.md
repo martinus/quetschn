@@ -285,6 +285,37 @@ instead of -50 [-80, -40] on the desktop sample, -300 [-360, -270] instead of -2
 phone pages. In these two codec runs `seqlz-fast-lit` is already faster than `lz4` at cold p99 on
 x86-64, unlike in the four codec quick bench; why is not looked into yet.
 
+## The next token before the copies: reads faster on both phone cores, kept
+
+*In `seqlz_decode()`, a sequence without a length value looks up the next token before it copies.* By
+source line on the little core, the fast path waited for its own token: the entry was loaded right
+before its fields were needed, and the match copy then waited for the offset. The next token's entry
+only needs the bits after this sequence, known after its `drop`, so the lookup now goes before the
+16 to 48 bytes of copies, which fill the time the load takes on an in-order core. The slow path looks
+it up after its length values, as before.
+
+In the harness, phone pages, `main` and this alternating, 5 runs per core, Δ against `lz4` in ns with
+the smallest and largest of the 5:
+
+| core | | `main` | this |
+| --- | --- | --- | --- |
+| little | cold p50 | 2169 [2147, 2202] | 2007 [1984, 2054] |
+| little | cold p99 | 7364 [7225, 7454] | 7178 [6989, 7235] |
+| little | warm p99 | 6614 [6568, 6679] | 6459 [6431, 6558] |
+| big | cold p50 | 456 [379, 473] | 330 [275, 335] |
+| big | cold p99 | 3204 [3086, 3398] | 3011 [2939, 3095] |
+| big | warm p99 | 2363 [2344, 2374] | 2121 [2100, 2138] |
+
+x86-64, the decode loop: 5800 instead of 5967 user cycles per page, the same instructions. The lookup
+needs two more registers, and on arm64 two values go to the stack; the little core gains anyway.
+
+**Tried and not kept: `copy_match()` with 16 bytes per round.** For runs with an offset of 1, 2 or 4
+two stores per round, for offsets of 16 and more two loads, then two stores. On the little core 3.4%
+fewer cycles per page and 6% fewer instructions, but cold p99 against `lz4` 7798 [7644, 7870] instead of
+7400 [7268, 7646] ns and warm p99 6859 instead of 6630: the slowest pages have many short matches and
+runs, and the extra loop and the check of the step are branches that mispredict there. Together with
+the next token it was worse at p99 than the next token alone.
+||||||| f94ab64
 ## The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept
 
 *`match_page()` loads one position ahead, the bytes it writes do not change.* By source line, with

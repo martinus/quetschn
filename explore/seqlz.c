@@ -756,7 +756,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     u8* d_fast;
     unsigned long lit_fast;
     struct bit_reader br;
-    unsigned int n_lit, last = 1;
+    unsigned int n_lit, last = 1, tok;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
@@ -789,17 +789,22 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     d_fast = d_end - 64;
     lit_fast = (unsigned long)lit_bound - 16U;
 
+    /* A refill only when token and offset might not fit, 11 + 12 bits: the next token's lookup then
+     * does not wait for the refill's load, and a refill leaves 56 bits for two or three sequences. The
+     * escape and the length values refill before they read. The token's entry has the class of the
+     * offset, so its raw bits are known without a second lookup. */
+#define NEXT_TOKEN()                                                      \
+    do {                                                                  \
+        if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))      \
+            refill(&br);                                                  \
+        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)]; \
+    } while (0)
+
+    NEXT_TOKEN();
     for (;;) {
-        unsigned int tok, nl, len, off;
+        unsigned int nl, len, off;
         u32 e;
 
-        /* A refill only when token and offset might not fit, 11 + 12 bits: the next token's lookup then
-         * does not wait for the refill's load, and a refill leaves 56 bits for two or three sequences.
-         * The escape and the length values refill before they read. The token's entry has the class
-         * of the offset, so its raw bits are known without a second lookup. */
-        if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
-            refill(&br);
-        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
         if (tok >> 31) {
             /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
             unsigned int idx;
@@ -828,6 +833,10 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         if (!(tok & (1U << 30)) && d <= d_fast && (unsigned long)lit <= lit_fast) {
             u64 a, b;
 
+            /* The next token now, before the copies: no length value follows this one, and the
+             * copies fill the time the load takes on an in-order core such as the Cortex-A55. A
+             * fast sequence is never the last, that one ends the page. */
+            NEXT_TOKEN();
             /* No check of nl against the literals left: the 16 bytes are inside lit_bound, so lit
              * stays inside too. Past lit_end it reads the next bytes of the input, and the page is
              * rejected by the next sequence on the path below, where every page ends, because
@@ -910,7 +919,9 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
             return -1;
         copy_match(d, d_end, off, len);
         d += len;
+        NEXT_TOKEN();
     }
+#undef NEXT_TOKEN
     if (d != d_end || lit != lit_end || br.count < 0)
         return -1;
     return 0;
