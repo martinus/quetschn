@@ -315,6 +315,41 @@ fewer cycles per page and 6% fewer instructions, but cold p99 against `lz4` 7798
 7400 [7268, 7646] ns and warm p99 6859 instead of 6630: the slowest pages have many short matches and
 runs, and the extra loop and the check of the step are branches that mispredict there. Together with
 the next token it was worse at p99 than the next token alone.
+||||||| f94ab64
+## The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept
+
+*`match_page()` loads one position ahead, the bytes it writes do not change.* By source line, with
+`simpleperf` on the Mi 9T's little core and the phone's pages, `seqlz-fast-lit`'s compression went to
+the positions without a match (46%, the hash included), extending matches in `count()` (24%), writing
+the bitstream (18%) and coding the literals (10%). The loop over the positions is one chain: 8 bytes,
+the 64 bit multiply of the hash, the table entry, the 4 bytes at the candidate, the compare. The A55
+issues in order and waits at every link, at 0.91 instructions per cycle. Changes:
+
+* The next position's 8 bytes, hash, table entry and the 4 bytes at its candidate are loaded while this
+  one is compared. The entry is read after the position before was stored, as before.
+* The 4 bytes to compare come from the 8 of the hash, the last offset is a negative index: 15 instead of
+  17 instructions per position.
+* The encoder masks the offset only for class 0: an offset of class 1 to 5 has no more bits than the
+  class sends.
+
+Every page's compressed length is the same as before for `seqlz-fast`, `seqlz-fast-lit` and `bytelz`, on
+the 455 239 pages of the desktop dump and the 81 709 of the phone's. Per page in the compress loop on the
+little core, `main` and this alternating, median of 5 runs: 42 349 [42 018, 43 290] instead of 43 841
+[43 722, 45 211] cycles, 39 762 instead of 40 965 instructions; x86-64 16 148 instead of 16 489 user
+cycles. In the harness, phone pages, median of 5 runs with `lz4`:
+
+| core | compress p50 | compress p99 | against `lz4`, p50 / p99 |
+| --- | --- | --- | --- |
+| little, before | 19.56 µs | 63.5 µs | 1.57 / 1.86 times |
+| little, after | 19.00 µs | 59.8 µs | 1.52 / 1.76 times |
+| big, before | 7.50 µs | 20.0 µs | 1.37 / 1.43 times |
+| big, after | 7.40 µs | 19.2 µs | 1.35 / 1.37 times |
+
+Tried and not kept, all with the same output: the next table entry chosen by a compare instead of read
+after the store, 9% more cycles, from more instructions; `count()` with 16 bytes per round, 1% more,
+most matches end in its first 16 bytes. Two that change the output, measured for later: `lz4`'s growing
+step without a match, 2.4% fewer cycles for 2.4 bytes more per page, and a hash of 4 bytes with a 32
+bit multiply, 2.3% fewer cycles for 1.9% more memory.
 
 ## Where the ratio of `zstd` comes from
 

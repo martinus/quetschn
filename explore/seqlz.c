@@ -338,7 +338,9 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         unsigned int tlen;
         u32 code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
 
-        enc_put(e, code | (u64)((off >> SEQLZ_OFF_SHIFT(cls)) & ((1U << raw_bits) - 1U)) << tlen, tlen + raw_bits);
+        /* An offset of class 1 to 5 has no more bits than the class sends, so only class 0, the last
+         * offset, needs a mask: it sends none. */
+        enc_put(e, code | (u64)((off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0))) << tlen, tlen + raw_bits);
         if (ll >= SEQLZ_LL_CAP) {
             put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
             enc_flush(e);
