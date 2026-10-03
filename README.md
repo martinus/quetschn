@@ -146,6 +146,10 @@ echo 1804800 > scaling_max_freq
 echo 1804800 > scaling_min_freq
 ```
 
+To compare two builds, configure both with `-DQUETSCHN_ALIGN_FUNCTIONS=ON`. With the kernel's alignment a
+change in one function moves the ones behind it, and on the phone's little core that alone moved reads
+by 130 ns.
+
 The pages are as private on the phone as anywhere else: delete them from `/data/local/tmp` afterwards.
 
 ## Collecting pages
