@@ -521,8 +521,10 @@ flowchart LR
 Per sequence the decoder:
 
 1. refills the bit reader if fewer than 23 bits are left, the most a token and an offset need;
-2. looks up the next 11 bits in the token table: the entry has the code length, `ll`, `ml - 4` and
-   the offset class;
+2. looks up the next 11 bits in the token table: the entry has `ll`, `ml`, the bits of the whole
+   sequence, the two shifts that bring the offset's raw bits into place, and whether a length value
+   follows. Unpacking the offset class at run time instead took 18 instructions, which matters on an
+   in-order core such as the Cortex-A55;
 3. takes the offset's raw bits right after the token, or the last offset for class 0, without a
    branch;
 4. copies 16 literal bytes and 16 to 40 match bytes without a loop, if the lengths fit into the
@@ -551,7 +553,7 @@ codec.
 | what | why it matters |
 | --- | --- |
 | **one table lookup per sequence** | the offset class is in the token, not a second symbol; the chain from one sequence to the next is lookup, shift, lookup |
-| **static tables, small enough for L1** | token table 2048 entries of 2 bytes, the page's literal table 1024 of 2 bytes, two length tables 256 of 4 bytes; nothing is built from the page, where `zstd` builds its literal table for each page with coded literals |
+| **static tables, small enough for L1** | token table 2048 entries of 4 bytes, the page's literal table 1024 of 2 bytes, two length tables 256 of 4 bytes; nothing is built from the page, where `zstd` builds its literal table for each page with coded literals |
 | **only complete Huffman codes** | every bit pattern starts a code, so the decoder never checks for one that does not |
 | **the common sequence has no loop and no length value** | literal runs up to 14 bytes and matches up to 34 bytes are the token alone, and fixed copies of 16 to 40 bytes cover them |
 | **literals in 8 streams** | 8 chains of work side by side instead of one |
@@ -595,7 +597,7 @@ first and the second dump. A point of memory is 1% of the uncompressed page, 41 
 | --- | --- | --- | --- |
 | `ll`, `ml` and the offset class in one token | a symbol each | 22% fewer decode cycles, and less memory | |
 | the offset class in the token, raw offset bits after it | the offset's size Huffman coded on its own | 7% fewer decode cycles, 8168 instead of 8758 per page: one table lookup per sequence | 0.4 points of memory |
-| token codes of at most 11 bits, a 4 KiB table | 12 bits, an 8 KiB table | the slowest 1% of cold reads take 4350 instead of 5070 ns: the smaller table stays in the L1 cache | none measured in memory |
+| token codes of at most 11 bits, a table of 2048 entries | 12 bits, 4096 entries | the slowest 1% of cold reads take 4350 instead of 5070 ns: the smaller table stays in the L1 cache, measured with entries of 2 bytes | none measured in memory |
 | rare tokens escaped | a code for every token | needed: 11 bits have room for 2048 codes, there are 3072 tokens | 16 bits for a rare token |
 | match lengths up to 34 in the token | up to 18 | a length value after 8.5% of the matches instead of 18.7%, and fewer mispredicted branches: 9180 instead of 9400 decode cycles | |
 | one repeat offset | three, as in `zstd` | 17% fewer decode cycles | 0.2 points of memory: the other two were 11% of the matches |
