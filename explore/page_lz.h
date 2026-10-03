@@ -128,23 +128,44 @@ typedef void (*emit_fn)(void* ctx, const u8* literals, unsigned int ll, unsigned
 static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_fn emit, void* ctx) {
     /* positions, not pointers: the end is a constant, and the position for the table is at hand */
     const unsigned int limit = PAGE_LZ_PAGE - 8U; /* 8 bytes readable for the hash and the comparison */
-    unsigned int pos = 1, anchor = 0, last = 1;
+    unsigned int pos = 1, anchor = 0, last = 1, h, cand;
+    /* -last as an index, so the load at the last offset needs no subtraction of its own */
+    long back = -1;
+    /* This position's 8 bytes, hash, table entry and the 4 bytes there, all loaded one position ahead:
+     * on the in-order Cortex-A55 each step waited for the one before, 3.4% of the compressor's cycles.
+     * The entry is read after the position before was stored, as before, so the matches are the same. */
+    u64 v;
+    u32 cand_bytes;
 
     __builtin_memset(table, 0, sizeof(unsigned short) << PAGE_LZ_HASH_BITS);
+    v = load64(src + pos);
+    h = hash5(v);
+    cand = table[h];
+    cand_bytes = load32(src + cand);
 
     while (pos < limit) {
-        u32 cur = load32(src + pos);
-        unsigned int h = hash5(load64(src + pos)), cand = table[h], m, len;
+        u64 v_next = load64(src + pos + 1);
+        unsigned int h_next = hash5(v_next), m, len;
+        /* the first 4 bytes of the 8 for the hash, without a second load */
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        u32 cur = (u32)v;
+#else
+        u32 cur = (u32)(v >> 32);
+#endif
         /* One branch for both candidates, not three: the last offset always points into the page (it
          * starts at 1, the search at position 1), and so does a table entry, so both can be read before
          * it is known whether they count. Three branches mispredicted almost twice as often as lz4's
          * one. The table is cleared for each page, so every entry is before pos. */
-        unsigned int rep_hit = load32(src + pos - last) == cur;
-        unsigned int cand_hit = load32(src + cand) == cur;
+        unsigned int rep_hit = load32(src + pos + back) == cur;
+        unsigned int cand_hit = cand_bytes == cur;
 
         table[h] = (unsigned short)pos;
         if (!(rep_hit | cand_hit)) {
             pos++;
+            v = v_next;
+            h = h_next;
+            cand = table[h];
+            cand_bytes = load32(src + cand);
             continue;
         }
         m = rep_hit ? pos - last : cand;
@@ -155,12 +176,18 @@ static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_
         }
         len = 4U + count(src + pos + 4, src + m + 4, src + PAGE_LZ_PAGE);
         last = pos - m;
+        back = -(long)last;
         emit(ctx, src + anchor, pos - anchor, len, last);
         pos += len;
         anchor = pos;
         /* a position near the end of the match, for the next matches */
-        if (pos < limit)
+        if (pos < limit) {
             table[hash5(load64(src + pos - 2))] = (unsigned short)(pos - 2);
+            v = load64(src + pos);
+            h = hash5(v);
+            cand = table[h];
+            cand_bytes = load32(src + cand);
+        }
     }
     emit(ctx, src + anchor, PAGE_LZ_PAGE - anchor, 0, 0);
 }
