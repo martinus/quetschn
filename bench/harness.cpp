@@ -175,8 +175,10 @@ double timer_step_ns() {
     if (steps.empty()) {
         return ns_per_tick();
     }
-    std::nth_element(steps.begin(), steps.begin() + static_cast<std::ptrdiff_t>(steps.size() / 2), steps.end());
-    return steps[steps.size() / 2] * ns_per_tick();
+    // The smallest, not the median: on a virtual machine with ASan the durations jitter, and the median
+    // of the differences was 44 ns for a TSC that steps by far less. A coarse clock has no differences
+    // between one tick and its step.
+    return *std::min_element(steps.begin(), steps.end()) * ns_per_tick();
 }
 
 namespace {
