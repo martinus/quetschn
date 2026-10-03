@@ -415,6 +415,23 @@ positions without a match, and there it takes 1.43 times `lz4`'s time. 74% of th
   sequences: at least 5 bytes leaves 161.0 instead of 161.3 sequences per page, the table's hash of 5
   bytes rarely finds shorter ones; 6 bytes 155.8 sequences for 761.0 instead of 749.8 bytes per page.
 
+* **The other 8 KiB of the per CPU budget, not kept.** C5 allows `lz4`'s 16 416 bytes per CPU, and
+  `seqlz-fast` uses 8192 for its table. Spent on the matcher, it could have bought memory to trade for
+  a faster parse, e.g. `lz4`'s growing step. It buys almost nothing: bytes per page on the phone's /
+  the desktop's dump, and sequences per page of the phone sample:
+
+  | matcher | phone | desktop | sequences |
+  | --- | --- | --- | --- |
+  | today, 4096 entries | 749.8 | 1084.3 | 161.3 |
+  | 8192 entries | 749.3 | 1082.6 | 161.4 |
+  | 4096 entries of 2 positions | 749.0 | 1081.6 | 161.5 |
+  | today with the step | 752.4 | 1088.9 | 160.6 |
+  | 8192 entries with the step | 751.9 | 1087.1 | 160.7 |
+  | 2 positions with the step | 751.6 | 1086.1 | 160.8 |
+
+  A page has 4096 positions, and a table of 4096 entries already keeps nearly every candidate that
+  helps. With the step the larger tables are still worse than today, so they were not timed.
+
 **Code layout.** The first A/B of the `count()` change made reads 130 ns slower on the little core,
 though `seqlz_decode()` was the same code: with the kernel's `-falign-functions=4` on arm64 it had moved
 by 12 bytes. Two runs of the same build differ by 10 to 20 ns. With every function on 64 bytes in both
