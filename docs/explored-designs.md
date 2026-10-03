@@ -230,6 +230,61 @@ instead of 34.5%. Same clocks and the same quick bench, latency on a sample of 2
 p99 is 1.75 times `lz4`'s on the little core and 1.61 times on the big core. A dump this soon after
 boot holds what Android swaps out first; a dump after a day of normal use may look different.
 
+## seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept
+
+*On the Cortex-A55 the sequence loop of `seqlz_decode()` issued two instructions per cycle, so fewer
+instructions were faster almost one for one.* `simpleperf` on the Mi 9T's little core showed 1.87 times
+`lz4`'s instructions per page at an IPC of 0.99, and 18 of the about 60 instructions per sequence went
+into unpacking the token: the offset class, its raw bits from a packed constant, the mask, the shift of
+classes 4 and 5. Four changes, the format stays the same:
+
+* The token table has entries of 4 bytes instead of 2, with what the decoder needs ready to use: the
+  two shifts that bring the offset's raw bits into place, the bits of the whole sequence, `ll`, `ml`,
+  and one bit for "a length value follows", which replaces two compares. 8 KiB instead of 4 KiB, once
+  per device, not per CPU.
+* The fast path does not check `nl` against the literals left. Its 16 byte copy stays inside the
+  input; a page whose literals run past their end is rejected by the next sequence on the slow path,
+  where every page ends. Without the new check there, ASan reports a heap overflow in the existing test.
+* The room checks of the fast path are compares against precomputed limits.
+* The tables are prefetched 8 lines per loop iteration, and a match is copied from `d - off` once
+  computed: clang computed `d + 8 - off` anew for every load.
+
+Per page of the decode loop on the little core, phone pages, `simpleperf stat` of 6 passes minus 1:
+
+| step | instructions | cycles |
+| --- | --- | --- |
+| before | 17 842 | 16 976 to 17 308 |
+| match copy from `d - off` | 17 542 | |
+| room checks as compares, no `nl` check | 16 809 | 16 676 |
+| prefetch 8 lines per iteration | 16 547 | 16 247 |
+| token entries of 4 bytes | 15 539 | 15 776 |
+| the length value flag in the entry | 15 129 | 15 797 |
+
+The last step saved instructions but no cycles: the chain from one token's lookup to the next is the
+limit there. `lz4` needs 9640 instructions and 11 874 cycles for the same pages.
+
+Latency in the harness, A/B of the binary of `main` and this one, alternating, 5 rounds per core, each
+run with `lz4`, Δ against `lz4` in ns with the smallest and largest of the 5 runs:
+
+| pages | core | Δ cold p50 before / after | Δ cold p99 before | Δ cold p99 after |
+| --- | --- | --- | --- | --- |
+| desktop | little | 3481 / 2477 | 8677 [8547, 8818] | 7895 [7848, 7973] |
+| desktop | big | 1745 / 1294 | 3955 [3903, 4249] | 3638 [3620, 3736] |
+| phone | little | 2352 / 1847 | 7514 [7424, 7571] | 6787 [6756, 6849] |
+| phone | big | 780 / 512 | 3673 [3301, 3812] | 3387 [3234, 3645] |
+
+Cold p99 of `seqlz-fast-lit` against `lz4`'s is now 1.64 instead of 1.69 times on the little core with
+desktop pages, 1.55 instead of 1.61 with phone pages. These runs have only the two codecs, so they are
+lower than the 1.87 of the quick bench above, where `zstd` runs in between. The larger token table did
+not cost cold reads: an 8 KiB table was slower once, see `docs/seqlz.md`, but that was 4096 entries of
+2 bytes, indexed by 12 bits.
+
+x86-64 gains too, the Ryzen 9 7950X with boost on, so only the A/B within a run counts: 19 656 instead
+of 22 073 instructions per page in the decode loop, and Δ cold p99 against `lz4` -170 [-220, -90] ns
+instead of -50 [-80, -40] on the desktop sample, -300 [-360, -270] instead of -240 [-260, -230] on the
+phone pages. In these two codec runs `seqlz-fast-lit` is already faster than `lz4` at cold p99 on
+x86-64, unlike in the four codec quick bench; why is not looked into yet.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals

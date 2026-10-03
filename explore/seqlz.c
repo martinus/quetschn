@@ -25,8 +25,8 @@ struct value_table {
 };
 
 struct token_table {
-    u16 decode[1U << SEQLZ_TOKEN_BITS];
-    u16 enc[SEQLZ_TOKEN_SYMBOLS + 1]; /* code | length << 12: 4 KiB in L1 next to the hash table */
+    u32 decode[1U << SEQLZ_TOKEN_BITS]; /* token_entry() */
+    u16 enc[SEQLZ_TOKEN_SYMBOLS + 1];   /* code | length << 12: 4 KiB in L1 next to the hash table */
 };
 
 struct lit_table {
@@ -66,12 +66,33 @@ static u32 length_entry(unsigned int s) {
     return ((1U << (s - 12U)) << 8) | ((s - 12U) << 4);
 }
 
-/* ll, ml - 4 and the offset class of a token symbol, class 7 for the escape */
-static u32 token_entry(unsigned int s) {
+_Static_assert(SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U && SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
+                   SEQLZ_ML_CAP + 4U <= 63U && SEQLZ_OFF_SHIFT(5) <= 3U,
+               "token_entry's fields are too narrow");
+_Static_assert(sizeof(((struct token_table*)0)->decode) % 512U == 0 && sizeof(((struct value_table*)0)->decode) % 512U == 0 &&
+                   sizeof(((struct lit_table*)0)->decode) % 512U == 0,
+               "prefetch_lines() takes multiples of 512 bytes");
+
+/*
+ * The decoder's entry for token symbol s with a code of n bits: what it needs, ready to use.
+ *   bits  0..5:  64 - n - raw bits of the offset, mod 64: the stream shifted left by it has the raw bits on top
+ *   bits  6..11: 64 - raw bits, mod 64: then shifted right by it they are the number; 0 for the last offset
+ *   bits 12..13: the shift of the offset, 3 for classes 4 and 5
+ *   bits 14..18: n + raw bits, the bits of the sequence
+ *   bits 19..22: ll, bits 23..28: ml
+ *   bit  30:     a length value follows, for ll or ml
+ *   bit  31:     the escape, with n in bits 14..18
+ * Unpacking the class at run time took 18 instructions per sequence, which a Cortex-A55 issues at
+ * most two per cycle.
+ */
+static u32 token_entry(unsigned int s, unsigned int n) {
+    unsigned int cls = s >> (SEQLZ_LL_BITS + SEQLZ_ML_BITS), raw_bits = SEQLZ_RAW_BITS(cls);
+    unsigned int drop = n + raw_bits, ll = s & SEQLZ_LL_CAP, ml = (s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP;
+
     if (s == SEQLZ_ESCAPE)
-        return 7U << 13;
-    return ((s & SEQLZ_LL_CAP) << 4) | (((s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP) << 8) |
-           ((s >> (SEQLZ_LL_BITS + SEQLZ_ML_BITS)) << 13);
+        return 1U << 31 | n << 14;
+    return ((64U - drop) & 63U) | ((64U - raw_bits) & 63U) << 6 | SEQLZ_OFF_SHIFT(cls) << 12 | drop << 14 | ll << 19 |
+           (ml + 4U) << 23 | (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << 30;
 }
 
 /*
@@ -101,7 +122,7 @@ static int first_codes(const u8* len, unsigned int n, unsigned int bits, unsigne
 }
 
 /* The token's codes, bit reversed for the bitstream read least significant bit first, and its decode
- * table: token_entry() | code length at every index whose low bits are the code. */
+ * table: token_entry() at every index whose low bits are the code. */
 static int build_token(const u8* len, struct token_table* t) {
     unsigned int next[16], s, k;
 
@@ -115,7 +136,7 @@ static int build_token(const u8* len, struct token_table* t) {
         r = reverse(next[l]++, l);
         t->enc[s] = (u16)(r | l << 12);
         for (k = r; k < (1U << SEQLZ_TOKEN_BITS); k += 1U << l)
-            t->decode[k] = (u16)(token_entry(s) | l);
+            t->decode[k] = token_entry(s, l);
     }
     return 0;
 }
@@ -673,8 +694,7 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     if (src_len < SEQLZ_LIT_HEADER || n_lit > SEQLZ_PAGE || s[2] >= SEQLZ_LIT_SETS)
         return 0;
     lt = t->lit[s[2]].decode;
-    for (k = 0; k < sizeof(t->lit[0].decode); k += 64)
-        PAGE_LZ_PREFETCH((const u8*)lt + k);
+    prefetch_lines(lt, sizeof(t->lit[0].decode));
     for (k = 0; k < 8U; k++) {
         sz[k] = load16(s + 3 + 2 * k);
         start[k] = q + total;
@@ -731,22 +751,17 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     u8* d = dst;
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end, *lit_bound;
+    u8* d_fast;
+    unsigned long lit_fast;
     struct bit_reader br;
     unsigned int n_lit, last = 1;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
-    {
-        /* the decoder's tables, so that their misses overlap when they are cold */
-        const u8* q;
-
-        for (q = (const u8*)t->token.decode; q < (const u8*)(t->token.decode + (1U << SEQLZ_TOKEN_BITS)); q += 64)
-            PAGE_LZ_PREFETCH(q);
-        for (q = (const u8*)t->ll.decode; q < (const u8*)(t->ll.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
-            PAGE_LZ_PREFETCH(q);
-        for (q = (const u8*)t->ml.decode; q < (const u8*)(t->ml.decode + (1U << SEQLZ_MAX_BITS)); q += 64)
-            PAGE_LZ_PREFETCH(q);
-    }
+    /* the decoder's tables, so that their misses overlap when they are cold */
+    prefetch_lines(t->token.decode, sizeof(t->token.decode[0]) << SEQLZ_TOKEN_BITS);
+    prefetch_lines(t->ll.decode, sizeof(t->ll.decode[0]) << SEQLZ_MAX_BITS);
+    prefetch_lines(t->ml.decode, sizeof(t->ml.decode[0]) << SEQLZ_MAX_BITS);
     n_lit = load16(s);
     if (n_lit & 0x8000U) {
         const u8* q;
@@ -767,6 +782,11 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         br = (struct bit_reader){lit_end, s_end, 0, 0};
     }
 
+    /* the fast path below needs 64 bytes of room in the page and 16 bytes of literals or input, a
+     * compare each; lit_fast as a number, because the input can be shorter than 16 bytes */
+    d_fast = d_end - 64;
+    lit_fast = (unsigned long)lit_bound - 16U;
+
     for (;;) {
         unsigned int tok, nl, len, off;
         u32 e;
@@ -778,38 +798,38 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
             refill(&br);
         tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
-        if (tok >= (7U << 13)) {
+        if (tok >> 31) {
             /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
             unsigned int idx;
 
-            drop(&br, tok & 15U);
+            drop(&br, (tok >> 14) & 31U);
             refill(&br);
             idx = (unsigned int)br.bits & ((1U << SEQLZ_ESCAPE_BITS) - 1U);
             drop(&br, SEQLZ_ESCAPE_BITS);
             if (idx >= SEQLZ_TOKEN_SYMBOLS)
                 return -1;
-            tok = token_entry(idx);
+            tok = token_entry(idx, 0);
         }
         {
-            unsigned int cls = tok >> 13, raw_bits = SEQLZ_RAW_BITS(cls);
-            unsigned int n_tok = tok & 15U;
-            unsigned int is_new = 0U - (cls != 0);
-            unsigned int raw = ((unsigned int)(br.bits >> n_tok) & ((1U << raw_bits) - 1U)) << SEQLZ_OFF_SHIFT(cls);
+            /* the raw bits: the bits of the sequence shifted to the top, then down to their place */
+            unsigned int back = (tok >> 6) & 63U;
+            unsigned int raw = (unsigned int)((br.bits << (tok & 63U)) >> back) << ((tok >> 12) & 3U);
 
-            drop(&br, n_tok + raw_bits);
-            off = (raw & is_new) | (last & ~is_new);
+            drop(&br, (tok >> 14) & 31U);
+            off = back ? raw : last;
         }
-        nl = (tok >> 4) & 15U;
-        len = ((tok >> 8) & 31U) + 4U;
+        nl = (tok >> 19) & 15U;
+        len = (tok >> 23) & 63U;
         /* Far from the end of the page and of the literals, and no length value: 16 literal bytes
          * and 16 or 32 bytes of match copied without checking the room behind them; nl + len is at
          * most 14 + 34, and the last sequence always has its literals up to the end of the page. */
-        if (nl < SEQLZ_LL_CAP && len < SEQLZ_ML_CAP + 4U && (unsigned int)(d_end - d) >= 64U &&
-            (unsigned int)(lit_bound - lit) >= 16U) {
+        if (!(tok & (1U << 30)) && d <= d_fast && (unsigned long)lit <= lit_fast) {
             u64 a, b;
 
-            if (nl > (unsigned int)(lit_end - lit))
-                return -1;
+            /* No check of nl against the literals left: the 16 bytes are inside lit_bound, so lit
+             * stays inside too. Past lit_end it reads the next bytes of the input, and the page is
+             * rejected by the next sequence on the path below, where every page ends, because
+             * lit > lit_end. 3 instructions less per sequence. */
             __builtin_memcpy(&a, lit, 8);
             __builtin_memcpy(&b, lit + 8, 8);
             __builtin_memcpy(d, &a, 8);
@@ -820,18 +840,21 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
             if (off - 1U >= (unsigned int)(d - (u8*)dst))
                 return -1;
             if (off >= 8U) {
-                /* for 8 <= off < 16 each load reads what the stores before it wrote, which is right */
-                __builtin_memcpy(&a, d - off, 8);
+                /* for 8 <= off < 16 each load reads what the stores before it wrote, which is right.
+                 * From m, not d + 8 - off: clang computed that sum anew for every load. */
+                const u8* m = d - off;
+
+                __builtin_memcpy(&a, m, 8);
                 __builtin_memcpy(d, &a, 8);
-                __builtin_memcpy(&b, d + 8 - off, 8);
+                __builtin_memcpy(&b, m + 8, 8);
                 __builtin_memcpy(d + 8, &b, 8);
                 if (len > 16U) {
-                    __builtin_memcpy(&a, d + 16 - off, 8);
+                    __builtin_memcpy(&a, m + 16, 8);
                     __builtin_memcpy(d + 16, &a, 8);
-                    __builtin_memcpy(&b, d + 24 - off, 8);
+                    __builtin_memcpy(&b, m + 24, 8);
                     __builtin_memcpy(d + 24, &b, 8);
                     if (len > 32U) {
-                        __builtin_memcpy(&a, d + 32 - off, 8);
+                        __builtin_memcpy(&a, m + 32, 8);
                         __builtin_memcpy(d + 32, &a, 8);
                     }
                 }
@@ -867,7 +890,7 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
             refill(&br);
             nl += value(&br, &t->ll, &e);
         }
-        if (nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
+        if (lit > lit_end || nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
             return -1;
         copy_literals(d, d_end, lit, lit_bound, nl);
         d += nl;

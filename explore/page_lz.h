@@ -31,6 +31,25 @@ typedef unsigned char u8;
 #    define PAGE_LZ_PREFETCH(p) __builtin_prefetch(p)
 #endif
 
+/* Every cache line of [p, p + size), size a multiple of 512: 8 lines per iteration. A loop of one line
+ * per iteration was 4 instructions per line, about 500 per page for seqlz's tables, 3% of a page's
+ * decode on a Cortex-A55. */
+static inline void prefetch_lines(const void* p, unsigned long size) {
+    const u8* q = p;
+    const u8* const end = q + size;
+
+    for (; q < end; q += 512) {
+        PAGE_LZ_PREFETCH(q);
+        PAGE_LZ_PREFETCH(q + 64);
+        PAGE_LZ_PREFETCH(q + 128);
+        PAGE_LZ_PREFETCH(q + 192);
+        PAGE_LZ_PREFETCH(q + 256);
+        PAGE_LZ_PREFETCH(q + 320);
+        PAGE_LZ_PREFETCH(q + 384);
+        PAGE_LZ_PREFETCH(q + 448);
+    }
+}
+
 static inline void store16(u8* p, unsigned int v) {
     p[0] = (u8)v;
     p[1] = (u8)(v >> 8);
