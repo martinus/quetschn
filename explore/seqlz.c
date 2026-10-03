@@ -258,7 +258,12 @@ struct encoder {
     const struct seqlz_tables* t;
     u64 acc;
     unsigned int cnt;
-    u8* p;             /* bitstream */
+    u8* p; /* bitstream */
+#ifdef SEQLZ_TWO_STREAMS
+    u64 acc2; /* the other stream, swapped with acc, cnt and p after every sequence */
+    unsigned int cnt2;
+    u8* p2;
+#endif
     u8* lit;           /* literals */
     const u8* src_end; /* the 16-byte literal copies may read up to here */
     unsigned int last; /* the last offset */
@@ -350,8 +355,63 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
         enc_flush(e);
         e->last = off;
     }
+#ifdef SEQLZ_TWO_STREAMS
+    {
+        u64 a = e->acc;
+        unsigned int c = e->cnt;
+        u8* q = e->p;
+
+        e->acc = e->acc2;
+        e->cnt = e->cnt2;
+        e->p = e->p2;
+        e->acc2 = a;
+        e->cnt2 = c;
+        e->p2 = q;
+    }
+#endif
 }
 
+#ifdef SEQLZ_TWO_STREAMS
+/* Room for each of the two streams: half the sequences, rounded up, of at most 31 bits each, and an 8
+ * byte store behind them. Both behind the literals and their 16 bytes of slack, in two pages. */
+#    define SEQLZ_STREAM_ROOM ((((SEQLZ_MAX_SEQUENCES + 1U) / 2U) * 31U + 7U) / 8U + 16U)
+_Static_assert(SEQLZ_HEADER + SEQLZ_PAGE + 16U + 2U * SEQLZ_STREAM_ROOM <= 2U * SEQLZ_PAGE,
+               "two streams do not fit into two pages");
+_Static_assert(SEQLZ_MAX_ESCAPE_LEN + SEQLZ_ESCAPE_BITS + QUETSCHN_PAGE_BITS <= 31U, "a sequence has more than 31 bits");
+
+static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
+    u8* a = d + SEQLZ_HEADER + SEQLZ_PAGE + 16U;
+
+    *e = (struct encoder){t, 0, 0, a, 0, 0, a + SEQLZ_STREAM_ROOM, d + SEQLZ_HEADER, src_end, 1};
+}
+
+/* the last bits of both streams, the header, and the streams moved in behind the literals: u16 the
+ * bytes of stream A, stream A, stream B */
+static unsigned int encoder_finish(struct encoder* e, u8* d) {
+    u8* a = d + SEQLZ_HEADER + SEQLZ_PAGE + 16U;
+    u8* b = a + SEQLZ_STREAM_ROOM;
+    unsigned int n_lit = (unsigned int)(e->lit - (d + SEQLZ_HEADER)), na, nb;
+    u8 *pa, *pb;
+
+    if (e->cnt > 0) {
+        store64(e->p, e->acc);
+        e->p++;
+    }
+    if (e->cnt2 > 0) {
+        store64(e->p2, e->acc2);
+        e->p2++;
+    }
+    pa = e->p < b ? e->p : e->p2;
+    pb = e->p < b ? e->p2 : e->p;
+    na = (unsigned int)(pa - a);
+    nb = (unsigned int)(pb - b);
+    store16(d, n_lit);
+    store16(e->lit, na);
+    __builtin_memmove(e->lit + 2, a, na);
+    __builtin_memmove(e->lit + 2 + na, b, nb);
+    return SEQLZ_HEADER + n_lit + 2U + na + nb;
+}
+#else
 static ALWAYS_INLINE void encoder_init(struct encoder* e, const struct seqlz_tables* t, u8* d, const u8* src_end) {
     *e = (struct encoder){t, 0, 0, d + SEQLZ_HEADER + SEQLZ_PAGE + 16U, d + SEQLZ_HEADER, src_end, 1};
 }
@@ -370,6 +430,7 @@ static unsigned int encoder_finish(struct encoder* e, u8* d) {
     __builtin_memmove(e->lit, bits, bytes);
     return SEQLZ_HEADER + n_lit + bytes;
 }
+#endif
 
 static unsigned int encode_raw(const struct seqlz_tables* t,
                                const struct seqlz_sequence* seq,
@@ -747,16 +808,183 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     return q + total;
 }
 
+#ifdef SEQLZ_TWO_STREAMS
+/* what the sequences of both streams share: where the page and the literals are */
+struct seq_state {
+    u8* d;
+    const u8* lit;
+    unsigned int last;
+    u8* dst;
+    u8* d_end;
+    u8* d_fast;
+    const u8* lit_end;
+    const u8* lit_bound;
+    unsigned long lit_fast;
+};
+
+#    define NEXT_TOKEN_P()                                                       \
+        do {                                                                     \
+            if (br->count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))        \
+                refill(br);                                                      \
+            *tokp = t->token.decode[br->bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)]; \
+        } while (0)
+
+/* One sequence of a stream, its token looked up before; looks up the stream's next one. 0 for the
+ * next sequence, 1 when the page is complete, -1 if it is not valid. */
+static ALWAYS_INLINE int decode_seq(const struct seqlz_tables* t, struct bit_reader* br, u32* tokp, struct seq_state* x) {
+    u8* d = x->d;
+    const u8* lit = x->lit;
+    unsigned int last = x->last, tok = *tokp, nl, len, off;
+    u8* const dst = x->dst;
+    u8* const d_end = x->d_end;
+    u8* const d_fast = x->d_fast;
+    const u8* const lit_end = x->lit_end;
+    const u8* const lit_bound = x->lit_bound;
+    const unsigned long lit_fast = x->lit_fast;
+    u32 e;
+
+    if (tok >> 31) {
+        /* the escape: the token follows in SEQLZ_ESCAPE_BITS bits */
+        unsigned int idx;
+
+        drop(br, (tok >> 14) & 31U);
+        refill(br);
+        idx = (unsigned int)br->bits & ((1U << SEQLZ_ESCAPE_BITS) - 1U);
+        drop(br, SEQLZ_ESCAPE_BITS);
+        if (idx >= SEQLZ_TOKEN_SYMBOLS)
+            return -1;
+        tok = token_entry(idx, 0);
+    }
+    {
+        /* the raw bits: the bits of the sequence shifted to the top, then down to their place */
+        unsigned int back = (tok >> 6) & 63U;
+        unsigned int raw = (unsigned int)((br->bits << (tok & 63U)) >> back) << ((tok >> 12) & 3U);
+
+        drop(br, (tok >> 14) & 31U);
+        off = back ? raw : last;
+    }
+    nl = (tok >> 19) & 15U;
+    len = (tok >> 23) & 63U;
+    /* Far from the end of the page and of the literals, and no length value: 16 literal bytes
+     * and 16 or 32 bytes of match copied without checking the room behind them; nl + len is at
+     * most 14 + 34, and the last sequence always has its literals up to the end of the page. */
+    if (!(tok & (1U << 30)) && d <= d_fast && (unsigned long)lit <= lit_fast) {
+        u64 a, b;
+
+        /* The next token now, before the copies: no length value follows this one, and the
+         * copies fill the time the load takes on an in-order core such as the Cortex-A55. A
+         * fast sequence is never the last, that one ends the page. */
+        NEXT_TOKEN_P();
+        /* No check of nl against the literals left: the 16 bytes are inside lit_bound, so lit
+         * stays inside too. Past lit_end it reads the next bytes of the input, and the page is
+         * rejected by the next sequence on the path below, where every page ends, because
+         * lit > lit_end. 3 instructions less per sequence. */
+        __builtin_memcpy(&a, lit, 8);
+        __builtin_memcpy(&b, lit + 8, 8);
+        __builtin_memcpy(d, &a, 8);
+        __builtin_memcpy(d + 8, &b, 8);
+        d += nl;
+        lit += nl;
+        last = off;
+        if (off - 1U >= (unsigned int)(d - (u8*)dst))
+            return -1;
+        if (off >= 8U) {
+            /* for 8 <= off < 16 each load reads what the stores before it wrote, which is right.
+             * From m, not d + 8 - off: clang computed that sum anew for every load. */
+            const u8* m = d - off;
+
+            __builtin_memcpy(&a, m, 8);
+            __builtin_memcpy(d, &a, 8);
+            __builtin_memcpy(&b, m + 8, 8);
+            __builtin_memcpy(d + 8, &b, 8);
+            if (len > 16U) {
+                __builtin_memcpy(&a, m + 16, 8);
+                __builtin_memcpy(d + 16, &a, 8);
+                __builtin_memcpy(&b, m + 24, 8);
+                __builtin_memcpy(d + 24, &b, 8);
+                if (len > 32U) {
+                    __builtin_memcpy(&a, m + 32, 8);
+                    __builtin_memcpy(d + 32, &a, 8);
+                }
+            }
+        } else {
+            /* The off bytes before d repeated to 8 bytes; step, the largest multiple of off up to
+             * 8, apart it is the same 8 bytes again, so the same register is stored at each step,
+             * without loads. Five stores cover at least 28 bytes. */
+            static const u8 step_for[8] = {0, 8, 8, 6, 8, 5, 6, 7};
+            static const u64 repeat[8] = {0,
+                                          0x0101010101010101ULL,
+                                          0x0001000100010001ULL,
+                                          0x0001000001000001ULL,
+                                          0x0000000100000001ULL,
+                                          0x0000010000000001ULL,
+                                          0x0001000000000001ULL,
+                                          0x0100000000000001ULL};
+            unsigned int step = step_for[off], k;
+
+            __builtin_memcpy(&a, d - off, 8);
+            a = (a & (~0ULL >> (64U - 8U * off))) * repeat[off];
+            __builtin_memcpy(d, &a, 8);
+            __builtin_memcpy(d + step, &a, 8);
+            __builtin_memcpy(d + 2U * step, &a, 8);
+            __builtin_memcpy(d + 3U * step, &a, 8);
+            __builtin_memcpy(d + 4U * step, &a, 8);
+            for (k = 5U * step; k < len; k += step)
+                __builtin_memcpy(d + k, &a, 8);
+        }
+        d += len;
+        x->d = d;
+        x->lit = lit;
+        x->last = last;
+        return 0;
+    }
+    if (nl == SEQLZ_LL_CAP) {
+        refill(br);
+        nl += value(br, &t->ll, &e);
+    }
+    if (lit > lit_end || nl > (unsigned int)(lit_end - lit) || nl > (unsigned int)(d_end - d))
+        return -1;
+    copy_literals(d, d_end, lit, lit_bound, nl);
+    d += nl;
+    lit += nl;
+    if (d == d_end) {
+        x->d = d;
+        x->lit = lit;
+        return 1; /* the last sequence */
+    }
+
+    if (len == SEQLZ_ML_CAP + 4U) {
+        refill(br);
+        len += value(br, &t->ml, &e);
+    }
+    last = off;
+    /* off - 1 wraps for 0 */
+    if (off - 1U >= (unsigned int)(d - (u8*)dst) || len > (unsigned int)(d_end - d))
+        return -1;
+    copy_match(d, d_end, off, len);
+    d += len;
+    NEXT_TOKEN_P();
+    x->d = d;
+    x->lit = lit;
+    x->last = last;
+    return 0;
+}
+#    undef NEXT_TOKEN_P
+#endif
+
 int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
     const u8* s = src;
     const u8* const s_end = s + src_len;
     u8* d = dst;
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end, *lit_bound;
+#ifndef SEQLZ_TWO_STREAMS
     u8* d_fast;
     unsigned long lit_fast;
+    unsigned int last = 1, tok;
+#endif
     struct bit_reader br;
-    unsigned int n_lit, last = 1, tok;
+    unsigned int n_lit;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
@@ -784,6 +1012,41 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         br = (struct bit_reader){lit_end, s_end, 0, 0};
     }
 
+#ifdef SEQLZ_TWO_STREAMS
+    {
+        /* u16 the bytes of stream A, stream A, stream B; the sequences alternate between them */
+        const u8* q = br.p;
+        struct bit_reader bra, brb;
+        struct seq_state x;
+        u32 ta, tb;
+        unsigned int na;
+        int r;
+
+        if (s_end - q < 2)
+            return -1;
+        na = load16(q);
+        if ((unsigned long)(s_end - q - 2) < na)
+            return -1;
+        bra = (struct bit_reader){q + 2, q + 2 + na, 0, 0};
+        brb = (struct bit_reader){q + 2 + na, s_end, 0, 0};
+        x = (struct seq_state){d, lit, 1, d, d_end, d_end - 64, lit_end, lit_bound, (unsigned long)lit_bound - 16U};
+        refill(&bra);
+        ta = t->token.decode[bra.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
+        refill(&brb);
+        tb = t->token.decode[brb.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)];
+        for (;;) {
+            r = decode_seq(t, &bra, &ta, &x);
+            if (r)
+                break;
+            r = decode_seq(t, &brb, &tb, &x);
+            if (r)
+                break;
+        }
+        if (r < 0 || x.d != d_end || x.lit != lit_end || bra.count < 0 || brb.count < 0)
+            return -1;
+        return 0;
+    }
+#else
     /* the fast path below needs 64 bytes of room in the page and 16 bytes of literals or input, a
      * compare each; lit_fast as a number, because the input can be shorter than 16 bytes */
     d_fast = d_end - 64;
@@ -793,12 +1056,12 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
      * does not wait for the refill's load, and a refill leaves 56 bits for two or three sequences. The
      * escape and the length values refill before they read. The token's entry has the class of the
      * offset, so its raw bits are known without a second lookup. */
-#define NEXT_TOKEN()                                                      \
-    do {                                                                  \
-        if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))      \
-            refill(&br);                                                  \
-        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)]; \
-    } while (0)
+#    define NEXT_TOKEN()                                                      \
+        do {                                                                  \
+            if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))      \
+                refill(&br);                                                  \
+            tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)]; \
+        } while (0)
 
     NEXT_TOKEN();
     for (;;) {
@@ -921,8 +1184,9 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         d += len;
         NEXT_TOKEN();
     }
-#undef NEXT_TOKEN
+#    undef NEXT_TOKEN
     if (d != d_end || lit != lit_end || br.count < 0)
         return -1;
     return 0;
+#endif
 }
