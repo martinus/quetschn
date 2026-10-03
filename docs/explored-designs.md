@@ -169,6 +169,52 @@ below stores uncompressed, which compares the decoders on the same work.
 The target is the gap between the first two rows and the third: `zstd -1` needs 17% less memory than
 `lzo-rle`, and 60% more time at cold p99 than `lz4`.
 
+## arm64: on a phone, `seqlz-fast-lit` is 1.7 to 1.9 times `lz4` at cold p99
+
+*The gap to `lz4` is larger on arm64 than on x86-64, largest on the in-order little core.* The old phone
+of `PLAN.md` §4: Xiaomi Mi 9T, Snapdragon 730, MIUI 12.1.1 with its Linux 4.14 kernel, rooted. Little
+core cpu2 (Kryo 470 Silver, Cortex-A55 based) fixed at 1804.8 MHz, big core cpu7 (Kryo 470 Gold,
+Cortex-A76 based) fixed at 2208 MHz, both with the `performance` governor and min equal to max. A busy loop
+counted 1.70 to 1.80 GHz on cpu2 and 2.18 to 2.21 GHz on cpu7 in 40 samples of each. Built with the Android NDK r30 (clang 21),
+the codecs with the flags of an arm64 `defconfig` build of the kernel (`cmake/kernel_codecs.cmake`).
+`tools/quick-bench.sh` on the 20 000 page sample of the first zram dump, the timed runs on the phone
+over `adb`. The Σ zsmalloc cost is the same on both architectures, byte for byte for `lz4`, `lzo-rle`
+and `zstd`.
+
+Timing on arm64 needed two fixes in `bench/harness.cpp`. `steady_clock` steps by 52 ns on this phone,
+so the harness reads the PMU cycle counter with `perf_event_open`, user mode only; `timer_step_ns()`
+then says 5.0 ns. And `clock_gettime` is a system call on this kernel, so calibrating cycles against a
+loop of `steady_clock` calls missed the 69% of the time spent in the kernel, and every latency came out
+3.2 times too long. The calibration now runs over user code.
+
+Cold p50 / p99 and warm p99 in ns, median of 5 processes, Δ cold p99 against `lz4` with the smallest
+and largest of the 5:
+
+| codec | Σ cost | little: cold p50 / p99 | warm p99 | Δ cold p99 | big: cold p50 / p99 | warm p99 | Δ cold p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 34.5% | 7187 / 11 240 | 10 466 | | 2990 / 5419 | 4183 | |
+| `lzo-rle` | 32.4% | 7717 / 12 579 | 11 680 | 1338 [1308, 1371] | 3775 / 6514 | 5905 | 1095 [951, 1262] |
+| `zstd` | 23.6% | 26 490 / 47 545 | 42 914 | 36 298 [36 209, 36 457] | 10 075 / 17 684 | 16 660 | 12 203 [12 029, 12 638] |
+| `seqlz-fast-lit` | 24.2% | 11 400 / 20 995 | 19 314 | 9760 [9747, 9880] | 4766 / 9226 | 7840 | 3778 [3475, 3952] |
+
+Compress p50 on the little core: `lz4` 18 817 ns, `lzo-rle` 17 774, `zstd` 76 233, `seqlz-fast-lit`
+31 456; on the big core 9173, 8750, 25 990 and 12 816.
+
+Cold p99 against `lz4`:
+
+| codec | little core | big core | x86-64 |
+| --- | --- | --- | --- |
+| `lzo-rle` | 1.12 | 1.20 | 0.97 |
+| `zstd` | 4.23 | 3.26 | 2.59 |
+| `seqlz-fast-lit` | 1.87 | 1.70 | 1.22 |
+
+The x86-64 column is the same sample and codecs on the Ryzen 9 7950X, but with boost on and the
+`powersave` governor, so its cold numbers can be off by a few hundred ns: `lz4` 2320 ns, `lzo-rle` 2260,
+`zstd` 6000, `seqlz-fast-lit` 2820. `seqlz-fast-lit` keeps its place between `lz4` and `zstd` on every
+core, at 0.44 and 0.52 times `zstd`'s cold p99 on the phone. What costs it more on arm64 is not known
+yet; `perf` on the phone would show it. These are quick bench numbers on the sample, not a full run, and
+the phone's own kernel may be built with other flags than `defconfig`, e.g. with UBSAN.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals

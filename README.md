@@ -121,6 +121,33 @@ the same page, in rotating order. `--out` is a directory then:
 The `quetschn-bench-*` binaries contain GPL-2.0-only kernel code, so they are GPL-2.0 works; they are
 for measuring, not for distribution.
 
+## Benchmarking on an Android phone
+
+For arm64 timings on a rooted Android phone, build with the Android NDK and run the binaries over
+`adb`. The kernel tree is the same; its codecs get the flags of an arm64 kernel build:
+
+```sh
+cmake -S . -B build-android -G Ninja -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-30 -DANDROID_STL=c++_static \
+    -DQUETSCHN_KERNEL_TREE=$HOME/linux
+cmake --build build-android
+adb shell mkdir -p /data/local/tmp/quetschn
+adb push build-android/quetschn-bench-interleaved corpus/test.pages corpus/test.tsv /data/local/tmp/quetschn/
+```
+
+On arm64 the harness counts cycles with `perf_event_open`, which needs root, or
+`setprop security.perf_harden 0` on Android. The header line `timer` shows the step of the clock.
+Fix the clock of the cluster first, e.g. for cpu2 of a Snapdragon 730 at 1804.8 MHz, as root:
+
+```sh
+cd /sys/devices/system/cpu/cpu2/cpufreq
+echo performance > scaling_governor
+echo 1804800 > scaling_max_freq
+echo 1804800 > scaling_min_freq
+```
+
+The pages are as private on the phone as anywhere else: delete them from `/data/local/tmp` afterwards.
+
 ## Collecting pages
 
 ```sh
