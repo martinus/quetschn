@@ -215,6 +215,21 @@ core, at 0.44 and 0.52 times `zstd`'s cold p99 on the phone. What costs it more 
 yet; `perf` on the phone would show it. These are quick bench numbers on the sample, not a full run, and
 the phone's own kernel may be built with other flags than `defconfig`, e.g. with UBSAN.
 
+The phone's own pages tell the same story. A `dd` of the Mi 9T's `/dev/block/zram0` 50 minutes after
+boot, 82 188 pages, 81 709 measured: they compress much better than the desktop's, `lz4` needs 25.8%
+instead of 34.5%. Same clocks and the same quick bench, latency on a sample of 20 000 of these pages:
+
+| codec | Σ cost | little: cold p50 / p99 | Δ cold p99 | big: cold p50 / p99 | Δ cold p99 |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 25.8% | 6000 / 11 259 | | 2567 / 5241 | |
+| `lzo-rle` | 24.2% | 6485 / 12 315 | 1050 [1024, 1085] | 2988 / 6213 | 972 [880, 1018] |
+| `zstd` | 16.8% | 21 098 / 45 674 | 34 444 [34 309, 34 464] | 8534 / 16 914 | 11 585 [11 246, 11 985] |
+| `seqlz-fast-lit` | 17.4% | 8950 / 19 745 | 8487 [8397, 8516] | 3500 / 8445 | 3136 [3106, 3501] |
+
+`seqlz-fast-lit` needs 28% less than `lzo-rle` here, with tables trained on desktop pages, and its cold
+p99 is 1.75 times `lz4`'s on the little core and 1.61 times on the big core. A dump this soon after
+boot holds what Android swaps out first; a dump after a day of normal use may look different.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
