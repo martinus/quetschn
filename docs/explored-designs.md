@@ -432,6 +432,23 @@ positions without a match, and there it takes 1.43 times `lz4`'s time. 74% of th
   A page has 4096 positions, and a table of 4096 entries already keeps nearly every candidate that
   helps. With the step the larger tables are still worse than today, so they were not timed.
 
+* **Two streams for the sequences, not kept.** Built on the branch `seqlz-two-streams`, behind
+  `SEQLZ_TWO_STREAMS`: even sequences in stream A, odd ones in stream B, behind the literals as `u16`
+  bytes of A, A, B, so that the in-order A55 decodes two token chains side by side; the same for raw and
+  coded literals. 2.4 bytes more per page. With both builds aligned, phone pages, median of 5 runs, cold
+  reads in µs, one stream / two streams:
+
+  | codec, core | p50 | p99 |
+  | --- | --- | --- |
+  | `seqlz-fast`, little | 7.31 / 7.91 | 12.44 / 13.95 |
+  | `seqlz-fast`, big | 2.73 / 3.01 | 5.40 / 5.87 |
+  | `seqlz-fast-lit`, little | 7.96 / 8.71 | 18.82 / 19.81 |
+  | `seqlz-fast-lit`, big | 2.97 / 3.22 | 7.90 / 8.06 |
+
+  Writes got slower too, `seqlz-fast` on the little core 0.4 µs at p50, and on x86-64 decoding took 6 to
+  9% more cycles per page. Since #62 the decoder looks up the next token before the copies, so the token
+  chain no longer limits it, and the second stream only adds a bit reader and the switch between them.
+
 **Code layout.** The first A/B of the `count()` change made reads 130 ns slower on the little core,
 though `seqlz_decode()` was the same code: with the kernel's `-falign-functions=4` on arm64 it had moved
 by 12 bytes. Two runs of the same build differ by 10 to 20 ns. With every function on 64 bytes in both
