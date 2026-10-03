@@ -351,6 +351,43 @@ most matches end in its first 16 bytes. Two that change the output, measured for
 step without a match, 2.4% fewer cycles for 2.4 bytes more per page, and a hash of 4 bytes with a 32
 bit multiply, 2.3% fewer cycles for 1.9% more memory.
 
+## Memory for speed on the phone: no trade worth it, not kept
+
+*Three changes to the matcher that cost memory, measured by the score of `PLAN.md` §1.1 on the Mi 9T.*
+After PR #61 and #62 the matcher and the decoder had no cheap instructions left on the little core, so
+the next question was what memory buys. Each variant was a compile time switch in `match_page()`:
+
+* **step**: `lz4`'s growing step without a match, `1 + (pos - anchor) >> 6`, see "The matcher without
+  its step" for why it was removed on x86-64.
+* **hash4**: a hash of 4 bytes with a 32 bit multiply, `lz4`'s, instead of 5 bytes with a 64 bit one.
+* **both**.
+
+Bytes per page, `seqlz-fast` / `seqlz-fast-lit`:
+
+| variant | phone pages | desktop pages |
+| --- | --- | --- |
+| `main` | 749.8 / 714.0 | 1084.3 / 993.1 |
+| step | 752.4 / 716.4 | 1088.9 / 995.5 |
+| hash4 | 758.2 / 731.9 | 1084.0 / 1010.9 |
+| both | 759.9 / 732.8 | 1085.7 / 1012.2 |
+
+Time per page written, `write + 0.34 * cold read`, from `quetschn-score`, phone pages, 20 000 of them,
+median of 3 runs, clock fixed; `lz4` needs 1059.3 bytes and 15.90 / 7.09 µs:
+
+| variant | `seqlz-fast-lit`, little core | big core | `seqlz-fast`, little core | big core |
+| --- | --- | --- | --- | --- |
+| `main` | 23.92 µs | 8.32 µs | 21.40 µs | 8.11 µs |
+| step | 23.63 µs | 8.44 µs | 21.11 µs | 8.25 µs |
+| hash4 | 23.51 µs | 8.38 µs | 21.35 µs | 8.42 µs |
+| both | 22.93 µs | 8.65 µs | 20.69 µs | 8.73 µs |
+
+The best one, both together, saves 1.0 µs per page written on the little core, 4%, for 2.7% more memory,
+and is slower on the big core, as every variant is. The clearer trade is one that exists already:
+`seqlz-fast`, without coded literals, needs 2.5 µs less on the little core for 5% more memory. On the big
+core `seqlz-fast-lit` takes 1.17 times `lz4`'s time per page written, on the little core 1.50 times:
+what is left there is the format, the Huffman coded sequences, two candidates per position, and the
+literal coding.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
