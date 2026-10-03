@@ -384,6 +384,7 @@ int main(int argc, char** argv) {
                     first_line("/sys/devices/system/cpu/cpufreq/boost").c_str());
         if (opts.measure_time) {
             std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
+            std::printf("timer      step %.2f ns\n", quetschn::timer_step_ns());
         } else {
             std::printf("method     no timing, sizes only\n");
         }

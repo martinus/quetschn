@@ -70,6 +70,10 @@ run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& mo
                                                       zsmalloc_model const& model,
                                                       run_options const& opts);
 
+// The smallest step of the clock that run_codec and run_interleaved time with, in ns. Above a few ns the
+// clock is too coarse to tell codecs apart on a single page.
+[[nodiscard]] double timer_step_ns();
+
 // Nearest-rank percentile, p in [0, 100]. values must not be empty.
 [[nodiscard]] double percentile(std::vector<double> values, double p);
 

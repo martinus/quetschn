@@ -16,6 +16,12 @@
 
 #if defined(__x86_64__)
 #    include <x86intrin.h>
+#elif defined(__aarch64__)
+#    include <cerrno>
+#    include <linux/perf_event.h>
+#    include <sys/syscall.h>
+#    include <system_error>
+#    include <unistd.h>
 #endif
 
 namespace quetschn {
@@ -49,25 +55,59 @@ void flush(void const* p, std::size_t size) {
     _mm_mfence();
 }
 
-#else
+#elif defined(__aarch64__)
 
-// TODO(arm64): the PMU cycle counter via perf_event_open, see PLAN.md §5.2. cntvct_el0 runs at only
-// 19 to 54 MHz on many boards, which is too coarse for a single page.
+// The PMU's cycle counter, through perf_event_open. cntvct_el0, which steady_clock reads, runs at only 19
+// to 54 MHz on many boards: 52 ns per step on a Snapdragon 730, too coarse for a single page. Linux
+// before 5.17 does not let userspace read the cycle counter itself, so every read is a read() system
+// call. Only cycles in user mode count: the kernel's part of that call does not, and neither does an
+// interrupt during the timed code. What remains of the call is the same for every codec.
+int cycle_counter() {
+    static int const fd = [] {
+        auto attr = perf_event_attr{};
+        attr.size = sizeof(attr);
+        attr.type = PERF_TYPE_HARDWARE;
+        attr.config = PERF_COUNT_HW_CPU_CYCLES;
+        attr.exclude_kernel = 1;
+        attr.exclude_hv = 1;
+        auto const r = static_cast<int>(::syscall(SYS_perf_event_open, &attr, 0, -1, -1, 0));
+        if (r < 0) {
+            throw std::system_error(errno,
+                                    std::generic_category(),
+                                    "perf_event_open for the cycle counter (as root, or with "
+                                    "kernel.perf_event_paranoid at most 2; on Android setprop "
+                                    "security.perf_harden 0)");
+        }
+        return r;
+    }();
+    return fd;
+}
+
 std::uint64_t ticks() {
-    return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    auto v = std::uint64_t{};
+    if (::read(cycle_counter(), &v, sizeof(v)) != static_cast<ssize_t>(sizeof(v))) {
+        throw std::system_error(errno, std::generic_category(), "reading the cycle counter");
+    }
+    return v;
 }
 
 void flush(void const* p, std::size_t size) {
-#    if defined(__aarch64__)
     auto const* b = static_cast<char const*>(p);
     for (std::size_t off = 0; off < size; off += cache_line) {
         asm volatile("dc civac, %0" ::"r"(b + off) : "memory");
     }
     asm volatile("dsb ish" ::: "memory");
-#    else
+}
+
+#else
+
+std::uint64_t ticks() {
+    return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+void flush(void const* p, std::size_t size) {
     (void)p;
     (void)size;
-#    endif
 }
 
 #endif
@@ -86,11 +126,17 @@ void touch(void const* p, std::size_t size) {
 }
 
 double ns_per_tick() {
+    // 50 ms of work in user mode, with steady_clock read only every 100 000 iterations. A loop that only
+    // reads steady_clock spends most of its time in the kernel where clock_gettime is a system call, as
+    // on the Mi 9T's 4.14 kernel, and the arm64 cycle counter does not count that time.
     static double const factor = [] {
         using clock = std::chrono::steady_clock;
         auto const t0 = clock::now();
         auto const c0 = ticks();
         while (clock::now() - t0 < std::chrono::milliseconds(50)) {
+            for (unsigned i = 0; i < 100'000; ++i) {
+                asm volatile("" ::: "memory");
+            }
         }
         auto const c1 = ticks();
         auto const ns = std::chrono::duration<double, std::nano>(clock::now() - t0).count();
@@ -98,6 +144,42 @@ double ns_per_tick() {
     }();
     return factor;
 }
+
+} // namespace
+
+double timer_step_ns() {
+    // Loops of n and n + 1 iterations differ by about a cycle. The shortest of several runs per n leaves
+    // out interrupts. Where the two durations differ at all, a cycle counter shows a cycle or a few, a
+    // coarse clock its whole step. A clock converted to ns, like steady_clock, also differs by 1 ns where
+    // the conversion rounds, so differences of one tick do not count; if there are only those, the step
+    // is one tick.
+    constexpr unsigned loops = 500;
+    constexpr unsigned runs = 5;
+    auto shortest = std::vector<std::uint64_t>(loops, ~std::uint64_t{});
+    for (unsigned r = 0; r < runs; ++r) {
+        for (unsigned n = 0; n < loops; ++n) {
+            auto const t0 = ticks();
+            for (unsigned i = 0; i < n; ++i) {
+                asm volatile("" ::: "memory");
+            }
+            shortest[n] = std::min(shortest[n], ticks() - t0);
+        }
+    }
+    auto steps = std::vector<double>();
+    for (unsigned n = 1; n < loops; ++n) {
+        auto const d = shortest[n] > shortest[n - 1] ? shortest[n] - shortest[n - 1] : shortest[n - 1] - shortest[n];
+        if (d > 1) {
+            steps.push_back(static_cast<double>(d));
+        }
+    }
+    if (steps.empty()) {
+        return ns_per_tick();
+    }
+    std::nth_element(steps.begin(), steps.begin() + static_cast<std::ptrdiff_t>(steps.size() / 2), steps.end());
+    return steps[steps.size() / 2] * ns_per_tick();
+}
+
+namespace {
 
 [[noreturn]] void fail(quetschn_codec const& codec, std::size_t page, char const* what) {
     throw std::runtime_error(std::string(codec.name) + ": page " + std::to_string(page) + ": " + what);
