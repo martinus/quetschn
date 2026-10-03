@@ -388,6 +388,42 @@ core `seqlz-fast-lit` takes 1.17 times `lz4`'s time per page written, on the lit
 what is left there is the format, the Huffman coded sequences, two candidates per position, and the
 literal coding.
 
+## seqlz-fast on the phone: time goes per sequence, and code layout moves reads by 130 ns
+
+*What makes `seqlz-fast`'s pages slow on the Mi 9T's little core, one change kept, and a trap in the A/B
+runs.* Per page of the phone sample, the time in the harness fitted by least squares on what the matcher
+makes of the page explains 96% of the read time and 99.6% of the compress time:
+
+| per | cold read | compress |
+| --- | --- | --- |
+| sequence | 17.8 ns, 32 cycles | 67.8 ns, 122 cycles |
+| literal byte | 1.1 ns | 11.7 ns, 21 cycles, one position without a match |
+| length value of `ll` | 43.7 ns | 49.7 ns |
+
+The slowest 1% of the reads are pages with 490 sequences instead of 165, many of them at the last
+offset, and there `seqlz-fast` takes 1.11 times `lz4`'s time, less than its 1.18 on all pages: they
+are slow for `lz4` too. The slowest 1% of the writes are pages with 2055 literals instead of 418, the
+positions without a match, and there it takes 1.43 times `lz4`'s time. 74% of the matches are at most
+12 bytes long, on the phone's pages as on the desktop's.
+
+* **`count()` with one ctz, kept.** Its first 16 bytes computed the ctz of both words and combined
+  them; now it takes the first word that differs and one ctz, still without a branch. Same output,
+  every page's length checked on both dumps. Compress p50 against `lz4` on the big core 1107 instead
+  of 1208 ns, p99 2396 instead of 2664; on the little core no difference in the harness, 1.6% fewer
+  cycles in the compress loop; x86-64 3% fewer.
+* **A minimum length for the table's matches, again, not kept.** Measured offline before, now with the
+  sequences: at least 5 bytes leaves 161.0 instead of 161.3 sequences per page, the table's hash of 5
+  bytes rarely finds shorter ones; 6 bytes 155.8 sequences for 761.0 instead of 749.8 bytes per page.
+
+**Code layout.** The first A/B of the `count()` change made reads 130 ns slower on the little core,
+though `seqlz_decode()` was the same code: with the kernel's `-falign-functions=4` on arm64 it had moved
+by 12 bytes. Two runs of the same build differ by 10 to 20 ns. With every function on 64 bytes in both
+builds, the reads are the same and only the compression differs. `-DQUETSCHN_ALIGN_FUNCTIONS=ON` builds
+the codecs that way, for A/B runs. #62, the next token before the copies, was measured with the kernel's
+alignment, so it was measured again with 64 bytes: on the little core cold p50 against `lz4` 2062
+[2050, 2103] instead of 2213 [2204, 2233] ns, p99 7317 instead of 7516, on the big core 425 instead of
+553 and 3317 instead of 3456. It holds.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
