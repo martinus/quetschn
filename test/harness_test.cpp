@@ -4,7 +4,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -518,4 +520,60 @@ TEST_CASE("harness: a corpus written by the collector loads back unchanged") {
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("harness: the clock resolves differences far below a page's decode time") {
+    // The TSC of a Ryzen 9 7950X steps by 10 ns. cntvct_el0, which steady_clock reads on arm64, steps by
+    // 52 ns on a Snapdragon 730 and by 18.5 ns at 54 MHz, which is more than codecs often differ by.
+    CHECK(quetschn::timer_step_ns() < 15.0);
+}
+
+namespace {
+
+// user mode work only, about 1 ms, timed by the wall clock in each call. The loop is in assembly with
+// its counter in a register: in C++, unoptimized, the counter lives on the stack, and on a Cortex-A76 the
+// same loop then took 3.6 ms in some calls and 5.0 ms in others.
+constexpr unsigned long spin_iterations = 2'000'000;
+auto spin_wall_ns = std::vector<double>();
+
+void spin() {
+    auto n = spin_iterations;
+#if defined(__aarch64__)
+    asm volatile("1: subs %0, %0, #1\n b.ne 1b" : "+r"(n) : : "cc");
+#elif defined(__x86_64__)
+    asm volatile("1: dec %0\n jnz 1b" : "+r"(n) : : "cc");
+#else
+    for (; n > 0; --n) {
+        asm volatile("" ::: "memory");
+    }
+#endif
+}
+
+int spin_decompress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    auto const t0 = std::chrono::steady_clock::now();
+    spin();
+    spin_wall_ns.push_back(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
+    return trim_decompress(p, s, src, src_len, dst, dst_len);
+}
+
+quetschn_codec const spin_codec{
+    "spin", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, spin_decompress};
+
+} // namespace
+
+TEST_CASE("harness: a latency in ns is as long as the same work takes by the wall clock") {
+    // On a kernel where clock_gettime is a system call, a calibration that only calls steady_clock
+    // counted 0.56 user cycles per ns on a 1.8 GHz core, and every latency came out 3.2 times too long.
+    // The wall clock times the same calls as the harness, so a changing CPU frequency hits both alike,
+    // and both take the median.
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100)});
+    spin_wall_ns.clear();
+    auto const r = run_codec(c, spin_codec, model, run_options{});
+    REQUIRE(r.pages.size() == 1);
+    auto const wall_ns = percentile(spin_wall_ns, 50);
+    CAPTURE(wall_ns);
+    CHECK(r.pages[0].decompress_ns > 0.8 * wall_ns);
+    CHECK(r.pages[0].decompress_ns < 1.25 * wall_ns);
 }

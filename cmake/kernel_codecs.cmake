@@ -5,14 +5,16 @@
 # lib/lzo is GPL-2.0-only. The quetschn-bench-* binaries link them and are therefore GPL-2.0 works;
 # they are measurement tools and not distributed.
 #
-# Flags: from `make V=1 lib/lz4/lz4_compress.o lib/zstd/compress/zstd_compress.o` with Fedora's config for 7.1.8 on x86-64 (kernel
-# 986c24e0fe44, gcc 16). Everything that changes code generation and works in userspace is kept.
-# Left out, each for a reason:
+# Flags: from `make V=1 lib/lz4/lz4_compress.o lib/zstd/compress/zstd_compress.o` of kernel 986c24e0fe44.
+# On x86-64 with Fedora's config for 7.1.8 and gcc 16, on arm64 with defconfig and the Android NDK r30's
+# clang 21, the compiler Android kernels are built with. Everything that changes code generation and
+# works in userspace is kept. Left out, each for a reason:
 # - -mcmodel=kernel, -mstack-protector-guard-*, -fno-PIE: the kernel's address space, not ours.
 # - -mindirect-branch=thunk-extern, -mfunction-return=thunk-extern: the kernel patches these call sites
 #   at boot depending on the CPU's vulnerabilities, so the compile-time flag does not say what runs.
 # - -pg, -mfentry, -mrecord-mcount, -fpatchable-function-entry: ftrace NOPs at function entry.
 # - -mpreferred-stack-boundary=3: would call libc's memcpy with a stack the x86-64 ABI does not allow.
+# - -fshort-wchar, -fms-extensions, -fno-var-tracking, -fintegrated-as: no effect on these codecs' code.
 # Flags the compiler does not know (older gcc, clang) are dropped with a message.
 
 set(QUETSCHN_KERNEL_TREE "" CACHE PATH "Linux source tree to build the kernel codecs from")
@@ -28,21 +30,29 @@ endif()
 enable_language(C)
 include(CheckCCompilerFlag)
 
-set(quetschn_kernel_flags_wanted
-    -std=gnu11 -O2
-    -fno-strict-aliasing -fno-strict-overflow -fno-delete-null-pointer-checks -fno-common -funsigned-char
-    -fno-allow-store-data-races -fno-jump-tables -falign-jumps=1 -falign-loops=1
-    -fno-inline-functions-called-once -fmin-function-alignment=16 -fconserve-stack
-    -ftrivial-auto-var-init=zero -fzero-init-padding-bits=all -fstrict-flex-arrays=3
-    -fstack-protector-strong -fno-stack-clash-protection -fno-asynchronous-unwind-tables
-    -fsanitize=bounds-strict -fsanitize=shift)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    list(APPEND quetschn_kernel_flags_wanted
-        -march=x86-64 -mtune=generic -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -mno-sse4a
-        -mno-80387 -mno-fp-ret-in-387 -mno-red-zone -mskip-rax-setup -fcf-protection=branch -mharden-sls=all)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-    # Not yet taken from a real arm64 build, see the TODO in PLAN.md next actions.
-    list(APPEND quetschn_kernel_flags_wanted -mgeneral-regs-only)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    # arm64 defconfig has no UBSAN, unlike Fedora's x86-64 config.
+    set(quetschn_kernel_flags_wanted
+        -std=gnu11 -O2
+        -fno-strict-aliasing -fno-strict-overflow -fno-delete-null-pointer-checks -fno-common -funsigned-char
+        -fno-omit-frame-pointer -fno-optimize-sibling-calls -falign-functions=4
+        -ftrivial-auto-var-init=zero -fstrict-flex-arrays=3
+        -fstack-protector-strong -fno-stack-clash-protection -fno-asynchronous-unwind-tables -fno-unwind-tables
+        -mlittle-endian -mgeneral-regs-only -mbranch-protection=pac-ret)
+else()
+    set(quetschn_kernel_flags_wanted
+        -std=gnu11 -O2
+        -fno-strict-aliasing -fno-strict-overflow -fno-delete-null-pointer-checks -fno-common -funsigned-char
+        -fno-allow-store-data-races -fno-jump-tables -falign-jumps=1 -falign-loops=1
+        -fno-inline-functions-called-once -fmin-function-alignment=16 -fconserve-stack
+        -ftrivial-auto-var-init=zero -fzero-init-padding-bits=all -fstrict-flex-arrays=3
+        -fstack-protector-strong -fno-stack-clash-protection -fno-asynchronous-unwind-tables
+        -fsanitize=bounds-strict -fsanitize=shift)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        list(APPEND quetschn_kernel_flags_wanted
+            -march=x86-64 -mtune=generic -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -mno-sse4a
+            -mno-80387 -mno-fp-ret-in-387 -mno-red-zone -mskip-rax-setup -fcf-protection=branch -mharden-sls=all)
+    endif()
 endif()
 
 set(QUETSCHN_KERNEL_CFLAGS "")

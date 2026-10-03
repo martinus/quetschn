@@ -727,7 +727,7 @@ results/                    published measurements (no raw pages, ever)
 
 ## 9. Immediate next actions
 
-1. Get the old phone and root it (§4).
+1. ~~Get the old phone and root it (§4).~~ Done: a Xiaomi Mi 9T.
 2. ~~Check the employer rules (R8).~~ Done.
 3. Finish Phase 0: the kernel-flag build job, which needs the codec stub. Licenses, `README.md`,
    CMake, doctest and CI are done.
@@ -742,8 +742,9 @@ results/                    published measurements (no raw pages, ever)
    and without dictionary: `quetschn-bench-<codec> [--level n] [--dict file]`, one binary per codec.
    `quetschn-split-corpus` splits a corpus by process name, so a dictionary is trained on programs it
    is not measured on (§5.3). `quetschn-compare` pairs two runs page by page, with bootstrap
-   confidence intervals for the saving and for every latency percentile difference. Still missing:
-   the arm64 flags from a real arm64 kernel build, and the PMU cycle counter on arm64.
+   confidence intervals for the saving and for every latency percentile difference. The arm64
+   flags come from an arm64 `defconfig` build, and arm64 counts cycles with the PMU; first phone
+   numbers are in `docs/explored-designs.md`.
 
    First run with dictionaries, only to shake out the harness. 61 043 resident pages of the
    development machine (the biased collector 1), split by process name: 72 names to train a 64 KiB
