@@ -521,7 +521,28 @@ big core it is within 1.1 to 1.2 times `lz4` everywhere and reads cold faster th
 little core the cold read is the outlier: 9.2 µs more than `lz4` at p50, 11.4 at p99, while warm it is
 2.4 and 4.3 µs; the harness, whose tables stay in the cache, never saw this. The decoder's tables are 12
 KiB, the token table alone 8 KiB since #60, prefetched as 192 lines before each page, and the little core
-has few misses in flight. Next: the cold read with smaller tables and fewer prefetches.
+has few misses in flight.
+
+**Smaller tables and fewer prefetches, in the kernel, not kept.** Each variant its own module and name,
+the devices taking turns per page in one run, cold reads on the little core, p50 in µs:
+
+| decoder | run 1 | run 2 | warm p50, run 2 |
+| --- | --- | --- | --- |
+| `lz4` | 45.9 | 45.6 | 10.6 |
+| `main` | 56.7 | 55.7 | 14.0 |
+| without the prefetch of the length tables | 59.7 | | |
+| without any prefetch | 73.0 | | |
+| `main` with token entries of 2 bytes, 4 KiB | | 56.1 | 14.7 |
+| before #60, 4 KiB | 53.1 | 55.2 | 15.0 |
+
+The prefetch is needed on the little core, also the one of the length tables, though they are rarely
+read; on the big core no prefetch was 0.5 µs faster. The 4 KiB table looked 3.6 µs faster in the first
+run and was not in the second: the same decoder moved by up to 2 µs between runs, so a difference of 1
+or 2 µs needs several runs. The gap to `lz4` stays at about 10 µs, and it fits what a cold read has to
+fetch from DRAM, the 12 KiB of tables and the decoder's code, where `lz4` has no tables. Fewer table
+bytes would need shorter token codes, which changes the format. How cold a read really is depends on
+bursts: after the first swap-in of a burst the tables are in L2 again.
+
 
 ## Where the ratio of `zstd` comes from
 
