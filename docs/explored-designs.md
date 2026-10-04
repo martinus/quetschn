@@ -489,6 +489,40 @@ is left: 1.38 times `lz4`'s time per page written on the little core, 1.13 on th
 55 bytes per page more, but costs 4.2 µs per page written and 1.6 times the cold p99 on the little core,
 so on a phone `seqlz-fast` is the better trade.
 
+## In the phone's own kernel: cold reads on the little core cost seqlz-fast 9 µs more than lz4
+
+*zram on the Mi 9T's Linux 4.14, not the harness.* zram on 4.14 takes any registered crypto compressor,
+so `seqlz-fast` and `seqlz-fast-lit` became a module, `lz4` too, which this kernel does not have. Xiaomi
+did not publish the source of this kernel; the modules are built against `phoenix-r-oss` of
+`MiCode/Xiaomi_Kernel_OpenSource`, the Redmi K30's kernel, also 4.14.180 for the same SoC family, with
+the phone's `/proc/config.gz`, NDK r21e's clang 9 and the version string of the phone's kernel. Its
+symbol CRCs match the phone's only for 356 of 970 symbols, the drivers only in the phone's kernel change
+structs that many CRCs depend on; `struct module` has the same size and offsets. So the modules' version
+table got the phone's CRC where one of the phone's own modules uses the symbol, and lost the entry for
+the other kernel symbols. They loaded without a problem.
+
+A tool like `tools/zram-vm/init.c` wrote 19 752 pages of the second phone dump to four new zram devices,
+one per algorithm, and read them back with `O_DIRECT`, the devices taking turns per page; warm after a
+read of another page, cold after reading 2 MiB of other data. Median of 3 runs per page, clock fixed,
+µs:
+
+| | `lzo` | `lz4` | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- |
+| zram's `mem_used` | 24.1 MB | 25.8 MB | 19.6 MB | 18.5 MB |
+| little, write p50 / p99 | 28.0 / 50.3 | 24.7 / 54.1 | 29.8 / 59.4 | 32.4 / 79.3 |
+| little, read warm p50 / p99 | 11.7 / 18.0 | 10.2 / 17.1 | 12.6 / 21.5 | 13.1 / 30.4 |
+| little, read cold p50 / p99 | 45.6 / 62.3 | 45.2 / 63.6 | 54.3 / 75.0 | 56.4 / 81.8 |
+| big, write p50 / p99 | 10.3 / 19.9 | 9.6 / 18.6 | 11.0 / 20.8 | 10.6 / 22.5 |
+| big, read warm p50 / p99 | 5.1 / 10.6 | 3.9 / 6.3 | 4.3 / 6.8 | 4.1 / 8.8 |
+| big, read cold p50 / p99 | 7.6 / 13.0 | 6.7 / 9.2 | 7.9 / 10.8 | 8.0 / 14.0 |
+
+`seqlz-fast` needs 19% less memory than `lzo`, the phone's algorithm, and 24% less than `lz4`. On the
+big core it is within 1.1 to 1.2 times `lz4` everywhere and reads cold faster than `lzo` at p99. On the
+little core the cold read is the outlier: 9.2 µs more than `lz4` at p50, 11.4 at p99, while warm it is
+2.4 and 4.3 µs; the harness, whose tables stay in the cache, never saw this. The decoder's tables are 12
+KiB, the token table alone 8 KiB since #60, prefetched as 192 lines before each page, and the little core
+has few misses in flight. Next: the cold read with smaller tables and fewer prefetches.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
