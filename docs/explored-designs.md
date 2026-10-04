@@ -315,7 +315,6 @@ fewer cycles per page and 6% fewer instructions, but cold p99 against `lz4` 7798
 7400 [7268, 7646] ns and warm p99 6859 instead of 6630: the slowest pages have many short matches and
 runs, and the extra loop and the check of the step are branches that mispredict there. Together with
 the next token it was worse at p99 than the next token alone.
-||||||| f94ab64
 ## The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept
 
 *`match_page()` loads one position ahead, the bytes it writes do not change.* By source line, with
