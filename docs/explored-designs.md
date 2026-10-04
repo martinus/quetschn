@@ -388,6 +388,107 @@ core `seqlz-fast-lit` takes 1.17 times `lz4`'s time per page written, on the lit
 what is left there is the format, the Huffman coded sequences, two candidates per position, and the
 literal coding.
 
+## seqlz-fast on the phone: time goes per sequence, and code layout moves reads by 130 ns
+
+*What makes `seqlz-fast`'s pages slow on the Mi 9T's little core, one change kept, and a trap in the A/B
+runs.* Per page of the phone sample, the time in the harness fitted by least squares on what the matcher
+makes of the page explains 96% of the read time and 99.6% of the compress time:
+
+| per | cold read | compress |
+| --- | --- | --- |
+| sequence | 17.8 ns, 32 cycles | 67.8 ns, 122 cycles |
+| literal byte | 1.1 ns | 11.7 ns, 21 cycles, one position without a match |
+| length value of `ll` | 43.7 ns | 49.7 ns |
+
+The slowest 1% of the reads are pages with 490 sequences instead of 165, many of them at the last
+offset, and there `seqlz-fast` takes 1.11 times `lz4`'s time, less than its 1.18 on all pages: they
+are slow for `lz4` too. The slowest 1% of the writes are pages with 2055 literals instead of 418, the
+positions without a match, and there it takes 1.43 times `lz4`'s time. 74% of the matches are at most
+12 bytes long, on the phone's pages as on the desktop's.
+
+* **`count()` with one ctz, kept.** Its first 16 bytes computed the ctz of both words and combined
+  them; now it takes the first word that differs and one ctz, still without a branch. Same output,
+  every page's length checked on both dumps. Compress p50 against `lz4` on the big core 1107 instead
+  of 1208 ns, p99 2396 instead of 2664; on the little core no difference in the harness, 1.6% fewer
+  cycles in the compress loop; x86-64 3% fewer.
+* **A minimum length for the table's matches, again, not kept.** Measured offline before, now with the
+  sequences: at least 5 bytes leaves 161.0 instead of 161.3 sequences per page, the table's hash of 5
+  bytes rarely finds shorter ones; 6 bytes 155.8 sequences for 761.0 instead of 749.8 bytes per page.
+
+* **The other 8 KiB of the per CPU budget, not kept.** C5 allows `lz4`'s 16 416 bytes per CPU, and
+  `seqlz-fast` uses 8192 for its table. Spent on the matcher, it could have bought memory to trade for
+  a faster parse, e.g. `lz4`'s growing step. It buys almost nothing: bytes per page on the phone's /
+  the desktop's dump, and sequences per page of the phone sample:
+
+  | matcher | phone | desktop | sequences |
+  | --- | --- | --- | --- |
+  | today, 4096 entries | 749.8 | 1084.3 | 161.3 |
+  | 8192 entries | 749.3 | 1082.6 | 161.4 |
+  | 4096 entries of 2 positions | 749.0 | 1081.6 | 161.5 |
+  | today with the step | 752.4 | 1088.9 | 160.6 |
+  | 8192 entries with the step | 751.9 | 1087.1 | 160.7 |
+  | 2 positions with the step | 751.6 | 1086.1 | 160.8 |
+
+  A page has 4096 positions, and a table of 4096 entries already keeps nearly every candidate that
+  helps. With the step the larger tables are still worse than today, so they were not timed.
+
+* **Two streams for the sequences, not kept.** Built on the branch `seqlz-two-streams`, behind
+  `SEQLZ_TWO_STREAMS`: even sequences in stream A, odd ones in stream B, behind the literals as `u16`
+  bytes of A, A, B, so that the in-order A55 decodes two token chains side by side; the same for raw and
+  coded literals. 2.4 bytes more per page. With both builds aligned, phone pages, median of 5 runs, cold
+  reads in µs, one stream / two streams:
+
+  | codec, core | p50 | p99 |
+  | --- | --- | --- |
+  | `seqlz-fast`, little | 7.31 / 7.91 | 12.44 / 13.95 |
+  | `seqlz-fast`, big | 2.73 / 3.01 | 5.40 / 5.87 |
+  | `seqlz-fast-lit`, little | 7.96 / 8.71 | 18.82 / 19.81 |
+  | `seqlz-fast-lit`, big | 2.97 / 3.22 | 7.90 / 8.06 |
+
+  Writes got slower too, `seqlz-fast` on the little core 0.4 µs at p50, and on x86-64 decoding took 6 to
+  9% more cycles per page. Since #62 the decoder looks up the next token before the copies, so the token
+  chain no longer limits it, and the second stream only adds a bit reader and the switch between them.
+
+**Code layout.** The first A/B of the `count()` change made reads 130 ns slower on the little core,
+though `seqlz_decode()` was the same code: with the kernel's `-falign-functions=4` on arm64 it had moved
+by 12 bytes. Two runs of the same build differ by 10 to 20 ns. With every function on 64 bytes in both
+builds, the reads are the same and only the compression differs. `-DQUETSCHN_ALIGN_FUNCTIONS=ON` builds
+the codecs that way, for A/B runs. #62, the next token before the copies, was measured with the kernel's
+alignment, so it was measured again with 64 bytes: on the little core cold p50 against `lz4` 2062
+[2050, 2103] instead of 2213 [2204, 2233] ns, p99 7317 instead of 7516, on the big core 425 instead of
+553 and 3317 instead of 3456. It holds.
+
+## A second phone dump, after 12 hours of use: seqlz-fast reads faster than lzo-rle at p99
+
+*The Mi 9T's zram after 12 hours with many apps opened and used, 267 269 pages, 264 181 of them measured;
+the first dump was taken an hour after boot.* These pages compress worse, `lz4` needs 30.5% of them
+instead of 25.8%, and coding the literals pays more:
+
+| codec | first dump, bytes per page | this dump | against `lzo-rle` |
+| --- | --- | --- | --- |
+| `lz4` | 1055.3 | 1247.5 | +4.3% |
+| `lzo-rle` | 992.1 | 1195.6 | |
+| `seqlz-fast` | 749.8 | 951.5 | -20.4% |
+| `seqlz-fast-lit` | 714.0 | 896.1 | -25.1% |
+| `zstd` | 688.9 | 857.8 | -28.3% |
+
+Quick bench on 20 000 of these pages, clock fixed, cold reads p50 / p99 and the time per page written,
+`write + 0.34 * cold read`, from `quetschn-score`, in µs:
+
+| codec | little: read | little: per page written | big: read | big: per page written |
+| --- | --- | --- | --- | --- |
+| `lz4` | 6.47 / 11.76 | 18.08 | 2.68 / 5.19 | 8.16 |
+| `lzo-rle` | 6.95 / 13.78 | 17.55 | 3.27 / 6.86 | 7.84 |
+| `seqlz-fast` | 7.86 / 12.62 | 24.92 | 2.95 / 5.64 | 9.22 |
+| `seqlz-fast-lit` | 8.51 / 20.25 | 29.12 | 2.90 / 8.78 | 9.42 |
+| `zstd` | 24.10 / 47.37 | 78.65 | 9.68 / 16.79 | 25.38 |
+
+`seqlz-fast` reads the slowest pages faster than `lzo-rle`, zram's default and what the phone runs, on
+both cores, for 20% less memory, and at 1.07 times `lz4`'s cold p99 on the little core. Writing is what
+is left: 1.38 times `lz4`'s time per page written on the little core, 1.13 on the big one. `-lit` saves
+55 bytes per page more, but costs 4.2 µs per page written and 1.6 times the cold p99 on the little core,
+so on a phone `seqlz-fast` is the better trade.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
