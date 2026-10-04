@@ -547,6 +547,17 @@ memory per CPU, `lz4` has 16 416; on x86-64 1.4% more cycles, 15 962 instead of 
 long matches, 38 400 cycles against 38 000; the next position's table entry and bytes loaded before the
 sequence is written, so that writing it fills their time, 40 100.
 
+Two more for the C matcher of `main`, on the little core:
+
+* **A growing step only after 512 positions without a match**, so that it hits mostly the pages zram
+  stores raw: every position up to there in the loop of `main`, then a second loop with a step of
+  `1 + (pos - start) >> 5`. 0.1% more bytes, 0.03% from 1024 on; the same cycles per page, and p99 49.6
+  instead of 47.5 µs, because the second loop has the whole chain at every position it tries.
+* **No clearing of the table for a page.** A position of an earlier page is a correct candidate too,
+  because its 4 bytes are compared in the current page, as long as it is before the current position;
+  one compare per position instead of 8 KiB of stores. 0.05% more bytes, and twice the time, 44.4 instead
+  of 21.5 µs per page, 41% of the cycles at the store into the table. Why is not clear.
+
 ## Ratio from the parse and the tables on phone pages, measured offline, not built
 
 *Six ideas for `seqlz-fast`'s memory on phone pages, each measured with the format as it is, none
