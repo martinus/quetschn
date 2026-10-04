@@ -457,11 +457,12 @@ alignment, so it was measured again with 64 bytes: on the little core cold p50 a
 [2050, 2103] instead of 2213 [2204, 2233] ns, p99 7317 instead of 7516, on the big core 425 instead of
 553 and 3317 instead of 3456. It holds.
 
-## The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, kept
+## The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, not kept
 
-*`seqlz-fast` compresses with 9% fewer cycles on the Mi 9T's little core and 3% fewer on the big one,
-for 0.2% more bytes; in the phone's kernel its slowest writes on the little core are now as fast as
-`lz4`'s.* Three changes in `match_page()`:
+*With its loop over the positions in assembly, `seqlz-fast` compressed with 9% fewer cycles on the Mi
+9T's little core, and in the phone's kernel its slowest writes were as fast as `lz4`'s. In C, which the
+codec has to stay, the same design gains 2.5% in the harness and nothing in the phone's kernel.* The
+assembly version is on the branch `seqlz-matcher-asm`. Its changes in `match_page()`:
 
 * A table entry has 8 bytes: the position, the generation of the page and the 4 bytes at the position.
   2048 slots, 16 KiB, `lz4`'s size, instead of 4096 slots of 2 bytes. A candidate is compared with its
@@ -471,10 +472,10 @@ for 0.2% more bytes; in the phone's kernel its slowest writes on the little core
 * On arm64 the loop over the positions without a match is inline assembly, two positions per round,
   each with its own registers, so nothing is moved for the next position. It finds the same matches as
   the C loop: the sequences of all 20 000 pages of the second phone dump's sample hash the same on the
-  phone, with and without the assembly, and on x86-64. CI runs the tests on an arm64 runner for it.
-* The search stops 9 bytes before the end of the page instead of 8, on every architecture: the
-  assembly reads the 8 bytes two positions on, and with 8 its last round read one byte behind the page.
-  A test now compresses a page that ends where the memory ends.
+  phone, with and without the assembly, and on x86-64.
+* The search stops 9 bytes before the end of the page instead of 8: the assembly reads the 8 bytes two
+  positions on, and with 8 its last round read one byte behind the page. A test compresses a page that
+  ends where the memory ends; with 8 it crashes on the phone.
 
 **Why.** By instruction with `simpleperf` on the little core, the second dump's sample, the compress
 loop: the positions without a match took 41% of the cycles, `count()` 24%, writing the sequence 18%,
@@ -494,51 +495,57 @@ passes minus 1, median of 3, with the harness's two clock reads per page:
 | C: hash 3, entry 2, bytes 1 position ahead | yes | 45 300 | 48 300 |
 | C: two positions per step | yes | 40 300 | 38 200 |
 | C: the same, one branch, next bytes loaded ahead | yes | 42 600 | 41 100 |
-| C: entries with bytes and generation | no | 40 800 | 40 100 |
+| C: entries with bytes and generation, median of 5 | no | 40 650 | 40 090 |
 | the same, next entry read before the store, fixed by a compare | no | 43 700 | 42 200 |
 | the same, bytes 2 and hash 1 position ahead | no | 44 900 | 45 300 |
+| the same, two positions per round as in the assembly | no | 41 800 | 42 200 |
+| the same, the test at the end of the step | no | 43 800 | 48 800 |
+| the same, hash and next bytes pinned with an empty `asm` | no | 40 300 | 44 600 |
 | assembly, today's table | yes | 39 700 | 38 700 |
 | assembly, entries with bytes and generation | no | 38 700 | 41 300 |
 | the same, two positions per round | no | 38 000 | 39 500 |
-| the same, the last position done by the C loop | no | 39 200 | 40 800 |
-| the same, the search stops 1 position earlier, kept, median of 5 | no | 38 300 | 39 200 |
+| the same, the search stops 1 position earlier, median of 5 | no | 38 300 | 39 200 |
 
-Each C version that loads ahead was turned back into the chain by clang, or got the loads of the next
-position right before their use; `-mtune=cortex-a55` did not change that, 41 700 cycles for `main`.
-Doing the last position in C put the restart after a match into a path shared with it, 6 instructions
-more per sequence, so the search stops one position earlier instead. The big core: 18 150 instead of
-18 790 cycles, median of 3.
+clang turned each C version that loads ahead back into the chain: it moves the next position's hash
+and entry behind the branch, where only the path without a match uses them, or across the loop's edge
+into the next step. With the test at the end of the step it read the entry in the next step and
+computed the hash there again. `-mtune=cortex-a55` did not change that, 41 700 cycles for `main`. The
+big core: the assembly 18 150 and the C with the new entries 18 380 instead of 18 800 cycles.
 
-In the harness, the second dump's sample, `main` and this alternating, 3 rounds per core, each run with
-`lz4`, Δ against `lz4` in ns with the smallest and largest of the 3:
+In the harness, the second dump's sample, `main` and the other build alternating, 3 rounds per core,
+each run with `lz4`, Δ against `lz4` in ns with the smallest and largest of the 3, and the mean time to
+compress a page:
 
-| core | | `main` | this |
-| --- | --- | --- | --- |
-| little | compress p50 | 5509 [5469, 5522] | 4143 [4132, 4184] |
-| little | compress p99 | 11 960 [11 949, 12 110] | 7969 [7949, 7975] |
-| big | compress p50 | 1297 [1288, 1307] | 762 [751, 785] |
-| big | compress p99 | 1907 [1901, 1931] | 782 [723, 789] |
+| core | | `main` | C, new entries | assembly |
+| --- | --- | --- | --- | --- |
+| little | Δ compress p50 | 5463 [5460, 5480] | 5192 [5129, 5219] | 4143 [4132, 4184] |
+| little | Δ compress p99 | 11 962 [11 882, 11 971] | 10 846 [10 552, 10 861] | 7969 [7949, 7975] |
+| little | mean, `lz4` 15.5 µs | 21.17 µs | 20.65 µs | 19.16 µs |
+| big | Δ compress p50 | 1300 [1291, 1310] | 961 [949, 965] | 762 [751, 785] |
+| big | Δ compress p99 | 1915 [1913, 1916] | 1186 [1179, 1221] | 782 [723, 789] |
+| big | mean, `lz4` 6.8 µs | 7.92 µs | 7.62 µs | 7.37 µs |
 
-The mean time to compress a page on the little core is 19.16 µs instead of 21.15, `lz4` 15.44; on the
-big core 7.37 instead of 7.91, `lz4` 6.83. The decoder is the same, the reads moved by up to 110 ns, in
-both directions. In the phone's own kernel, the setup of the section on it, 19 752 pages of the second
-dump, median of 3 runs per page, µs:
+In the phone's own kernel, the setup of the section on it, 19 752 pages of the second dump, all four in
+one run, write p50 / p99 / mean in µs:
 
-| | `lz4` | `seqlz-fast`, `main` | this |
-| --- | --- | --- | --- |
-| little, write p50 / p99 / mean | 24.2 / 52.6 / 24.8 | 29.5 / 59.0 / 29.8 | 27.8 / 52.3 / 27.6 |
-| big, write p50 / p99 / mean | 9.6 / 18.6 / 9.5 | 11.1 / 20.9 / 10.8 | 10.6 / 19.8 / 10.3 |
-| zram's `mem_used` | 25.77 MB | 19.61 MB | 19.66 MB |
+| core | `lz4` | `main` | C, new entries | assembly |
+| --- | --- | --- | --- | --- |
+| little | 24.4 / 53.4 / 25.0 | 29.7 / 58.9 / 30.0 | 30.2 / 60.2 / 30.4 | 28.3 / 53.0 / 28.0 |
+| big | 9.6 / 18.5 / 9.5 | 11.1 / 20.6 / 10.8 | 11.1 / 20.4 / 10.7 | 10.7 / 19.7 / 10.3 |
 
-Bytes per page, pages zram stores raw counted as 4096: 723.21 instead of 721.88 on the first dump,
-917.85 instead of 915.82 on the second, almost all from the smaller table. The work memory per CPU is
-16 392 bytes instead of 8192, `lz4` has 16 440 in the harness. On x86-64 the C loop with the new
-entries takes 1.4% more user cycles than before, 15 962 instead of 15 749 per page, median of 5. One
-table layout for every architecture keeps the code simple, so x86-64 pays these 1.4%.
+The modules are built with the phone kernel's compiler, clang 9 from NDK r21e, and with it the C
+version gains nothing. `seqlz.o` of the assembly version built with clang 21 instead, the rest of the
+module unchanged, writes 0.3 to 0.4 µs faster and reads warm 0.1 to 0.2 µs faster; cold reads do not
+change.
 
-**Tried and not kept**, all on the little core: `count()` with 16 bytes per round for long matches,
-38 400 cycles against 38 000; the next position's table entry and bytes loaded before the sequence is
-written, so that writing it fills their time, 40 100.
+The costs of the new entries, also in C: 723.15 instead of 721.88 bytes per page on the first dump,
+917.77 instead of 915.82 on the second, from the smaller table; 16 392 instead of 8192 bytes of work
+memory per CPU, `lz4` has 16 416; on x86-64 1.4% more cycles, 15 962 instead of 15 749 per page. For
+2.5% on the little core in the harness and nothing in the kernel, the C version is not worth these.
+
+**Tried and not kept**, all on the little core with the assembly: `count()` with 16 bytes per round for
+long matches, 38 400 cycles against 38 000; the next position's table entry and bytes loaded before the
+sequence is written, so that writing it fills their time, 40 100.
 
 ## A second phone dump, after 12 hours of use: seqlz-fast reads faster than lzo-rle at p99
 

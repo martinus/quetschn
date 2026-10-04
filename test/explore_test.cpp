@@ -553,9 +553,8 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
 }
 
 TEST_CASE("seqlz: the matcher never takes a position of an earlier page") {
-    // A table entry holds the 4 bytes at its position, so an entry of page a that is still in the table
-    // would look like a match for the same bytes in page b. Page b repeats nothing of its own, only 8
-    // bytes of page a, so it has no match, also after the generation wrapped.
+    // The state is shared over the pages, as zram has one per CPU. Page b repeats nothing of its own,
+    // only 8 bytes of page a, so it has no match.
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
     auto rng = std::mt19937_64(73);
     auto random_page = [&] {
@@ -565,21 +564,14 @@ TEST_CASE("seqlz: the matcher never takes a position of an earlier page") {
         }
         return bytes;
     };
-    unsigned int const last_gen = 0xffffffffU >> QUETSCHN_PAGE_BITS;
-    for (unsigned int gen_before_b : {0U, last_gen}) {
-        CAPTURE(gen_before_b);
-        auto state = std::make_unique<seqlz_state>();
+    auto state = std::make_unique<seqlz_state>();
+    for (int round = 0; round < 20; ++round) {
+        CAPTURE(round);
         auto const a = random_page();
         REQUIRE(seqlz_find(state.get(), a.data(), seq.data()) == 1);
-        REQUIRE(state->gen == 1);
         auto b = random_page();
         std::copy_n(a.begin() + 500, 8, b.begin() + 1000);
-        if (gen_before_b == last_gen) {
-            // b gets the generation after the wrap, which is a's
-            state->gen = last_gen;
-        }
         CHECK(seqlz_find(state.get(), b.data(), seq.data()) == 1);
-        CHECK(state->gen == (gen_before_b == last_gen ? 1U : 2U));
     }
 }
 

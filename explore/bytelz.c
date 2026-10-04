@@ -3,7 +3,7 @@
 
 #include "page_lz.h"
 
-_Static_assert(PAGE_LZ_PAGE == BYTELZ_PAGE && sizeof(((struct bytelz_state*)0)->table) == 8U << PAGE_LZ_HASH_BITS,
+_Static_assert(PAGE_LZ_PAGE == BYTELZ_PAGE && sizeof(((struct bytelz_state*)0)->table) == 2U << PAGE_LZ_HASH_BITS,
                "page_lz.h and bytelz.h disagree");
 
 /* ---- encoder ---- */
@@ -71,7 +71,7 @@ unsigned int bytelz_compress(struct bytelz_state* st, const void* src_v, void* d
      * 16 bytes written behind: two pages are always enough */
     if (dst_cap < 2U * BYTELZ_PAGE)
         return 0;
-    match_page(st->table, &st->gen, src, encode_emit, &e);
+    match_page(st->table, src, encode_emit, &e);
     return (unsigned int)(e.op - (u8*)dst);
 }
 

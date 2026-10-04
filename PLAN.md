@@ -258,7 +258,7 @@ On a 16-core phone every 4 KiB less than `lz4` saves 64 KiB, permanently residen
 free line in the cover letter and it is the kind of thing Android vendors notice. The target was 4 KiB
 at first. It is `lz4`'s 16 KiB since 23rd September 2026: 8 points less memory on the compressed pages
 are worth far more than a few KiB per CPU, and a 4 KiB budget costs speed or ratio in the matcher
-(`seqlz-fast` has a 16 KiB hash table, `docs/explored-designs.md`).
+(`seqlz-fast` has an 8 KiB hash table, `docs/explored-designs.md`).
 
 ### 3.4 The integration surface is small
 

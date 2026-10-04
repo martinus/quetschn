@@ -43,7 +43,7 @@ jobs:
         include:
           - {name: gcc-debug-sanitize, os: ubuntu-latest, cxx: g++, build_type: Debug, sanitize: 'ON'}
           - {name: clang-release, os: ubuntu-latest, cxx: clang++, build_type: Release, sanitize: 'OFF'}
-          # The matcher's loop is assembly on arm64 (explore/page_lz.h), only tested here.
+          # arm64 like the phones: the codecs there, and the harness's cycle counter, which uses the PMU only on arm64.
           - {name: gcc-release-arm64, os: ubuntu-24.04-arm, cxx: g++, build_type: Release, sanitize: 'OFF'}
     name: test (${{ matrix.name }})
     steps:

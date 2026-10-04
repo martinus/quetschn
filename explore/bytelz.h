@@ -33,8 +33,7 @@ extern "C" {
 #define BYTELZ_PAGE (1U << QUETSCHN_PAGE_BITS)
 
 struct bytelz_state {
-    unsigned long long table[1U << (QUETSCHN_PAGE_BITS == 12 ? 11 : 12)]; /* the matcher's hash table */
-    unsigned int gen; /* the generation of the last page, see page_lz.h; zero at first */
+    unsigned short table[1U << (QUETSCHN_PAGE_BITS == 12 ? 12 : 13)]; /* the matcher's hash table */
 };
 
 /* Compresses one page. dst_cap must be at least two pages, which is always enough. Returns the
