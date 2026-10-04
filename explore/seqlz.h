@@ -155,13 +155,14 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigne
 
 /*
  * The compressor: its own matcher (explore/page_lz.h), and the sequences coded straight into dst. The
- * state is per CPU, the matcher's hash table, cleared for each page.
+ * state is per CPU, the matcher's hash table and the generation of its last page, zero at first.
  */
-#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
+#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 11U : 12U)
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
 struct seqlz_state {
-    unsigned short table[1U << SEQLZ_HASH_BITS];
+    unsigned long long table[1U << SEQLZ_HASH_BITS];
+    unsigned int gen; /* the generation of the last page, see page_lz.h */
 };
 
 /* The sequences of a page as the matcher finds them, the last one without a match. Returns their

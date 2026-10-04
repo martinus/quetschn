@@ -236,7 +236,7 @@ static ALWAYS_INLINE void find_emit(void* ctx, const u8* literals, unsigned int 
 unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_sequence* seq) {
     struct find_ctx f = {seq, 0};
 
-    match_page(st->table, src, find_emit, &f);
+    match_page(st->table, &st->gen, src, find_emit, &f);
     return f.n;
 }
 
@@ -578,7 +578,7 @@ compress_page(const struct seqlz_tables* t, struct seqlz_state* st, const u8* sr
     if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
         return 0;
     encoder_init(&e, t, dst, src + SEQLZ_PAGE);
-    match_page(st->table, src, encode_emit, &e);
+    match_page(st->table, &st->gen, src, encode_emit, &e);
     return encoder_finish(&e, dst);
 }
 

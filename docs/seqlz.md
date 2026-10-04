@@ -453,8 +453,9 @@ The matcher, [`match_page()`](../explore/page_lz.h), is greedy like `lz4`'s fast
 first match it finds.
 
 1. At every position it checks two candidates: the offset of the last match, and the last position
-   where the same 5 bytes were seen, from a hash table of 4096 positions, 8 KiB, cleared for each
-   page. Both are read before either is compared, so that one branch decides, not three.
+   where the same 5 bytes were seen, from a hash table of 2048 slots, 16 KiB. Both are read before
+   either is compared, so that one branch decides, not three. On arm64 this loop is assembly, two
+   positions per round.
 2. On a match it extends it backwards into the literals and forwards, the first 16 bytes without a
    branch, and hands the sequence to the encoder right away. Matcher and encoder are one loop.
 3. The encoder writes the literals to the front of the output and the sequences' bits behind the
@@ -466,23 +467,31 @@ first match it finds.
 
 ### The hash table is a cache, not a map
 
-The table has 4096 slots of 2 bytes, 8 KiB, and each slot holds one position in the page. At every
-position the matcher reads 8 bytes and hashes the lowest 5 of them into a slot number of 12 bits,
-with a multiplication and a shift, the hash of `zstd`: `v << 24` keeps the 5 bytes, the
-multiplication by an odd constant mixes them, and the top 12 bits of the product, which depend on
-all 40 bits of the input, are the slot. A change in any of the 5 bytes moves the slot, e.g. `10 00
-56 34 12` goes to slot 1533 and `20 00 56 34 12` to 1305.
+The table has 2048 slots of 8 bytes, 16 KiB, `lz4`'s size. A slot holds a position in the page, the 4
+bytes at that position and the page's generation. At every position the matcher reads 8 bytes and
+hashes the lowest 5 of them into a slot number of 11 bits, with a multiplication and a shift, the hash
+of `zstd`: `v << 24` keeps the 5 bytes, the multiplication by an odd constant mixes them, and the top 11
+bits of the product, which depend on all 40 bits of the input, are the slot. A change in any of the 5
+bytes moves the slot.
 
-* **Looking up** reads the one slot. The position in it is only a candidate: the matcher compares 4
-  bytes there with the 4 bytes at the current position, and only if they are equal it is a match.
-* **Inserting** writes the current position into the slot and overwrites what was there. There is no
-  probing, no second slot and no list of older positions.
+* **Looking up** reads the one slot. The position in it is only a candidate: its 4 bytes and its
+  generation must be equal to the current position's 4 bytes and the current page's generation, then
+  it is a match. Both are in the slot, so this needs no load from the page.
+* **Inserting** writes the current position, its 4 bytes and the generation into the slot and
+  overwrites what was there. There is no probing, no second slot and no list of older positions.
 
 Two different byte strings with the same hash overwrite each other, and the older one is lost. That
 costs a match now and then, never a wrong result, because every candidate is compared first. It
 keeps the matcher at one load and one store per position, without a loop. Positions inside a match
-are not inserted, only the one 2 bytes before its end, and the table is cleared for each page, so
-all its positions are in the current page.
+are not inserted, only the one 2 bytes before its end. The generation counts the pages compressed
+with this table, so a slot of an earlier page never matches; the table is cleared only when the
+count wraps, after 2^20 pages, instead of 8 KiB of stores for every page.
+
+Until October 2026 the table had 4096 slots of 2 bytes, only positions, cleared for every page, and a
+candidate's 4 bytes were loaded from the page. On the Mi 9T's in-order little core the slot, then the
+bytes at its position, were the longest chain of a position without a match. With the bytes in the
+slot and the loop in assembly, `seqlz-fast` compresses with 9% fewer cycles on the little core and
+3% fewer on the big one, for 0.2% more bytes from the smaller table, see `docs/explored-designs.md`.
 
 Keeping more was measured, and each way costs about as much time as it saves memory:
 

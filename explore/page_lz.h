@@ -17,9 +17,13 @@ typedef unsigned char u8;
 #    define QUETSCHN_PAGE_BITS 12
 #endif
 #define PAGE_LZ_PAGE (1U << QUETSCHN_PAGE_BITS)
-/* the matcher's table has 1 << PAGE_LZ_HASH_BITS unsigned shorts: 8 KiB for 4 KiB pages, 16 KiB for
- * larger ones, lz4's size */
-#define PAGE_LZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
+/* the matcher's table has 1 << PAGE_LZ_HASH_BITS entries of 8 bytes: 16 KiB for 4 KiB pages, lz4's
+ * size, 32 KiB for larger ones */
+#define PAGE_LZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 11U : 12U)
+/* An entry: the position in the low QUETSCHN_PAGE_BITS bits, above it up to bit 31 the page's
+ * generation, and the 4 bytes at the position in the high 32 bits. */
+#define PAGE_LZ_POS_MASK ((1U << QUETSCHN_PAGE_BITS) - 1U)
+#define PAGE_LZ_GEN_MASK (0xffffffffU >> QUETSCHN_PAGE_BITS)
 
 #define ALWAYS_INLINE inline __attribute__((always_inline))
 
@@ -116,6 +120,23 @@ static inline unsigned int count(const u8* p, const u8* q, const u8* end) {
  * last sequence, and the offset. */
 typedef void (*emit_fn)(void* ctx, const u8* literals, unsigned int ll, unsigned int ml, unsigned int off);
 
+/* the 4 bytes at p as the matcher compares them, from v = load64(p) */
+static inline u32 first4(u64 v) {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    return (u32)v;
+#else
+    return (u32)(v >> 32);
+#endif
+}
+
+/* The loop over the positions without a match in assembly, for arm64. PAGE_LZ_NO_ASM builds the C one,
+ * which finds the same matches. */
+#if defined(__aarch64__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && !defined(PAGE_LZ_NO_ASM)
+#    define PAGE_LZ_ASM_ARM64 1
+#else
+#    define PAGE_LZ_ASM_ARM64 0
+#endif
+
 /*
  * Greedy, like lz4's fast mode: at every position the last offset and one candidate from a hash of 5
  * bytes. With 5 instead of 4 the matcher finds fewer sequences: 5% fewer compress cycles for 0.6 points
@@ -125,51 +146,135 @@ typedef void (*emit_fn)(void* ctx, const u8* literals, unsigned int ll, unsigned
  * pages that compress were 5% faster, the ones zram stores raw 2.3 us slower (docs/explored-designs.md,
  * "The matcher without its step"). Each sequence goes to emit as soon as it is found; inlined with the
  * encoder that is one pass over the page, and the same matcher feeds seqlz_find.
+ *
+ * A table entry has the 4 bytes at its position, so a candidate is checked without a load from the
+ * page: on the in-order Cortex-A55 the entry, then the bytes at it, were the longest chain of a
+ * position. And it has the page's generation, *gen, counted up per page, so an entry of an earlier page
+ * never matches and the table is cleared only when the count wraps, not for every page.
  */
-static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_fn emit, void* ctx) {
+static ALWAYS_INLINE void match_page(u64* table, unsigned int* gen, const u8* src, emit_fn emit, void* ctx) {
     /* positions, not pointers: the end is a constant, and the position for the table is at hand */
-    const unsigned int limit = PAGE_LZ_PAGE - 8U; /* 8 bytes readable for the hash and the comparison */
-    unsigned int pos = 1, anchor = 0, last = 1, h, cand;
+    /* 8 bytes readable for the hash and the comparison, and for the assembly also one position on */
+    const unsigned int limit = PAGE_LZ_PAGE - 9U;
+    unsigned int pos = 1, anchor = 0, last = 1, h;
     /* -last as an index, so the load at the last offset needs no subtraction of its own */
     long back = -1;
-    /* This position's 8 bytes, hash, table entry and the 4 bytes there, all loaded one position ahead:
-     * on the in-order Cortex-A55 each step waited for the one before, 3.4% of the compressor's cycles.
-     * The entry is read after the position before was stored, as before, so the matches are the same. */
-    u64 v;
-    u32 cand_bytes;
+    u64 v, cand, g;
 
-    __builtin_memset(table, 0, sizeof(unsigned short) << PAGE_LZ_HASH_BITS);
+    *gen = (*gen + 1U) & PAGE_LZ_GEN_MASK;
+    if (*gen == 0) {
+        __builtin_memset(table, 0, sizeof(u64) << PAGE_LZ_HASH_BITS);
+        *gen = 1;
+    }
+    g = (u64)*gen << QUETSCHN_PAGE_BITS;
+    /* position 0, where the search does not start */
+    v = load64(src);
+    table[hash5(v)] = (u64)first4(v) << 32 | g;
     v = load64(src + pos);
     h = hash5(v);
     cand = table[h];
-    cand_bytes = load32(src + cand);
 
     while (pos < limit) {
-        u64 v_next = load64(src + pos + 1);
-        unsigned int h_next = hash5(v_next), m, len;
-        /* the first 4 bytes of the 8 for the hash, without a second load */
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-        u32 cur = (u32)v;
-#else
-        u32 cur = (u32)(v >> 32);
-#endif
-        /* One branch for both candidates, not three: the last offset always points into the page (it
-         * starts at 1, the search at position 1), and so does a table entry, so both can be read before
-         * it is known whether they count. Three branches mispredicted almost twice as often as lz4's
-         * one. The table is cleared for each page, so every entry is before pos. */
-        unsigned int rep_hit = load32(src + pos + back) == cur;
-        unsigned int cand_hit = cand_bytes == cur;
+        unsigned int m, len, rep_hit;
 
-        table[h] = (unsigned short)pos;
-        if (!(rep_hit | cand_hit)) {
-            pos++;
-            v = v_next;
-            h = h_next;
-            cand = table[h];
-            cand_bytes = load32(src + cand);
-            continue;
+#if PAGE_LZ_ASM_ARM64
+        {
+            /*
+             * The same steps as the C below, two positions per round, each with its own registers, so
+             * that no value has to be moved for the next one. The next position's hash and entry, and
+             * the 8 bytes of the one after it, are loaded while this one is compared. 9% fewer
+             * cycles per page on the A55 than the C, 3% on the A76 (docs/explored-designs.md).
+             */
+            const u8* p = src + pos;
+            unsigned long pp = pos, hh = h, h1;
+            u64 v1 = load64(src + pos + 1), key, mh, st, e, cand1;
+            u32 rep;
+
+            __asm__ volatile("1:\n\t"
+                             "ldr %w[rep], [%[p], %[back]]\n\t"
+                             "mul %[mh], %[v1], %[k]\n\t"
+                             "orr %[key], %[g], %[v0], lsl #32\n\t"
+                             "orr %[st], %[key], %[pp]\n\t"
+                             "and %[e], %[cand], %[hi]\n\t"
+                             "str %[st], [%[tab], %[hh], lsl #3]\n\t"
+                             "cmp %[e], %[key]\n\t"
+                             "ccmp %w[rep], %w[v0], #4, ne\n\t"
+                             "ldr %[v0], [%[p], #2]\n\t"
+                             "lsr %[h1], %[mh], #%[sh]\n\t"
+                             "b.eq 3f\n\t"
+                             "ldr %[cand1], [%[tab], %[h1], lsl #3]\n\t"
+                             "add %[p], %[p], #1\n\t"
+                             "add %[pp], %[pp], #1\n\t"
+                             "cmp %[pp], %[limit]\n\t"
+                             "b.hs 3f\n\t"
+                             "ldr %w[rep], [%[p], %[back]]\n\t"
+                             "mul %[mh], %[v0], %[k]\n\t"
+                             "orr %[key], %[g], %[v1], lsl #32\n\t"
+                             "orr %[st], %[key], %[pp]\n\t"
+                             "and %[e], %[cand1], %[hi]\n\t"
+                             "str %[st], [%[tab], %[h1], lsl #3]\n\t"
+                             "cmp %[e], %[key]\n\t"
+                             "ccmp %w[rep], %w[v1], #4, ne\n\t"
+                             "ldr %[v1], [%[p], #2]\n\t"
+                             "lsr %[hh], %[mh], #%[sh]\n\t"
+                             "b.eq 2f\n\t"
+                             "ldr %[cand], [%[tab], %[hh], lsl #3]\n\t"
+                             "add %[p], %[p], #1\n\t"
+                             "add %[pp], %[pp], #1\n\t"
+                             "cmp %[pp], %[limit]\n\t"
+                             "b.lo 1b\n\t"
+                             "b 3f\n"
+                             "2:\n\t"
+                             "mov %[cand], %[cand1]\n"
+                             "3:"
+                             : [pp] "+r"(pp),
+                               [p] "+r"(p),
+                               [v0] "+r"(v),
+                               [v1] "+r"(v1),
+                               [hh] "+r"(hh),
+                               [cand] "+r"(cand),
+                               [key] "=&r"(key),
+                               [rep] "=&r"(rep),
+                               [mh] "=&r"(mh),
+                               [h1] "=&r"(h1),
+                               [st] "=&r"(st),
+                               [e] "=&r"(e),
+                               [cand1] "=&r"(cand1)
+                             : [back] "r"(back),
+                               [tab] "r"(table),
+                               [limit] "r"((unsigned long)limit),
+                               [g] "r"(g),
+                               [hi] "r"(~(u64)PAGE_LZ_POS_MASK),
+                               [k] "r"(889523592379ULL << 24),
+                               [sh] "i"(64U - PAGE_LZ_HASH_BITS)
+                             : "cc", "memory");
+            pos = (unsigned int)pp;
+            if (pos >= limit)
+                break;
+            rep_hit = rep == (u32)(key >> 32);
         }
-        m = rep_hit ? pos - last : cand;
+#else
+        {
+            /* This position's 8 bytes, hash and entry were loaded in the step before. */
+            u64 v_next = load64(src + pos + 1), key = (u64)first4(v) << 32 | g;
+            unsigned int h_next = hash5(v_next), cand_hit;
+
+            /* One branch for both candidates: the last offset always points into the page (it starts
+             * at 1, the search at position 1), so it can be read before it is known whether it
+             * counts. */
+            rep_hit = load32(src + pos + back) == first4(v);
+            cand_hit = (cand & ~(u64)PAGE_LZ_POS_MASK) == key;
+            table[h] = key | pos;
+            if (!(rep_hit | cand_hit)) {
+                pos++;
+                v = v_next;
+                h = h_next;
+                cand = table[h];
+                continue;
+            }
+        }
+#endif
+        m = rep_hit ? pos - last : (unsigned int)cand & PAGE_LZ_POS_MASK;
         /* backwards into the literals, then forwards */
         while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {
             pos--;
@@ -183,11 +288,12 @@ static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_
         anchor = pos;
         /* a position near the end of the match, for the next matches */
         if (pos < limit) {
-            table[hash5(load64(src + pos - 2))] = (unsigned short)(pos - 2);
+            u64 w = load64(src + pos - 2);
+
+            table[hash5(w)] = (u64)first4(w) << 32 | g | (pos - 2);
             v = load64(src + pos);
             h = hash5(v);
             cand = table[h];
-            cand_bytes = load32(src + cand);
         }
     }
     emit(ctx, src + anchor, PAGE_LZ_PAGE - anchor, 0, 0);
