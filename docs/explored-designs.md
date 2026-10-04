@@ -458,6 +458,37 @@ alignment, so it was measured again with 64 bytes: on the little core cold p50 a
 [2050, 2103] instead of 2213 [2204, 2233] ns, p99 7317 instead of 7516, on the big core 425 instead of
 553 and 3317 instead of 3456. It holds.
 
+## A second phone dump, after 12 hours of use: seqlz-fast reads faster than lzo-rle at p99
+
+*The Mi 9T's zram after 12 hours with many apps opened and used, 267 269 pages, 264 181 of them measured;
+the first dump was taken an hour after boot.* These pages compress worse, `lz4` needs 30.5% of them
+instead of 25.8%, and coding the literals pays more:
+
+| codec | first dump, bytes per page | this dump | against `lzo-rle` |
+| --- | --- | --- | --- |
+| `lz4` | 1055.3 | 1247.5 | +4.3% |
+| `lzo-rle` | 992.1 | 1195.6 | |
+| `seqlz-fast` | 749.8 | 951.5 | -20.4% |
+| `seqlz-fast-lit` | 714.0 | 896.1 | -25.1% |
+| `zstd` | 688.9 | 857.8 | -28.3% |
+
+Quick bench on 20 000 of these pages, clock fixed, cold reads p50 / p99 and the time per page written,
+`write + 0.34 * cold read`, from `quetschn-score`, in µs:
+
+| codec | little: read | little: per page written | big: read | big: per page written |
+| --- | --- | --- | --- | --- |
+| `lz4` | 6.47 / 11.76 | 18.08 | 2.68 / 5.19 | 8.16 |
+| `lzo-rle` | 6.95 / 13.78 | 17.55 | 3.27 / 6.86 | 7.84 |
+| `seqlz-fast` | 7.86 / 12.62 | 24.92 | 2.95 / 5.64 | 9.22 |
+| `seqlz-fast-lit` | 8.51 / 20.25 | 29.12 | 2.90 / 8.78 | 9.42 |
+| `zstd` | 24.10 / 47.37 | 78.65 | 9.68 / 16.79 | 25.38 |
+
+`seqlz-fast` reads the slowest pages faster than `lzo-rle`, zram's default and what the phone runs, on
+both cores, for 20% less memory, and at 1.07 times `lz4`'s cold p99 on the little core. Writing is what
+is left: 1.38 times `lz4`'s time per page written on the little core, 1.13 on the big one. `-lit` saves
+55 bytes per page more, but costs 4.2 µs per page written and 1.6 times the cold p99 on the little core,
+so on a phone `seqlz-fast` is the better trade.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
