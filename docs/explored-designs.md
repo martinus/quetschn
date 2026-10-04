@@ -543,6 +543,29 @@ fetch from DRAM, the 12 KiB of tables and the decoder's code, where `lz4` has no
 bytes would need shorter token codes, which changes the format. How cold a read really is depends on
 bursts: after the first swap-in of a burst the tables are in L2 again.
 
+**How cold is cold: the read time by the data read in between.** The same tool, the reads after
+reading 0, 64 KiB, 256 KiB, 1 MiB or 2 MiB of other data, the little core, p50 in µs:
+
+| other data | `lzo` | `lz4` | `seqlz-fast` | `seqlz-fast` - `lz4` |
+| --- | --- | --- | --- | --- |
+| 0 | 11.7 | 10.4 | 13.5 | 3.1 |
+| 64 KiB | 12.6 | 11.3 | 14.9 | 3.6 |
+| 256 KiB | 13.9 | 12.7 | 16.3 | 3.6 |
+| 1 MiB | 22.9 | 20.5 | 27.3 | 6.8 |
+| 2 MiB | 45.7 | 45.6 | 56.8 | 11.1 |
+
+Up to 256 KiB of other work between two swap-ins the gap stays at 3.1 to 3.6 µs; it grows when the
+other data pushes the tables out of the 1 MiB L3. Already the warm gap is larger than in the harness,
+where `seqlz-fast` decodes these pages 2.0 µs slower than `lz4` at p50 on the same core.
+
+Two causes for the kernel's extra, measured, neither is it:
+
+* **Tables from `kzalloc` instead of `vzalloc`**, in the linear map instead of 4 KiB pages of their
+  own: cold p50 54.8 instead of 56.6 µs, warm 13.3 instead of 13.4. The TLB misses of the tables cost
+  about 2 µs at most of the 11.
+* **`seqlz.o` built with clang 21 instead of the kernel's clang 9**, the rest of the module the same:
+  warm reads 0.1 to 0.2 µs faster, writes 0.3 to 0.4 µs, cold reads the same.
+
 
 ## Where the ratio of `zstd` comes from
 
