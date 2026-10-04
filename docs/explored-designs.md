@@ -547,6 +547,38 @@ memory per CPU, `lz4` has 16 416; on x86-64 1.4% more cycles, 15 962 instead of 
 long matches, 38 400 cycles against 38 000; the next position's table entry and bytes loaded before the
 sequence is written, so that writing it fills their time, 40 100.
 
+## Ratio from the parse and the tables on phone pages, measured offline, not built
+
+*Six ideas for `seqlz-fast`'s memory on phone pages, each measured with the format as it is, none
+worth its cost.* Bytes per page on the 20 000 page samples of the two phone dumps, pages zram stores
+raw counted as 4096; `main` needs 916.8 on the second dump and 724.2 on the first.
+
+Where the bytes go first, on the second dump's sample: 4.2% of the pages are stored raw, 172 of the
+928 bytes per page; of the rest, 486 bytes per page are literals and 267 the sequences, 13.3 bits per
+sequence. The literals are the largest part, and coding them order 0 takes only about 10% off.
+
+| idea | second dump | first dump | why not |
+| --- | --- | --- | --- |
+| lazy, a longer match one position on wins, 1 step | 907.5 | 716.9 | -1.0%, one more lookup and `count()` per sequence |
+| lazy, 2 steps | 907.5 | 717.0 | no better than 1 |
+| lazy, 1 step, offset priced 4 bits lower | 905.8 | 714.7 | -1.2% |
+| a fixed step of 2 without a match | 961.9 | 757.4 | +4.9%, misses most matches of 4 and 5 bytes |
+| the last offset only checked up to 16 positions after a match | 919.3 | 724.6 | +0.3%, for one load less per position |
+| the last offset not checked | 950.8 | 754.1 | +3.7% |
+
+* **Literals as the difference to the byte at the last offset**, as LZMA codes a literal after a
+  match: order 0 per page 6.01 bits per literal, the same as the bytes themselves, on the second dump,
+  5.80 instead of 5.97 on the first. Arrays of records with a counter in them look like they would gain,
+  the average does not.
+* **Repeats of 2 and 3 bytes at the last offset**, below the 4 bytes of a match: 19.7% of the literals
+  equal the byte at the last offset, in runs of 3 bytes 12.4 times per page, of 2 bytes 15.2 times. A
+  match of 3 costs a token and a split of the literal run; worth about 10 bits each, 1.5% of the page,
+  for 8% more sequences, which both directions pay for.
+* **Code tables trained on phone pages** instead of the development machine's resident pages, full
+  dumps: trained on the second dump, the first needs 719.85 instead of 721.88 bytes; trained on the
+  first, the second needs 915.51 instead of 915.82. On their own training dump they gain 0.3% to 0.6%.
+  The tables from the desktop fit phone pages.
+
 ## A second phone dump, after 12 hours of use: seqlz-fast reads faster than lzo-rle at p99
 
 *The Mi 9T's zram after 12 hours with many apps opened and used, 267 269 pages, 264 181 of them measured;
