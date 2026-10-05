@@ -1354,6 +1354,15 @@ instructions, 15 545 against 15 987 cycles per page on the A55, 2.8%, and 7196 a
 That is about 1 µs per page with coded literals on the A55, and 0.1 µs per page written; not built into
 the kernel module.
 
+Writing costs the A55 more: `seqlz-fast-lit` compresses in 47 640 cycles per page in the hot loop,
+`seqlz-fast` in 42 241, 5400 cycles or 3 µs for `code_literals()`, on every page with literals. 14 582
+of the 19 387 pages stay raw, with 404 literals each, and for each of them all literals are counted in
+all 8 tables first. Every 8th literal counted first, to send pages back that cannot get near paying:
+with a margin of 3/16 for the sample's error the bytes stay the same, 0.1 bytes per page more at most
+on the four dumps, but compressing takes 1150 instructions more per page, 48 300 against 47 766 cycles
+on the A55 and 21 498 against 21 227 on the A76. Too few pages are sent back: the literals of most raw
+pages come close to paying. Not kept.
+
 ### 9. The 51 bytes of "Coded literals only where they save 51 bytes" again, with item 4's and 7's prefetches
 
 The minimum for coding literals was chosen with the decoder as it was, without the compressed data
