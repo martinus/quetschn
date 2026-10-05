@@ -73,13 +73,29 @@ jobs:
       - run: |
           grep -E 'assertions: +[1-9][0-9]* \| +[1-9][0-9]* passed \| +0 failed' test.log
 
+  # The decoder on any input and the roundtrip of any page, a minute each with ASan and UBSan. The
+  # long runs are fuzz/afl.sh. A crash leaves its input as an artifact.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: fuzz/smoke.sh 60 build-fuzz
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashes
+          path: |
+            build-fuzz/decode-*
+            build-fuzz/roundtrip-*
+
   # The one required check. A job whose dependency failed is skipped, and a skipped required check
   # counts as passed, so this needs if: always() and has to look at every result itself.
   ci-ok:
     if: always()
-    needs: [format, test]
+    needs: [format, test, fuzz]
     runs-on: ubuntu-latest
     steps:
       - run: |
           test "${{ needs.format.result }}" = success
           test "${{ needs.test.result }}" = success
+          test "${{ needs.fuzz.result }}" = success
