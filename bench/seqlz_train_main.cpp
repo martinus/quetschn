@@ -207,9 +207,9 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
                         best_bits = b;
                     }
                 }
-                // the encoder's rule, the bytes of the coded literals and the header
+                // the encoder's rule
                 auto const n = weights[i];
-                auto const coded = std::ceil(best_bits / 8.0) + SEQLZ_LIT_HEADER;
+                auto const coded = std::ceil(best_bits / 8.0) + SEQLZ_LIT_CODED_MIN;
                 s_assign[i] = best;
                 if (coded >= n - std::floor(n / 16.0)) {
                     s_assign[i] = k_sets;

@@ -62,9 +62,11 @@ def trace(page_bytes, comp, name):
     out = {"comp": base64.b64encode(comp).decode(), "n": n}
     if h & 0x8000:
         out["layout"] = "coded"
-        out["set"] = comp[2]
-        sizes = [comp[3 + 2 * j] | comp[4 + 2 * j] << 8 for j in range(8)]
-        starts = [19]
+        out["set"], w = comp[2] & 7, 5 + (comp[2] >> 3 & 7)
+        packed = int.from_bytes(comp[3 : 3 + w], "little")
+        sizes = [packed >> (j * w) & ((1 << w) - 1) for j in range(8)]
+        out["width"] = w
+        starts = [3 + w]
         for s in sizes:
             starts.append(starts[-1] + s)
         out["sizes"], out["starts"] = sizes, starts
@@ -73,7 +75,7 @@ def trace(page_bytes, comp, name):
             r = Reader(comp, starts[j], True)
             for k in range(j, n, 8):
                 p0 = r.pos
-                v, bits = r.symbol(lit_codes[comp[2]])
+                v, bits = r.symbol(lit_codes[comp[2] & 7])
                 lit_rec[k] = [p0, len(bits), v, bits]
             assert r.pos <= 8 * starts[j + 1]
         lits = [x[2] for x in lit_rec]

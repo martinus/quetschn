@@ -25,7 +25,7 @@ codes) from fixed tables that are part of the format and not in the compressed p
 ## Notation
 
 - Sizes are in bytes unless they say bits. A literal is one byte.
-- Numbers of 2 bytes are little endian: the first byte is the low one.
+- Numbers of several bytes are little endian: the first byte is the low one.
 - `|x|` is the length of `x`: the bytes of a byte string, the bytes written so far for `out`.
 - `a << b` is `a * 2^b`, `a >> b` is `a` divided by `2^b`, rounded down, `a & b` is the bitwise and,
   `a div b` and `a mod b` are the quotient and remainder, `c ? a : b` is `a` if `c` holds, else `b`.
@@ -68,21 +68,28 @@ layouts.
 | offset | size | content |
 | --- | --- | --- |
 | 0 | 2 | `h`, which is `0x8000 + n` |
-| 2 | 1 | `set`, which of the 8 literal tables codes them |
-| 3 | 16 | `s[0]` to `s[7]`, 8 numbers of 2 bytes, little endian: the size of each literal stream |
-| 19 | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
-| `19 + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
+| 2 | 1 | `t`: `set = t & 7` is which of the 8 literal tables codes them, `w = 5 + ((t >> 3) & 7)` the bits of each stream size, `t >> 6` is 0 |
+| 3 | `w` | `s[0]` to `s[7]`, the size of each literal stream, `w` bits each |
+| `3 + w` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
+| `3 + w + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
+
+The `w` bytes from byte 3 on are one number `S` of `8 * w` bits, little endian, and
+`s[j] = (S >> (j * w)) & ((1 << w) - 1)`: 8 sizes of `w` bits fill exactly `w` bytes; `w` is 5 to 12.
+*Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most 640 bytes in a 4 KiB
+page and 2560 in a 16 KiB page; the largest stream of most pages is below 128 bytes, so 7 bits each
+do, and 2 bytes each made pages about 5 bytes larger on average. The two top bits of `t` are kept for
+later.
 
 The coded literals are split into 8 **streams**: literal 0 goes to stream 0, literal 1 to stream 1, ...,
-literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 19 + s[0] + ... + s[j-1]`, so
-`start[0] = 19`. *Why:* in one stream each literal's code can only be found once the one before is
+literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + s[0] + ... + s[j-1]`, so
+`start[0] = 3 + w`. *Why:* in one stream each literal's code can only be found once the one before is
 decoded, a chain of table lookups; 8 streams are 8 chains, which a CPU works on side by side.
 
 A page is invalid if
 
 - `len < 2`, or `n > PAGE`;
 - with raw literals `2 + n > len`;
-- with coded literals `len < 19`, `set > 7`, or `19 + s[0] + ... + s[7] > len`.
+- with coded literals `len < 3 + w`, `t >> 6` is not 0, or `3 + w + s[0] + ... + s[7] > len`.
 
 ## Prefix codes
 
@@ -289,7 +296,8 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
 - zero bits to fill the last byte of the bitstream and of each literal stream, and nothing after the
   bitstream;
 - coded literals only when `19 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
-  them in the fewest bits.
+  them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 19 is not the
+  size of the header; with it, a page has to save enough to be worth decoding its literals.
 
 The compressed page is at most `2 * PAGE` bytes, which is the buffer zram gives the compressor. zram
 stores a page that does not compress well enough as it is, so that page never reaches the decoder.
