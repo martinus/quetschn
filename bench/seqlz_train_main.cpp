@@ -2,9 +2,8 @@
 //
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of seqlz's own
 // matcher on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
-// SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 2099 bytes that zram's dictionary parameter can carry. With --lit-sets the literal tables of
-// explore/seqlz_lit_sets.c instead.
+// SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables_4k.inc, with --lit-sets
+// the literal tables of explore/seqlz_lit_sets.c instead.
 
 #include "harness.h"
 #include "page_stats.h"
@@ -17,7 +16,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <fstream>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -275,10 +273,10 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train --corpus <base> [--blob <file>] [--lit-sets]\n"
+                 "usage: quetschn-seqlz-train --corpus <base> [--lit-sets]\n"
                  "\n"
                  "Counts seqlz's symbols over the matches of its own matcher on every page. Prints the code\n"
-                 "lengths as a C initializer, or writes them to --blob for zram's dictionary parameter.\n"
+                 "lengths as a C initializer.\n"
                  "--lit-sets prints the literal tables of explore/seqlz_lit_sets.c instead, from the pages with\n"
                  "more than 64 literals.\n");
 }
@@ -287,7 +285,6 @@ void usage() {
 
 int main(int argc, char** argv) {
     auto base = std::string();
-    auto blob = std::string();
     auto want_lit_sets = false;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
@@ -296,8 +293,6 @@ int main(int argc, char** argv) {
             base = argv[++i];
         } else if (arg == "--lit-sets") {
             want_lit_sets = true;
-        } else if (arg == "--blob" && has_value) {
-            blob = argv[++i];
         } else {
             usage();
             return 2;
@@ -391,15 +386,6 @@ int main(int argc, char** argv) {
         std::copy(l_ll.begin(), l_ll.end(), lengths.ll);
         std::copy(l_ml.begin(), l_ml.end(), lengths.ml);
 
-        if (!blob.empty()) {
-            auto out = std::ofstream(blob, std::ios::binary);
-            out.write(reinterpret_cast<char const*>(&lengths), sizeof(lengths));
-            if (!out) {
-                throw std::runtime_error("cannot write " + blob);
-            }
-            std::printf("%zu pages, seqlz, %zu bytes to %s\n", pages, sizeof(lengths), blob.c_str());
-            return 0;
-        }
         auto print = [](char const* name, unsigned char const* l, unsigned n) {
             std::printf("    .%s = {", name);
             for (unsigned i = 0; i < n; ++i) {

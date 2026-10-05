@@ -1,26 +1,22 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * seqlz (explore/seqlz.h) as a zram backend would call it: "seqlz-fast" with raw literals,
- * "seqlz-fast-lit" with the literals Huffman coded where that pays. zram's dictionary parameter, if it
- * is exactly a struct seqlz_lengths, carries other code lengths instead of the ones compiled in.
+ * "seqlz-fast-lit" with the literals Huffman coded where that pays. The tables are part of the format
+ * (FORMAT.md), so zram's dictionary parameter is ignored, like lzo ignores it.
  */
 #include "seqlz.h"
 #include "zram_codec.h"
 
 static int setup(struct quetschn_params* p) {
-    const struct seqlz_lengths* lengths = &seqlz_default_own;
     struct seqlz_tables* t;
 
     if (p->page_size != SEQLZ_PAGE)
         return -1;
-    /* a dictionary of another size is not for seqlz; ignored like lzo ignores dictionaries */
-    if (p->dict_size == sizeof(struct seqlz_lengths))
-        lengths = p->dict;
     t = quetschn_zalloc(seqlz_tables_size(), &p->allocated);
     if (!t)
         return -1;
-    /* the encoder needs a code for every symbol: tables without one fail here, not at every page */
-    if (seqlz_tables_init(t, lengths) || !seqlz_all_symbols(t)) {
+    /* the encoder needs a code for every symbol; the tables are fixed, this keeps a bad retraining out */
+    if (seqlz_tables_init(t, &seqlz_default_own) || !seqlz_all_symbols(t)) {
         quetschn_free(t, &p->allocated);
         return -1;
     }

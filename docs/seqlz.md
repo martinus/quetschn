@@ -1,79 +1,76 @@
 # seqlz: how it works, and why
 
-*Or how to get most of `zstd`'s memory at most of `lz4`'s speed, for zram's 4 KiB pages.*
+*How to store a memory page almost as small as `zstd` does, almost as fast as `lz4` does.*
 
 > [!NOTE]
-> **In short.** On the pages my desktop swapped into zram, `seqlz-fast-lit` needs **21% to 24% less
-> memory** than `lzo-rle`, zram's default, and 25% to 28% less than `lz4`. It is **about 25%
-> slower** than `lz4` to write a page and 18% to 27% slower to read one. `zstd` level 3 needs 3% to
-> 10% less memory than `seqlz`, but twice the time to write and 1.7 to 1.8 times the time to read.
+> **In short.** zram keeps swapped-out memory pages compressed in RAM. On the pages my desktop swapped
+> there, `seqlz-fast-lit` stores a page in **24% and 21% fewer bytes** than `lzo-rle`, zram's default,
+> and 28% and 25% fewer than `lz4`, the fastest common choice. It takes **about 25% more time** than
+> `lz4` to write a page and 18% and 27% more to read one. `zstd`, which compresses best, stores a page
+> in 3% and 10% fewer bytes than `seqlz-fast-lit`, but takes twice the time to write and 1.8 and 1.7
+> times the time to read. Each pair of numbers is for two sets of pages, see below.
 
-This document explains how `seqlz` works for someone who has not written a compressor before: the
-page format, the encoder, the decoder, and why each part is the way it is, with the measurement that
-decided it. The history of every idea, also of the ones that failed, is in
-[explored-designs.md](explored-designs.md). The code is in [`explore/seqlz.c`](../explore/seqlz.c),
-[`explore/seqlz.h`](../explore/seqlz.h) and [`explore/page_lz.h`](../explore/page_lz.h).
+This document explains how `seqlz` works for someone who has not written a compressor before. Every
+term is explained where it is first used, and the [glossary](#glossary) at the end lists them all.
+The exact bytes of a compressed page, for writing a decoder, are in [FORMAT.md](../FORMAT.md); the
+history of every idea, also of the ones that failed, is in [explored-designs.md](explored-designs.md).
+The code is in [`explore/seqlz.c`](../explore/seqlz.c), [`explore/seqlz.h`](../explore/seqlz.h) and
+[`explore/page_lz.h`](../explore/page_lz.h).
+
+## How to read this
+
+* **If you are new to compression,** read [Compression in five minutes](#compression-in-five-minutes),
+  [What makes zram different](#what-makes-zram-different), [The result](#the-result-lz4s-time-zstds-size-almost)
+  [What makes code slow on a CPU](#what-makes-code-slow-on-a-cpu), and [How seqlz stores a page](#how-seqlz-stores-a-page)
+  up to and including [The literals](#the-literals-one-table-per-page-in-8-streams). The rest, and the parts
+  folded away behind a click, are for readers who want to know why each detail is the way it is.
+* **Two names, one format.** `seqlz-fast` stores the leftover bytes of a page as they are,
+  `seqlz-fast-lit` also compresses them. Both write the same format, and one decoder reads both.
+  Numbers are for `seqlz-fast-lit` unless they say otherwise.
+* **Dumps.** A dump is a copy of all pages that were in zram on my desktop at one moment. The numbers
+  come from two of them: the first from 23rd September 2026, the second from 24th September. Two
+  numbers like "1039 / 1322" or "24% and 21%" are the first and the second dump. "From 18% to 25%"
+  is a range, over the dumps or over the codecs. One chart also has a third dump, from 28th September.
+* **Two kinds of memory.** The **stored size** is how many bytes zram spends on one compressed page.
+  The **work memory** is what the codec needs for its own buffers, once per CPU. "Smaller" in this
+  document means the stored size.
+* **Points.** A point is 1% of the 4096 bytes of a page, 41 bytes. A page stored in 25.4% of its size
+  takes 1039 bytes; 0.5 points less means about 20 bytes less.
+* **The tables changed.** The sizes and times here were measured with the code tables used until
+  5th October 2026. The code lengths in the examples are from the tables now in the code. These are
+  trained on pages that programs had in RAM on a desktop, not the two dumps, and on a phone's zram
+  dump, and change the stored size by about 0.4%
+  ([explored-designs.md](explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
 
 ## Contents
 
 * [Compression in five minutes](#compression-in-five-minutes)
 * [What makes zram different](#what-makes-zram-different)
-* [The result](#the-result-lz4s-time-zstds-memory-almost)
-* [The format](#the-format-lz4s-sequences-coded-like-zstds)
-* [A sequence takes 14 to 16 bits](#a-sequence-takes-14-to-16-bits-in-lz4s-format-25)
-* [Why it needs less memory](#why-it-needs-less-memory-offsets-and-literals)
+* [The result](#the-result-lz4s-time-zstds-size-almost)
+* [What makes code slow on a CPU](#what-makes-code-slow-on-a-cpu)
+* [How seqlz stores a page](#how-seqlz-stores-a-page)
 * [The encoder](#the-encoder-one-pass-over-the-page)
 * [The decoder](#the-decoder-one-table-lookup-per-sequence)
 * [Why it is nearly as fast as lz4](#why-it-is-nearly-as-fast-as-lz4)
-* [Why zstd still needs less memory](#why-zstd-still-needs-less-memory)
-* [The choices, with their numbers](#the-choices-with-their-numbers)
+* [Why zstd still stores pages smaller](#why-zstd-still-stores-pages-smaller)
 * [What is not known yet](#what-is-not-known-yet)
-
-<details>
-<summary><b>Glossary</b>: the words this document uses, click to open</summary>
-
-| word | meaning |
-| --- | --- |
-| **page** | 4096 bytes of memory, the unit the kernel swaps out and zram compresses |
-| **literal** | a byte stored as it is, because the matcher found no earlier copy of it |
-| **match** | "copy `ml` bytes from `offset` bytes back": bytes that appeared earlier in the page |
-| **offset** | how many bytes back the copy of a match starts |
-| **sequence** | `ll` literals followed by one match; the compressor turns a page into a list of sequences |
-| **`ll`** | literal length: how many literals a sequence has, 0 or more |
-| **`ml`** | match length: how many bytes the match copies, 4 or more |
-| **matcher** | the first half of the compressor: it walks through the page and looks for matches. It decides where the matches are, and the bytes between them are the literals |
-| **hash table** | the matcher's table of 4096 positions, one per hash of 5 bytes; a slot keeps only the newest position, see [the encoder](#the-hash-table-is-a-cache-not-a-map) |
-| **greedy** | a matcher that takes a match as soon as it finds one, without checking whether a match that starts a byte later would be longer |
-| **encoder** | the second half of the compressor: it writes the matcher's sequences and literals in the format |
-| **decoder** | turns a compressed page back into its 4096 bytes |
-| **stream** | coded literals are split into 8 streams, literal `k` into stream `k % 8`, all coded with the same table |
-| **scratch** | work memory of the codec; the decoder decodes coded literals into it, 4144 bytes per CPU |
-| **offset class** | one of 6 ways to store the offset, e.g. "the same as the match before", in 0 bits |
-| **token** | one Huffman coded symbol for `ll`, `ml` and the offset class of a sequence |
-| **Huffman code** | a code where frequent symbols get few bits and rare ones many; see below |
-| **static table** | a Huffman table fixed in the code, the same for every page |
-| **bitstream** | the codes written one after the other, bit by bit, not aligned to bytes |
-| **zsmalloc** | the allocator zram stores compressed pages in, in size classes |
-| **µs** | a microsecond, a millionth of a second |
-| **mean** | the average time over all pages |
-| **p99** | sort the times of all pages: p99 is the time 99% of them stay below, the slowest 1% take longer |
-| **cold** | the data is not in the CPU cache and has to come from memory |
-| **time per page written** | write time + 0.34 × read time, see [below](#what-makes-zram-different) |
-
-</details>
+* [The choices, with their numbers](#the-choices-with-their-numbers)
+* [Glossary](#glossary)
 
 ## Compression in five minutes
 
-Almost every fast compressor, `lz4`, `lzo`, `zstd` and `seqlz` included, is built from two ideas.
+Almost every fast compressor, `lz4`, `zstd` and `seqlz` included, is built from two ideas.
 
 ### Idea 1: say "that again" instead of repeating bytes
 
 The part of the compressor that finds repeats is the **matcher**. It walks through the page. When
 the next bytes appeared before, it takes a **match**: go back `offset` bytes and copy `ml` bytes.
 When they did not, the bytes stay as they are, as **literals**. Memory pages are full of repeats,
-because programs store arrays of similar things. Here are the first 24 bytes of a page that holds an
-array of pointers, each pointing 16 bytes further than the one before. The bytes follow each other
-in memory, here one pointer per line:
+because programs store arrays of similar things.
+
+Here are the first 24 bytes of a page that holds an array of pointers, each pointing 16 bytes further
+than the one before. x86 and arm64 store a number with its lowest byte first, so the pointer
+0x7f1234560010 is the 8 bytes `10 00 56 34 12 7f 00 00`. One pointer per line:
 
 ```text
 pointer 1:  10 00 56 34 12 7f 00 00
@@ -82,9 +79,10 @@ pointer 3:  30 00 56 34 12 7f 00 00
 ...
 ```
 
-Every pointer differs from the one before in its first byte, and every 16th in the second byte too.
-The compressor writes the page as a list of **sequences**. A sequence is always the same two steps:
-first `ll` literals, then one match of `ml` bytes from `offset` bytes back.
+Every pointer differs from the one before only in its first byte (every 16th also in the second,
+when 0xf0 + 0x10 carries over). The compressor writes the page as a list of **sequences**. A
+sequence is always the same two steps: first `ll` literals, then one match of `ml` bytes from
+`offset` bytes back.
 
 ```mermaid
 flowchart LR
@@ -100,41 +98,79 @@ flowchart LR
 | 2 | `30` | 1 | `00 56 34 12 7f 00 00` | 7 | 8 |
 | 3 | `40` | 1 | `00 56 34 12 7f 00 00` | 7 | 8 |
 
-A match is at least 4 bytes long: like `lz4`'s, the matcher does not look for shorter ones. That is
-why the format stores `ml - 4`. The last sequence of a page has only literals and no match.
+`20` is a literal because nothing before it has that byte at that place; the 7 bytes after it equal
+the 7 bytes 8 places back, so they are a match. The first sequence covers two pointers, so 512
+pointers take 511 sequences. A match is at least 4 bytes long: a shorter one would cost about as many
+bits as its bytes as literals, so the matcher does not look for them, and the format stores `ml - 4`
+so that no number is spent on lengths 0 to 3. The last sequence of a page has only literals and no
+match.
 
 ### Idea 2: frequent things get short codes
 
-`lz4` spends a whole byte on `ll` and `ml` of every sequence, and two bytes on every offset,
-whatever they are. But some sequences are much more common than others: "1 literal, 7 bytes from the
-same offset as before" is one of the most common on real pages. A **Huffman code** gives it 4 bits,
-a rare sequence up to 11, and the rarest 16. On average that is far less than `lz4`'s bytes. This is
-called entropy coding.
+`lz4` writes every sequence in whole bytes: one byte holds `ll` and `ml` of a sequence, and every
+offset takes two bytes, whatever they are. But some sequences are much more common than others. The
+idea of a **Huffman code** is to give frequent things short codes and rare things long codes.
+
+A small example. Say a page has only four kinds of sequence: A in half the cases, B in a quarter, C
+and D in an eighth each. Give A the code `0`, B `10`, C `110` and D `111`. No code is the start of
+another one, so a decoder reading bit by bit always knows where a code ends: `0 10 0 111 0` can only
+be A B A D A. On average that is 1.75 bits for a kind of sequence, where 4 kinds in a fixed number of
+bits need 2. A set of codes where no code is the start of another is a **prefix code**; a Huffman
+code is the best prefix code for the frequencies.
+
+The decoder does not read bit by bit. It takes the next 3 bits, the length of the longest code, and
+looks them up in a table of 8 entries:
+
+| next 3 bits | means |
+| --- | --- |
+| `000` to `011` | A, 1 bit used |
+| `100`, `101` | B, 2 bits used |
+| `110` | C, 3 bits used |
+| `111` | D, 3 bits used |
+
+Then it drops the bits it used and looks up the next 3. One lookup per code, whatever its length.
+Every combination of 3 bits starts some code, the table has no empty entry: such a code is
+**complete**, and then the decoder never has to check for bits that are no code. `seqlz`'s token table
+works the same way, with 11 bits and 2048 entries.
+
+In `seqlz` the thing coded is a **token**, one number for a whole sequence, see
+[below](#one-sequence-a-token-and-the-offset). "1 literal, a match of 7 bytes, the same offset as
+before", the pointer array's sequence, is one of the most common on real pages and gets 4 bits. A
+rare sequence gets up to 11, the rarest 16.
 
 > [!TIP]
-> For the page of pointers above, `lz4` needs 2058 bytes, about 4 bytes per pointer: a token byte,
-> the literal, and 2 bytes of offset. `seqlz-fast-lit` needs 671 bytes, about 10.5 bits per pointer:
-> a 4-bit token and the literal byte, Huffman coded too. `lzo-rle` needs 1564 bytes and `zstd` 434.
+> For the page of pointers above, `lz4` needs 2058 bytes, about 4 bytes per pointer: a byte for
+> `ll` and `ml`, the literal, and 2 bytes of offset. `seqlz-fast-lit` needs 664 bytes, about 10.4 bits
+> per pointer: a 4-bit token and the literal byte, Huffman coded too, and no offset at all, because it
+> is the same as before. `lzo-rle` needs 1564 bytes and `zstd` 434.
 
-`lz4` uses idea 1 only, which makes it very fast. `zstd` uses both, with tables it can adapt to
-every block of data. `seqlz` uses both too, but with tables that are built once and compiled in,
-which makes it much faster than `zstd`.
+The decoder needs the same table as the encoder. `zstd` builds tables for each chunk of its input and
+stores them in front of it, which pays off for large inputs. `zstd` stores a table's code lengths
+packed, and for the 256 byte values that takes about 64 bytes; on a page of 4 KiB that often costs
+more than it saves. So `seqlz`'s tables are
+built once, from many pages, and fixed in the code: the same for every page, and part of the format.
+Fixed tables, and one lookup per sequence (see [the decoder](#the-decoder-one-table-lookup-per-sequence)),
+make it much faster than `zstd`, which uses both ideas too; the second idea makes it smaller than
+`lz4`, which uses only the first.
 
 ## What makes zram different
 
 zram is a compressed swap device in RAM. When memory runs low, the kernel moves pages that were not
-used for a while into zram, compressed. When a program touches such a page again, the page fault
-waits until zram has decompressed it. Four things follow from that, and they shape everything below:
+used for a while into zram, compressed. When a program touches such a page again, it waits until
+zram has decompressed it. Four things follow from that, and they shape everything below:
 
 > [!IMPORTANT]
-> 1. **Every page is compressed on its own**, 4096 bytes, without the pages around it. There is no
->    room to send a Huffman table with each page; a table can cost more than it saves.
+> 1. **Every page is compressed on its own**, 4096 bytes, without the pages around it, so that any
+>    page can be read back alone. There is no room to send a Huffman table with each page.
 > 2. **Reading is on the critical path**: a program waits for it. Writing happens when the kernel
 >    reclaims memory, often in the background, sometimes while a program waits for memory.
-> 3. **Memory is counted in zsmalloc's size classes**, at least 16 bytes apart, not in bytes. A page
->    of 3625 bytes and more is stored uncompressed, as 4096.
-> 4. **The code runs in the kernel**: no floating point, no SIMD, and every byte of work memory per
->    CPU counts on a phone.
+> 3. **The stored size is counted in size classes.** zram's allocator, zsmalloc, has slots of fixed
+>    sizes, at least 16 bytes apart: a page compressed to 1001 bytes takes a slot of about 1008. A page
+>    that compresses to 3625 bytes or more is stored uncompressed, as 4096 bytes; such pages and pages
+>    filled with one repeated value never reach the codec on a read.
+> 4. **The code runs in the kernel**: no floating point, no vector instructions, and each CPU may
+>    compress a page at the same time, so each has its own work memory. On a phone every byte of it
+>    counts: the project's limit is `lz4`'s work space, 16 416 bytes per CPU.
 
 To compare codecs by their time, writes and reads go into one number, the time part of the score of
 [PLAN.md](../PLAN.md#11-the-score-memory-against-time-not-bars):
@@ -142,36 +178,47 @@ To compare codecs by their time, writes and reads go into one number, the time p
 $$\text{time per page written} = t_\text{write} + 0.34 \cdot t_\text{read}$$
 
 Here $t_\text{write}$ is the mean time to write a page and $t_\text{read}$ the mean time to read a
-page back cold. The 0.34 is measured: my desktop read one page back from zram for every three it
-swapped out, 3 146 179 pages in against 9 210 320 out in 27.5 days. So the number is what a codec
-costs per page that goes into zram, its reads included. E.g. for `lz4` on the first dump it is 5.27
-+ 0.34 × 2.53 = 6.13 µs.
+page back **cold**: its compressed bytes are not in any CPU cache, as for a page swapped out a while
+ago. The 0.34 is measured: my desktop read one page back from zram for every three it swapped out,
+3 146 179 pages read back from zram against 9 210 320 written to it in 27.5 days. So the number is what a codec costs per page
+that goes into zram, its reads included. E.g. for `lz4` on the first dump it is 5.27 + 0.34 × 2.53 =
+6.13 µs.
 
-Memory is the other axis. Which codec is best then depends on how many bytes of memory one
-microsecond per page is worth to you, and PLAN.md's score adds both with that exchange rate.
+The stored size is the other side. Which codec is best depends on how many bytes one microsecond per
+page is worth to you, an exchange rate between time and size. Say it is 100 bytes per µs. Going from
+`lzo-rle` to `seqlz-fast-lit` costs 7.58 − 6.03 = 1.55 µs, worth 155 bytes, and saves 1361 − 1039 =
+322 bytes: worth it. Going on to `zstd` costs 7.61 µs more, worth 761 bytes, and saves 27 bytes: not
+worth it. PLAN.md's score adds both with such a rate.
 
-## The result: lz4's time, zstd's memory, almost
+## The result: lz4's time, zstd's size, almost
 
 ![seqlz-fast-lit against zram's codecs](plots/seqlz-speed.svg)
 
-Kernel VM of [`tools/zram-vm/run.sh`](../tools/zram-vm/run.sh), 20 000 pages of each of two zram
-dumps, all four codecs in one boot per dump, one CPU of a Ryzen 9 7950X fixed at 4.5 GHz, means over
-the pages, first dump / second dump:
+Measured in the real kernel, in a virtual machine, on 20 000 pages of each dump, on one desktop CPU
+core, means over the pages, first dump / second dump:
 
-| codec | zsmalloc bytes per page | write, µs | cold read, µs | time per page written, µs |
+| codec | stored bytes per page | write, µs | cold read, µs | time per page written, µs |
 | --- | --- | --- | --- | --- |
-| `lz4` | 1450 / 1755 | 5.27 / 5.74 | 2.53 / 2.54 | 6.13 / 6.61 |
+| `lz4` (fastest) | 1450 / 1755 | 5.27 / 5.74 | 2.53 / 2.54 | 6.13 / 6.61 |
 | `lzo-rle` (zram's default) | 1361 / 1679 | 5.09 / 5.66 | 2.76 / 2.81 | 6.03 / 6.61 |
 | **`seqlz-fast-lit`** | **1039 / 1322** | **6.56 / 7.29** | **2.99 / 3.23** | **7.58 / 8.39** |
-| `zstd` 3 | 1012 / 1197 | 13.38 / 14.30 | 5.32 / 5.52 | 15.19 / 16.17 |
+| `zstd` 3 (smallest) | 1012 / 1197 | 13.38 / 14.30 | 5.32 / 5.52 | 15.19 / 16.17 |
+
+Compare the bold row with `lz4` and `zstd`: its size is close to `zstd`'s, its time close to
+`lz4`'s. In the chart above, the three panels on the right have the numbers of the table, write,
+cold read and stored bytes, each with the first dump above and the second below. The first panel,
+"Hot loop", is the codec alone, outside the kernel, in a loop over pages that are in the CPU's
+cache, in thousands of CPU cycles (ticks of the CPU's clock) per page: the darker bar compressing,
+the lighter one decoding.
 
 > [!NOTE]
-> **How the times are measured, and what p99 is.** A program in the VM writes each page to zram with
-> `pwrite` and reads it back with `pread`, and times each call. So a time is the whole system call,
-> zram and zsmalloc included, not only the codec. Each page is timed 3 times and its median counts.
-> For a **cold read**, the compressed page is flushed from the CPU cache first, and the read before
-> it was of another page, as for a page swapped out a while ago. The **mean** is the average over
-> the 20 000 pages. For **p99** the 20 000 times are sorted: p99 is the one at position 19 800, so
+> **How the times are measured, and what p99 is.** The VM is [`tools/zram-vm/run.sh`](../tools/zram-vm/run.sh),
+> all four codecs in one boot per dump, one CPU of a Ryzen 9 7950X fixed at 4.5 GHz. A program in
+> the VM writes each page to zram with `pwrite` and reads it back with `pread`, and times each call.
+> So a time is the whole system call, zram and zsmalloc included, not only the codec. Each page is
+> timed 3 times and its median counts. For a cold read, the compressed page is flushed from the CPU
+> cache first. The **mean** is the average over the 20 000 pages, the **median** or p50 the time half
+> of them stay below. For **p99** the 20 000 times are sorted: p99 is the one at position 19 800, so
 > 99% of the pages are done faster and the slowest 200 take longer. The mean says how much time all
 > pages cost together; p99 shows whether some pages are much slower than the rest, and a program
 > that waits for such a page feels it.
@@ -181,94 +228,137 @@ the pages, first dump / second dump:
 
 At p99 `seqlz-fast-lit` reads cold pages in 4.94 and 5.19 µs, faster than `lzo-rle` (5.42 and 5.38)
 and a bit slower than `lz4` (4.74 and 4.75). It writes in 11.5 and 11.7 µs, where `lz4` needs 9.2
-and 9.5 and `zstd` 23.2 and 23.7. Per CPU it needs 12 336 bytes of work memory, `lz4` 16 440.
+and 9.5 and `zstd` 23.2 and 23.7. Its work memory is 12 304 bytes per CPU: the matcher's table of
+8192 bytes and a buffer of 4112 bytes the decoder decodes literals into. `lz4`'s is 16 440: the
+16 416 bytes of work space the limit is about, and a small struct. Two things are not work memory:
+the buffer the compressed page is written into is zram's, two pages per CPU for every codec, and the
+tables for encoder and decoder, 43 280 bytes, are built once per zram device from the fixed code
+lengths and shared by all CPUs.
 
 </details>
 
-There is no fastest codec here, there is a pareto front: nothing beats `seqlz-fast-lit` on memory
-without taking twice its time, and nothing beats it on time without taking 27% to 40% more memory.
-By the [score](../PLAN.md#11-the-score-memory-against-time-not-bars) it is the best choice for
-anyone who values a microsecond per page written at 16 to about 200 bytes of memory per page, on
-both dumps. The rightmost column of the chart below shows where that comes from: `zstd` saves 3 and
-16 bytes per page for each µs more than `seqlz-fast-lit`, and `seqlz-fast-lit` saves 208 and 201
-bytes per page for each µs more than `lzo-rle`.
+No codec is better on both counts: nothing stores pages smaller than `seqlz-fast-lit` without taking
+twice its time, and nothing is faster without taking at least 27% more bytes. `zstd` saves 3 and 16
+bytes per page for each µs more than `seqlz-fast-lit`, and `seqlz-fast-lit` saves 208 and 201 bytes
+per page for each µs more than `lzo-rle`. So if a µs is worth less than 16 bytes to you, `zstd`'s
+smaller pages pay for its extra time, at least on the second dump. If a µs is worth more than about
+200 bytes, `lzo-rle`'s saved time beats `seqlz-fast-lit`'s smaller pages. In between,
+`seqlz-fast-lit` is the best choice on both dumps. The chart below shows it.
 
-![Memory against latency for all codecs](plots/seqlz-codecs.svg)
+![Stored size against time for all codecs](plots/seqlz-codecs.svg)
 
-## The format: lz4's sequences, coded like zstd's
+How to read this chart: one row per dump. In each panel a codec's stored size is up and down, its
+time left and right, so lower left is better; the panels are the time to read cold, to read warm,
+to write, and the time per page written, the "Score". The markers are the median (filled), the mean
+(bar) and p99 (open). In the Score panel the dashed line joins the codecs that are the best choice
+for some exchange rate, and "B/µs" is the bytes saved per µs between two of them. The table in each
+row has the stored size in % of the page and the ratio, e.g. 3.94:1: the page's size divided by its
+stored size.
+
+## What makes code slow on a CPU
+
+The rest of this document explains `seqlz`'s speed with three things a CPU does. Here they are in
+short, since they decide most of the design.
+
+> [!NOTE]
+> * **Waiting for memory.** Data that is not in a CPU cache takes about 100 ns to arrive from RAM.
+>   The smallest and fastest cache, **L1**, holds a few dozen KiB and answers in about 1 ns. A table
+>   that fits into L1 is cheap to look up; a page that is cold is in no cache at all.
+> * **Wrong guesses at `if`s.** The CPU guesses which way a **branch**, an `if` or the end of a loop,
+>   goes, and works ahead. A wrong guess, a **mispredicted branch**, throws that work away, about 15
+>   to 20 cycles. Code "without a branch" computes both outcomes and picks one with arithmetic.
+> * **Steps that wait for each other.** A CPU core runs several independent instructions per cycle,
+>   but a step that needs the result of the step before has to wait for it. A **chain** of such steps
+>   sets the speed. The small cores of phones, such as the Cortex-A55, are **in-order**: they run
+>   instructions strictly in the order of the program and cannot work ahead around a step that waits,
+>   so every instruction on a chain costs time.
+
+## How seqlz stores a page
+
+### The big picture
 
 ![The seqlz page format](plots/seqlz-format.svg)
 
-Like `lz4`, `seqlz` describes a page as sequences. Unlike `lz4`, it Huffman codes them with tables
-that are compiled in. The chart shows the two kinds a compressed page can have, in the two top rows.
-The rows below it zoom into the bitstream, which is the same in both kinds.
+`lz4` writes the sequences one after the other, each in whole bytes, with its literals in the middle
+of it. `seqlz` takes the page apart into two parts: all literals of the page in one block, and all
+the rest of the sequences, packed as bits:
 
-| kind of page | layout |
-| --- | --- |
-| **raw literals** | `u16` number of literals, bit `0x8000` not set · the literals · the bitstream of the sequences |
-| **coded literals** | `u16` number of literals \| `0x8000` · `u8` which literal table · 8 × `u16` stream sizes · 8 literal streams · the bitstream of the sequences |
+```text
+lz4:    [token | literals | offset] [token | literals | offset] ...    each sequence in whole bytes
+seqlz:  [header] [all literals of the page] [the sequences, as bits, one after the other]
+```
 
-The literals of all sequences are stored together, in front, and the rest of each sequence is in the
-bitstream behind them.
+Keeping the literals in one block lets them be coded as a whole, with one table for the page, and
+leaves the sequences as a pure stream of bits, the **bitstream**. The chart above shows both kinds of
+page `seqlz` writes: the top row with the literals as they are, the second with them coded; the rows
+below zoom into the bitstream, which is the same in both.
 
-> [!IMPORTANT]
-> **The encoder decides, for every page.** After the matcher, `seqlz-fast-lit` finds the one literal
-> table that codes all literals of the page in the fewest bits, see [the
-> literals](#the-literals-one-table-per-page-in-8-streams). It writes the coded kind only if those
-> streams and the 17 more bytes of header are smaller than the raw literals minus 1/16. For `n`
-> literals and `coded` bytes of streams, that is `coded + 19 < n - n / 16` in
-> [`code_literals()`](../explore/seqlz.c). Else the page keeps its raw literals. That is 50% to 69%
-> coded pages on my dumps. `seqlz-fast` never codes literals, so all its pages are of the raw kind.
->
-> **The decoder sees the kind in the first 2 bytes.** A page has at most 4096 literals, so the
-> number needs 13 bits and bit `0x8000` of the `u16` is free: set means coded literals. The other
-> bits are the number of literals in both kinds.
+### One sequence: a token and the offset
 
-The bitstream has no length of its own: it goes to the end of the compressed page, and zram stores
-that page's size. Two kinds of page never reach the decoder of `seqlz` at all: a page filled with
-one repeated value, which zram stores as just that value, and a page that `seqlz` cannot compress
-below 3625 bytes, which zram stores as it is. On a read zram copies such a page back without calling
-the codec.
-
-The bitstream holds the sequences one after the other, read least significant bit first. Each
-sequence has up to four parts in it:
+Each sequence in the bitstream has up to four parts:
 
 | part | bits | what it says |
 | --- | --- | --- |
-| **token** | 4 to 11, Huffman coded; 16 if escaped | `ll` up to 15, `ml - 4` up to 31, and the offset class |
-| **offset** | 0 to 12, raw | the offset, stored as its class says |
-| **`ll` value** | Huffman code + raw bits | only if `ll` >= 15: the rest of `ll` |
-| **`ml` value** | Huffman code + raw bits | only if `ml` >= 35: the rest of `ml` |
+| **token** | 4 to 11, Huffman coded; 16 if escaped | `ll` and `ml - 4` up to a cap, and the offset class |
+| **offset bits** | 0 to 12, plain bits | the offset, stored as its class says |
+| **`ll` value** | Huffman code and plain bits | only if `ll` is 15 or more: the rest of `ll` |
+| **`ml` value** | Huffman code and plain bits | only if `ml` is 35 or more: the rest of `ml` |
 
-### The offset class is part of the token
+The **token** is one number that holds three things:
 
-The token is one number that holds three things: `min(ll, 15) + 16 × min(ml - 4, 31) + 512 × class`.
-That gives 16 × 32 × 6 = 3072 possible tokens, and the Huffman code is for the whole token. **So the
-offset class has no bits of its own.** It makes the token's code longer, by about **2 bits** on
-average on both dumps, the entropy of the tokens with the class against without it. On its own the
-class would need about 2.5 bits. It is cheaper in the token because the class goes together with the
-lengths, and the token's code can use that: e.g. a match of 4 bytes has almost always the offset of
-the match before, and 29% and 36% of the matches with a class 3 offset are 5 bytes long, against 12%
-and 19% of all matches. That the decoder gets `ll`, `ml` and the class with one table lookup is what
-makes it fast, see [the decoder](#the-decoder-one-table-lookup-per-sequence).
+    token = min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class
 
-The class says how the offset's raw bits right after the token are to be read:
+Like hours, minutes and seconds packed into one number of seconds, it is easy to take apart again:
+`ll` is `token mod 16`, `ml − 4` is `(token div 16) mod 32`, the class is `token div 512`. That gives
+16 × 32 × 6 = 3072 tokens, and the Huffman code is for the whole token. `ll` from 0 to 14 and `ml`
+from 4 to 34 fit into the token; a 15 for `ll` means "15 or more, the rest follows as an `ll` value",
+and 31 for `ml − 4` the same for `ml`.
 
-| class | offset | raw bits |
-| --- | --- | --- |
-| 0 | the same as the match before | 0 |
-| 1 | below 16 | 4 |
-| 2 | below 256 | 8 |
-| 3 | below 4096 | 12 |
-| 4 | a multiple of 8, from 16, below 256 | 5, the offset / 8 |
-| 5 | a multiple of 8, from 256 | 9, the offset / 8 |
+**The offset class is part of the token.** It says how the offset is stored:
 
-A token that is rare has no code at all: only 512 of the 3072 tokens have one. A rare token is sent
-as a 4-bit escape code and the token in 12 raw bits. That keeps the frequent codes short; on my
-dumps 14 to 38 of about 200 sequences per page are escaped. There is no count of the sequences: the
-last one is the one whose literals fill the page.
+| class | the offset is | offset bits | the encoder uses it for |
+| --- | --- | --- | --- |
+| 0 | the **repeat offset**: the same as the match before | 0 | an offset equal to the one before |
+| 1 | the 4 bits | 4 | offsets below 16 |
+| 2 | the 8 bits | 8 | offsets below 256 |
+| 3 | the 12 bits | 12 | offsets below 4096 |
+| 4 | the 5 bits × 8 | 5 | multiples of 8 from 16, below 256 |
+| 5 | the 9 bits × 8 | 9 | multiples of 8 from 256 |
 
-### A sequence takes 14 to 16 bits, in lz4's format 25
+Memory is full of 8-byte things, pointers and 8-byte fields, so an offset that is a multiple of 8 is
+common, and classes 4 and 5 store it divided by 8, 3 bits shorter. At the start of a page the
+repeat offset is 1, so class 0 works for the first match too. The offset bits are plain binary,
+not Huffman coded. Putting the class into the token makes the average token code about 2 bits longer;
+a code of its own for the class would cost about 2.5 bits, so the token saves about half a bit per
+sequence there, and the decoder a second table lookup. Against a Huffman code for the offset's
+number of bits, which `seqlz` had before, plain offset bits cost 0.4 points, see
+[the choices](#the-choices-with-their-numbers). The token's code can also use that class
+and lengths go together: a match of 4 bytes has almost always the repeat offset, because at a new
+offset 4 bytes are barely worth a match, and 29% and 36% of the matches with a class 3 offset are 5
+bytes long, against 12% and 19% of all matches.
+
+Here is one sequence taken apart: 2 literals, a match of 7 bytes, 16 bytes back.
+
+* `ll` = 2, `ml` = 7, so `ml − 4` = 3.
+* The offset 16 is a multiple of 8 and below 256: class 4, sent as 16 / 8 = 2 in 5 bits.
+* The token is `2 + 16 × 3 + 512 × 4 = 2098`. Its Huffman code in the table has 9 bits.
+* Both lengths fit into the token, so there are no length values.
+
+The sequence costs 9 + 5 = 14 bits, plus the 2 literal bytes. In `lz4`'s format the same sequence is
+a token byte, the 2 literal bytes and 2 bytes of offset: 24 bits plus the literals. The pointer
+array's sequence is token 49: "1 literal, a match of 7 bytes, the repeat offset", `1 + 16 × 3 +
+512 × 0 = 49`, with a 4-bit code and no offset bits.
+
+**Escapes.** Only 512 of the 3072 tokens have a code of their own. Each of the other 2560 is rare,
+but together they are a good part of the sequences, 14 to 38 of about 200 per page on my dumps. So
+they share one code, the **escape**, followed by the token's number in 12 plain bits: 4 + 12 = 16
+bits. The escape is itself a frequent **symbol**, a thing that gets a code, and has a 4-bit code. Giving codes to more tokens would
+make the codes of the frequent ones longer, and those matter more.
+
+There is no count of the sequences: the last one is the one whose literals fill the page, and it has
+no match.
+
+### A sequence takes 14 to 16 bits, against 25 in lz4
 
 Measured on the same 20 000 pages of each dump, without the literals:
 
@@ -280,66 +370,112 @@ Measured on the same 20 000 pages of each dump, without the literals:
 | **`seqlz`, total** | **13.8** | **16.1** |
 | the same sequences in `lz4`'s format | 25.5 | 25.7 |
 
-Half of the sequences take at most 13 and 16 bits. The shortest take 4 bits, a frequent token with
-the offset of the match before. 99% take at most 31 bits, and the longest 59, with a long `ll` and a
-long `ml` value. The literals come on top: 8 bits each when they are stored raw, fewer when they are
-coded, see [the literals](#why-it-needs-less-memory-offsets-and-literals).
+`lz4`'s 25.5 bits are its token byte, the 2 bytes of offset, and now and then a byte for a long
+length. The median `seqlz` sequence takes 13 bits on the first dump and 16 on the second. The
+shortest take 4 bits, a frequent token with the repeat offset. 99% take at most 31 bits, the longest
+59, with a long `ll` and a long `ml` value. The literals come on top: 8 bits each when they are stored
+as they are, fewer when they are coded, see [the literals](#the-literals-one-table-per-page-in-8-streams).
 
-Here is one sequence taken apart: 2 literals, a match of 7 bytes, 16 bytes back.
+### Where the bytes go
 
-* `ll` = 2, `ml` = 7, so `ml - 4` = 3.
-* The offset 16 is a multiple of 8 and below 256: class 4, sent as 16 / 8 = 2 in 5 bits.
-* The token is `2 + 16 × 3 + 512 × 4 = 2098`. Its Huffman code in the compiled-in table has 9 bits.
-* Both lengths fit into the token, so there are no length values.
+The same sequences, from `seqlz`'s own matcher, cost this many bytes per page in `lz4`'s format and
+in `seqlz`'s, as written, before zsmalloc rounds them up to its size classes:
 
-The sequence costs 9 + 5 = 14 bits, plus the 2 literal bytes. In `lz4`'s format the same sequence is
-a token byte, the 2 literal bytes and 2 bytes of offset: 24 bits plus the literals.
+![Where the bytes of a page go](plots/seqlz-bytes.svg)
 
-The most frequent tokens have 4 bits: token 49 is "1 literal, a match of 7 bytes, the offset of the
-match before", exactly the pointer array from the start: `1 + 16 × 3 + 512 × 0 = 49`, and no offset
-bits.
+| bytes per page, first dump | `lz4`'s format | `seqlz` | saved |
+| --- | --- | --- | --- |
+| tokens | 205 | 198 | 7 |
+| **offsets** | **408** | **136** | **272** |
+| lengths beyond the token | 41 | 18 | 23 |
+| **literals** | **700** | **603** | **97** |
+| header, on average | 0 | 11 | -11 |
+| total | 1355 | 966 | 389 |
+
+The totals are smaller than the stored sizes in [the result](#the-result-lz4s-time-zstds-size-almost),
+1039 and 1450, because zsmalloc rounds every page up to its size class and stores pages of 3625
+bytes or more as 4096; and the `lz4` column uses `seqlz`'s matches, not `lz4`'s own. The chart also
+has the third dump, from 28th September.
+
+> [!NOTE]
+> **The offsets are two thirds of the gain.** `lz4` spends 2 bytes on every offset. `seqlz` spends 0
+> bits on a repeat offset, 5 or 9 bits on one that is a multiple of 8, and 4 or 8 bits on a short one,
+> instead of 16.
+
+![What the format is built for](plots/seqlz-distributions.svg)
+
+The chart shows how often each offset class, each literal length and each match length occurs, with
+lines where the token's caps are:
+
+* **18% to 25%** of the matches have the repeat offset: 0 bits.
+* **20% to 41%** are multiples of 8: 5 or 9 bits instead of 8 or 12.
+* Of the rest, many are short: below 16 in 4 bits, below 256 in 8.
+
+**The literals are the second part.** The matcher already took out the repeated runs of bytes. What
+is left are single bytes, and some byte values are far more common than others: zero, ASCII letters,
+small numbers. 50% to 69% of the pages get their literals coded, and over all pages the literals get
+14% to 17% smaller.
+
+**The tokens cost about the same as `lz4`'s token byte**, 198 against 205 bytes per page, but they
+also carry the offset class, and a length value follows only after 8.5% of the matches.
 
 ### The literals: one table per page, in 8 streams
 
-A page's literals are stored raw, or all of them are Huffman coded with **one** of 8 fixed tables.
-The encoder chooses once per page, not per literal and not per sequence, and the choice costs one
-byte of header, the table's number. A choice per literal would need 3 more bits for every literal,
-just to say which table.
+A page's literals are stored as they are, or all of them are Huffman coded with **one** of 8 fixed
+**literal tables**. The encoder chooses once per page, not per literal and not per sequence, and the
+choice costs one byte of header, the table's number. A choice per literal would need 3 more bits for
+every literal, just to say which table.
 
-The 8 tables are compiled in. They were trained on the resident pages of running programs: k-means
-puts pages with similar literals into one group, and each table is the Huffman code of one group,
-see [explored-designs.md](explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page). So
-the tables are quite different. Code lengths in bits of a few bytes:
+The 8 tables are fixed in the code and part of the format. They were trained on the pages programs
+had in RAM on a desktop and on the pages of a phone's zram: a clustering method, k-means, puts pages
+whose literals look alike into one group, and each table is the Huffman code of one group, see
+[explored-designs.md](explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
+So the tables are quite different. How many bits each table spends on a few byte values:
 
 | byte | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `00` | 2 | 3 | 3 | 2 | 3 | 4 | 2 | 6 |
-| `20`, a space | 6 | 5 | 5 | 7 | 5 | 6 | 7 | 8 |
-| `65`, the letter `e` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
-| `ff` | 7 | 8 | 7 | 6 | 9 | 9 | 4 | 9 |
+| `00` | 3 | 2 | 3 | 3 | 2 | 5 | 5 | 7 |
+| `20`, a space | 6 | 7 | 5 | 5 | 7 | 7 | 6 | 8 |
+| `65`, the letter `e` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
+| `ff` | 7 | 6 | 7 | 9 | 8 | 10 | 9 | 10 |
 
-Table 4 gives `e` 4 bits, so it fits text. Table 6 gives `ff` 4 bits, it fits pages with many of
-them. In table 7 most bytes cost about the same.
+Table 3 gives `e` 4 bits, so it fits text. Tables 1 and 4 give `00` 2 bits, they fit pages with many
+zero bytes. Table 7 is for pages of a few other bytes: it gives `c1` 2 bits and `00` 7.
 
-**Finding the smallest table is one addition per literal.** For each of the 256 byte values the
-encoder has a 64-bit number with the byte's code lengths in all 8 tables, one table per byte of the
-number. Adding up these numbers for all literals of the page gives the bits of the page's literals
-in all 8 tables at once. E.g. for the literals `65 20 65 00`:
+**Picking the table.** The encoder adds up the code lengths of all literals of the page in all 8
+tables and takes the table with the smallest sum. E.g. for the literals `65 20 65 00`:
 
 | literal | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `65` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
-| `20` | 6 | 5 | 5 | 7 | 5 | 6 | 7 | 8 |
-| `65` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
-| `00` | 2 | 3 | 3 | 2 | 3 | 4 | 2 | 6 |
-| **sum** | 20 | 18 | 24 | 25 | **16** | 20 | 27 | 26 |
+| `65` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
+| `20` | 6 | 7 | 5 | 5 | 7 | 7 | 6 | 8 |
+| `65` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
+| `00` | 3 | 2 | 3 | 3 | 2 | 5 | 5 | 7 |
+| **sum** | 19 | 27 | 26 | **16** | 29 | 24 | 27 | 35 |
 
-Each row is one 64-bit addition for the CPU, not 8. Table 4 wins with 16 bits, where the raw bytes
-are 32. A byte of the sum holds at most 255, and a code has at most 10 bits, so every 25 literals
-the sums move into 16-bit lanes before they can overflow. This costs at most 400 cycles per page,
-about 1.5% of a write, and 30 to 40 ns per write in the kernel. Writing the coded literals
-afterwards costs much more, about 0.6 ns per literal. The table with the smallest sum is used if it
-saves 1/16, see [the two kinds of page](#the-format-lz4s-sequences-coded-like-zstds).
+Table 3 wins with 16 bits, where the bytes as they are take 32.
+
+<details>
+<summary>How the 8 sums are one addition per literal</summary>
+
+For each of the 256 byte values the encoder has a 64-bit number with the byte's code lengths in all 8
+tables, one table per byte of the number. Adding up these numbers adds all 8 sums at once, so each
+row of the table above is one 64-bit addition for the CPU, not 8. The encoder keeps 8 such sums, one
+per stream, because each stream is rounded up to whole bytes on its own. A byte of a sum holds at
+most 255 and a code has at most 10 bits, so every 200 literals of the page, 25 per stream, the sums
+are added into two other 64-bit numbers per stream, with 4 sums of 16 bits each, before they can
+overflow. This was measured at 30 to 40 ns per write in the
+kernel, about 1.5% of a write. Writing the coded literals afterwards costs much more, about 0.6 ns
+per literal.
+
+</details>
+
+**The 1/16 rule.** The encoder codes the literals only if the 8 streams and their 19-byte header are
+smaller than 15/16 of the literals as they are, `coded + 19 < n − n / 16` in
+[`code_literals()`](../explore/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
+apart, so saving a few bytes mostly saves nothing, and coding the literals whenever they save
+anything gave less than 0.1 points more, for decoding time on every such page. `seqlz-fast` never
+codes literals.
 
 **8 streams, all with the same table.** The coded literals are dealt out like cards: literal 0 goes
 into stream 0, literal 1 into stream 1, and so on up to literal 7 in stream 7. Literal 8 goes into
@@ -354,82 +490,52 @@ stream 2:             L2  L10 L18 L26 ...
 stream 7:             L7  L15 L23 L31 ...
 ```
 
-The streams are there only for the speed of the decoder. A Huffman code has no fixed length, so the
-decoder knows where a literal starts only after it has decoded the one before. In one stream that is
-a chain: look up, shift, look up, shift, and every step waits for the one before. 8 streams are 8
+This is only for the speed of the decoder. To decode one literal, it looks at the next 10 bits of
+its stream, looks them up in the table of 1024 entries, writes the byte, and moves the stream on by
+the code length. Only then does it know where the next literal of that stream starts: in one stream
+that is a chain, look up, move on, look up, and every step waits for the one before. 8 streams are 8
 chains that do not wait for each other, and a CPU works on them side by side. With 4 streams a
-literal took 2.9 cycles to decode, and 8 streams made the decoding of a page 4% faster again. The
-streams cost no bits: a literal's code depends only on the literal, not on its neighbours, so it has
-the same length in any stream. What they cost is the header, 2 bytes for the size of each stream,
-and up to 7 bits at the end of each: going from 4 to 8 streams cost 0.1 to 0.2 points of memory.
+literal took 2.9 cycles to decode, and 8 streams made decoding a page 4% faster than 4. The streams
+cost no bits for the codes, which depend only on the literal, but each stream's size is in the header,
+2 bytes each, and each stream is filled up to a whole byte: going from 4 to 8 streams cost 0.1 to
+0.2 points.
 
 > [!NOTE]
 > **The 8 streams have nothing to do with the 8 tables.** All 8 streams of a page are coded with the
-> page's one table. That both are 8 is a coincidence: the number of tables was chosen for memory, 16
+> page's one table. That both are 8 is a coincidence: the number of tables was chosen for size, 16
 > tables saved only 0.1 to 0.3 points more, and the number of streams for the decoder's speed.
 
-**Where each stream starts and ends.** The header has the size of each stream in bytes, 8 × `u16`.
-Stream 0 starts right after the 19 bytes of header, stream 1 where stream 0 ends, and so on; the
-sequences' bitstream starts where stream 7 ends. A stream ends with the bits of its last literal,
-filled up to a whole byte. How many literals a stream has follows from the number of literals in the
-header: stream `k` has literals `k`, `k + 8`, `k + 16` and so on, as long as they are below that
-number.
+Before the first sequence, the decoder decodes all literals of the page this way into a buffer of
+work memory, 8 at a time. Then they are in their order, as if they had been stored as they are, and
+the sequences take them from there, the same way for both kinds of page.
 
-**Decoding them.** Before the first sequence, the decoder decodes all literals of the page into a
-scratch buffer, 8 at a time: literal `i` comes from stream `i % 8`. For each literal it looks up the
-next 10 bits of its stream in the table, a table of 1024 entries with the byte and its code length,
-writes the byte, and moves that stream on by the code length. Then the literals are in the scratch
-in their order, as if they had been raw. The loop over the sequences copies them from there, the
-same way for both kinds of page.
+### The bytes of a page
 
-## Why it needs less memory: offsets and literals
+Now the header can be read. Its first 2 bytes are the number of literals, a page has at most 4096,
+and 4096 fits into 13 bits, so the top bit of the 2 bytes is free: set means coded literals.
 
-The same sequences, from `seqlz`'s own matcher, cost this many bytes per page in `lz4`'s format and
-in `seqlz`'s:
+| kind of page | layout |
+| --- | --- |
+| **literals as they are** | 2 bytes: the number of literals · the literals · the bitstream |
+| **coded literals** | 2 bytes: the number of literals with the top bit set · 1 byte: which literal table · 8 × 2 bytes: the size of each stream · the 8 streams · the bitstream |
 
-![Where the bytes of a page go](plots/seqlz-bytes.svg)
+The bitstream has no length of its own: it goes to the end of the compressed page, and zram stores
+that page's size.
 
-| bytes per page, first dump | `lz4`'s format | `seqlz` | saved |
-| --- | --- | --- | --- |
-| tokens | 205 | 198 | 7 |
-| **offsets** | **408** | **136** | **272** |
-| lengths beyond the token | 41 | 18 | 23 |
-| **literals** | **700** | **603** | **97** |
-| header | 0 | 11 | -11 |
-| total | 1355 | 966 | 389 |
-
-> [!NOTE]
-> **The offsets are two thirds of the gain.** `lz4` spends 2 bytes on every offset. `seqlz` spends 0
-> bits on a repeated offset, 5 or 9 bits on an 8-byte aligned one, and 4 or 8 bits on a short one.
-
-Memory pages are full of arrays of structs and pointers, and that shows in the offsets:
-
-![What the format is built for](plots/seqlz-distributions.svg)
-
-* **18% to 25%** of the matches repeat the offset of the match before: 0 bits.
-* **20% to 41%** are multiples of 8, 8-byte aligned data: 5 or 9 bits instead of 8 or 12.
-* Of the rest, many are short: below 16 in 4 bits, below 256 in 8.
-
-**The literals are the second part.** After the matcher, the literals have no structure of more than
-one byte left, but single bytes are far from uniform: zero bytes, ASCII, small integers. 50% to 69%
-of the pages get their literals coded, and over all pages the literals get 14% to 17% smaller.
-
-**The tokens cost about the same as `lz4`'s token byte**, 198 against 205 bytes per page, but they
-also carry the offset class, and lengths beyond the token are rare: 53% to 68% of the matches are 4
-to 8 bytes, and 56% to 63% of the literal runs are 0 or 1 byte long.
+E.g. the 9 bytes `02 00 61 62 47 96 7b fb 19` are a page of `ab` 2048 times. `02 00` is the number of
+literals, 2, with the top bit clear; `61 62` are the literals `a` and `b`. The 40 bits after them are
+one sequence and the end: the code of token 1010 (`ll` 2, `ml − 4` 31, class 1), 4 offset bits for
+offset 2, a length value that makes `ml` 4094, the rest of the page, and the code of token 0, the last
+sequence with 0 literals. [FORMAT.md](../FORMAT.md#example) takes it apart bit by bit.
 
 <details>
-<summary>Why the tables are fixed, and why literals are coded only when they save 1/16</summary>
+<summary>Why the tables are fixed, and why there are no tables per device</summary>
 
-**Static tables.** A page of 4 KiB has little room for its own tables: the 256 code lengths of a
-literal table take about 64 bytes, coded. A literal table of its own, where that saves 16 bytes,
-made writes 13% and 15% slower for 0.3% and 4.6% less memory; with one of 4 token tables as well,
-43% slower for 2.6% and 6.6%. The fixed tables are trained on other pages than the ones they are
-measured on: on resident pages of running programs, measured on the zram dumps.
-
-**The 1/16 rule.** zsmalloc stores in size classes at least 16 bytes apart, so saving a few bytes
-mostly saves nothing. Coding the literals whenever they save anything gave less than 0.1 points of
-memory more, for decoding time on every such page.
+A literal table of its own for each page, where that saves 16 bytes, made writes 13% and 15% slower
+for 0.3 and 4.6 points less; with one of 4 token tables as well, 43% slower for 2.6 and 6.6 points.
+zram can pass a dictionary to the codec, a block of bytes set for each zram device, and tables
+trained on a phone's own pages could have come that way. They saved at most 1% on another dump of the same phone, so there are none: one
+set of tables for all, trained on other pages than the ones the numbers here are measured on.
 
 </details>
 
@@ -437,79 +543,94 @@ memory more, for decoding time on every such page.
 
 ```mermaid
 flowchart LR
-    P["page, 4096 bytes"] --> M["matcher:<br/>last offset and<br/>hash of 5 bytes"]
+    P["page, 4096 bytes"] --> M["matcher:<br/>finds repeats"]
     M -->|"each sequence<br/>right away"| E["encoder:<br/>token, offset,<br/>length values"]
-    M -->|"literal bytes"| L["literals,<br/>raw"]
+    M -->|"literal bytes"| L["literals,<br/>as they are"]
     E --> B["bitstream"]
     L --> Q{"best of 8 tables<br/>saves 1/16?"}
     Q -->|yes| C["8 coded<br/>literal streams"]
-    Q -->|no| R["raw literals"]
+    Q -->|no| R["literals<br/>as they are"]
     B --> O["compressed page"]
     C --> O
     R --> O
 ```
 
-The matcher, [`match_page()`](../explore/page_lz.h), is greedy like `lz4`'s fast mode: it takes the
-first match it finds.
+The matcher, [`match_page()`](../explore/page_lz.h), is **greedy**: it takes the first match it
+finds, without checking whether one that starts a byte later would be longer.
 
-1. At every position it checks two candidates: the offset of the last match, and the last position
-   where the same 5 bytes were seen, from a hash table of 4096 positions, 8 KiB, cleared for each
-   page. Both are read before either is compared, so that one branch decides, not three.
-2. On a match it extends it backwards into the literals and forwards, the first 16 bytes without a
-   branch, and hands the sequence to the encoder right away. Matcher and encoder are one loop.
-3. The encoder writes the literals to the front of the output and the sequences' bits behind the
-   room of a page, with a 64-bit accumulator that is flushed once per sequence.
-4. At the end, the literal coder finds the table with the fewest bits for the page's literals, one
-   addition per literal for all 8 tables. If it saves 1/16, the 8 streams are written, four at a
-   time, each with its bits in a register. See [the
+1. At every position it checks two candidates: the repeat offset, and the last position whose next
+   5 bytes had the same hash, from a table of 4096 positions, 8 KiB, cleared for each page. The
+   table can hold a position with other bytes, see [below](#the-table-of-positions-is-a-cache-not-a-map).
+2. On a match it extends it backwards, because the bytes just before the found position may match
+   too, and forwards, and hands the sequence to the encoder right away. Matcher and encoder are one
+   loop.
+3. The encoder's output buffer is zram's and two pages long. The literals go to its start, after the header;
+   the sequences' bits are written behind room for a page of literals, and moved down behind the
+   literals at the end. The bits are collected in a 64-bit variable and written to memory once per
+   sequence, twice when it has an `ll` value.
+4. At the end it picks the literal table and writes the 8 streams if they save 1/16, see [the
    literals](#the-literals-one-table-per-page-in-8-streams).
 
-### The hash table is a cache, not a map
+Two pages are always enough: a sequence takes at most 28 bits for its token and offset, an escaped
+token and a 12-bit offset, and covers at least 4 bytes of the page, so the bits of a page never take
+more than about 3600 bytes. Behind the header, a page of literals and 16 bytes of room for the
+decoder's 16-byte copies, there are 4078.
 
-The table has 4096 slots of 2 bytes, 8 KiB, and each slot holds one position in the page. At every
-position the matcher reads 8 bytes and hashes the lowest 5 of them into a slot number of 12 bits,
-with a multiplication and a shift, the hash of `zstd`: `v << 24` keeps the 5 bytes, the
-multiplication by an odd constant mixes them, and the top 12 bits of the product, which depend on
-all 40 bits of the input, are the slot. A change in any of the 5 bytes moves the slot, e.g. `10 00
-56 34 12` goes to slot 1533 and `20 00 56 34 12` to 1305.
+### The table of positions is a cache, not a map
+
+The table has 4096 slots of 2 bytes, and each slot holds one position in the page. At every position
+the matcher computes a **hash** of the next 5 bytes: a number from 0 to 4095 that depends on all 5
+bytes, the slot to look in. E.g. `10 00 56 34 12` goes to slot 1533 and `20 00 56 34 12` to 1305.
 
 * **Looking up** reads the one slot. The position in it is only a candidate: the matcher compares 4
   bytes there with the 4 bytes at the current position, and only if they are equal it is a match.
+  4 bytes are enough, because that is the shortest match; the match is then extended.
 * **Inserting** writes the current position into the slot and overwrites what was there. There is no
-  probing, no second slot and no list of older positions.
+  second slot and no list of older positions.
 
-Two different byte strings with the same hash overwrite each other, and the older one is lost. That
-costs a match now and then, never a wrong result, because every candidate is compared first. It
-keeps the matcher at one load and one store per position, without a loop. Positions inside a match
-are not inserted, only the one 2 bytes before its end, and the table is cleared for each page, so
-all its positions are in the current page.
+Two different byte strings with the same hash, a **collision**, overwrite each other, and the older
+one is lost. That costs a match now and then, never a wrong result, because every candidate is
+compared first. It keeps the matcher at one memory read and one write per position.
 
-Keeping more was measured, and each way costs about as much time as it saves memory:
+<details>
+<summary>The hash, and what keeping more positions would give</summary>
 
-| variant | memory, first / second dump | compress cycles per page |
+The matcher reads 8 bytes at a position and hashes the lowest 5 with a multiplication and a shift,
+the hash of `zstd`: `v << 24` keeps the 5 bytes, the multiplication by an odd constant mixes them,
+and the top 12 bits of the product, which depend on all 40 bits, are the slot. Positions inside a
+match are not inserted, only the one 2 bytes before its end, which is where the next match often
+starts; the table is cleared for each page, so all its positions are in the current page. Both
+candidates are read before either is compared, so that one branch decides, not three.
+
+Keeping more was measured, and each way costs about as much time as it saves bytes:
+
+| variant | stored size, first / second dump | compress cycles per page |
 | --- | --- | --- |
-| today | 24.6% / 31.8% | about 22 500 |
+| the matcher kept, as measured then | 24.6% / 31.8% | about 22 500 |
 | twice the slots, 16 KiB, more work memory than `lz4` | 24.4% / 31.6% | 1.2% more with an older matcher |
-| half the slots, 4 KiB | 0.2% more bytes | the same with an older matcher |
+| half the slots, 4 KiB | 0.2 points more | the same with an older matcher |
 | 1 older position per slot, the longer match wins | 24.4% / 31.5% | 26 400 |
 | 3 older positions per slot | 24.2% / 31.4% | 28 400 |
 
-These are from before the matcher lost its step, the differences between the rows are what counts.
+These are from an older version of the matcher, and are sizes as written, before zsmalloc rounds
+them up, so they are lower than the 25.4% of the result; the differences between the rows are what
+counts. So collisions are not what the matcher misses. It misses older places with the same bytes,
+which only a search through more positions finds.
 
-So collisions are not what the matcher misses. It misses older places with the same bytes, which
-only a search through more positions finds. The hash covers 5 bytes and not 4 because a table on 4
-bytes finds many more matches of 4 bytes, which with coded literals cost about as much as their 4
-literals; those from the last offset are still found without the table.
+The hash covers 5 bytes and not 4 for speed. A table on 4 bytes finds many more matches of 4 bytes,
+and checking them costs time, while with coded literals such a match saves little: it costs about as
+many bits as its 4 bytes as literals. 5 bytes cost 0.6 points and save 5% of the compress cycles, see
+[the choices](#the-choices-with-their-numbers). Matches of 4 bytes at the repeat offset are still
+found without the table.
 
-zram hands the codec a buffer of two pages, and that is always enough: the most bits per page byte
-are sequences of 4-byte matches without literals, 23 bits each, 2948 bytes for a page.
+</details>
 
 ## The decoder: one table lookup per sequence
 
 ```mermaid
 flowchart LR
     S["compressed page"] --> H{"coded<br/>literals?"}
-    H -->|yes| D["decode 8 streams<br/>side by side<br/>into scratch"]
+    H -->|yes| D["decode 8 streams<br/>side by side<br/>into work memory"]
     H -->|no| T
     D --> T["per sequence:<br/>11 bits into the<br/>token table"]
     T --> F["offset bits,<br/>without a branch"]
@@ -518,90 +639,125 @@ flowchart LR
     K --> O["page, 4096 bytes"]
 ```
 
-Per sequence the decoder:
+The decoder keeps up to 64 bits of the bitstream in a **register**, a variable inside the CPU
+itself, and takes codes off it. Per sequence
+it:
 
-1. refills the bit reader if fewer than 23 bits are left, the most a token and an offset need;
-2. looks up the next 11 bits in the token table: the entry has `ll`, `ml`, the bits of the whole
-   sequence, the two shifts that bring the offset's raw bits into place, and whether a length value
+1. loads the next bytes into the register if fewer than 23 bits are left: enough for a token with a
+   code of its own, 11 bits, and a 12-bit offset. An escaped token, and a length value, load more
+   before they read;
+2. looks up the next 11 bits in the token table, like the 3-bit table in
+   [Idea 2](#idea-2-frequent-things-get-short-codes). The entry has `ll`, `ml`, how many bits the
+   sequence takes, how to cut the offset out of the bits after the token, and whether a length value
    follows. Unpacking the offset class at run time instead took 18 instructions, which matters on an
-   in-order core such as the Cortex-A55;
-3. takes the offset's raw bits right after the token, or the last offset for class 0, without a
-   branch;
-4. copies 16 literal bytes and 16 to 40 match bytes without a loop, if the lengths fit into the
-   token and there are 64 bytes of room; otherwise it reads the length values and copies with loops.
+   in-order core;
+3. takes the offset bits right after the token, or the repeat offset for class 0, without a branch;
+4. copies the literals and the match. Most sequences are short, so it copies a fixed 16 bytes of
+   literals and 16 to 40 of the match without a loop, if both lengths fit into the token and there is
+   room in the page, and then moves on by the real lengths: with `ll` = 3 it copies 16 bytes and moves
+   3 on, and the next sequence overwrites the other 13. Otherwise it reads the length values and
+   copies with loops.
+
+A match can overlap the bytes it writes. With offset 1 and length 6 after an `a`, each byte it copies
+is the one it just wrote, and the result is `aaaaaa`: that is how a run of zeros compresses. So the
+match is copied front to back, never with a block copy that reads all bytes first.
 
 <details>
-<summary>Coded literals, and matches that overlap themselves</summary>
+<summary>Overlapping matches fast, and checking the input</summary>
 
-Coded literals are decoded first, into a scratch of a page, by 8 independent chains: per literal a
-table lookup of 10 bits, a shift and a store, see [the
-literals](#the-literals-one-table-per-page-in-8-streams). The sequences then take them from there.
+For an offset below 8 the decoder builds the first 8 bytes of the match in a register: with offset 3
+after `abc`, the register gets `abcabcab`. Then it stores the register again and again, each time 6
+bytes further, the largest multiple of the offset up to 8, so that no step reads what the step before
+just wrote. A long match with a short offset gets a loop of such stores.
 
-A match with an offset below 8 overlaps itself: its first bytes are also its source. For those the
-decoder builds the first 8 bytes in a register and stores them in steps of the largest multiple of
-the offset up to 8, so that no load waits for the store before it.
+Every length and offset is checked against the room in the page and the literals left before it is
+used, so a damaged page is rejected and never makes the decoder read or write outside its buffers.
+A literal stream whose literals need more bits than its size makes the page invalid: the decoder reads
+8 bytes of a stream at a time and may read into the next one, so it checks at the end that each stream
+stayed within its bytes. The fuzz tests in [`fuzz/`](../fuzz) feed the decoder billions of random and
+damaged pages to keep it that way.
 
 </details>
 
 ## Why it is nearly as fast as lz4
 
-`seqlz` decodes with 2.3 times the instructions of `lz4`, 28 768 against 12 527 per page, but at 3.4
-instructions per cycle: 8507 cycles against 5238 with the page in the cache. In the kernel the reads
-are closer, 2.99 against 2.53 µs, because much of a page fault is waiting for memory, whatever the
-codec.
+`seqlz` decodes with 2.3 times the instructions of `lz4`, 28 768 against 12 527 per page. But the
+CPU runs 3.4 of its instructions per cycle, against 2.4 for `lz4`, because more of `seqlz`'s work is
+independent: 8507 cycles against 5238, with the page in the cache. In the kernel the reads are closer
+still, 2.99 against 2.53 µs, because the system call and getting the cold page from memory cost the
+same for every codec.
 
 | what | why it matters |
 | --- | --- |
 | **one table lookup per sequence** | the offset class is in the token, not a second symbol; the chain from one sequence to the next is lookup, shift, lookup |
-| **static tables, small enough for L1** | token table 2048 entries of 4 bytes, the page's literal table 1024 of 2 bytes, two length tables 256 of 4 bytes; nothing is built from the page, where `zstd` builds its literal table for each page with coded literals |
+| **fixed tables, small enough for L1** | the token table has 2048 entries of 4 bytes, the page's literal table 1024 of 2 bytes, the two length tables 256 of 4 bytes, 12 KiB together; nothing is built from the page, where `zstd` builds its literal table for each page with coded literals |
 | **only complete Huffman codes** | every bit pattern starts a code, so the decoder never checks for one that does not |
 | **the common sequence has no loop and no length value** | literal runs up to 14 bytes and matches up to 34 bytes are the token alone, and fixed copies of 16 to 40 bytes cover them |
 | **literals in 8 streams** | 8 chains of work side by side instead of one |
-| **the compressed data is prefetched** | the zram backend asks for it before decoding starts; in the same kernel VM prefetching made `lz4`'s p99 read latency 30% lower |
+| **the compressed data is fetched early** | zram asks the CPU to load it before decoding starts (a prefetch), so it is on its way while the decoder sets up; this helps every codec, it made `lz4`'s p99 read 30% faster |
 
 Writing takes 1.25 times `lz4`'s time: the matcher alone costs about as much as all of `lz4`, and
 coding sequences and literals comes on top. `zstd` 3 needs 2.4 times `seqlz`'s cycles to compress
 (54 680 against 22 912 per page) and 2 times to decode (16 973 against 8507).
 
-## Why zstd still needs less memory
+## Why zstd still stores pages smaller
 
-On the second dump `zstd` 3 needs 10% less memory than `seqlz-fast-lit`, on the first 3%. Three
+On the second dump `zstd` 3 stores pages 10% smaller than `seqlz-fast-lit`, on the first 3%. Three
 things make the difference, each measured:
 
-* **Better matches.** `zstd` 3 searches more. `lz4hc`'s matches coded by `seqlz` need 3% to 7% fewer
-  bytes than `seqlz`'s greedy matcher, but a matcher that searches that much takes more time than
-  zram's writes can spend.
-* **Its own literal table per page.** Coding the literals is worth 2.3 and 4.7 points of memory to
-  `zstd` 3 on the two dumps. A page's own table instead of the best of 8 fixed ones would save
-  `seqlz` 0.3% to 4.6% more, for 13% to 15% slower writes.
+* **Better matches.** `zstd` 3 searches more. The matches of `lz4hc`, `lz4`'s slow and thorough
+  compressor, coded by `seqlz` take 3% and 7% fewer bytes than `seqlz`'s greedy matcher, but a matcher
+  that searches that much takes more time than zram's writes can spend.
+* **Its own literal table per page.** Coding the literals is worth 2.3 and 4.7 points to `zstd` 3.
+  A page's own table instead of the best of 8 fixed ones would save `seqlz` 0.3 and 4.6 points more,
+  for 13% to 15% slower writes.
 * **Adaptive sequence coding.** `zstd` codes literal length, match length and offset with separate
-  tables that adapt. `seqlz`'s one static token table is what keeps its decoder fast.
+  tables, which it can pick or build for each chunk of data; decoding them takes three lookups per
+  sequence. `seqlz`'s one fixed token table is what keeps its decoder fast.
 
 > [!NOTE]
-> Where the ratio of `zstd` comes from in the first place, measured on the whole first dump:
-> `lz4hc`'s best matches in `lz4`'s format need 30.7%, the same matches with entropy coded sequences
-> 25.8%, and with coded literals as well 23.6%. **Coding the sequences is the largest step**, and
-> that is what `seqlz` is built on. See
+> Where the ratio of `zstd` comes from in the first place, measured on the whole first dump: the best
+> matches of `lz4hc` in `lz4`'s format take 30.7% of the page, the same matches with Huffman coded
+> sequences 25.8%, and with coded literals as well 23.6%. **Coding the sequences is the largest step**,
+> and that is what `seqlz` is built on. See
 > [explored-designs.md](explored-designs.md#where-the-ratio-of-zstd-comes-from).
+
+## What is not known yet
+
+> [!WARNING]
+> * **One desktop, one phone.** The numbers in this document are from two zram dumps of one desktop;
+>   the tables are trained on other pages of that desktop, the ones programs had in RAM, and on one
+>   zram dump of a phone.
+> * **arm64 on one phone.** The times here are from x86-64. On the small core of a Mi 9T phone, a
+>   Cortex-A55, in the phone's own kernel, a cold read takes 54 µs for `seqlz-fast` and 56 µs for
+>   `seqlz-fast-lit` at the median, against 45 µs for `lz4`: 20% and 25% more
+>   ([explored-designs.md](explored-designs.md#in-the-phones-own-kernel-cold-reads-on-the-little-core-cost-seqlz-fast-9-µs-more-than-lz4)).
+>   In a test that switches between 25 apps, with the same RAM given to zram, launches were not
+>   slower, and because `seqlz` stores pages smaller every app stayed in memory, where `lz4` lost some
+>   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
+> * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 784 bytes of
+>   work memory per CPU, twice `lz4`'s, which breaks the project's limit of `lz4`'s work memory. A way
+>   around it is built and measured, but not kept, see [explored-designs.md](explored-designs.md).
+> * **Writes at p99** take 1.25 and 1.23 times `lz4`'s time.
 
 ## The choices, with their numbers
 
 Each choice was measured against the alternative in the second column; the numbers are from
-[explored-designs.md](explored-designs.md), 4 KiB pages. Where a row has two numbers, they are the
-first and the second dump. A point of memory is 1% of the uncompressed page, 41 bytes.
+[explored-designs.md](explored-designs.md), 4 KiB pages, two numbers for the first and the second
+dump. Cycle counts are from the time of each change, so rows are not comparable with each other.
 
-<details open>
+<details>
 <summary><b>The format</b></summary>
 
 | choice | instead of | gain | price |
 | --- | --- | --- | --- |
-| `ll`, `ml` and the offset class in one token | a symbol each | 22% fewer decode cycles, and less memory | |
-| the offset class in the token, raw offset bits after it | the offset's size Huffman coded on its own | 7% fewer decode cycles, 8168 instead of 8758 per page: one table lookup per sequence | 0.4 points of memory |
-| token codes of at most 11 bits, a table of 2048 entries | 12 bits, 4096 entries | the slowest 1% of cold reads take 4350 instead of 5070 ns: the smaller table stays in the L1 cache, measured with entries of 2 bytes | none measured in memory |
+| `ll`, `ml` and the offset class in one token | a symbol each | 22% fewer decode cycles, and smaller pages | |
+| the offset class in the token, plain offset bits after it | the offset's size Huffman coded on its own | 7% fewer decode cycles, 8168 instead of 8758 per page: one table lookup per sequence | 0.4 points |
+| token codes of at most 11 bits, a table of 2048 entries | 12 bits, 4096 entries | the slowest 1% of cold reads take 4350 instead of 5070 ns: the smaller table stays in L1, measured with entries of 2 bytes | none measured in size |
 | rare tokens escaped | a code for every token | needed: 11 bits have room for 2048 codes, there are 3072 tokens | 16 bits for a rare token |
 | match lengths up to 34 in the token | up to 18 | a length value after 8.5% of the matches instead of 18.7%, and fewer mispredicted branches: 9180 instead of 9400 decode cycles | |
-| one repeat offset | three, as in `zstd` | 17% fewer decode cycles | 0.2 points of memory: the other two were 11% of the matches |
-| two classes for offsets that are multiples of 8 | only plain offsets | 24 and 2 bytes less memory per page in the kernel | 0.2 µs more time per page written |
+| one repeat offset | three, as in `zstd` | 17% fewer decode cycles | 0.2 points: the other two were 11% of the matches |
+| two classes for offsets that are multiples of 8 | only plain offsets | 24 and 2 bytes less per page in the kernel | 0.2 µs more time per page written |
 | only complete Huffman codes | checks for invalid codes | 6% fewer instructions in the decoder | |
 
 </details>
@@ -611,10 +767,10 @@ first and the second dump. A point of memory is 1% of the uncompressed page, 41 
 
 | choice | instead of | gain | price |
 | --- | --- | --- | --- |
-| static tables | a table built for each page | 13% and 15% faster writes | 0.3% and 4.6% more memory |
+| fixed tables | a table built for each page | 13% and 15% faster writes | 0.3 and 4.6 points |
 | one of 8 literal tables per page | one table for all pages | pages 10.2% and 12.5% smaller than without coded literals, where one table gives 7.3% and 6.3% | 8 tables of 2 KiB to decode with |
 | literals in 8 streams | 4 streams | 4% fewer decode cycles, 8676 instead of 9070 per page | 8 more bytes of header: 0.1 to 0.2 points |
-| literals coded only if that saves 1/16 of them | coded whenever it saves anything | no decoding of literals on pages where it saves only a few bytes | less than 0.1 points of memory |
+| literals coded only if that saves 1/16 of them | coded whenever it saves anything | no decoding of literals on pages where it saves only a few bytes | less than 0.1 points |
 
 </details>
 
@@ -623,10 +779,10 @@ first and the second dump. A point of memory is 1% of the uncompressed page, 41 
 
 | choice | instead of | gain | price |
 | --- | --- | --- | --- |
-| a hash of 5 bytes | 4 bytes | 5% fewer compress cycles, and the slowest 1% of writes 10% faster in the kernel | 0.6 points of memory |
-| the last offset checked at every position | only the hash table | 0.5 points less memory | |
-| the hash table cleared for each page | checking each entry's age | compressing 7% faster | |
-| every position tried | `lz4`'s growing step after long runs without a match | writes 1% to 3% faster in the kernel | pages zram stores uncompressed take 2.3 µs longer |
+| a hash of 5 bytes | 4 bytes | 5% fewer compress cycles, and the slowest 1% of writes 10% faster in the kernel | 0.6 points |
+| the repeat offset checked at every position | only the table of positions | 0.5 points smaller | |
+| the table of positions cleared for each page | checking each entry's age | compressing 7% faster | |
+| every position tried | `lz4`'s way of skipping ahead faster and faster when it finds no match | writes 1% to 3% faster in the kernel | pages zram stores uncompressed take 2.3 µs longer |
 
 </details>
 
@@ -635,25 +791,94 @@ first and the second dump. A point of memory is 1% of the uncompressed page, 41 
 
 A token table chosen by the offset class before it (3 to 12 bytes per page for three times the
 tables), the literals coded inside the matcher's loop (more cycles than the pass after it), decoding
-the literals into the output page to save the scratch (slower cold reads), `lz4`'s format from a
-better compressor, the word model of WKdm, BΔI, a byte shuffle, FSST and Tunstall codes for the
-literals, and recompressing idle pages. Why each of them failed is in
-[explored-designs.md](explored-designs.md).
+the literals into the output page to save the work memory (slower cold reads), `lz4`'s format from a
+better compressor, other ways to compress memory pages and short strings (the word model of WKdm,
+BΔI, a byte shuffle, FSST and Tunstall codes for the literals), and recompressing idle pages. Why each
+of them failed is in [explored-designs.md](explored-designs.md).
 
 </details>
 
-## What is not known yet
+## Glossary
 
-> [!WARNING]
-> * **One machine.** All of this is measured on one desktop: two zram dumps of the same machine, and
->   tables trained on its resident pages.
-> * **No arm64 yet.** Every latency is from x86-64, and phones are the users of zram. The decoder
->   runs 3.4 instructions per cycle on a Ryzen; on a small core that runs one or two, its 2.3 times
->   `lz4`'s instructions probably count for more.
-> * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 816 bytes of
->   work memory per CPU, twice `lz4`'s, which breaks one of the project's own limits. A fix is built
->   and measured, but not kept.
-> * **Writes at p99** take 1.2 to 1.25 times `lz4`'s time.
+Many of these words sound alike and are not. They belong to levels: what is on the page, how a
+sequence becomes numbers, how numbers become bits, and the compressed page.
 
-Nevertheless, on the pages this machine actually swapped, `seqlz` sits between `lzo-rle` and `zstd`
-on both axes: much less memory than `lzo-rle`, much less time than `zstd`.
+**What is on the page**
+
+| word | meaning |
+| --- | --- |
+| **zram** | a swap device in RAM: the pages the kernel swaps out are stored there compressed |
+| **page** | 4096 bytes of memory, the unit the kernel swaps out and zram compresses |
+| **literal** | a byte stored as it is, because the matcher found no earlier copy of it |
+| **match** | "copy `ml` bytes from `offset` bytes back": bytes that appeared earlier in the page |
+| **offset** | how many bytes back the copy of a match starts |
+| **repeat offset** | the offset of the match before, used again; class 0, it costs no bits |
+| **`ll`** | literal length: how many literals a sequence has, 0 or more |
+| **`ml`** | match length: how many bytes the match copies, 4 or more |
+| **sequence** | `ll` literals followed by one match; the compressor turns a page into a list of sequences, and the last one has literals only |
+
+**How a sequence becomes numbers**
+
+| word | meaning |
+| --- | --- |
+| **token** | one number for `ll`, `ml − 4` and the offset class of a sequence together, 3072 of them; it is what the Huffman code codes |
+| **offset class** | one of 6 ways to store the offset, e.g. class 0, the repeat offset, in 0 bits |
+| **offset bits** | the plain bits after the token that hold the offset, as many as its class says |
+| **length value** | the rest of `ll` or `ml` when it is too large for the token: a symbol of its own table and some plain bits |
+| **escape** | the code shared by all tokens that have none of their own, followed by the token in 12 plain bits |
+
+**How numbers become bits**
+
+| word | meaning |
+| --- | --- |
+| **symbol** | whatever is coded. In the token table a symbol is a token, in a literal table a byte value, in a length table a length or a range of lengths |
+| **code** | the bits written for one symbol, e.g. `11100010011` for token 1010. Frequent symbols get short codes, rare ones long codes |
+| **code length** | how many bits a symbol's code has; a table stores only these, the codes follow from them by a fixed rule |
+| **prefix code** | a set of codes where no code is the start of another, so a decoder reading bit by bit knows where a code ends: `0`, `10`, `11` is one, `0`, `01` is not |
+| **Huffman code** | the best prefix code for how often each symbol occurs; seqlz's tables are Huffman codes |
+| **complete** | a prefix code whose codes use up every bit pattern, so a lookup table has no empty entry |
+| **table** | the code lengths of all symbols of one kind. seqlz has 11: tokens, literal length values, match length values, and 8 literal tables, all fixed and part of the format |
+| **literal table** | one of the 8 tables for literals; a page with coded literals uses one of them for all its literals. It has nothing to do with the 8 streams |
+| **bitstream** | codes and plain bits written one after the other, not aligned to bytes |
+
+**The compressed page**
+
+| word | meaning |
+| --- | --- |
+| **header** | the first bytes: the number of literals, and with coded literals the literal table and the 8 stream sizes |
+| **coded literals** | each literal written as its code from one literal table, which takes fewer bits than a byte |
+| **stream** | coded literals are split into 8 streams, literal `k` into stream `k mod 8`, so that the decoder can work on 8 at a time |
+
+**The codecs, the machine, and the measurements**
+
+| word | meaning |
+| --- | --- |
+| **codec** | a compressor and its decoder, such as `lz4` or `seqlz` |
+| **`seqlz-fast`, `seqlz-fast-lit`** | `seqlz` without and with coded literals; one format |
+| **`lz4`, `lzo-rle`, `zstd`, `lz4hc`** | other compressors: the fastest common one, zram's default, the one that compresses best, and `lz4`'s slow and thorough variant |
+| **dump** | a copy of all pages that were in zram at one moment |
+| **stored size** | the bytes zram spends on one compressed page, rounded up to zsmalloc's size class |
+| **point** | 1% of a page, 41 bytes |
+| **work memory** | the codec's own buffers, once per CPU: for `seqlz-fast-lit` 12 304 bytes, the matcher's table of 8192 and a buffer of 4112 for decoded literals |
+| **zsmalloc** | the allocator zram stores compressed pages in |
+| **size class** | one of zsmalloc's fixed slot sizes; a compressed page takes the smallest slot it fits in |
+| **matcher** | the first half of the compressor: it walks through the page and looks for matches |
+| **greedy** | a matcher that takes a match as soon as it finds one |
+| **hash** | a number computed from some bytes, here from 5 bytes to a slot from 0 to 4095 |
+| **collision** | two different byte strings with the same hash |
+| **encoder** | the second half of the compressor: it writes the sequences and literals in the format |
+| **decoder** | turns a compressed page back into its 4096 bytes |
+| **cache, L1** | fast memory in the CPU; L1 is the smallest and fastest |
+| **cold** | the data is not in any CPU cache and has to come from RAM |
+| **branch, mispredicted** | an `if` or the end of a loop; the CPU guesses its outcome, and a wrong guess costs about 15 to 20 cycles |
+| **chain** | steps that each wait for the result of the one before, so the CPU cannot run them side by side |
+| **register** | a variable inside the CPU itself, 64 bits on x86-64 and arm64 |
+| **in-order core** | a CPU core that runs instructions strictly in program order, like a phone's small Cortex-A55 |
+| **prefetch** | asking the CPU to load data before it is needed |
+| **cycle** | one tick of the CPU's clock, 0.22 ns at 4.5 GHz |
+| **µs** | a microsecond, a millionth of a second |
+| **mean, median, p50** | the average over all pages; the time half of them stay below |
+| **p99** | the time 99% of the pages stay below, the slowest 1% take longer |
+| **time per page written** | write time + 0.34 × read time, see [What makes zram different](#what-makes-zram-different) |
+| **exchange rate** | how many bytes of stored size one µs per page is worth to you |
+| **score** | PLAN.md's measure of a codec: the stored size and the time per page written, added up at an exchange rate |

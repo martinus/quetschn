@@ -3,6 +3,7 @@
 // The kernel's lz4, lzo and zstd, built in userspace from QUETSCHN_KERNEL_TREE. Only compiled when that is set.
 
 #include "kernel_codecs/zram_codec.h"
+#include "seqlz.h"
 
 #include <doctest/doctest.h>
 
@@ -358,6 +359,19 @@ TEST_CASE("kernel codecs: every page is compressed on its own, also with a dicti
         REQUIRE(d.decompress(d.compress(b), out) == 0);
         REQUIRE(d.decompress(first, out) == 0);
         CHECK(out == a);
+    }
+}
+
+TEST_CASE("kernel codecs: seqlz takes no dictionary, its tables are part of the format") {
+    // A dictionary of exactly the size of struct seqlz_lengths once replaced seqlz's code lengths. The
+    // tables are fixed now (FORMAT.md), so such a dictionary is ignored like any other: one of zeros,
+    // no code at all, would have failed the setup.
+    auto const dict = page(sizeof(seqlz_lengths));
+    auto const p = text_page();
+    for (auto const* codec : {&quetschn_codec_seqlz_fast, &quetschn_codec_seqlz_fast_lit}) {
+        auto const name = std::string(codec->name);
+        CAPTURE(name);
+        CHECK(device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p) == device(*codec).compress(p));
     }
 }
 

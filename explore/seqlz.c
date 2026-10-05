@@ -245,13 +245,15 @@ unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_se
 /*
  * One encoder for both entry points. Literals go to the front of dst, right after the header; the
  * bitstream goes behind the room of a page of literals and is moved in behind the literals at the end.
- * dst has two pages, and that is always enough: the most bits per page byte are a sequence of 4 bytes
- * without literals, an 11-bit token and a 12-bit offset, so at most 1024 * 23 + 31 bits, 2948 bytes;
- * behind 4 + 4096 + 16 bytes of header, literals and room for their 16-byte copies there are 4076. The
- * code lengths are capped at 11 and 9 bits, so this holds for any tables.
+ * dst has two pages, and that is always enough: a sequence takes at most 31 bits for its token and
+ * offset, an escaped token of SEQLZ_MAX_ESCAPE_LEN + 12 bits and an offset of QUETSCHN_PAGE_BITS, and
+ * covers at least 4 bytes of the page, so at most SEQLZ_PAGE / 4 * 31 + 31 bits: 3972 bytes for 4 KiB
+ * pages, where behind 2 + 4096 + 16 bytes of header, literals and room for their 16-byte copies there
+ * are 4078; 15 876 against 16 366 for 16 KiB pages. The token codes are capped at 11 bits and the
+ * escape at SEQLZ_MAX_ESCAPE_LEN, so this holds for any tables the encoder takes.
  * The bit writer is a 64-bit accumulator, stored 8 bytes at a time and advanced by the whole bytes. It
- * holds at most 7 bits after a flush, so one flush per sequence is enough: 7 + 11 bits of token, 12 of
- * offset and 20 of a match length value are 50. Only a literal length value, another 20, needs its
+ * holds at most 7 bits after a flush, so one flush per sequence is enough: 7 bits, 31 of token and
+ * offset and 20 of a match length value are 58. Only a literal length value, another 20, needs its
  * own flush.
  */
 struct encoder {
@@ -660,8 +662,8 @@ static __attribute__((__noinline__, __cold__)) u64 lit_load_tail(const u8* ip, c
     return load_be64(b);
 }
 
-/* 8 bytes at ip, which may be those of the next stream or of the sequences: they are only used for the
- * symbols behind n_lit */
+/* 8 bytes at ip; past the stream's end they are the next stream's or the sequences', and a stream that
+ * uses them fails the check of its size */
 #define LIT_REFILL(ip, bits)                                                                          \
     do {                                                                                              \
         unsigned int used_ = (unsigned int)__builtin_ctzll(bits);                                     \
@@ -676,6 +678,16 @@ static __attribute__((__noinline__, __cold__)) u64 lit_load_tail(const u8* ip, c
                                                                               \
         (out) = (u8)(e_ >> 8);                                                \
         (bits) <<= e_ & 63U; /* the code length; the symbol is above bit 6 */ \
+    } while (0)
+
+/* the same, but the stream only moves on where mask is 63; where it is 0 the symbol is decoded and not
+ * taken */
+#define LIT_DECODE_MASKED(out, bits, mask)                      \
+    do {                                                        \
+        unsigned int e_ = lt[(bits) >> (64U - SEQLZ_LIT_BITS)]; \
+                                                                \
+        (out) = (u8)(e_ >> 8);                                  \
+        (bits) <<= e_ & (mask);                                 \
     } while (0)
 
 /* The coded literals of a page into out, see seqlz_encode(). Returns where the sequences'
@@ -705,7 +717,8 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     }
     if (SEQLZ_LIT_HEADER + total > src_len)
         return 0;
-    for (k = 0; k < n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {
+    /* full rounds only: the last, partial one below decodes no literal that does not exist */
+    for (k = 0; k + 8U * SEQLZ_LIT_ROUNDS <= n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {
         unsigned int j;
         const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3], *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
 
@@ -737,11 +750,57 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
         }
     }
     {
-        const long slack = (long)(SEQLZ_LIT_ROUNDS * SEQLZ_LIT_BITS);
+        /* The rest, fewer than 40 literals: steps of all 8 streams, then one more in which the streams
+         * at r and above, which have no literal left, decode one and do not move on, so that each stream
+         * ends right behind its own codes. What they decode lands behind the literals, in the 16 bytes the
+         * scratch has there. The same steps for every stream; a loop per stream ends after a different
+         * number of literals on every page. */
+        const unsigned int rest = n_lit - k, steps = rest >> 3, r = rest & 7U;
+        const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3], *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
+        unsigned int j;
+
+        LIT_REFILL(i0, b0);
+        LIT_REFILL(i1, b1);
+        LIT_REFILL(i2, b2);
+        LIT_REFILL(i3, b3);
+        LIT_REFILL(i4, b4);
+        LIT_REFILL(i5, b5);
+        LIT_REFILL(i6, b6);
+        LIT_REFILL(i7, b7);
+        for (j = 0; j < steps; j++) {
+            LIT_DECODE(out[k + 8 * j], b0);
+            LIT_DECODE(out[k + 8 * j + 1], b1);
+            LIT_DECODE(out[k + 8 * j + 2], b2);
+            LIT_DECODE(out[k + 8 * j + 3], b3);
+            LIT_DECODE(out[k + 8 * j + 4], b4);
+            LIT_DECODE(out[k + 8 * j + 5], b5);
+            LIT_DECODE(out[k + 8 * j + 6], b6);
+            LIT_DECODE(out[k + 8 * j + 7], b7);
+        }
+        k += 8 * steps;
+        LIT_DECODE_MASKED(out[k], b0, (0U - (0U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 1], b1, (0U - (1U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 2], b2, (0U - (2U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 3], b3, (0U - (3U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 4], b4, (0U - (4U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 5], b5, (0U - (5U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 6], b6, (0U - (6U < r)) & 63U);
+        LIT_DECODE_MASKED(out[k + 7], b7, (0U - (7U < r)) & 63U);
+        ip[0] = i0;
+        ip[1] = i1;
+        ip[2] = i2;
+        ip[3] = i3;
+        ip[4] = i4;
+        ip[5] = i5;
+        ip[6] = i6;
+        ip[7] = i7;
+    }
+    {
         u64 bb[8] = {b0, b1, b2, b3, b4, b5, b6, b7};
 
+        /* the codes of each stream's literals fit into its size */
         for (k = 0; k < 8U; k++)
-            if (8L * (ip[k] - start[k]) + __builtin_ctzll(bb[k]) > 8L * sz[k] + slack)
+            if (8L * (ip[k] - start[k]) + __builtin_ctzll(bb[k]) > 8L * sz[k])
                 return 0;
     }
     return q + total;
