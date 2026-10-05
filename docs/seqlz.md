@@ -743,9 +743,11 @@ things make the difference, each measured:
 >   the tables are trained on other pages of that desktop, the ones programs had in RAM, and on one
 >   zram dump of a phone.
 > * **arm64 on one phone.** The times here are from x86-64. On the small core of a Mi 9T phone, a
->   Cortex-A55, in the phone's own kernel, a cold read takes 54 µs for `seqlz-fast` and 56 µs for
->   `seqlz-fast-lit` at the median, against 45 µs for `lz4`: 20% and 25% more
->   ([explored-designs.md](explored-designs.md#in-the-phones-own-kernel-cold-reads-on-the-little-core-cost-seqlz-fast-9-µs-more-than-lz4)).
+>   Cortex-A55, in the phone's own kernel, on the pages of the first dump, a cold read takes 59 µs for
+>   `seqlz-fast` and 65 µs for `seqlz-fast-lit` at the median, against 52 µs for `lz4`: 14% and 26% more.
+>   On the big core it is 9.1 and 10.1 µs against 7.3. On the little core `seqlz-fast-lit` is the best
+>   choice only up to 15 bytes per µs, `seqlz-fast` up to 36
+>   ([explored-designs.md](explored-designs.md#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)).
 >   In a test that switches between 25 apps, with the same RAM given to zram, launches were not
 >   slower, and because `seqlz` stores pages smaller every app stayed in memory, where `lz4` lost some
 >   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).

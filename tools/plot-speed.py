@@ -41,10 +41,16 @@ def lighter(color, f=0.55):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--hot", required=True, help="the hot loop, TSV: codec, compress cycles, decode cycles, decode instructions")
+    ap.add_argument(
+        "--hot", required=True, help="the hot loop, TSV: codec, compress cycles, decode cycles, decode instructions"
+    )
     ap.add_argument("--hot-title", default="Hot loop, 23rd Sep", help="the hot loop panel's title")
-    ap.add_argument("--run", action="append", required=True, metavar="TITLE=LOG", help="two: a dump's title and its VM log")
-    ap.add_argument("--out", action="append", required=True, help="output file, .png or .svg, can be given more than once")
+    ap.add_argument(
+        "--run", action="append", required=True, metavar="TITLE=LOG", help="two: a dump's title and its VM log"
+    )
+    ap.add_argument(
+        "--out", action="append", required=True, help="output file, .png or .svg, can be given more than once"
+    )
     ap.add_argument("--clock", default="4.5 GHz", help="the fixed clock, for the footer")
     ap.add_argument("--source", default=None, help="what was measured, for the footer; default git describe")
     args = ap.parse_args()
@@ -75,7 +81,9 @@ def main():
         ax.barh(y + 0.18, c / 1000, height=0.34, color=color[n])
         ax.barh(y - 0.18, d / 1000, height=0.34, color=lighter(color[n]))
         ax.text(c / 1000 + 1, y + 0.18, f"{c / 1000:.1f}k compress", va="center", fontsize=8.5)
-        ax.text(d / 1000 + 1, y - 0.18, f"{d / 1000:.1f}k decode, {ins / 1000:.1f}k instructions", va="center", fontsize=8.5)
+        ax.text(
+            d / 1000 + 1, y - 0.18, f"{d / 1000:.1f}k decode, {ins / 1000:.1f}k instructions", va="center", fontsize=8.5
+        )
     ax.set_xlim(0, 80)
     ax.set_xlabel("thousand cycles per page, page in L3")
     ax.set_title(args.hot_title, loc="left", fontweight="bold")
@@ -93,7 +101,9 @@ def main():
             p99 = max(codecs[n][key]["p99"] for _, codecs in runs) / 1000
             ax.text(p99 + 0.03 * xmax, ys[n], f"{means[0]:.2f} / {means[1]:.2f}", va="center", fontsize=8.5)
         ax.set_xlim(0, xmax)
-        ax.set_xlabel(f"µs per page: filled the mean, open p99\nupper {runs[0][0]}, lower {runs[1][0]}; the numbers: means")
+        ax.set_xlabel(
+            f"µs per page: filled the mean, open p99\nupper {runs[0][0]}, lower {runs[1][0]}; the numbers: means"
+        )
         ax.set_title(title, loc="left", fontweight="bold")
 
     ax = axes[3]
@@ -115,8 +125,11 @@ def main():
         ax.set_axisbelow(True)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
-    fig.suptitle("seqlz-fast-lit against zram's codecs: close to lz4's time, close to zstd's memory", fontsize=13,
-                 fontweight="bold")
+    fig.suptitle(
+        "seqlz-fast-lit against zram's codecs: close to lz4's time, close to zstd's memory",
+        fontsize=13,
+        fontweight="bold",
+    )
     fig.text(
         0.01,
         0.01,

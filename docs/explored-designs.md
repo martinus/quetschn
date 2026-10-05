@@ -1007,6 +1007,31 @@ literals, whose literals the in-order core decodes slowly. Time per page written
 `tools/plot-speed.py` draws docs/seqlz.md's first chart from the VM logs and the hot loop, so that it can
 be drawn again.
 
+**In the phone's own kernel, on the same pages as the PC.** The harness on the PC gave writes that do
+not hold: `seqlz-fast-lit` 3.40 µs and `seqlz-fast` 4.21, also with the two apart in `--codecs` and
+without `zstd`, while each alone wrote in 3.17 and 2.67 µs and the kernel VM had the expected order. Not
+looked into further; the comparison of the PC and the phone is in the kernel on both. `seqlz` as a
+module for the Mi 9T's Linux 4.14 (`~/opt/mi9t-kernel/mkvar.sh`, which now also copies the tables'
+`.inc`), zramphone with the same 20 000 pages of the first desktop dump as the VM, devices taking turns
+per page, cold after reading 2 MiB of other data, clocks fixed, µs, p50 / p99, the mean last:
+
+| | `lz4` | `lzo` | `zstd` 3 | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- | --- |
+| memory, % of the pages | 36.0 | 33.1 | 24.6 | 27.5 | 25.2 |
+| big, write | 12.4 / 22.2 / 12.0 | 12.9 / 23.2 / 12.7 | 39.8 / 84.4 / 40.0 | 13.8 / 22.1 / 13.1 | 14.5 / 25.3 / 13.9 |
+| big, read cold | 7.3 / 9.5 / 7.2 | 8.3 / 14.1 / 8.4 | 26.4 / 39.1 / 25.2 | 9.1 / 12.1 / 8.9 | 10.1 / 16.0 / 10.1 |
+| little, write | 30.1 / 58.6 / 30.5 | 32.0 / 54.2 / 32.3 | 136.4 / 376.8 / 145.3 | 35.9 / 62.7 / 35.7 | 39.7 / 77.7 / 39.7 |
+| little, read cold | 51.6 / 73.0 / 51.6 | 49.3 / 75.9 / 49.7 | 126.0 / 168.6 / 119.3 | 58.9 / 82.6 / 58.5 | 65.2 / 90.7 / 65.3 |
+
+The order of the devices matters for writes: with `seqlz-fast-lit` right after `seqlz-fast`, which ran
+the same matcher on the same page just before, its write on the big core was 13.5 µs, the same as
+`seqlz-fast`'s; the table is from a second run with the two apart, `lz4 seqlz lzo seqlz-lit zstd`. On
+the score's hull `seqlz-fast-lit` is the best choice from 2.8 to 153 bytes per µs on the PC, from 0.8
+to 76 on the big core and from 0.2 to 15 on the little core, with `seqlz-fast` above it up to 36 and
+`lzo` above that. `tools/plot-devices.py` draws the three side by side, docs/plots/devices.svg:
+
+![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
