@@ -82,7 +82,8 @@ class Bits:
 
 
 class MsbBits:
-    """a literal stream: most significant bit first, on into the following bytes, 0 past the end"""
+    """a literal stream: most significant bit first; past its end the page's next bytes, then 0, which
+    the check of the stream's size rejects"""
 
     def __init__(self, data, start):
         self.data, self.pos = data, 8 * start
@@ -115,15 +116,12 @@ def decode(page, tables, page_bits):
         s = [page[3 + 2 * j] | page[4 + 2 * j] << 8 for j in range(8)]
         if 19 + sum(s) > len(page):
             raise Invalid
-        rounds = -(-n // 40)
         lits = [0] * n
         for j in range(8):
             r = MsbBits(page, 19 + sum(s[:j]))
-            for i in range(5 * rounds):
-                sym = r.symbol(lit_codes[page[2]])
-                if 8 * i + j < n:
-                    lits[8 * i + j] = sym
-            if r.pos - 8 * (19 + sum(s[:j])) > 8 * s[j] + 50:
+            for k in range(j, n, 8):
+                lits[k] = r.symbol(lit_codes[page[2]])
+            if r.pos - 8 * (19 + sum(s[:j])) > 8 * s[j]:
                 raise Invalid
         bits = Bits(page[19 + sum(s) :])
     else:

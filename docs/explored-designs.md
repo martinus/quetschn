@@ -808,6 +808,47 @@ swap was at 276 MiB then and `lmkd`'s log shows `swap_free_percentage` at 10% to
 runs ended at 298 to 404 MiB. So a few dozen MiB decide if `lmkd` kills a whole burst of apps, and
 5 runs are not enough to tell 6% of RAM apart in this test.
 
+## The format written down: one set of tables, and stream sizes that hold
+
+*FORMAT.md describes the format; writing it showed two things the code had decided, not the format.*
+
+**Tables per device are not worth it.** zram's dictionary parameter could carry other token and length
+tables, so the question was if a phone should get tables of its own. Tables trained on one zram dump
+of the Mi 9T, measured on the other one and on the first desktop dump, with the literal tables trained
+on the same pages and built in, zsmalloc cost in bytes per page of `seqlz-fast-lit`:
+
+| tables trained on | phone 10-03 | phone 10-04 | desktop zram0 |
+| --- | --- | --- | --- |
+| desktop resident pages, the tables until now | 714.0 | 896.1 | 993.1 |
+| phone 10-03 | 701.6, its own pages | 893.5 | 1001.9 |
+| phone 10-04 | 706.8 | 886.3, its own pages | 1003.5 |
+| for comparison: `lz4`, `zstd` | 1055.3, 688.9 | 1247.5, 857.8 | 1412.4, 964.9 |
+
+On the other dump of the same phone the phone's tables save 0.3% and 1.0%, on the desktop they cost
+0.9% and 1.0%; even on their own pages they save only 1.1% to 1.7%. For `seqlz-fast`, without coded
+literals, all of it is 0 to 0.4%. So the tables are now part of the format and the dictionary
+parameter is ignored, like `lzo` ignores it: one set for all, trained on the desktop's resident pages
+and the first phone dump together, 138 268 pages. Against the tables before, on pages they have not
+seen: phone 10-04 896.1 to 892.2, desktop zram0 993.1 to 996.9; on the phone dump they were trained
+on 714.0 to 702.8. `seqlz-fast` moved by 0.1% at most on the unseen dumps.
+
+**A literal stream's codes now have to fit into its size.** The decoder decodes the coded literals in
+rounds of 40, 5 per stream, without a check per literal, and decoded the last round in full, also the
+literals behind the last one. Their bits came from the bytes after the stream, so it accepted up to
+50 bits more than the stream's size, and a stream one byte too short decoded with the bits of the next
+one. Now the last round decodes each stream's own literals only, and a stream's codes must fit into
+its size. Decode cycles per page of `seqlz-fast-lit` on the Mi 9T, 20 000 pages of the second phone
+dump, clock fixed, median of 7 runs taking turns:
+
+| core | before | now |
+| --- | --- | --- |
+| Cortex-A55, little | 16 357 [15 924 .. 16 610] | 16 540 [16 449 .. 16 826] |
+| Cortex-A76, big | 7699 [7643 .. 7719] | 7691 [7629 .. 7736] |
+
+1.1% more on the little core, 45 instructions per page more, nothing on the big one; the pages with raw
+literals in the sample did not change, so per coded page it is a bit more. The decoder's scratch is
+32 bytes smaller, `SEQLZ_PAGE + 16`, since nothing is decoded behind the last literal any more.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
