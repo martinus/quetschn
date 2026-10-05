@@ -1231,7 +1231,7 @@ of the lookups, the first quarter 23%.
 What suits both is to ask which core it is: prefetch the token table only on an in-order core, here
 Cortex-A53, A55, A510, A520 and Qualcomm's Kryo silver cores by `read_cpuid_id()`, which the Mi 9T's
 little cores are (implementer 0x51, part 0x805; the big ones 0x804). The A76 then reads 1.2 µs faster and
-3.3 µs at p99, the A55 as before. On x86-64 the reversed index costs 19% more decode cycles in the hot
+3.3 µs at p99, the A55 as before; in two more runs, item 7, 2.5 and 2.1 µs. On x86-64 the reversed index costs 19% more decode cycles in the hot
 loop, 9347 against 7838 per page with clang, because it has no instruction for it: arm64 only.
 
 With the token table of 10 bits, item 1, the A76 gets most of this already, it prefetches 64 lines less.
@@ -1239,8 +1239,8 @@ Both together, 3 rounds against 10 bits alone and 11 bits as now: cold 9.49 agai
 the A76, at p99 16.30 against 17.07 and 22.14; the A55 62.12 against 60.64 and 63.84, at p99 89.79
 against 88.00 and 91.34, within its noise. So:
 
-* **Decoder only**, the core asked and the codes in one range on arm64: the A76's cold reads 1.2 µs
-  faster and 3.3 µs at p99, the A55 unchanged, no bytes.
+* **Decoder only**, the core asked and the codes in one range on arm64: the A76's cold reads 1.2 to 2.5
+  µs faster and 3.3 to 6 µs at p99, the A55 unchanged, no bytes.
 * **10 bits**: 2.0 to 2.7 µs on the A76, 2.3 to 3.2 µs on the A55, for 4.8 bytes per page, a format
   change.
 * **Both**: as 10 bits, and 0.8 µs less at p99 on the A76.
