@@ -12,7 +12,9 @@ Short version so far: the gap between `lz4` and `zstd -1` is mostly how the sequ
 `zstd -1`, 25.2% against 26.9%, and decodes faster than it, but is still 1.4 µs slower than `lz4` at
 cold p99. Two decoders beat `lz4` on cold p99, but only with formats that need 55.7% and 70.5% of the
 uncompressed size, against 34.5% for `lz4`. The ratio has to come from repeats across the whole page;
-local tricks on 8 or 64 bytes do not get there.
+local tricks on 8 or 64 bytes do not get there. On a phone that swaps 25 apps with the same RAM for zram,
+no app had to start again with `seqlz-fast` in 3 runs, 54 launches did with `lz4`, see
+[Apps on the phone](#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4).
 
 ## How the numbers are measured
 
@@ -566,6 +568,91 @@ Two causes for the kernel's extra, measured, neither is it:
 * **`seqlz.o` built with clang 21 instead of the kernel's clang 9**, the rest of the module the same:
   warm reads 0.1 to 0.2 µs faster, writes 0.3 to 0.4 µs, cold reads the same.
 
+
+## Apps on the phone: with the same RAM, no cold launch in 6 runs of seqlz, 54 in 3 runs of lz4
+
+*Android 11 on the Mi 9T, the modules of the previous section, 25 apps. Not the harness.* The question
+here is if the smaller pages change anything a user sees, and if the slower reads do. `tools/phone-apps/`
+launches 25 apps in turn with `am start -W`, which reports the launch time and if the app was still
+there: cold means it was killed in between and starts from scratch, warm or hot means it came back from
+memory, with what zram has of it. Chrome opens 4 pages in round 1, every app gets 2 swipes. Before each
+run the phone reboots and waits 90 s, then `hog` locks 1536 MiB, so the 25 apps do not fit into the
+phone's 5.4 GiB, and `zram0` gets the algorithm. 4 rounds; round 1 starts most apps cold, so all numbers
+are of rounds 2 to 4, 75 launches per run. 3 runs per algorithm, each repetition starts at another
+algorithm.
+
+Two settings of Android decide before memory does, so both are changed:
+
+* The kernel's lowmemorykiller of this phone kills by free memory and ignores swap. With it and the
+  limit below, almost all launches after round 1 were cold. `setup.sh` switches it off and hides its parameters, so `lmkd`
+  kills by memory pressure (PSI), like on current phones.
+* ActivityManager keeps at most 32 cached processes here and kills the rest by count. `device_config`
+  raises it to 96; a flag sync after boot sets it back, so `swapbench.sh` checks it before every
+  launch. It was reset 17 times in series C, always in round 1.
+
+**The same disksize for all, the phone's 2.5 GiB.** Mean of 3 runs, the launch times of rounds 2 to 4,
+cold launches the sum of the 3 runs:
+
+| | `lz4` | `lzo` | `seqlz-fast` | `seqlz-fast-lit` | `zstd` |
+| --- | --- | --- | --- | --- | --- |
+| zram's `mem_used` | 687 MiB | 650 MiB | 526 MiB | 484 MiB | 459 MiB |
+| cold launches | 24 | 21 | 18 | 3 | 6 |
+| all launches, median | 427 ms | 433 ms | 462 ms | 446 ms | 451 ms |
+| all launches, mean | 536 ms | 573 ms | 575 ms | 516 ms | 551 ms |
+| warm and hot only, median | 391 ms | 414 ms | 421 ms | 439 ms | 441 ms |
+| pages swapped out | 1.90 M | 1.84 M | 1.72 M | 1.63 M | 1.65 M |
+| kswapd CPU | 136 s | 140 s | 145 s | 132 s | 199 s |
+
+In every run the 2.5 GiB were full, about 2200 MiB of pages, and about 1 million pages were swapped in.
+`lmkd` also kills when swap runs low, and it counts swap in pages, not in RAM, so with the same disksize
+a better ratio helps only with the RAM it frees. It did help `seqlz-fast-lit` and `zstd`, 3 and 6 cold
+launches against 24 for `lz4`; `seqlz-fast`, with 18, hardly.
+
+The median of the warm and hot launches alone made `seqlz-fast-lit` look 48 ms slower than `lz4`, and
+that is mostly because it kept more apps: an app that survives makes a slow warm launch, with lots of
+swap-ins, instead of a cold one that is not counted there. With the cold launches the median is 19 ms
+above `lz4` and the mean 20 ms below. `zstd` costs 60 s more CPU in `kswapd` per run than all others,
+that is its compression; both `seqlz` variants are at `lz4`'s and `lzo`'s.
+
+**The same RAM for all: the disksize scaled by the ratio.** That is what a phone vendor would do who
+picks the disksize for the algorithm. Every algorithm gets the RAM that `lzo` gets with 2.5 GiB, with the
+ratios of the runs above: 2.33 GiB for `lz4`, 3.05 GiB for `seqlz-fast`, 3.26 GiB for `seqlz-fast-lit`,
+3.42 GiB for `zstd`. Mean of 3 runs:
+
+| | `lz4` | `lzo` | `seqlz-fast` | `seqlz-fast-lit` | `zstd` |
+| --- | --- | --- | --- | --- | --- |
+| zram's `mem_used` | 647 MiB | 644 MiB | 653 MiB | 617 MiB | 558 MiB |
+| pages in zram | 2080 MiB | 2217 MiB | 2699 MiB | 2708 MiB | 2587 MiB |
+| cold launches | 54 | 23 | 0 | 0 | 0 |
+| killed processes per run | 145 | 124 | 63 | 66 | 71 |
+| all launches, median | 534 ms | 440 ms | 417 ms | 411 ms | 459 ms |
+| all launches, mean | 624 ms | 570 ms | 470 ms | 466 ms | 508 ms |
+| warm and hot only, median | 426 ms | 411 ms | 417 ms | 411 ms | 459 ms |
+| kswapd CPU | 145 s | 139 s | 133 s | 138 s | 200 s |
+
+No app was killed between two rounds in any of the 9 runs of `seqlz-fast`, `seqlz-fast-lit` and `zstd`;
+`lz4` had 11, 20 and 23 cold launches. The mean of all launches is 154 ms lower with `seqlz-fast` than
+with `lz4`, and even the warm and hot launches alone are not slower. `zstd` keeps all apps too, but its
+launches are about 45 ms slower than `seqlz`'s, and its 3.42 GiB were full before its RAM was.
+
+**Where the slower reads went.** `swapbench.sh` reads `pswpin` before and after every launch, the
+median launch swapped in about 3000 pages. A line through the launch time against these pages, all warm
+and hot launches of an algorithm: 37.9 µs per page for `lz4`, 38.4 `lzo`, 45.7 `seqlz-fast`, 42.9
+`seqlz-fast-lit`, 51.8 `zstd`. The runs of one algorithm spread by up to 14 µs per page. The slope also
+holds the work of apps that need more pages, so only differences mean something: `zstd`'s slower reads
+show, and the 3 to 11 µs per page that `seqlz-fast` reads slower in the previous section are within the
+spread. Per launch that is 10 to 30 ms, less than what one cold launch more costs.
+
+Before that, with the lowmemorykiller off and nothing killed at all, 10 apps, 6 rounds, 3 runs each:
+`seqlz-fast` used 367 MiB against 481 MiB of `lz4` and 468 MiB of `lzo`, swapped in 146 000 pages against
+177 000 and 231 000, and its launches took 469 ms on average against 480 and 483 ms.
+
+All of this is one phone, one set of apps, 3 runs per setting; the median of one algorithm moved by up
+to 90 ms between runs, so differences of 30 ms in a single row mean nothing. The cold launches are
+counts of a few dozen, but the order held in every run of the second table. In one run of the second
+table, the launch of YouTube stopped at a Google sign-in and the run hung; that run was repeated and
+`swapbench.sh` now gives up a launch after 30 s, which happened once more. The first table ran without
+the swap-ins per launch.
 
 ## Where the ratio of `zstd` comes from
 
