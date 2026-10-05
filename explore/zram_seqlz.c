@@ -15,7 +15,7 @@ static int setup(struct quetschn_params* p) {
     t = quetschn_zalloc(seqlz_tables_size(), &p->allocated);
     if (!t)
         return -1;
-    /* the encoder needs a code for every symbol: tables without one fail here, not at every page */
+    /* the encoder needs a code for every symbol; the tables are fixed, this keeps a bad retraining out */
     if (seqlz_tables_init(t, &seqlz_default_own) || !seqlz_all_symbols(t)) {
         quetschn_free(t, &p->allocated);
         return -1;

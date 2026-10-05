@@ -364,44 +364,14 @@ TEST_CASE("kernel codecs: every page is compressed on its own, also with a dicti
 
 TEST_CASE("kernel codecs: seqlz takes no dictionary, its tables are part of the format") {
     // A dictionary of exactly the size of struct seqlz_lengths once replaced seqlz's code lengths. The
-    // tables are fixed now (FORMAT.md), so such a dictionary is ignored like any other.
-    auto lengths = seqlz_default_own;
+    // tables are fixed now (FORMAT.md), so such a dictionary is ignored like any other: one of zeros,
+    // no code at all, would have failed the setup.
+    auto const dict = page(sizeof(seqlz_lengths));
     auto const p = text_page();
-    auto state = seqlz_state{};
-    // the token of the page's first sequence and a token with a code of another length swapped: still a
-    // complete prefix code, and the page's bytes change
-    auto sequences = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
-    REQUIRE(seqlz_find(&state, p.data(), sequences.data()) > 1);
-    auto raw_bits = 0U;
-    auto const used =
-        seqlz_token(sequences[0].literals, sequences[0].match, seqlz_off_class(sequences[0].offset, 1, &raw_bits));
-    REQUIRE(lengths.token[used] != 0);
-    auto other_length = 0U;
-    while (lengths.token[other_length] == 0 || lengths.token[other_length] == lengths.token[used]) {
-        ++other_length;
-    }
-    std::swap(lengths.token[used], lengths.token[other_length]);
-    auto dict = page(sizeof(lengths));
-    std::memcpy(dict.data(), &lengths, sizeof(lengths));
-    auto tables = page(seqlz_tables_size());
-    auto* const t = reinterpret_cast<seqlz_tables*>(tables.data());
-    REQUIRE(seqlz_tables_init(t, &lengths) == 0);
     for (auto const* codec : {&quetschn_codec_seqlz_fast, &quetschn_codec_seqlz_fast_lit}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
-        auto const without = device(*codec).compress(p);
-        // the swapped lengths would change the bytes, so that a codec that took them would fail below
-        auto other = page(2 * page_size);
-        auto const len = seqlz_compress(t,
-                                        &state,
-                                        p.data(),
-                                        other.data(),
-                                        static_cast<unsigned>(other.size()),
-                                        codec == &quetschn_codec_seqlz_fast_lit ? 1 : 0);
-        REQUIRE(len > 0);
-        other.resize(len);
-        REQUIRE(other != without);
-        CHECK(device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p) == without);
+        CHECK(device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p) == device(*codec).compress(p));
     }
 }
 

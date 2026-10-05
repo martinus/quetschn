@@ -589,7 +589,8 @@ Candidate designs to prototype in userspace, ranked by expected value:
    class table, so it knows the target size. Compression time is less precious than decompression
    time. The payoff is largest at `huge_class_size`, 455 bytes per rescued page, and 16 to 144 bytes
    at every other boundary.
-5. **Dictionary support** from the start, via `zcomp_params->dict` (C4).
+5. **Dictionary support** from the start, via `zcomp_params->dict` (C4). For seqlz measured and dropped:
+   its tables are part of the format (docs/explored-designs.md, "The format written down").
 
 A slower, higher-ratio sibling for `CONFIG_ZRAM_MULTI_COMP` recompression of idle pages is a legitimate
 second target (working name `wuzl`) — but only after the primary codec lands. Do not split effort.
