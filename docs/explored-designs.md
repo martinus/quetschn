@@ -786,6 +786,28 @@ table, the launch of YouTube stopped at a Google sign-in and the run hung; that 
 `swapbench.sh` now gives up a launch after 30 s, which happened once more. The first table ran without
 the swap-ins per launch.
 
+**`seqlz-fast` against `seqlz-fast-lit`, 5 runs each, the phone's 2.5 GiB.** In the first table
+`seqlz-fast-lit` had 3 cold launches against 18 of `seqlz-fast`, so both ran again, alternating, with
+the scripts of `tools/phone-apps/` as committed:
+
+| | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | --- | --- |
+| zram's `mem_used` | 528 MiB | 494 MiB |
+| cold launches, per run | 18, 7, 4, 7, 2 | 7, 3, 3, 5, 7 |
+| all launches, mean per run | 608, 535, 519, 523, 491 ms | 502, 490, 488, 510, 572 ms |
+| all launches, median | 433 ms | 398 ms |
+| warm and hot only, median | 402 ms | 386 ms |
+| kswapd CPU | 137 s | 135 s |
+
+`seqlz-fast-lit` needs 6% less RAM and is not slower, but that it keeps more apps is not shown: 25
+cold launches against 38, and a rank test of the runs gives p = 0.33 for them, 0.056 with the runs of
+the first table, and 0.11 for the mean of all launches. After 7 of the 10 runs it looked clearly
+better, the last two runs took that back. Cold launches come in bursts: in every run round 2 had 0 to 6
+and round 3 had 0 or 1, but run 1 of `seqlz-fast` had 11 in round 4 alone, one app after the other. Free
+swap was at 276 MiB then and `lmkd`'s log shows `swap_free_percentage` at 10% to 11%, while the other
+runs ended at 298 to 404 MiB. So a few dozen MiB decide if `lmkd` kills a whole burst of apps, and
+5 runs are not enough to tell 6% of RAM apart in this test.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
