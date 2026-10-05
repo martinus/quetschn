@@ -861,6 +861,17 @@ On the little core the three are within their spread, so the 1.1% above was abou
 cost; on the big core the kept one is as fast as before. The decoder's scratch is 32 bytes smaller,
 `SEQLZ_PAGE + 16`: what is decoded behind the last literal now is at most 7 bytes.
 
+**FORMAT.md, checked with a second decoder.** `tools/seqlz_ref.py` decodes bit by bit from FORMAT.md
+alone. On 13 279 inputs, the inputs AFL++ kept for the decode target, the pages of the roundtrip target
+compressed with raw and with coded literals, and those pages with one literal stream one byte
+shorter, it agreed with `seqlz_decode()` on every one: 5216 valid with the same page, the rest invalid
+in both. With the old rule of the stream sizes, 50 bits more, the reference accepted all 5704
+shortened pages, so the comparison sees a difference when there is one. A second reader then wrote
+its own encoder from FORMAT.md and found no page on which the two decoders differ, on edge cases and
+600 damaged pages of both page sizes; the four places where two careful decoders could have differed
+are each a rule now. The 16 KiB tables are still trained on desktop pages only, 16 KiB pages made of 4
+adjacent 4 KiB pages: there is no zram dump with 16 KiB pages yet.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals

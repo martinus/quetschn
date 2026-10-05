@@ -2,8 +2,10 @@
 
 seqlz compresses one memory page into one compressed page. This file describes the bytes, so that a
 decoder can be written from it alone, and it says which compressed pages are valid. It describes the
-format as `explore/seqlz.c` writes and reads it. The why of each number is in
-[docs/explored-designs.md](docs/explored-designs.md); here it gets one sentence at most.
+format as `explore/seqlz.c` writes and reads it. Sentences marked *Why:* explain a choice and are
+not part of the format; the measurements behind them are in
+[docs/explored-designs.md](docs/explored-designs.md). How seqlz works, for a reader new to
+compression, is in [docs/seqlz.md](docs/seqlz.md).
 
 `seqlz-fast` and `seqlz-fast-lit` are the same format: `seqlz-fast` always stores the literals as they
 are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both.
@@ -15,14 +17,10 @@ are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both
 
 Like lz4 and zstd, seqlz describes a page as a list of **sequences**. Each sequence says: copy the next
 `ll` **literals** (bytes stored in the compressed page as they are) to the output, then copy a **match**
-of `ml` bytes that starts `off` bytes back in the output. The **offset** `off` points into what was
-already written, so a match repeats bytes the page had before. The last sequence has literals only and
-ends the page.
-
-What makes seqlz smaller than lz4 is how the numbers `ll`, `ml` and `off` are stored: with **prefix
-codes** (Huffman codes) from tables that are fixed and built into the decoder, so that frequent
-combinations take few bits. The tables are not in the compressed page; a page of 4 KiB is too small to
-carry its own.
+of `ml` bytes that starts `off` bytes back in the output, its **offset**. The last sequence has literals
+only and ends the page. The numbers `ll`, `ml` and `off` are stored with **prefix codes** (Huffman
+codes) from fixed tables that are part of the format and not in the compressed page. *Why:* a page of
+4 KiB is too small to carry tables of its own.
 
 ## Notation
 
@@ -76,9 +74,9 @@ layouts.
 | `19 + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
 
 The coded literals are split into 8 **streams**: literal 0 goes to stream 0, literal 1 to stream 1, ...,
-literal 8 to stream 0 again. In one stream each literal's code can only be found once the one before is
-decoded, a chain of table lookups; 8 streams are 8 chains, which a CPU works on side by side. Stream
-`j` starts at byte `start[j] = 19 + s[0] + ... + s[j-1]`, so `start[0] = 19`.
+literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 19 + s[0] + ... + s[j-1]`, so
+`start[0] = 19`. *Why:* in one stream each literal's code can only be found once the one before is
+decoded, a chain of table lookups; 8 streams are 8 chains, which a CPU works on side by side.
 
 A page is invalid if
 
@@ -140,9 +138,7 @@ so that a decoder can check that it has the right ones; `tools/seqlz_ref.py` che
 | `ML_16k` | `e487aeb101066058f2794a507d4c7bc48962dedcbfcfda92e4e621a196cc8bcc` |
 | `LIT` | `8fac7c712644c8d48f19141f8982306489e0d740bdf60e56a4d9351a7e66cc3b` |
 
-The 4 KiB tables are trained on pages of a desktop and of an Android phone; tables trained on one
-device's pages saved at most 1% on that device. The 16 KiB tables are trained on desktop pages only,
-16 KiB pages made of 4 adjacent 4 KiB pages: there is no zram dump with 16 KiB pages yet.
+How the tables were trained is in [docs/explored-designs.md](docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
 
 ## The bitstream of the sequences
 
@@ -183,12 +179,14 @@ the most frequent combinations take few bits:
     mlf = (token >> 4) & 31  the match length minus 4, 0 to 31; 31 means 31 or more
     c   = token >> 9         the class of the offset, 0 to 5
 
-That is 16 * 32 * 6 = 3072 tokens. `ml` is at least 4 because shorter matches are not worth it, so the
-token stores `ml - 4`.
+That is 16 * 32 * 6 = 3072 tokens. A match is at least 4 bytes, so the token stores `ml - 4`. *Why:*
+one code for the three numbers lets frequent combinations share a short code, and shorter matches
+cost more bits than the literals they replace.
 
-There are only 2048 codes of 11 bits, fewer than the 3072 tokens, and most tokens are rare, so only the
-frequent ones have a code. Symbol 3072 of `TOK` is the **escape**: it is followed by the token's number
-in 12 bits. Any token can be sent escaped, also one that has a code of its own; it means the same.
+Symbol 3072 of `TOK` is the **escape**: it is followed by the token's number in 12 bits. Any token can
+be sent escaped, also one that has a code of its own; it means the same. *Why:* there are only 2048
+codes of 11 bits, fewer than the 3072 tokens, and most tokens are rare, so only the frequent ones have
+a code.
 Reading a token:
 
     t = symbol(TOK)
@@ -198,9 +196,9 @@ Reading a token:
 
 ### Offsets
 
-The offset's class says how it is stored. Small offsets are frequent, and so are offsets that are
-multiples of 8 (8-byte values like pointers repeat at such distances), so they get classes with fewer
-bits. Each class reads its **offset bits** and turns them into the offset:
+The offset's class says how it is stored: each class reads its **offset bits** and turns them into
+the offset. *Why:* small offsets are frequent, and so are multiples of 8, at which 8-byte values like
+pointers repeat, so they get classes with fewer bits.
 
 | class | offset bits | offset | offsets it can send |
 | --- | --- | --- | --- |
@@ -306,11 +304,6 @@ stores a page that does not compress well enough as it is, so that page never re
 
 ## How this file was checked
 
-`tools/seqlz_ref.py` decodes bit by bit, from this file alone. It was compared with `seqlz_decode()` on
-13279 inputs: the inputs AFL++ kept for the decode target (`fuzz/`), the pages of the roundtrip target
-compressed with raw and with coded literals, and those pages with one literal stream one byte shorter.
-On every input both said valid with the same page, 5216 times, or both said invalid. With the rule
-of the stream sizes as it was before, with 50 bits more, the reference accepted all 5704 shortened
-pages, so the comparison sees a difference when there is one. A second reader wrote its own encoder
-from this file and found no page on which the two decoders differ, on edge cases and 600 damaged
-pages of both page sizes.
+`tools/seqlz_ref.py` decodes bit by bit, from this file alone, and agreed with `seqlz_decode()` on
+every input it was given, valid and damaged pages of both page sizes; the numbers are in
+[docs/explored-designs.md](docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).

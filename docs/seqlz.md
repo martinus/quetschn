@@ -181,7 +181,7 @@ the pages, first dump / second dump:
 
 At p99 `seqlz-fast-lit` reads cold pages in 4.94 and 5.19 µs, faster than `lzo-rle` (5.42 and 5.38)
 and a bit slower than `lz4` (4.74 and 4.75). It writes in 11.5 and 11.7 µs, where `lz4` needs 9.2
-and 9.5 and `zstd` 23.2 and 23.7. Per CPU it needs 12 336 bytes of work memory, `lz4` 16 440.
+and 9.5 and `zstd` 23.2 and 23.7. Per CPU it needs 12 304 bytes of work memory, `lz4` 16 440.
 
 </details>
 
@@ -231,7 +231,8 @@ below 3625 bytes, which zram stores as it is. On a read zram copies such a page 
 the codec.
 
 The bitstream holds the sequences one after the other, read least significant bit first. Each
-sequence has up to four parts in it:
+sequence has up to four parts in it; the exact bytes and when a page is valid are in
+[FORMAT.md](../FORMAT.md):
 
 | part | bits | what it says |
 | --- | --- | --- |
@@ -306,20 +307,21 @@ The encoder chooses once per page, not per literal and not per sequence, and the
 byte of header, the table's number. A choice per literal would need 3 more bits for every literal,
 just to say which table.
 
-The 8 tables are compiled in. They were trained on the resident pages of running programs: k-means
-puts pages with similar literals into one group, and each table is the Huffman code of one group,
-see [explored-designs.md](explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page). So
-the tables are quite different. Code lengths in bits of a few bytes:
+The 8 tables are compiled in and part of the format. They were trained on the resident pages of
+running programs on a desktop and on the pages of a phone's zram: k-means puts pages with similar
+literals into one group, and each table is the Huffman code of one group, see
+[explored-designs.md](explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page). So the
+tables are quite different. Code lengths in bits of a few bytes:
 
 | byte | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `00` | 2 | 3 | 3 | 2 | 3 | 4 | 2 | 6 |
-| `20`, a space | 6 | 5 | 5 | 7 | 5 | 6 | 7 | 8 |
-| `65`, the letter `e` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
-| `ff` | 7 | 8 | 7 | 6 | 9 | 9 | 4 | 9 |
+| `00` | 3 | 2 | 3 | 3 | 2 | 5 | 5 | 7 |
+| `20`, a space | 6 | 7 | 5 | 5 | 7 | 7 | 6 | 8 |
+| `65`, the letter `e` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
+| `ff` | 7 | 6 | 7 | 9 | 8 | 10 | 9 | 10 |
 
-Table 4 gives `e` 4 bits, so it fits text. Table 6 gives `ff` 4 bits, it fits pages with many of
-them. In table 7 most bytes cost about the same.
+Table 3 gives `e` 4 bits, so it fits text. Tables 1 and 4 give `00` 2 bits, they fit pages with many
+zero bytes. In table 7 most bytes cost about the same.
 
 **Finding the smallest table is one addition per literal.** For each of the 256 byte values the
 encoder has a 64-bit number with the byte's code lengths in all 8 tables, one table per byte of the
@@ -328,13 +330,13 @@ in all 8 tables at once. E.g. for the literals `65 20 65 00`:
 
 | literal | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `65` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
-| `20` | 6 | 5 | 5 | 7 | 5 | 6 | 7 | 8 |
-| `65` | 6 | 5 | 8 | 8 | 4 | 5 | 9 | 6 |
-| `00` | 2 | 3 | 3 | 2 | 3 | 4 | 2 | 6 |
-| **sum** | 20 | 18 | 24 | 25 | **16** | 20 | 27 | 26 |
+| `65` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
+| `20` | 6 | 7 | 5 | 5 | 7 | 7 | 6 | 8 |
+| `65` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
+| `00` | 3 | 2 | 3 | 3 | 2 | 5 | 5 | 7 |
+| **sum** | 19 | 27 | 26 | **16** | 29 | 24 | 27 | 35 |
 
-Each row is one 64-bit addition for the CPU, not 8. Table 4 wins with 16 bits, where the raw bytes
+Each row is one 64-bit addition for the CPU, not 8. Table 3 wins with 16 bits, where the raw bytes
 are 32. A byte of the sum holds at most 255, and a code has at most 10 bits, so every 25 literals
 the sums move into 16-bit lanes before they can overflow. This costs at most 400 cycles per page,
 about 1.5% of a write, and 30 to 40 ns per write in the kernel. Writing the coded literals
@@ -379,7 +381,9 @@ number.
 scratch buffer, 8 at a time: literal `i` comes from stream `i % 8`. For each literal it looks up the
 next 10 bits of its stream in the table, a table of 1024 entries with the byte and its code length,
 writes the byte, and moves that stream on by the code length. Then the literals are in the scratch
-in their order, as if they had been raw. The loop over the sequences copies them from there, the
+in their order, as if they had been raw. A stream whose literals need more bits than its size makes
+the page invalid: the decoder reads 8 bytes at a time and may read into the next stream, so it
+checks at the end that each stream stayed within its bytes. The loop over the sequences copies them from there, the
 same way for both kinds of page.
 
 ## Why it needs less memory: offsets and literals
@@ -424,8 +428,9 @@ to 8 bytes, and 56% to 63% of the literal runs are 0 or 1 byte long.
 **Static tables.** A page of 4 KiB has little room for its own tables: the 256 code lengths of a
 literal table take about 64 bytes, coded. A literal table of its own, where that saves 16 bytes,
 made writes 13% and 15% slower for 0.3% and 4.6% less memory; with one of 4 token tables as well,
-43% slower for 2.6% and 6.6%. The fixed tables are trained on other pages than the ones they are
-measured on: on resident pages of running programs, measured on the zram dumps.
+43% slower for 2.6% and 6.6%. Tables of a device's own, carried in zram's dictionary parameter, saved
+at most 1% on another dump of the same phone, so there are none: one set of tables for all, trained
+on other pages than the ones the numbers here are measured on.
 
 **The 1/16 rule.** zsmalloc stores in size classes at least 16 bytes apart, so saving a few bytes
 mostly saves nothing. Coding the literals whenever they save anything gave less than 0.1 points of
@@ -645,12 +650,15 @@ literals, and recompressing idle pages. Why each of them failed is in
 ## What is not known yet
 
 > [!WARNING]
-> * **One machine.** All of this is measured on one desktop: two zram dumps of the same machine, and
->   tables trained on its resident pages.
-> * **No arm64 yet.** Every latency is from x86-64, and phones are the users of zram. The decoder
->   runs 3.4 instructions per cycle on a Ryzen; on a small core that runs one or two, its 2.3 times
->   `lz4`'s instructions probably count for more.
-> * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 816 bytes of
+> * **One desktop, one phone.** The numbers in this document are from two zram dumps of one desktop;
+>   the tables are trained on that desktop's resident pages and one zram dump of a phone.
+> * **arm64 on one phone.** The latencies here are from x86-64. On a Mi 9T's Cortex-A55, in the
+>   phone's own kernel, a cold read of `seqlz-fast` takes about 9 µs more than `lz4`'s
+>   ([explored-designs.md](explored-designs.md#in-the-phones-own-kernel-cold-reads-on-the-little-core-cost-seqlz-fast-9-µs-more-than-lz4)).
+>   Switching between 25 apps with the same RAM for zram, that did not make launches slower, and the
+>   better ratio kept every app alive where `lz4` lost some
+>   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
+> * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 784 bytes of
 >   work memory per CPU, twice `lz4`'s, which breaks one of the project's own limits. A fix is built
 >   and measured, but not kept.
 > * **Writes at p99** take 1.2 to 1.25 times `lz4`'s time.
