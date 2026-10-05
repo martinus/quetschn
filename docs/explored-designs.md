@@ -952,6 +952,86 @@ cost in bytes per page, all pages of both dumps:
 path for sequences that have one; not timed. Kept: the tables cost the format two tables once, the 5
 bits cost every page 3 bytes.
 
+## The numbers again, with the format as it is now: reads 0.3 µs faster than on 29th September
+
+*After the tables of #69, the stream sizes of #71 and the checks of #72, the kernel VM, the hot loop and
+the phone again.* Kernel VM of `tools/zram-vm/run.sh`, 20 000 pages per dump, one boot per dump with
+all five codecs, CPU 2 at a fixed 4.5 GHz with boost off; means in µs, first dump / second dump, from
+`quetschn-score`:
+
+| codec | bytes per page | write | cold read | µs per page written |
+| --- | --- | --- | --- | --- |
+| `lz4` | 1450.4 / 1754.5 | 5.28 / 5.75 | 2.53 / 2.54 | 6.14 / 6.61 |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.11 / 5.69 | 2.73 / 2.83 | 6.04 / 6.65 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.49 / 14.40 | 5.29 / 5.53 | 15.29 / 16.28 |
+| `seqlz-fast` | 1122.7 / 1477.0 | 5.89 / 6.41 | 2.63 / 2.74 | 6.79 / 7.34 |
+| `seqlz-fast-lit` | 1034.9 / 1330.6 | 6.44 / 7.13 | 2.70 / 2.88 | 7.36 / 8.11 |
+
+On 29th September `seqlz-fast-lit` was 1039 / 1322 bytes, 6.56 / 7.29 µs to write and 2.99 / 3.23 to
+read. The reads are 0.29 and 0.35 µs faster, the writes 0.12 and 0.16. The second dump is 9 bytes per
+page larger: the tables trained on the desktop's resident pages and a phone dump cost it about 14
+bytes, the stream sizes save 5.5. At cold p99 `seqlz-fast-lit` reads in 4.51 and 4.61 µs, `lz4` in 4.72
+and 4.71, `lzo-rle` in 5.26 and 5.48; it writes in 11.2 and 11.3 µs, `lz4` in 9.3 and 9.5. On the hull
+of the score, `lzo-rle` to `seqlz-fast-lit` is 247 and 238 bytes per µs, `seqlz-fast-lit` to `zstd` 2.8 and
+16.3. With `seqlz-fast` on the hull too, `seqlz-fast` to `seqlz-fast-lit` is 153 and 190.
+
+Hot loop, perf over the 2000 page sample of the first dump, the counts of 30 loops minus 10, median of
+5 processes, per page:
+
+| codec | compress cycles | decode cycles | decode instructions |
+| --- | --- | --- | --- |
+| `lz4` | 17 183 | 4992 | 11 899 |
+| `lzo-rle` | 15 736 | 6555 | 15 559 |
+| `zstd` 3 | 54 037 | 16 489 | 57 296 |
+| `seqlz-fast-lit` | 22 076 | 7609 | 25 284 |
+
+On 30th September `seqlz-fast-lit` decoded in 8507 cycles and 28 768 instructions.
+
+The Mi 9T, clocks fixed as in "arm64: on a phone", the harness with all five codecs on 20 000 pages of
+the first desktop dump, median of 5 processes, ns, Δ cold p99 against `lz4` with the smallest and largest
+of the 5:
+
+| codec | little: cold p50 / p99 | warm p99 | Δ cold p99 | big: cold p50 / p99 | warm p99 | Δ cold p99 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 7217 / 11 238 | 10 429 | | 2996 / 5194 | 4265 | |
+| `lzo-rle` | 7798 / 12 456 | 11 511 | 1205 [1140, 1280] | 3854 / 6678 | 6069 | 1492 [1410, 1611] |
+| `zstd` 3 | 26 864 / 48 063 | 43 424 | 36 747 [36 660, 37 417] | 10 238 / 17 945 | 16 820 | 12 625 [12 399, 13 005] |
+| `seqlz-fast` | 9118 / 12 847 | 11 244 | 1607 [1543, 1688] | 3471 / 6088 | 4907 | 894 [769, 1015] |
+| `seqlz-fast-lit` | 10 291 / 20 430 | 18 831 | 9202 [9113, 9254] | 3554 / 8863 | 6451 | 3719 [3557, 3767] |
+
+`seqlz-fast-lit`'s cold reads were 11 400 / 20 995 on the little core and 4766 / 9226 on the big one in
+that section. The gap to `lz4` at cold p99 on the little core is still 9.2 µs: the pages with coded
+literals, whose literals the in-order core decodes slowly. Time per page written on the little core:
+`lz4` 20.3 µs, `lzo-rle` 20.2, `seqlz-fast` 28.2, `seqlz-fast-lit` 33.1, `zstd` 84.5.
+
+`tools/plot-speed.py` draws docs/seqlz.md's first chart from the VM logs and the hot loop, so that it can
+be drawn again.
+
+**In the phone's own kernel, on the same pages as the PC.** The harness on the PC gave writes that do
+not hold: `seqlz-fast-lit` 3.40 µs and `seqlz-fast` 4.21, also with the two apart in `--codecs` and
+without `zstd`, while each alone wrote in 3.17 and 2.67 µs and the kernel VM had the expected order. Not
+looked into further; the comparison of the PC and the phone is in the kernel on both. `seqlz` as a
+module for the Mi 9T's Linux 4.14 (`~/opt/mi9t-kernel/mkvar.sh`, which now also copies the tables'
+`.inc`), zramphone with the same 20 000 pages of the first desktop dump as the VM, devices taking turns
+per page, cold after reading 2 MiB of other data, clocks fixed, µs, p50 / p99, the mean last:
+
+| | `lz4` | `lzo` | `zstd` 3 | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- | --- |
+| memory, % of the pages | 36.0 | 33.1 | 24.6 | 27.5 | 25.2 |
+| big, write | 12.4 / 22.2 / 12.0 | 12.9 / 23.2 / 12.7 | 39.8 / 84.4 / 40.0 | 13.8 / 22.1 / 13.1 | 14.5 / 25.3 / 13.9 |
+| big, read cold | 7.3 / 9.5 / 7.2 | 8.3 / 14.1 / 8.4 | 26.4 / 39.1 / 25.2 | 9.1 / 12.1 / 8.9 | 10.1 / 16.0 / 10.1 |
+| little, write | 30.1 / 58.6 / 30.5 | 32.0 / 54.2 / 32.3 | 136.4 / 376.8 / 145.3 | 35.9 / 62.7 / 35.7 | 39.7 / 77.7 / 39.7 |
+| little, read cold | 51.6 / 73.0 / 51.6 | 49.3 / 75.9 / 49.7 | 126.0 / 168.6 / 119.3 | 58.9 / 82.6 / 58.5 | 65.2 / 90.7 / 65.3 |
+
+The order of the devices matters for writes: with `seqlz-fast-lit` right after `seqlz-fast`, which ran
+the same matcher on the same page just before, its write on the big core was 13.5 µs, the same as
+`seqlz-fast`'s; the table is from a second run with the two apart, `lz4 seqlz lzo seqlz-lit zstd`. On
+the score's hull `seqlz-fast-lit` is the best choice from 2.8 to 153 bytes per µs on the PC, from 0.8
+to 76 on the big core and from 0.2 to 15 on the little core, with `seqlz-fast` above it up to 36 and
+`lzo` above that. `tools/plot-devices.py` draws the three side by side, docs/plots/devices.svg:
+
+![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
