@@ -1347,6 +1347,24 @@ instructions, 15 545 against 15 987 cycles per page on the A55, 2.8%, and 7196 a
 That is about 1 µs per page with coded literals on the A55, and 0.1 µs per page written; not built into
 the kernel module.
 
+### 9. The 51 bytes of "Coded literals only where they save 51 bytes" again, with item 4's and 7's prefetches
+
+The minimum for coding literals was chosen with the decoder as it was, without the compressed data
+prefetched and with all tables prefetched on both cores. Again with both changes, 3 rounds:
+
+| minimum | bytes | A76 warm / cold / per page written | A55 warm / cold / per page written |
+| --- | --- | --- | --- |
+| 19 | 929.0 | 5.04 / 10.45 / 16.44 | 13.62 / 61.16 / 57.49 |
+| 51 | 936.9 | 4.92 / 9.86 / 16.05 | 13.25 / 59.90 / 56.71 |
+| 83 | 946.4 | 4.87 / 10.19 / 15.99 | 13.01 / 58.17 / 55.88 |
+
+51 instead of 19 saves 0.4 µs per page written on the A76 and 0.8 on the A55, where it saved 1.1 and
+2.7 before: the prefetches took most of the fixed cost of a page with coded literals. That is 20 and 10
+bytes per µs, against `seqlz-fast-lit`'s 78 and 12 against `seqlz-fast` (item 7). 83 is not measurably
+faster than 51. 51 stays, with less reason than it had: the A55's 0.8 µs is within its noise between
+rounds, only its warm reads, 0.37 µs faster, are clear, and the A76's 0.4 µs is within what modules
+differ.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
