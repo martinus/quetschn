@@ -1093,7 +1093,7 @@ same build differ, for 20 bytes on this sample and 11 on the whole dump, about 2
 `seqlz-fast-lit` is the best choice up to 153. Kept for the phone, the target: `SEQLZ_LIT_CODED_MIN`
 is 51. zram's level parameter could set it per device instead, which `seqlz` ignores so far; not done.
 
-## Six choices made on the PC, measured on the phone: the token table and its prefetch matter, the rest does not
+## Six choices made on the PC, measured on the phone: the token table and the prefetches matter, the rest does not
 
 *Six parts of `seqlz` were chosen with measurements on x86-64: the token table's 11 bits, the literal
 tables' 10 bits, 8 literal streams, prefetching all tables before each read, the matcher's hash of 5
@@ -1278,6 +1278,40 @@ always and 8 more for matches longer than 32, and 40 bytes always. Three rounds,
 Both are slower: warm reads by 0.1 µs on the A76 and 0.5 to 0.8 µs on the A55, cold reads by 1.1 and 1.2
 µs on the A76. On the PC's hot loop too, 2% and 4% more cycles. 79% of the matches are at most 16 bytes,
 the copies behind them cost more than the branches they save. As they are.
+
+### 7. The phone's module did not prefetch the compressed data: 2.3 µs faster warm reads on the A55
+
+zram's backend for `seqlz` on the PC, `explore/zram_seqlz.c`, prefetches the compressed data from its
+second line on and the page it decodes into, before `seqlz_decode()`, as "zram: prefetch the compressed
+data before decompression" proposes for every codec. The phone's module for its 4.14 kernel,
+`~/opt/mi9t-kernel/quetschn-mod/quetschn_crypto_glue.c`, did neither, so every phone number above is
+without it, as `lz4`'s and the others' are; what it gives `lz4` on the phone is not measured. `seqlz`
+reads the literals from the front and the bitstream behind them, with coded literals 8 streams more,
+most likely more than the A55's hardware prefetcher follows. Three rounds, the decoder as now:
+
+| prefetch in the module | A76 warm / cold / cold p99 | A55 warm / cold / cold p99 |
+| --- | --- | --- |
+| none, as on the phone so far | 4.77 / 11.52 / 20.78 | 15.29 / 63.23 / 90.62 |
+| the compressed data | 4.91 / 10.70 / 19.33 | 13.04 / 62.33 / 86.16 |
+| the compressed data and the page | 4.91 / 12.67 / 22.81 | 13.11 / 63.18 / 87.62 |
+
+The compressed data: the A55's warm reads 2.3 µs faster, 15%, and its cold p99 4.5 µs, the A76's cold
+reads 0.8 µs and its p99 1.5. The page too costs the A76 2 µs cold, as the token table's prefetch does:
+the A76 wants as few prefetches as possible, the A55 as many. On x86 the page's prefetch cost nothing
+and helped nothing in the kernel either; a backend should prefetch the compressed data only.
+
+With the compressed data prefetched, item 4's decoder again, and with the token table of 10 bits too,
+3 rounds:
+
+| decoder, with the compressed data prefetched | A76 warm / cold / cold p99 | A55 warm / cold / cold p99 |
+| --- | --- | --- |
+| as now | 4.88 / 12.42 / 22.59 | 13.01 / 60.85 / 85.57 |
+| token table on in-order cores only, codes in one range | 4.86 / 9.88 / 16.61 | 13.32 / 61.07 / 85.90 |
+| the same with 10 bits | 4.98 / 9.64 / 16.35 | 13.30 / 59.36 / 83.79 |
+
+The decoder-only change holds: the A76's cold reads 2.5 µs faster and 6 µs at p99, the A55 the same,
+its warm reads 0.3 µs slower. 10 bits adds 0.24 µs on the A76 and 1.7 on the A55, which is within the
+A55's noise. Time per page written on the A76: 15.94 and 15.93 µs, `lz4` 12.79.
 
 ## Where the ratio of `zstd` comes from
 
