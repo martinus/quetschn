@@ -16,6 +16,9 @@
 #include <random>
 #include <vector>
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 namespace {
 
 using page = std::array<std::uint64_t, 512>;
@@ -547,6 +550,56 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
         CHECK(seq[0].match == len);
         CHECK(seq[0].offset == 61);
     }
+}
+
+TEST_CASE("seqlz: the matcher never takes a position of an earlier page") {
+    // The state is shared over the pages, as zram has one per CPU. Page b repeats nothing of its own,
+    // only 8 bytes of page a, so it has no match.
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto rng = std::mt19937_64(73);
+    auto random_page = [&] {
+        auto bytes = std::vector<unsigned char>(SEQLZ_PAGE);
+        for (auto& b : bytes) {
+            b = static_cast<unsigned char>(rng());
+        }
+        return bytes;
+    };
+    auto state = std::make_unique<seqlz_state>();
+    for (int round = 0; round < 20; ++round) {
+        CAPTURE(round);
+        auto const a = random_page();
+        REQUIRE(seqlz_find(state.get(), a.data(), seq.data()) == 1);
+        auto b = random_page();
+        std::copy_n(a.begin() + 500, 8, b.begin() + 1000);
+        CHECK(seqlz_find(state.get(), b.data(), seq.data()) == 1);
+    }
+}
+
+TEST_CASE("seqlz and bytelz: the matcher reads nothing behind the page") {
+    // The page ends where the memory ends, as a page in the kernel can, and the matcher has to look at
+    // its last positions: random bytes, which have no match.
+    auto const ps = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    REQUIRE(ps >= SEQLZ_PAGE);
+    auto* const mem =
+        static_cast<unsigned char*>(mmap(nullptr, 2 * ps, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    REQUIRE(mem != MAP_FAILED);
+    REQUIRE(mprotect(mem + ps, ps, PROT_NONE) == 0);
+    unsigned char* const page = mem + ps - SEQLZ_PAGE;
+    auto const t = default_tables(seqlz_default_own);
+    auto st = std::make_unique<seqlz_state>();
+    auto bst = std::make_unique<bytelz_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto c = std::vector<unsigned char>(2 * SEQLZ_PAGE);
+    auto rng = std::mt19937_64(79);
+    for (int round = 0; round < 20; ++round) {
+        for (unsigned k = 0; k < SEQLZ_PAGE; ++k) {
+            page[k] = static_cast<unsigned char>(rng());
+        }
+        CHECK(seqlz_find(st.get(), page, seq.data()) == 1);
+        CHECK(seqlz_compress(t.get(), st.get(), page, c.data(), static_cast<unsigned>(c.size()), 1) > 0);
+        CHECK(bytelz_compress(bst.get(), page, c.data(), static_cast<unsigned>(c.size())) > 0);
+    }
+    munmap(mem, 2 * ps);
 }
 
 TEST_CASE("seqlz: the matcher looks at every position, also far behind the last match") {

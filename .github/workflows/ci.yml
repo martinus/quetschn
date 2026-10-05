@@ -36,13 +36,15 @@ jobs:
       - run: clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {name: gcc-debug-sanitize, cxx: g++, build_type: Debug, sanitize: 'ON'}
-          - {name: clang-release, cxx: clang++, build_type: Release, sanitize: 'OFF'}
+          - {name: gcc-debug-sanitize, os: ubuntu-latest, cxx: g++, build_type: Debug, sanitize: 'ON'}
+          - {name: clang-release, os: ubuntu-latest, cxx: clang++, build_type: Release, sanitize: 'OFF'}
+          # arm64 like the phones: the codecs there, and the harness's cycle counter, which uses the PMU only on arm64.
+          - {name: gcc-release-arm64, os: ubuntu-24.04-arm, cxx: g++, build_type: Release, sanitize: 'OFF'}
     name: test (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v7
@@ -63,6 +65,9 @@ jobs:
           -DQUETSCHN_WERROR=ON
           -DQUETSCHN_SANITIZE=${{ matrix.sanitize }}
       - run: cmake --build build
+      # On arm64 the harness counts cycles with the PMU, and perf_event_open needs this.
+      - if: runner.arch == 'ARM64'
+        run: sudo sysctl -w kernel.perf_event_paranoid=2
       # A binary that ran no test at all also exits 0, so check that doctest ran assertions.
       - run: ./build/quetschn_test | tee test.log
       - run: |
