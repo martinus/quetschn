@@ -1305,6 +1305,13 @@ as the token table's prefetch does: the A76 wants as few prefetches as possible,
 the page's prefetch cost nothing and helped nothing in the kernel either; a backend should prefetch the
 compressed data only.
 
+And `lz4`? The same prefetch in a module of its own, `lz4` as `crypto/lz4.c` once without and once with
+it, 3 rounds: cold 6.77 and 6.80 µs on the A76, 47.93 and 47.43 on the A55, warm the same, the kernel's
+`lz4` in the same run 6.68 and 48.12. `lz4` reads its input front to back, the hardware prefetcher keeps
+up. So the prefetch is `seqlz`'s gain only, and the comparisons with `lz4` above stay as they are. The
+writes of the three `lz4` in that run are not usable, 8.3 to 10.1 µs on the A76 from round to round:
+an `lz4` written right after another one is faster, as a `seqlz` after a `seqlz`.
+
 With the compressed data prefetched, item 4's decoder again, and with the token table of 10 bits too,
 3 rounds:
 
