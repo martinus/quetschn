@@ -1107,11 +1107,15 @@ each round, the current `seqlz-fast-lit` with the 51-byte rule in every run. Col
 reading 2 MiB of other data. Time per page written is write + 0.34 × cold read, in µs.
 
 The noise first, because it decides what can be seen. On the A76 the same module gives the same time per
-page written within 0.15 µs from round to round. On the A55 it moves by up to 3.6 µs, 55.6 to 59.2,
-because the cold reads of all codecs drift together between rounds; within a round two variants differ by
-±2 µs for no reason. Also, modules that differ only in the decoder write at different speeds, by up to
-0.6 µs: the layout of the module, as in "seqlz-fast on the phone". So for a change to the decoder only
-the reads count, and on the A55 only differences of several µs.
+page written within 0.15 µs from round to round, but not from module to module: the same source built
+twice under two names, in one run, 3 rounds, read cold in 9.68 and 9.22 µs, at p99 in 17.0 and 15.8,
+warm in 4.77 and 4.55, and wrote in 12.43 and 11.93; 0.66 µs per page written for nothing but where the
+module and its tables landed. The same module also moved by up to 1.4 µs of cold reads from one run to
+the next. On the A55 the time per page written moves by up to 3.6 µs between rounds, 55.6 to 59.2,
+because the cold reads of all codecs drift together; within a round two variants differ by ±2 µs for no
+reason. Its warm reads are steady, within 0.4 µs for every module. So on the A76 only differences of
+more than about 1 µs count, best seen again with other modules, on the A55 only differences of several
+µs, and warm reads.
 
 zsmalloc bytes per page of `seqlz-fast-lit`, all pages of the four dumps, from the harness; phone 10-03
 is part of the pages the tables are trained on:
@@ -1213,7 +1217,7 @@ slower and 30 µs at p99, and even the 32 lines of the length values cost it 2.8
 miss it did not see coming stops it. The A76 reads 1.2 µs faster without any: a page touches only about
 55 of the token table's 128 lines, the out-of-order core fetches those as it needs them, and most likely
 the 128 prefetches are in the way of the misses that matter, on the compressed data and the page. The
-literal table first, before the token table, moves nothing beyond the noise.
+literal table first, before the token table, moves nothing beyond what modules differ.
 
 Codes in one range: the bitstream is read least significant bit first, so the 2^(11 - l) entries of a
 code of l bits are spread over the whole table, every 2^l entries. Indexed by the next 11 bits reversed,
@@ -1296,9 +1300,10 @@ most likely more than the A55's hardware prefetcher follows. Three rounds, the d
 | the compressed data and the page | 4.91 / 12.67 / 22.81 | 13.11 / 63.18 / 87.62 |
 
 The compressed data: the A55's warm reads 2.3 µs faster, 15%, and its cold p99 4.5 µs, the A76's cold
-reads 0.8 µs and its p99 1.5. The page too costs the A76 2 µs cold, as the token table's prefetch does:
-the A76 wants as few prefetches as possible, the A55 as many. On x86 the page's prefetch cost nothing
-and helped nothing in the kernel either; a backend should prefetch the compressed data only.
+reads 0.8 µs and its p99 1.5, which is within what modules differ. The page too costs the A76 2 µs cold,
+as the token table's prefetch does: the A76 wants as few prefetches as possible, the A55 as many. On x86
+the page's prefetch cost nothing and helped nothing in the kernel either; a backend should prefetch the
+compressed data only.
 
 With the compressed data prefetched, item 4's decoder again, and with the token table of 10 bits too,
 3 rounds:
@@ -1312,6 +1317,18 @@ With the compressed data prefetched, item 4's decoder again, and with the token 
 The decoder-only change holds: the A76's cold reads 2.5 µs faster and 6 µs at p99, the A55 the same,
 its warm reads 0.3 µs slower. 10 bits adds 0.24 µs on the A76 and 1.7 on the A55, which is within the
 A55's noise. Time per page written on the A76: 15.94 and 15.93 µs, `lz4` 12.79.
+
+Also without the prefetches of the length and literal tables on the A76, 64 lines more, in a run of its
+own: cold 9.84 against 9.90 µs, at p99 16.49 against 16.60, the decoder as now 11.99 and 21.56. Only
+the token table's prefetch is in the A76's way.
+
+With all of it, `seqlz-fast` against `seqlz-fast-lit` again, 3 rounds, in µs per page written: 14.28
+against 14.97 on the A76 and 51.63 against 56.23 on the A55, `lz4` 12.77 and 43.82, `lzo` 13.94 and
+46.64. `seqlz-fast-lit` stores 53.9 bytes per page less, which means it is the better choice from 78
+bytes per µs on the A76 and from 12 on the A55. Cold p99 on the A76: `seqlz-fast` 13.14, `seqlz-fast-lit`
+15.99, `lz4` 9.93, `lzo` 13.56. In the same run, the lines the literals are decoded into prefetched for
+writing on the A55: 57.22 against 56.23, nothing; in this run it read 1.1 µs slower on the A76, where
+it runs the same code as the module it was measured against, and 0.3 µs slower in the next.
 
 ## Where the ratio of `zstd` comes from
 
