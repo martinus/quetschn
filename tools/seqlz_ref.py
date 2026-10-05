@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """seqlz_ref.py <compressed page>...: a decoder written from FORMAT.md alone, slow on purpose, to check
 the spec against explore/seqlz.c. Prints per file "invalid" or "valid <sha256 of the page>".
---page-bits 14 for 16 KiB pages. The tables are read from the C files FORMAT.md names."""
+--page-bits 14 for 16 KiB pages. The tables are read from the files FORMAT.md names, and checked
+against the SHA-256 FORMAT.md gives for them."""
+
 import argparse
 import hashlib
 import re
@@ -16,116 +18,109 @@ class Invalid(Exception):
 
 
 def numbers(text):
-    return [int(x) for x in re.findall(r"\b\d+\b", text)]
+    return [int(x) for x in re.findall(r"\b\d+\b", re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.DOTALL))]
+
+
+def spec_hashes():
+    """the SHA-256 of each table, from FORMAT.md's table of tables"""
+    return dict(re.findall(r"^\| `(\w+)` \| `([0-9a-f]{64})` \|", (REPO / "FORMAT.md").read_text(), re.MULTILINE))
 
 
 def load_tables(page_bits):
+    """canonical codes of TOK, LL, ML and the 8 literal tables, after checking the lengths' SHA-256"""
     explore = REPO / "explore"
-    src = (explore / ("seqlz_default_tables.c" if page_bits == 12 else "seqlz_default_tables_16k.inc")).read_text()
-    if page_bits == 12:
-        src = src.split("#else", 1)[1]
-    len_symbols = 13 + page_bits
+    src = (explore / f"seqlz_default_tables_{4 if page_bits == 12 else 16}k.inc").read_text()
 
     def field(name):
-        body = re.search(r"\." + name + r"\s*=\s*\{([^}]*)\}", src).group(1)
-        return numbers(body)
+        return numbers(re.search(r"\." + name + r"\s*=\s*\{([^}]*)\}", src).group(1))
 
-    tok, ll, ml = field("token"), field("ll"), field("ml")
-    assert len(tok) == 3073 and len(ll) == len_symbols and len(ml) == len_symbols
+    tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml")}
     lit_src = (explore / "seqlz_lit_sets.c").read_text()
-    lit_src = lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :]
-    lit = numbers(lit_src.split("=", 1)[1])
+    lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
+    assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 13 + page_bits
     assert len(lit) == 8 * 256
-    return tok, ll, ml, [lit[256 * k : 256 * (k + 1)] for k in range(8)]
+    hashes, size = spec_hashes(), f"{4 if page_bits == 12 else 16}k"
+    for name, lengths in [*tables.items(), ("LIT", lit)]:
+        key = f"{name}_{size}" if name != "LIT" else "LIT"
+        if hashlib.sha256(bytes(lengths)).hexdigest() != hashes[key]:
+            raise SystemExit(f"{key}: the table is not the one FORMAT.md names")
+    return (
+        canonical(tables["TOK"], 11),
+        canonical(tables["LL"], 8),
+        canonical(tables["ML"], 8),
+        [canonical(lit[256 * k : 256 * (k + 1)], 10) for k in range(8)],
+    )
 
 
 def canonical(lengths, max_bits):
-    """{(length, code): symbol}, FORMAT.md's "Prefix codes"; complete codes only."""
+    """{(length, code): symbol}, FORMAT.md's "Prefix codes"; complete codes only"""
     assert max(lengths) <= max_bits
-    assert sum(2.0 ** -l for l in lengths if l) == 1.0
+    assert sum(2.0**-n for n in lengths if n) == 1.0
     count = [0] * (max_bits + 1)
-    for l in lengths:
-        if l:
-            count[l] += 1
-    nxt, code = [0] * (max_bits + 1), 0
-    for l in range(1, max_bits + 1):
-        code = (code + count[l - 1]) << 1
-        nxt[l] = code
+    for n in lengths:
+        if n:
+            count[n] += 1
+    first, code = [0] * (max_bits + 1), 0
+    for n in range(1, max_bits + 1):
+        code = (code + count[n - 1]) << 1
+        first[n] = code
     codes = {}
-    for s, l in enumerate(lengths):
-        if l:
-            codes[(l, nxt[l])] = s
-            nxt[l] += 1
+    for s, n in enumerate(lengths):
+        if n:
+            codes[(n, first[n])] = s
+            first[n] += 1
     return codes
 
 
 class Bits:
-    """the sequences' bitstream: least significant bit first in each byte, 0 past the end"""
+    """the bits of data from byte start on, 0 past its end: the sequences' bitstream least significant
+    bit first in each byte, a literal stream most significant bit first"""
 
-    def __init__(self, data):
-        self.data, self.pos = data, 0
+    def __init__(self, data, start=0, msb=False):
+        self.data, self.pos, self.msb = data, 8 * start, msb
 
     def bit(self):
         i = self.pos
         self.pos += 1
-        return (self.data[i // 8] >> (i % 8)) & 1 if i < 8 * len(self.data) else 0
+        if i >= 8 * len(self.data):
+            return 0
+        return (self.data[i // 8] >> (7 - i % 8 if self.msb else i % 8)) & 1
 
     def read(self, n):
         return sum(self.bit() << k for k in range(n))
 
     def symbol(self, codes):
         code, length = 0, 0
-        while True:
+        while (length, code) not in codes:
             code, length = code << 1 | self.bit(), length + 1
-            if (length, code) in codes:
-                return codes[(length, code)]
-
-
-class MsbBits:
-    """a literal stream: most significant bit first; past its end the page's next bytes, then 0, which
-    the check of the stream's size rejects"""
-
-    def __init__(self, data, start):
-        self.data, self.pos = data, 8 * start
-
-    def bit(self):
-        i = self.pos
-        self.pos += 1
-        return (self.data[i // 8] >> (7 - i % 8)) & 1 if i < 8 * len(self.data) else 0
-
-    def symbol(self, codes):
-        code, length = 0, 0
-        while True:
-            code, length = code << 1 | self.bit(), length + 1
-            if (length, code) in codes:
-                return codes[(length, code)]
+        return codes[(length, code)]
 
 
 def decode(page, tables, page_bits):
     tok_codes, ll_codes, ml_codes, lit_codes = tables
     size = 1 << page_bits
-    raw_bits = [0, 4, 8, 12, 5, 9] if page_bits == 12 else [0, 4, 8, 14, 5, 11]
-    shift = [0, 0, 0, 0, 3, 3]
+    offset_bits = [0, 4, 8, page_bits, 5, page_bits - 3]
     if len(page) < 2:
         raise Invalid
     h = page[0] | page[1] << 8
+    n = h & 0x7FFF
     if h & 0x8000:
-        n = h & 0x7FFF
         if len(page) < 19 or n > size or page[2] > 7:
             raise Invalid
-        s = [page[3 + 2 * j] | page[4 + 2 * j] << 8 for j in range(8)]
-        if 19 + sum(s) > len(page):
+        start = [19]
+        for j in range(8):
+            start.append(start[-1] + (page[3 + 2 * j] | page[4 + 2 * j] << 8))
+        if start[8] > len(page):
             raise Invalid
         lits = [0] * n
         for j in range(8):
-            r = MsbBits(page, 19 + sum(s[:j]))
+            r = Bits(page, start[j], msb=True)
             for k in range(j, n, 8):
                 lits[k] = r.symbol(lit_codes[page[2]])
-            if r.pos - 8 * (19 + sum(s[:j])) > 8 * s[j]:
+            if r.pos > 8 * start[j + 1]:
                 raise Invalid
-        bits = Bits(page[19 + sum(s) :])
+        bits = Bits(page[start[8] :])
     else:
-        n = h
         if 2 + n > len(page):
             raise Invalid
         lits = list(page[2 : 2 + n])
@@ -146,8 +141,8 @@ def decode(page, tables, page_bits):
             if t >= 3072:
                 raise Invalid
         ll, mlf, c = t & 15, (t >> 4) & 31, t >> 9
-        raw = bits.read(raw_bits[c])
-        off = last if c == 0 else raw << shift[c]
+        raw = bits.read(offset_bits[c])
+        off = last if c == 0 else raw << (3 if c >= 4 else 0)
         if ll == 15:
             ll = 15 + value(ll_codes)
         if ll > n - used or ll > size - len(out):
@@ -174,8 +169,7 @@ def main():
     ap.add_argument("--page-bits", type=int, default=12, choices=[12, 14])
     ap.add_argument("files", nargs="+")
     args = ap.parse_args()
-    tok, ll, ml, lit = load_tables(args.page_bits)
-    tables = (canonical(tok, 11), canonical(ll, 8), canonical(ml, 8), [canonical(x, 10) for x in lit])
+    tables = load_tables(args.page_bits)
     for f in args.files:
         try:
             print(f"{f} valid {hashlib.sha256(decode(Path(f).read_bytes(), tables, args.page_bits)).hexdigest()}")

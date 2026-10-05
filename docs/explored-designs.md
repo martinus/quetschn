@@ -846,8 +846,20 @@ dump, clock fixed, median of 7 runs taking turns:
 | Cortex-A76, big | 7699 [7643 .. 7719] | 7691 [7629 .. 7736] |
 
 1.1% more on the little core, 45 instructions per page more, nothing on the big one; the pages with raw
-literals in the sample did not change, so per coded page it is a bit more. The decoder's scratch is
-32 bytes smaller, `SEQLZ_PAGE + 16`, since nothing is decoded behind the last literal any more.
+literals in the sample did not change, so per coded page it is a bit more. That last round was a loop
+per stream, each ending after another number of literals on every page. Now it is the same steps for
+all 8 streams, and in the last one the streams without a literal decode one and do not move on, so the
+check stays exact. All three with the new tables, the same 20 000 pages, median of 7 runs taking turns:
+
+| decoder | Cortex-A55 | Cortex-A76 | instructions |
+| --- | --- | --- | --- |
+| as before, 50 bits more allowed | 16 399 [16 282 .. 16 897] | 7414 [7397 .. 7480] | 15 299 |
+| a loop per stream | 16 531 [14 742 .. 16 730] | 7480 [7435 .. 7494] | 15 349 |
+| the same steps for all streams, kept | 16 620 [16 387 .. 16 792] | 7420 [7374 .. 7474] | 15 288 |
+
+On the little core the three are within their spread, so the 1.1% above was about as much noise as
+cost; on the big core the kept one is as fast as before. The decoder's scratch is 32 bytes smaller,
+`SEQLZ_PAGE + 16`: what is decoded behind the last literal now is at most 7 bytes.
 
 ## Where the ratio of `zstd` comes from
 
