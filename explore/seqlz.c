@@ -38,8 +38,9 @@ struct lit_table {
  * at once are one add per literal, at most 25 literals before a lane could overflow */
 #define LIT_COST_WORDS ((SEQLZ_LIT_SETS + 7U) / 8U)
 _Static_assert(SEQLZ_LIT_BITS * 25U <= 255U, "lit_cost has lanes of 8 bits");
-_Static_assert(SEQLZ_LIT_SETS == 8U && SEQLZ_PAGE < 1U << SEQLZ_SIZE_BITS_MAX,
-               "byte 2 has 3 bits for the table, a size at most 16");
+_Static_assert(SEQLZ_LIT_SETS == 8U && SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
+                   (SEQLZ_PAGE / 8U * SEQLZ_LIT_BITS + 7U) / 8U < 1U << SEQLZ_SIZE_BITS_MAX,
+               "byte 2 has 3 bits for the table and 3 for the width, which holds the largest stream");
 
 struct seqlz_tables {
     struct token_table token;
@@ -491,8 +492,8 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
         coded += sizes[j];
         all |= sizes[j];
     }
-    /* the sizes in as many bits as the largest needs */
-    width = 32U - (unsigned int)__builtin_clz(all | 1U);
+    /* the sizes in as many bits as the largest needs, at least SEQLZ_SIZE_BITS_MIN */
+    width = 32U - (unsigned int)__builtin_clz(all | 1U << (SEQLZ_SIZE_BITS_MIN - 1U));
     header = SEQLZ_LIT_HEADER(width);
     if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
         return len;
@@ -558,7 +559,7 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
         }
     }
     store16(d, 0x8000U | n_literals);
-    d[2] = (u8)(set | width << 3);
+    d[2] = (u8)(set | (width - SEQLZ_SIZE_BITS_MIN) << 3);
     /* the 8 sizes, width bits each, lowest bit first: exactly width bytes */
     {
         u64 acc = 0;
@@ -714,7 +715,7 @@ static __attribute__((__noinline__, __cold__)) u64 lit_load_tail(const u8* ip, c
 static __attribute__((__noinline__, __aligned__(64))) const u8*
 decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len, unsigned int n_lit, u8* out) {
     const u8* const end = s + src_len;
-    const unsigned int width = src_len > 2U ? s[2] >> 3 : 0U;
+    const unsigned int width = SEQLZ_SIZE_BITS_MIN + (src_len > 2U ? (s[2] >> 3) & 7U : 0U);
     const u8* q = s + SEQLZ_LIT_HEADER(width);
     const u8* ip[8];
     const u8* start[8];
@@ -724,7 +725,7 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     u64 total = 0;
     const u16* lt;
 
-    if (width - 1U >= SEQLZ_SIZE_BITS_MAX || src_len < SEQLZ_LIT_HEADER(width) || n_lit > SEQLZ_PAGE)
+    if (src_len < SEQLZ_LIT_HEADER(width) || s[2] >> 6 || n_lit > SEQLZ_PAGE)
         return 0;
     lt = t->lit[s[2] & 7U].decode;
     prefetch_lines(lt, sizeof(t->lit[0].decode));

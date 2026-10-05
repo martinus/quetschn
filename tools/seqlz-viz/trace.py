@@ -62,7 +62,7 @@ def trace(page_bytes, comp, name):
     out = {"comp": base64.b64encode(comp).decode(), "n": n}
     if h & 0x8000:
         out["layout"] = "coded"
-        out["set"], w = comp[2] & 7, comp[2] >> 3
+        out["set"], w = comp[2] & 7, 5 + (comp[2] >> 3 & 7)
         packed = int.from_bytes(comp[3 : 3 + w], "little")
         sizes = [packed >> (j * w) & ((1 << w) - 1) for j in range(8)]
         out["width"] = w

@@ -105,8 +105,9 @@ def decode(page, tables, page_bits):
     h = page[0] | page[1] << 8
     n = h & 0x7FFF
     if h & 0x8000:
-        w = page[2] >> 3 if len(page) > 2 else 0
-        if not 1 <= w <= 16 or len(page) < 3 + w or n > size:
+        t = page[2] if len(page) > 2 else 0
+        w = 5 + (t >> 3 & 7)
+        if len(page) < 3 + w or t >> 6 or n > size:
             raise Invalid
         sizes = int.from_bytes(page[3 : 3 + w], "little")
         start = [3 + w]

@@ -895,10 +895,19 @@ all pages of both dumps:
 | 1 byte each where all fit, a flag in byte 2 | 990.6 | 1305.9 |
 | 4, 8 or 16 bits each, two bits of byte 2 | 990.5 | 1305.8 |
 | any width from 1 to 16, 5 bits of byte 2 | 989.0 | 1304.5 |
-| any width, the 1/16 rule as before, kept | 991.7 | 1306.2 |
+| any width, the 1/16 rule as before | 991.7 | 1306.2 |
+| widths 5 to 12, the 1/16 rule as before, kept | 991.7 | 1306.3 |
 
 4 bits pay only when all streams are below 16 bytes, and pages with so few literals rarely pass the
 1/16 rule, so the two bit mode adds 0.1 bytes to the one byte flag. Any width adds 1.6 and 1.4.
+
+**Widths 5 to 12.** A stream holds at most every 8th literal of at most 10 bits, 640 bytes in a 4 KiB
+page and 2560 in a 16 KiB page, so no page needs more than 10 and 12 bits. On the pages with coded
+literals of the two desktop dumps and the second phone dump, 3 bits were 0.09%, 0.03% and 0.07%, 4
+bits 0.7%, 1.4% and 3.2%, 10 bits 0.15%, 0.45% and 0.9%. So byte 2 has `w - 5` in 3 bits, 5 to 12 for
+both page sizes, and its top 2 bits must be 0, kept for later. The pages that needed 3 or 4 bits cost
+0.005 to 0.013 bytes per page more before size classes; zsmalloc cost 1306.3 instead of 1306.2 on the
+second dump, and 888.5 instead of 892.2 before this change on the second phone dump.
 
 **The 1/16 rule decides on the old header.** The rule counts the header, so with a smaller one more
 pages pass it: on the samples of 20 000 pages, 64.2% instead of 53.6% of the pages on the first dump

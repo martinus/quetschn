@@ -521,10 +521,13 @@ and 4096 fits into 13 bits, so the top bit of the 2 bytes is free: set means cod
 | kind of page | layout |
 | --- | --- |
 | **literals as they are** | 2 bytes: the number of literals · the literals · the bitstream |
-| **coded literals** | 2 bytes: the number of literals with the top bit set · 1 byte: which literal table, and how many bits `w` each stream size takes · `w` bytes: the 8 sizes of `w` bits each · the 8 streams · the bitstream |
+| **coded literals** | 2 bytes: the number of literals with the top bit set · 1 byte: which literal table, and how many bits `w` each stream size takes, 5 to 12 · `w` bytes: the 8 sizes of `w` bits each · the 8 streams · the bitstream |
 
-The 8 sizes take as many bits as the largest stream needs: 8 numbers of `w` bits are exactly `w`
-bytes. A page whose largest stream has 100 bytes takes 7 bits per size, a header of 3 + 7 = 10 bytes.
+The 8 sizes take as many bits as the largest stream needs, at least 5: 8 numbers of `w` bits are
+exactly `w` bytes. A page whose largest stream has 100 bytes takes 7 bits per size, a header of 3 + 7 =
+10 bytes. A stream can't be larger than 640 bytes, 512 literals of at most 10 bits, so 12 bits are
+always enough, also on pages of 16 KiB; byte 2 has the table in 3 bits, `w − 5` in 3 bits, and 2 bits
+that are 0, kept for later.
 Most pages have streams below 128 bytes. With 2 bytes per size, as until 5th October, the header was
 19 bytes, and pages were 5.2 and 5.5 bytes larger on average.
 

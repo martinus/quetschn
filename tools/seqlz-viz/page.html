@@ -824,7 +824,7 @@ function card() {
     const max = Math.max(...costs, 8 * n);
     h += eyebrow("Header · byte 2");
     h += `<div class="steptitle">Literal table ${set} of 8, sizes of ${T.width} bits</div><ul class="ops">`;
-    h += op(kc(K.SET), "8", `<p>Byte 2 is <code>0x${hex2(S.comp[2])}</code>: its low 3 bits <span class="bits">${(S.comp[2] & 7).toString(2).padStart(3, "0")}</span> are the literal table, <b>${set}</b>. The top 5 bits <span class="bits">${(S.comp[2] >> 3).toString(2).padStart(5, "0")}</span> are how many bits each of the 8 stream sizes takes, <b>${T.width}</b>, as many as the largest stream needs.</p>`);
+    h += op(kc(K.SET), "8", `<p>Byte 2 is <code>0x${hex2(S.comp[2])}</code>: its low 3 bits <span class="bits">${(S.comp[2] & 7).toString(2).padStart(3, "0")}</span> are the literal table, <b>${set}</b>. The next 3 bits <span class="bits">${((S.comp[2] >> 3) & 7).toString(2).padStart(3, "0")}</span> are ${(S.comp[2] >> 3) & 7}: each of the 8 stream sizes takes ${(S.comp[2] >> 3) & 7} + 5 = <b>${T.width}</b> bits, as many as the largest stream needs and at least 5. The top 2 bits are 0, kept for later.</p>`);
     let bars = '<div class="cost" style="margin-top:8px">';
     costs.forEach((cst, t) => {
       bars += `<span class="small${t === set ? "" : " muted"}">table ${t}</span><div class="cbar"><div style="width:${(100 * cst) / max}%;background:${t === set ? kc(K.LIT) : "var(--ink-3)"};opacity:${t === set ? 1 : 0.45}"></div></div><span class="small mono">${fmt(Math.ceil(cst / 8))} B</span>`;
