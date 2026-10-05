@@ -1330,6 +1330,23 @@ bytes per µs on the A76 and from 12 on the A55. Cold p99 on the A76: `seqlz-fas
 writing on the A55: 57.22 against 56.23, nothing; in this run it read 1.1 µs slower on the A76, where
 it runs the same code as the module it was measured against, and 0.3 µs slower in the next.
 
+### 8. Coded literals on the A55: 7.8 instructions per literal at one per cycle
+
+Where the A55's time for coded literals goes, in userspace on the phone: `quetschn-bench-interleaved` built
+with the NDK r30 (clang 21), the hot loop on the 20 000 pages, `simpleperf stat`, 6 loops minus 1, 5
+processes each. `seqlz-fast-lit` decodes a page in 15 987 cycles, `seqlz-fast` in 13 877 on the same
+pages: about 8400 cycles more per page with coded literals, 25% of them, 8 cycles per literal.
+`simpleperf record` puts 14% of the decoder's samples into `decode_literals()`, spread evenly over its
+instructions, no hot spot. Its loop is 312 instructions for 40 literals: per literal a shift for the
+index, the load, a shift for the byte, the store and the shift of the stream, 5, and 2.8 more for the 8
+refills and for the stream pointers, which do not fit into registers and go to the stack. The A55 runs
+them at about one per cycle.
+
+The 8 loads of a round first and their uses after, instead of each load followed by its uses: the same
+instructions, 15 545 against 15 987 cycles per page on the A55, 2.8%, and 7196 against 7254 on the A76.
+That is about 1 µs per page with coded literals on the A55, and 0.1 µs per page written; not built into
+the kernel module.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
