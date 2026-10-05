@@ -13,30 +13,61 @@
 
 #include "seqlz.h"
 
+#define DST_CAP (2U * SEQLZ_PAGE)
+
 static struct seqlz_tables* tables;
-static struct seqlz_state* state;
+static struct seqlz_state state;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
 static unsigned char literals[SEQLZ_PAGE];
+/* each an allocation of its own exact size, for ASan */
+static unsigned char *dst, *again, *out, *scratch;
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 
-static void roundtrip(const unsigned char* page, int coded) {
-    unsigned char *dst = malloc(2U * SEQLZ_PAGE), *again = malloc(2U * SEQLZ_PAGE);
-    unsigned char *out = malloc(SEQLZ_PAGE), *scratch = malloc(SEQLZ_SCRATCH);
-    unsigned int len, n, k, pos = 0, n_lit = 0;
+/* decodes into out, which holds other bytes before, so that a byte the decoder skips shows */
+static int decodes_to(const unsigned char* page, unsigned int len, void* scr) {
+    memset(out, 0xa5, SEQLZ_PAGE);
+    return seqlz_decode(tables, dst, len, out, scr) == 0 && memcmp(out, page, SEQLZ_PAGE) == 0;
+}
 
-    if (!dst || !again || !out || !scratch)
-        abort();
-    len = seqlz_compress(tables, state, page, dst, 2U * SEQLZ_PAGE, coded);
-    if (len == 0 || len > 2U * SEQLZ_PAGE)
-        abort();
-    if (seqlz_decode(tables, dst, len, out, scratch) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0)
+static void roundtrip(const unsigned char* page, unsigned int n, unsigned int n_lit, int coded) {
+    unsigned int len = seqlz_compress(tables, &state, page, dst, DST_CAP, coded);
+
+    if (len == 0 || len > DST_CAP || !decodes_to(page, len, scratch))
         abort();
     /* raw literals need no scratch */
-    if (!coded && (seqlz_decode(tables, dst, len, out, 0) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0))
+    if (!coded && !decodes_to(page, len, 0))
         abort();
+    if (seqlz_encode(tables, seq, n, literals, n_lit, again, DST_CAP, coded) != len || memcmp(again, dst, len) != 0)
+        abort();
+}
 
-    n = seqlz_find(state, page, seq);
+int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+    unsigned char* page;
+    unsigned int n, k, pos = 0, n_lit = 0;
+
+    if (size < 1 || size > SEQLZ_PAGE + 1U)
+        return 0;
+    if (!tables) {
+        tables = malloc(seqlz_tables_size());
+        dst = malloc(DST_CAP);
+        again = malloc(DST_CAP);
+        out = malloc(SEQLZ_PAGE);
+        scratch = malloc(SEQLZ_SCRATCH);
+        if (!tables || !dst || !again || !out || !scratch || seqlz_tables_init(tables, &seqlz_default_own) ||
+            !seqlz_all_symbols(tables))
+            abort();
+    }
+    page = calloc(1, SEQLZ_PAGE);
+    if (!page)
+        abort();
+    memcpy(page, data + 1, size - 1);
+    if (size > 1 && (data[0] & 1))
+        for (k = (unsigned int)size - 1U; k < SEQLZ_PAGE; k++)
+            page[k] = page[k - (size - 1)];
+
+    /* the sequences and literals of the page, the same for raw and coded literals */
+    n = seqlz_find(&state, page, seq);
     for (k = 0; k < n; k++) {
         memcpy(literals + n_lit, page + pos, seq[k].literals);
         n_lit += seq[k].literals;
@@ -44,38 +75,8 @@ static void roundtrip(const unsigned char* page, int coded) {
     }
     if (pos != SEQLZ_PAGE)
         abort();
-    if (seqlz_encode(tables, seq, n, literals, n_lit, again, 2U * SEQLZ_PAGE, coded) != len || memcmp(again, dst, len) != 0)
-        abort();
-
-    free(scratch);
-    free(out);
-    free(again);
-    free(dst);
-}
-
-int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-    unsigned char* page;
-    size_t k;
-
-    if (size < 1 || size > SEQLZ_PAGE + 1U)
-        return 0;
-    if (!tables) {
-        tables = malloc(seqlz_tables_size());
-        state = malloc(sizeof(*state));
-        if (!tables || !state || seqlz_tables_init(tables, &seqlz_default_own) || !seqlz_all_symbols(tables))
-            abort();
-    }
-    page = calloc(1, SEQLZ_PAGE);
-    if (!page)
-        abort();
-    if (size > 1) {
-        memcpy(page, data + 1, size - 1);
-        if (data[0] & 1)
-            for (k = size - 1; k < SEQLZ_PAGE; k++)
-                page[k] = page[k - (size - 1)];
-    }
-    roundtrip(page, 0);
-    roundtrip(page, 1);
+    roundtrip(page, n, n_lit, 0);
+    roundtrip(page, n, n_lit, 1);
     free(page);
     return 0;
 }

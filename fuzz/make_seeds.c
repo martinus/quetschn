@@ -32,7 +32,7 @@ static void make_page(int kind, unsigned char* p) {
         break;
     case 1: /* text */
         while (k < SEQLZ_PAGE) {
-            const char* w = words[next() % 8];
+            const char* w = words[next() % (sizeof(words) / sizeof(words[0]))];
             while (*w && k < SEQLZ_PAGE)
                 p[k++] = (unsigned char)*w++;
         }
@@ -58,7 +58,7 @@ static void make_page(int kind, unsigned char* p) {
         break;
     case 6: /* short periods, matches with offsets below 8 */
         for (; k < SEQLZ_PAGE; k++)
-            p[k] = (unsigned char)("abcabcxyzxyzxyz"[(k / 64) % 3 * 3 + k % 3] + (k / 512));
+            p[k] = (unsigned char)((unsigned char)"abcabcxyzxyzxyz"[(k / 64) % 3 * 3 + k % 3] + k / 512);
         break;
     default: /* 32-bit counters */
         for (; k + 4 <= SEQLZ_PAGE; k += 4) {
@@ -99,12 +99,15 @@ int main(int argc, char** argv) {
                 return 1;
             write_file(argv[1], coded ? "coded-" : "raw-", kind, dst, len);
         }
-        in[0] = 0;
         memcpy(in + 1, page, SEQLZ_PAGE);
         write_file(argv[2], "page-", kind, in, sizeof(in));
     }
     /* a short input repeated over the page */
     write_file(argv[2], "repeat-", 0, "\001seqlz", 6);
+    /* the longest input the decode target takes, two pages; libFuzzer takes its longest seed as the
+     * limit for the inputs it makes */
+    memset(dst, 0xff, sizeof(dst));
+    write_file(argv[1], "long-", 0, dst, sizeof(dst));
     free(t);
     return 0;
 }
