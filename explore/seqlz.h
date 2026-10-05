@@ -59,7 +59,7 @@ extern "C" {
 #define SEQLZ_HEADER 2U
 
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 2099 bytes. */
+ * produces and what zram's dictionary parameter can carry: 3123 bytes for 4 KiB pages. */
 struct seqlz_lengths {
     unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
