@@ -245,13 +245,15 @@ unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_se
 /*
  * One encoder for both entry points. Literals go to the front of dst, right after the header; the
  * bitstream goes behind the room of a page of literals and is moved in behind the literals at the end.
- * dst has two pages, and that is always enough: the most bits per page byte are a sequence of 4 bytes
- * without literals, an 11-bit token and a 12-bit offset, so at most 1024 * 23 + 31 bits, 2948 bytes;
- * behind 4 + 4096 + 16 bytes of header, literals and room for their 16-byte copies there are 4076. The
- * code lengths are capped at 11 and 9 bits, so this holds for any tables.
+ * dst has two pages, and that is always enough: a sequence takes at most 31 bits for its token and
+ * offset, an escaped token of SEQLZ_MAX_ESCAPE_LEN + 12 bits and an offset of QUETSCHN_PAGE_BITS, and
+ * covers at least 4 bytes of the page, so at most SEQLZ_PAGE / 4 * 31 + 31 bits: 3972 bytes for 4 KiB
+ * pages, where behind 2 + 4096 + 16 bytes of header, literals and room for their 16-byte copies there
+ * are 4078; 15 876 against 16 366 for 16 KiB pages. The token codes are capped at 11 bits and the
+ * escape at SEQLZ_MAX_ESCAPE_LEN, so this holds for any tables the encoder takes.
  * The bit writer is a 64-bit accumulator, stored 8 bytes at a time and advanced by the whole bytes. It
- * holds at most 7 bits after a flush, so one flush per sequence is enough: 7 + 11 bits of token, 12 of
- * offset and 20 of a match length value are 50. Only a literal length value, another 20, needs its
+ * holds at most 7 bits after a flush, so one flush per sequence is enough: 7 bits, 31 of token and
+ * offset and 20 of a match length value are 58. Only a literal length value, another 20, needs its
  * own flush.
  */
 struct encoder {
