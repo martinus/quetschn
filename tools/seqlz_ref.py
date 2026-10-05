@@ -105,18 +105,20 @@ def decode(page, tables, page_bits):
     h = page[0] | page[1] << 8
     n = h & 0x7FFF
     if h & 0x8000:
-        if len(page) < 19 or n > size or page[2] > 7:
+        w = page[2] >> 3 if len(page) > 2 else 0
+        if not 1 <= w <= 16 or len(page) < 3 + w or n > size:
             raise Invalid
-        start = [19]
+        sizes = int.from_bytes(page[3 : 3 + w], "little")
+        start = [3 + w]
         for j in range(8):
-            start.append(start[-1] + (page[3 + 2 * j] | page[4 + 2 * j] << 8))
+            start.append(start[-1] + (sizes >> (j * w) & ((1 << w) - 1)))
         if start[8] > len(page):
             raise Invalid
         lits = [0] * n
         for j in range(8):
             r = Bits(page, start[j], msb=True)
             for k in range(j, n, 8):
-                lits[k] = r.symbol(lit_codes[page[2]])
+                lits[k] = r.symbol(lit_codes[page[2] & 7])
             if r.pos > 8 * start[j + 1]:
                 raise Invalid
         bits = Bits(page[start[8] :])

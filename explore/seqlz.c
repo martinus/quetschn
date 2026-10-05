@@ -38,6 +38,8 @@ struct lit_table {
  * at once are one add per literal, at most 25 literals before a lane could overflow */
 #define LIT_COST_WORDS ((SEQLZ_LIT_SETS + 7U) / 8U)
 _Static_assert(SEQLZ_LIT_BITS * 25U <= 255U, "lit_cost has lanes of 8 bits");
+_Static_assert(SEQLZ_LIT_SETS == 8U && SEQLZ_PAGE < 1U << SEQLZ_SIZE_BITS_MAX,
+               "byte 2 has 3 bits for the table, a size at most 16");
 
 struct seqlz_tables {
     struct token_table token;
@@ -447,7 +449,7 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
     const u64 lanes = 0x00ff00ff00ff00ffULL;
     const unsigned int n_literals = load16(d), body = len - SEQLZ_HEADER;
     const u8* literals = d + SEQLZ_HEADER;
-    unsigned int bits = ~0U, k, j, coded, set = 0, sizes[8];
+    unsigned int bits = ~0U, k, j, coded, set = 0, sizes[8], all, width, header;
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
     u64 even[8][LIT_COST_WORDS] = {{0}}, odd[8][LIT_COST_WORDS] = {{0}};
     unsigned int w;
@@ -484,19 +486,23 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
         }
     }
     lt = &t->lit[set];
-    for (j = 0, coded = 0; j < 8U; j++) {
+    for (j = 0, coded = 0, all = 0; j < 8U; j++) {
         sizes[j] = (((unsigned int)((set & 1U ? odd : even)[j][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) + 7U) / 8U;
         coded += sizes[j];
+        all |= sizes[j];
     }
-    if (coded + SEQLZ_LIT_HEADER >= n_literals - n_literals / 16U)
+    /* the sizes in as many bits as the largest needs */
+    width = 32U - (unsigned int)__builtin_clz(all | 1U);
+    header = SEQLZ_LIT_HEADER(width);
+    if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
         return len;
     /* The coded literals, and the stores up to 16 bytes behind them, must stay in front of the moved
      * literals they come from; saving 1/16 makes sure of it for a page, this is for the reader. */
-    if (SEQLZ_LIT_HEADER + coded + 16U > 2U * SEQLZ_PAGE - body)
+    if (header + coded + 16U > 2U * SEQLZ_PAGE - body)
         return len;
     literals = d + 2U * SEQLZ_PAGE - body;
     __builtin_memmove(d + 2U * SEQLZ_PAGE - body, d + SEQLZ_HEADER, body);
-    q[0] = d + SEQLZ_LIT_HEADER;
+    q[0] = d + header;
     for (j = 0; j < 8U; j++)
         q[j + 1] = q[j] + sizes[j];
     /* Eight streams, literal k in stream k % 8, so that the decoder has eight chains side by side; most
@@ -552,10 +558,22 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
         }
     }
     store16(d, 0x8000U | n_literals);
-    d[2] = (u8)set;
-    for (j = 0; j < 8U; j++)
-        store16(d + 3 + 2 * j, sizes[j]);
-    coded += SEQLZ_LIT_HEADER;
+    d[2] = (u8)(set | width << 3);
+    /* the 8 sizes, width bits each, lowest bit first: exactly width bytes */
+    {
+        u64 acc = 0;
+        unsigned int cnt = 0;
+        u8* p = d + 3;
+
+        for (j = 0; j < 8U; j++) {
+            acc |= (u64)sizes[j] << cnt;
+            for (cnt += width; cnt >= 8U; cnt -= 8U) {
+                *p++ = (u8)acc;
+                acc >>= 8;
+            }
+        }
+    }
+    coded += header;
     __builtin_memmove(d + coded, literals + n_literals, body - n_literals);
     return coded + body - n_literals;
 }
@@ -696,7 +714,8 @@ static __attribute__((__noinline__, __cold__)) u64 lit_load_tail(const u8* ip, c
 static __attribute__((__noinline__, __aligned__(64))) const u8*
 decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len, unsigned int n_lit, u8* out) {
     const u8* const end = s + src_len;
-    const u8* q = s + SEQLZ_LIT_HEADER;
+    const unsigned int width = src_len > 2U ? s[2] >> 3 : 0U;
+    const u8* q = s + SEQLZ_LIT_HEADER(width);
     const u8* ip[8];
     const u8* start[8];
     unsigned int sz[8];
@@ -705,17 +724,23 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     u64 total = 0;
     const u16* lt;
 
-    if (src_len < SEQLZ_LIT_HEADER || n_lit > SEQLZ_PAGE || s[2] >= SEQLZ_LIT_SETS)
+    if (width - 1U >= SEQLZ_SIZE_BITS_MAX || src_len < SEQLZ_LIT_HEADER(width) || n_lit > SEQLZ_PAGE)
         return 0;
-    lt = t->lit[s[2]].decode;
+    lt = t->lit[s[2] & 7U].decode;
     prefetch_lines(lt, sizeof(t->lit[0].decode));
-    for (k = 0; k < 8U; k++) {
-        sz[k] = load16(s + 3 + 2 * k);
-        start[k] = q + total;
-        ip[k] = start[k];
-        total += sz[k];
+    {
+        /* the sizes copied out first: a 4-byte load at the last one's byte reads past the header */
+        u8 h[SEQLZ_SIZE_BITS_MAX + 4U] = {0};
+
+        __builtin_memcpy(h, s + 3, width);
+        for (k = 0; k < 8U; k++) {
+            sz[k] = (load32(h + k * width / 8U) >> (k * width % 8U)) & ((1U << width) - 1U);
+            start[k] = q + total;
+            ip[k] = start[k];
+            total += sz[k];
+        }
     }
-    if (SEQLZ_LIT_HEADER + total > src_len)
+    if (SEQLZ_LIT_HEADER(width) + total > src_len)
         return 0;
     /* full rounds only: the last, partial one below decodes no literal that does not exist */
     for (k = 0; k + 8U * SEQLZ_LIT_ROUNDS <= n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {

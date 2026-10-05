@@ -14,6 +14,7 @@
 #include <cstring>
 #include <memory>
 #include <random>
+#include <set>
 #include <vector>
 
 #include <sys/mman.h>
@@ -1140,8 +1141,8 @@ TEST_CASE("seqlz: coded literals use the literal table with the fewest bits for 
                 best_bits = bits;
             }
         }
-        CHECK(c[2] == best);
-        ++chosen[c[2]];
+        CHECK((c[2] & 7U) == best);
+        ++chosen[c[2] & 7U];
     }
     // not always the same table
     CHECK(std::count_if(chosen.begin(), chosen.end(), [](int n) {
@@ -1165,14 +1166,95 @@ std::vector<std::vector<std::pair<unsigned, unsigned char>>> canonical_codes(uns
     return by_length;
 }
 
-// the size of literal stream st in a page with coded literals, from its header (FORMAT.md)
+// In a page with coded literals (FORMAT.md): the width of its stream sizes, the length of its header, and
+// the size of literal stream st, width bits from bit st * width of the bytes behind byte 2.
+unsigned size_width(std::vector<unsigned char> const& c) {
+    return c[2] >> 3U;
+}
+
+std::size_t lit_header(std::vector<unsigned char> const& c) {
+    return SEQLZ_LIT_HEADER(size_width(c));
+}
+
 unsigned stream_size(std::vector<unsigned char> const& c, unsigned st) {
-    return c[3 + 2 * st] | static_cast<unsigned>(c[4 + 2 * st]) << 8;
+    auto v = 0U;
+    for (unsigned i = 0; i < size_width(c); ++i) {
+        auto const bit = st * size_width(c) + i;
+        v |= ((c[3 + bit / 8] >> (bit % 8)) & 1U) << i;
+    }
+    return v;
 }
 
 void set_stream_size(std::vector<unsigned char>& c, unsigned st, unsigned size) {
-    c[3 + 2 * st] = static_cast<unsigned char>(size);
-    c[4 + 2 * st] = static_cast<unsigned char>(size >> 8);
+    for (unsigned i = 0; i < size_width(c); ++i) {
+        auto const bit = st * size_width(c) + i;
+        auto const mask = static_cast<unsigned char>(1U << (bit % 8));
+        c[3 + bit / 8] = static_cast<unsigned char>((size >> i) & 1U ? c[3 + bit / 8] | mask : c[3 + bit / 8] & ~mask);
+    }
+}
+
+// the page c with its stream sizes written in width bits instead
+std::vector<unsigned char> with_size_width(std::vector<unsigned char> const& c, unsigned width) {
+    auto out = std::vector<unsigned char>(c.begin(), c.begin() + 3);
+    out[2] = static_cast<unsigned char>((c[2] & 7U) | width << 3);
+    out.resize(SEQLZ_LIT_HEADER(width));
+    for (unsigned st = 0; st < 8; ++st) {
+        set_stream_size(out, st, stream_size(c, st));
+    }
+    out.insert(out.end(), c.begin() + static_cast<std::ptrdiff_t>(lit_header(c)), c.end());
+    return out;
+}
+
+TEST_CASE("seqlz: the stream sizes take as many bits as the largest needs, up to 16") {
+    auto const t = default_tables(seqlz_default_own);
+    auto rng = std::mt19937_64(31);
+    auto out = std::vector<unsigned char>(4096);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto state = std::make_unique<seqlz_state>();
+    auto widths = std::set<unsigned>();
+    for (int round = 0; round < 200; ++round) {
+        CAPTURE(round);
+        // from 64 to 4096 bytes drawn as a literal table codes them, then zeros: streams of all sizes
+        auto const bytes = bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS);
+        auto page = std::vector<unsigned char>(4096);
+        std::copy_n(bytes.begin(), std::min<std::size_t>(4096, std::size_t{64} << (round % 7)), page.begin());
+        auto c = std::vector<unsigned char>(2 * 4096);
+        c.resize(seqlz_compress(t.get(), state.get(), page.data(), c.data(), 2 * 4096, 1));
+        REQUIRE(c.size() > 0);
+        if ((c[1] & 0x80) == 0) {
+            continue;
+        }
+        auto largest = 0U;
+        for (unsigned st = 0; st < 8; ++st) {
+            largest = std::max(largest, stream_size(c, st));
+        }
+        auto const width = size_width(c);
+        CAPTURE(width);
+        CHECK(largest < 1U << width);
+        CHECK((width == 1 || largest >= 1U << (width - 1)));
+        widths.insert(width);
+        // coded only where that saves 1/16 of the literals and 19 bytes, whatever the header takes
+        auto coded = 0U;
+        for (unsigned st = 0; st < 8; ++st) {
+            coded += stream_size(c, st);
+        }
+        auto const n_lit = static_cast<unsigned>(c[0] | (c[1] & 0x7f) << 8);
+        CHECK(coded + SEQLZ_LIT_CODED_MIN < n_lit - n_lit / 16);
+        // a decoder takes any width from 1 to 16
+        for (unsigned w = width; w <= SEQLZ_SIZE_BITS_MAX + 1; ++w) {
+            auto const wider = with_size_width(c, w);
+            auto const r =
+                seqlz_decode(t.get(), wider.data(), static_cast<unsigned>(wider.size()), out.data(), scratch.data());
+            CHECK(r == (w <= SEQLZ_SIZE_BITS_MAX ? 0 : -1));
+            if (r == 0) {
+                CHECK(out == page);
+            }
+        }
+        auto zero = c;
+        zero[2] &= 7U;
+        CHECK(seqlz_decode(t.get(), zero.data(), static_cast<unsigned>(zero.size()), out.data(), scratch.data()) == -1);
+    }
+    CHECK(widths.size() >= 4);
 }
 
 TEST_CASE("seqlz: a literal stream without its last byte is rejected") {
@@ -1193,7 +1275,7 @@ TEST_CASE("seqlz: a literal stream without its last byte is rejected") {
             continue;
         }
         REQUIRE(seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), scratch.data()) == 0);
-        auto end = std::size_t{SEQLZ_LIT_HEADER};
+        auto end = lit_header(c);
         for (unsigned st = 0; st < 8; ++st) {
             CAPTURE(st);
             auto const size = stream_size(c, st);
@@ -1225,12 +1307,11 @@ TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most signific
             continue;
         }
         ++checked;
-        // header: u16 0x8000 | literal bytes, u8 the table, 8 u16 stream bytes
+        // header: u16 0x8000 | literal bytes, u8 the table | width << 3, 8 stream sizes of width bits
         auto const n_lit = static_cast<unsigned>(c[0] | (c[1] & 0x7f) << 8);
         REQUIRE(n_lit == p.literals.size());
-        REQUIRE(c[2] < SEQLZ_LIT_SETS);
-        auto const codes = canonical_codes(seqlz_lit_sets[c[2]]);
-        auto pos = std::size_t{SEQLZ_LIT_HEADER};
+        auto const codes = canonical_codes(seqlz_lit_sets[c[2] & 7U]);
+        auto pos = lit_header(c);
         auto literals = std::vector<unsigned char>(n_lit);
         for (unsigned st = 0; st < 8; ++st) {
             auto const size = std::size_t{stream_size(c, st)};
@@ -1292,12 +1373,14 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             for (auto& b : c) {
                 b = static_cast<unsigned char>(rng());
             }
-            if (c.size() >= SEQLZ_LIT_HEADER) {
+            // widths 0 and 17 are not valid
+            auto const width = static_cast<unsigned>(rng() % (SEQLZ_SIZE_BITS_MAX + 2));
+            if (c.size() >= SEQLZ_LIT_HEADER(width)) {
                 auto const n_lit = static_cast<unsigned>(rng() % 4097);
-                auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER);
+                auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER(width));
                 c[0] = static_cast<unsigned char>(n_lit);
                 c[1] = static_cast<unsigned char>(0x80 | n_lit >> 8);
-                c[2] = static_cast<unsigned char>(rng() % (SEQLZ_LIT_SETS + 1));
+                c[2] = static_cast<unsigned char>(width << 3 | rng() % SEQLZ_LIT_SETS);
                 for (unsigned k = 0; k < 8; ++k) {
                     auto const size = static_cast<unsigned>(rng() % (rest / 8 + 2));
                     set_stream_size(c, k, size);

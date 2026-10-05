@@ -415,7 +415,7 @@ function load() {
   mark(0, 16, K.HDR, 0, S.stepIdx.h);
   if (T.layout === "coded") {
     mark(16, 8, K.SET, 0, S.stepIdx.set);
-    for (let j = 0; j < 8; j++) mark(24 + 16 * j, 16, K.SIZE, j, S.stepIdx.sizes);
+    for (let j = 0; j < 8; j++) mark(24 + T.width * j, T.width, K.SIZE, j, S.stepIdx.sizes);
     T.lits.forEach((l, k) => mark(l[0], l[1], K.LIT, k, S.stepIdx.lr + (k >> 3)));
   } else {
     mark(16, 8 * n, K.LIT, -1, S.stepIdx.raw);
@@ -458,7 +458,7 @@ function load() {
     let bits = 0;
     if (s.k === "h") { b.hdr += 16; bits = 16; }
     if (s.k === "set") { b.hdr += 8; bits = 8; }
-    if (s.k === "sizes") { b.hdr += 128; bits = 128; }
+    if (s.k === "sizes") { b.hdr += 8 * T.width; bits = 8 * T.width; }
     if (s.k === "lr") {
       const k0 = 8 * s.r, k1 = Math.min(n, k0 + 8);
       fill = k1; c.litLook += k1 - k0;
@@ -523,7 +523,7 @@ function bitAt(pos) {
   return (S.comp[byte] >> (lsb ? idx : 7 - idx)) & 1;
 }
 function inStreams(byte) {
-  return S.T.layout === "coded" && byte >= 19 && byte < S.T.starts[8];
+  return S.T.layout === "coded" && byte >= S.T.starts[0] && byte < S.T.starts[8];
 }
 
 /* the compressed page: one cell per byte, 8 bars per cell */
@@ -573,9 +573,9 @@ function curBitRange() {
   let lo = 0, hi = 0;
   if (s.k === "h") { lo = 0; hi = 16; }
   else if (s.k === "set") { lo = 16; hi = 24; }
-  else if (s.k === "sizes") { lo = 24; hi = 152; }
+  else if (s.k === "sizes") { lo = 24; hi = 24 + 8 * T.width; }
   else if (s.k === "raw") { lo = 16; hi = 16 + 8 * T.n; }
-  else if (s.k === "lr") { lo = 152; hi = 8 * T.starts[8]; }
+  else if (s.k === "lr") { lo = 8 * T.starts[0]; hi = 8 * T.starts[8]; }
   else if (s.k === "seq") { const q = T.seqs[s.i]; lo = q.tp; hi = (T.seqs[s.i + 1] ? T.seqs[s.i + 1].tp : S.comp.length * 8); }
   else if (s.k === "end") { lo = 0; hi = S.comp.length * 8; }
   S.curBitLo = lo; S.curBitHi = hi;
@@ -814,7 +814,7 @@ function card() {
     h += eyebrow("Header · bytes 0 and 1");
     h += `<div class="steptitle">${fmt(n)} literals, ${v & 0x8000 ? "coded" : "as they are"}</div><ul class="ops">`;
     h += op(kc(K.HDR), "16", `<p>Bytes <code>${hex2(S.comp[0])} ${hex2(S.comp[1])}</code> are one 16-bit number, lowest byte first: <code>0x${v.toString(16).padStart(4, "0")}</code>.</p>
-      <p>The top bit is <b>${v >> 15}</b>: ${v & 0x8000 ? "the literals are Huffman coded, a byte for the table and 16 bytes of stream sizes follow." : "the literals follow as they are, right after these 2 bytes."}</p>
+      <p>The top bit is <b>${v >> 15}</b>: ${v & 0x8000 ? "the literals are Huffman coded, a byte for the table and the width of the stream sizes follows, then the sizes." : "the literals follow as they are, right after these 2 bytes."}</p>
       <p>The other 15 bits are <b>${fmt(n)}</b>, the number of literals. A page has at most 4096, so 13 bits would do; the top bit is free for the flag.</p>`);
     h += `</ul>`;
   }
@@ -823,13 +823,14 @@ function card() {
     const costs = D.lit_len.length ? Array.from({ length: 8 }, (_, t) => S.lits.reduce((a, v) => a + D.lit_len[256 * t + v], 0)) : [];
     const max = Math.max(...costs, 8 * n);
     h += eyebrow("Header · byte 2");
-    h += `<div class="steptitle">Literal table ${set} of 8</div><ul class="ops">`;
+    h += `<div class="steptitle">Literal table ${set} of 8, sizes of ${T.width} bits</div><ul class="ops">`;
+    h += op(kc(K.SET), "8", `<p>Byte 2 is <code>0x${hex2(S.comp[2])}</code>: its low 3 bits <span class="bits">${(S.comp[2] & 7).toString(2).padStart(3, "0")}</span> are the literal table, <b>${set}</b>. The top 5 bits <span class="bits">${(S.comp[2] >> 3).toString(2).padStart(5, "0")}</span> are how many bits each of the 8 stream sizes takes, <b>${T.width}</b>, as many as the largest stream needs.</p>`);
     let bars = '<div class="cost" style="margin-top:8px">';
     costs.forEach((cst, t) => {
       bars += `<span class="small${t === set ? "" : " muted"}">table ${t}</span><div class="cbar"><div style="width:${(100 * cst) / max}%;background:${t === set ? kc(K.LIT) : "var(--ink-3)"};opacity:${t === set ? 1 : 0.45}"></div></div><span class="small mono">${fmt(Math.ceil(cst / 8))} B</span>`;
     });
     bars += `<span class="small muted">as they are</span><div class="cbar"><div style="width:${(100 * 8 * n) / max}%;background:var(--ink-3);opacity:.3"></div></div><span class="small mono">${fmt(n)} B</span></div>`;
-    h += op(kc(K.SET), "8", `<p>The 8 literal tables are fixed in the code, each the Huffman code of a group of similar pages. The encoder added up the code lengths of all ${fmt(n)} literals in every table and took the smallest sum:</p>${bars}`);
+    h += op(kc(K.LIT), "Σ", `<p>The 8 literal tables are fixed in the code, each the Huffman code of a group of similar pages. The encoder added up the code lengths of all ${fmt(n)} literals in every table and took the smallest sum:</p>${bars}`);
     const t = D.lit_len.slice(256 * set, 256 * set + 256);
     const top = [...t.keys()].sort((a, b) => t[a] - t[b]).slice(0, 8);
     h += op(kc(K.LIT), "→", `<p>The shortest codes of table ${set}:</p><div class="chips">${top.map((v) => `<span class="chip" style="background:${kc(K.LIT)}">${hex2(v)}${chq(v) ? `<small>${chq(v)}</small>` : ""} · ${t[v]}b</span>`).join("")}</div>`);
@@ -842,9 +843,11 @@ function card() {
       bars += `<span class="small">stream ${j}</span><div class="cbar"><div style="width:${(100 * z) / max}%;background:${kc(K.LIT)};opacity:${j & 1 ? 0.72 : 1}"></div></div><span class="small mono">${z} B</span>`;
     });
     bars += "</div>";
-    h += eyebrow("Header · bytes 3 to 18");
+    const w = T.width;
+    h += eyebrow(`Header · bytes 3 to ${2 + w}`);
     h += `<div class="steptitle">Where the 8 streams start</div><ul class="ops">`;
-    h += op(kc(K.SIZE), "16", `<p>8 sizes of 2 bytes each. The streams lie one after the other from byte 19, so the decoder adds them up: stream 0 starts at byte 19, the sequences' bitstream at byte <b>${T.starts[8]}</b>.</p>${bars}`);
+    h += op(kc(K.SIZE), String(w), `<p>8 sizes of ${w} bits each, lowest bit first, in ${plural(w, "byte")}: the largest stream has ${max} bytes, and ${w} bits count up to ${(1 << w) - 1}. With 2 bytes each the header would be ${16 - w} bytes longer.</p>
+      <p>The streams lie one after the other from byte ${3 + w}, so the decoder adds the sizes up: stream 0 starts at byte ${3 + w}, the sequences' bitstream at byte <b>${T.starts[8]}</b>.</p>${bars}`);
     h += op(kc(K.LIT), "÷8", `<p>Literal <i>k</i> is in stream <i>k</i> mod 8, like cards dealt to 8 players. That is only for speed: 8 streams are 8 chains of work the CPU runs side by side.</p>`);
     h += `</ul>`;
   }
@@ -1034,7 +1037,7 @@ function drawTop() {
   $("#pageNote").textContent = same ? "both codecs write the same bytes for this page" : "";
   const sz = S.comp.length;
   const parts = T.layout === "coded"
-    ? [["header", 19, K.HDR], ["8 literal streams", T.starts[8] - 19, K.LIT], ["sequences", sz - T.starts[8], K.TOK]]
+    ? [["header", T.starts[0], K.HDR], ["8 literal streams", T.starts[8] - T.starts[0], K.LIT], ["sequences", sz - T.starts[8], K.TOK]]
     : [["2", 2, K.HDR], ["literals", T.n, K.LIT], ["sequences", sz - 2 - T.n, K.TOK]];
   $("#layoutBar").innerHTML = parts.map(([nm, b, k]) => `<div style="flex:${b};background:${kc(k)}" title="${nm}: ${b} bytes">${b > sz / 12 ? `${nm} · ${fmt(b)} B` : ""}</div>`).join("");
   $("#layoutNote").textContent = parts.map(([nm, b]) => `${nm === "2" ? "header" : nm}: ${fmt(b)} bytes`).join(" · ");
@@ -1126,7 +1129,7 @@ const sw = (k) => `<span class="tk" style="background:${kc(k)}"></span>`;
 function describeBit(p) {
   const k = S.kind[p], o = S.owner[p], T = S.T;
   if (k === K.HDR) return `${sw(k)}Header: the number of literals and the flag`;
-  if (k === K.SET) return `${sw(k)}Header: literal table ${T.set}`;
+  if (k === K.SET) return `${sw(k)}Header: literal table ${T.set}, stream sizes of ${T.width} bits`;
   if (k === K.SIZE) return `${sw(k)}Header: size of stream ${o}, ${T.sizes[o]} bytes`;
   if (k === K.LIT) {
     if (T.layout === "raw") return `${sw(k)}Literal ${fmt(o)}, as it is: ${hex2(S.lits[o])} ${chq(S.lits[o])}`;

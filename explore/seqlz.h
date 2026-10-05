@@ -27,9 +27,10 @@
  * Page layout, all little endian, with the literals raw:
  *   u16 number of literals, the literals, the bitstream (the rest)
  * or with the literals Huffman coded, where that saves at least 1/16 of them:
- *   u16 0x8000 | number of literals, u8 which of the SEQLZ_LIT_SETS literal tables, 8 u16 sizes of the
- *   literals' 8 bitstreams, those streams, the sequences' bitstream (the rest). Literal k is in stream
- *   k % 8, most significant bit first, with canonical codes of at most SEQLZ_LIT_BITS bits.
+ *   u16 0x8000 | number of literals, u8 which of the SEQLZ_LIT_SETS literal tables | w << 3, the sizes
+ *   of the literals' 8 bitstreams in w bits each (SEQLZ_LIT_HEADER), those streams, the sequences'
+ *   bitstream (the rest). Literal k is in stream k % 8, most significant bit first, with canonical
+ *   codes of at most SEQLZ_LIT_BITS bits.
  */
 
 #ifdef __cplusplus
@@ -123,7 +124,16 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
 #define SEQLZ_LIT_SETS 8U
 extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS) /* literals per stream and refill: a refill leaves 56 bits */
-#define SEQLZ_LIT_HEADER 19U
+/* The header of a page with coded literals: the 2 bytes of every page, a byte with the literal table in
+ * bits 0 to 2 and the width w of the stream sizes in bits 3 to 7, then the 8 sizes of w bits each,
+ * lowest bit first, in w bytes. The encoder takes the smallest w: sizes of 2 bytes each made pages 5.2
+ * and 5.5 bytes larger on the two dumps. */
+#define SEQLZ_LIT_HEADER(w) (3U + (w))
+#define SEQLZ_SIZE_BITS_MAX 16U
+/* The encoder codes literals only where that saves 1/16 of them and 19 bytes, the header when each stream
+ * size took 2 bytes. Counting the smaller header coded 10% more pages, 2 bytes smaller each on phone
+ * pages, for 0.22 us more per page written on the A55. */
+#define SEQLZ_LIT_CODED_MIN 19U
 /* where the decoder decodes coded literals: 16 bytes behind them for the literal copies, which read 16
  * bytes at a time */
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 16U)
