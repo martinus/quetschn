@@ -67,10 +67,33 @@ target_include_directories(quetschn_spike PUBLIC spike bench/kernel_codecs)
 target_link_libraries(quetschn_spike PRIVATE quetschn_warnings)
 
 # Candidate designs, see docs/explored-designs.md. The parts that need no kernel code, for the tests.
-add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c
-            explore/bytelz.c)
+# seqlz's sources, for every target that builds it: the explore library, the kernel codecs, the fuzzers
+set(QUETSCHN_SEQLZ_SOURCES explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c)
+add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c ${QUETSCHN_SEQLZ_SOURCES} explore/bytelz.c)
 target_include_directories(quetschn_explore PUBLIC explore)
 target_link_libraries(quetschn_explore PRIVATE quetschn_warnings)
+
+# The fuzz targets of fuzz/, in libFuzzer's interface: built with clang they are libFuzzer binaries,
+# built with AFL++'s afl-clang-lto as CC they run under afl-fuzz. seqlz itself gets the coverage
+# instrumentation too, in a library of its own; make_seeds uses the plain one.
+option(QUETSCHN_FUZZ "Build the fuzz targets of fuzz/, needs clang or afl-clang-lto" OFF)
+if(QUETSCHN_FUZZ)
+    add_library(quetschn_fuzz_seqlz STATIC ${QUETSCHN_SEQLZ_SOURCES})
+    target_include_directories(quetschn_fuzz_seqlz PUBLIC explore)
+    # afl-clang-lto instruments every file anyway, and with this flag it would need libFuzzer's runtime
+    if(NOT CMAKE_C_COMPILER MATCHES "afl-")
+        target_compile_options(quetschn_fuzz_seqlz PRIVATE -fsanitize=fuzzer-no-link)
+    endif()
+    target_link_libraries(quetschn_fuzz_seqlz PRIVATE quetschn_warnings)
+    foreach(target seqlz_decode_fuzz seqlz_roundtrip_fuzz)
+        add_executable(${target} fuzz/${target}.c)
+        target_compile_options(${target} PRIVATE -fsanitize=fuzzer)
+        target_link_options(${target} PRIVATE -fsanitize=fuzzer)
+        target_link_libraries(${target} PRIVATE quetschn_fuzz_seqlz quetschn_warnings)
+    endforeach()
+    add_executable(quetschn-fuzz-seeds fuzz/make_seeds.c)
+    target_link_libraries(quetschn-fuzz-seeds PRIVATE quetschn_explore quetschn_warnings)
+endif()
 
 include(cmake/kernel_codecs.cmake)
 

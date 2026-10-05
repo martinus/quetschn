@@ -131,8 +131,8 @@ quetschn_kernel_codec(quetschn_kernel_explore lib/lz4 -O3 explore/shuffle.c expl
 target_include_directories(quetschn_kernel_explore PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 target_link_libraries(quetschn_kernel_explore PUBLIC quetschn_kernel_lz4)
 # seqlz and bytelz: their own matcher, with lz4's flags; seqlz's sequences Huffman coded with static tables
-quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c
-                      explore/zram_seqlz.c explore/bytelz.c explore/zram_bytelz.c)
+quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 ${QUETSCHN_SEQLZ_SOURCES} explore/zram_seqlz.c explore/bytelz.c
+                      explore/zram_bytelz.c)
 target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/explore")
 add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp)
 target_include_directories(quetschn-seqlz-train PRIVATE explore)
