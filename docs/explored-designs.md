@@ -872,6 +872,77 @@ its own encoder from FORMAT.md and found no page on which the two decoders diffe
 are each a rule now. The 16 KiB tables are still trained on desktop pages only, 16 KiB pages made of 4
 adjacent 4 KiB pages: there is no zram dump with 16 KiB pages yet.
 
+## Stream sizes in as many bits as the largest needs, kept
+
+*A page with coded literals stored the size of each of its 8 literal streams in 2 bytes. Most streams
+are below 128 bytes.* Largest stream per page with coded literals, all pages of both dumps:
+
+| largest stream | first dump | second dump |
+| --- | --- | --- |
+| 0 to 63 bytes | 46.8% | 30.0% |
+| 64 to 127 bytes | 38.4% | 38.6% |
+| 128 to 255 bytes | 12.8% | 25.6% |
+| 256 bytes or more | 2.0% | 5.8% |
+
+So byte 2, which used 3 bits for the literal table, now has the width `w` of the sizes in its other 5
+bits, and the 8 sizes follow in `w` bits each, lowest bit first, which is exactly `w` bytes. The header
+is `3 + w` bytes instead of 19, mostly 9 to 11. zsmalloc cost of `seqlz-fast-lit` in bytes per page,
+all pages of both dumps:
+
+| stream sizes | first dump | second dump |
+| --- | --- | --- |
+| 2 bytes each, before | 996.9 | 1311.7 |
+| 1 byte each where all fit, a flag in byte 2 | 990.6 | 1305.9 |
+| 4, 8 or 16 bits each, two bits of byte 2 | 990.5 | 1305.8 |
+| any width from 1 to 16, 5 bits of byte 2 | 989.0 | 1304.5 |
+| any width, the 1/16 rule as before, kept | 991.7 | 1306.2 |
+
+4 bits pay only when all streams are below 16 bytes, and pages with so few literals rarely pass the
+1/16 rule, so the two bit mode adds 0.1 bytes to the one byte flag. Any width adds 1.6 and 1.4.
+
+**The 1/16 rule decides on the old header.** The rule counts the header, so with a smaller one more
+pages pass it: on the samples of 20 000 pages, 64.2% instead of 53.6% of the pages on the first dump
+got coded literals, 65.2% instead of 59.0% on the second. They are worth 2.7 and 1.7 bytes per page,
+and every read of them decodes literals. Means in ns against `main`, 5 runs of each taking turns,
+Ryzen 9 7950X on the samples of both dumps, the Mi 9T with the clock fixed on 20 000 pages of the
+first phone dump:
+
+| | stored, desktop | time per page written, desktop | stored, phone | little: write / cold read / time per page written | big: time per page written |
+| --- | --- | --- | --- | --- | --- |
+| the rule counts the header | -7.9 / -7.2 | +26 / +16 | -5.4 | +178 / +120 / +218 | +88 |
+| the rule counts 19 bytes, kept | -5.2 / -5.5 | -4 / -8 | -3.4 | -35 / +8 / -33 | +27 |
+
+Write and cold read p99 moved by less than 40 ns on the desktop for both. The extra coded pages are
+2 bytes for 251 ns on the little core, 8 bytes per µs, below the 16 from which `seqlz-fast-lit` beats
+`zstd` on both dumps (docs/seqlz.md); on the desktop they are 70 to 90 bytes per µs. So the encoder codes literals only where
+that saves 1/16 of them and 19 bytes, as before, `SEQLZ_LIT_CODED_MIN`, and then writes the smaller
+header: the same pages as before get coded literals, 0.13 points smaller.
+
+**Code layout first.** The first A/B on the desktop showed writes 130 to 200 ns slower at p50, also
+with the old rule, which codes the same pages. Per page, `lz4` took 200 to 220 ns less in the new
+binaries than in `main`'s, although its code did not change. With `QUETSCHN_ALIGN_FUNCTIONS`, every
+codec function aligned to 64 bytes, `lz4` took 2111, 2111 and 2108 ns per write in the three binaries,
+and the difference was gone; all numbers above are from those builds.
+
+`tools/seqlz_ref.py` agreed with `seqlz_decode()` on 12 690 inputs, 9803 valid with the same page, the
+pages of the roundtrip target and damaged copies with bytes replaced, cut short, another width and a
+header bit flipped, and on 3200 inputs with 16 KiB pages.
+
+## Length values in 5 plain bits instead of their tables: 3 bytes per page more, not kept
+
+*A length value's symbol, 0 to 24, has a Huffman code from the `ll` or `ml` table. 5 plain bits instead
+would take two tables out of the format.* The codes of both tables average 3.7 to 4.1 bits. zsmalloc
+cost in bytes per page, all pages of both dumps:
+
+| length value symbols | `seqlz-fast-lit` | `seqlz-fast` |
+| --- | --- | --- |
+| Huffman coded, the tables | 996.9 / 1311.7 | 1085.1 / 1455.8 |
+| 5 plain bits | 1000.1 / 1314.5 | 1088.3 / 1458.4 |
+
+3.2 and 2.8 bytes per page, 0.07 to 0.08 points. Decoding a length value is one lookup either way, on the
+path for sequences that have one; not timed. Kept: the tables cost the format two tables once, the 5
+bits cost every page 3 bytes.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals

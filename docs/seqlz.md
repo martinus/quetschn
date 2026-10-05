@@ -36,11 +36,13 @@ The code is in [`explore/seqlz.c`](../explore/seqlz.c), [`explore/seqlz.h`](../e
   document means the stored size.
 * **Points.** A point is 1% of the 4096 bytes of a page, 41 bytes. A page stored in 25.4% of its size
   takes 1039 bytes; 0.5 points less means about 20 bytes less.
-* **The tables changed.** The sizes and times here were measured with the code tables used until
-  5th October 2026. The code lengths in the examples are from the tables now in the code. These are
-  trained on pages that programs had in RAM on a desktop, not the two dumps, and on a phone's zram
-  dump, and change the stored size by about 0.4%
+* **The format changed since.** The sizes and times here were measured with the code tables used
+  until 5th October 2026, and with stream sizes of 2 bytes each. The code lengths in the examples are
+  from the tables now in the code. These are trained on pages that programs had in RAM on a desktop,
+  not the two dumps, and on a phone's zram dump, and change the stored size by about 0.4%
   ([explored-designs.md](explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
+  The stream sizes now take as many bits as the largest needs, which stores a page about 5 bytes
+  smaller ([explored-designs.md](explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
 
 ## Contents
 
@@ -423,7 +425,7 @@ also carry the offset class, and a length value follows only after 8.5% of the m
 
 A page's literals are stored as they are, or all of them are Huffman coded with **one** of 8 fixed
 **literal tables**. The encoder chooses once per page, not per literal and not per sequence, and the
-choice costs one byte of header, the table's number. A choice per literal would need 3 more bits for
+choice costs 3 bits of header, the table's number. A choice per literal would need 3 more bits for
 every literal, just to say which table.
 
 The 8 tables are fixed in the code and part of the format. They were trained on the pages programs
@@ -470,12 +472,14 @@ per literal.
 
 </details>
 
-**The 1/16 rule.** The encoder codes the literals only if the 8 streams and their 19-byte header are
-smaller than 15/16 of the literals as they are, `coded + 19 < n − n / 16` in
+**The 1/16 rule.** The encoder codes the literals only if the 8 streams and 19 bytes more are smaller
+than 15/16 of the literals as they are, `coded + 19 < n − n / 16` in
 [`code_literals()`](../explore/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
 apart, so saving a few bytes mostly saves nothing, and coding the literals whenever they save
-anything gave less than 0.1 points more, for decoding time on every such page. `seqlz-fast` never
-codes literals.
+anything gave less than 0.1 points more, for decoding time on every such page. The 19 bytes were the
+header when each stream size took 2 bytes. Counting the smaller header of today instead coded 10% more
+pages, 2 bytes smaller each, for 0.22 µs more per page written on the phone's little core.
+`seqlz-fast` never codes literals.
 
 **8 streams, all with the same table.** The coded literals are dealt out like cards: literal 0 goes
 into stream 0, literal 1 into stream 1, and so on up to literal 7 in stream 7. Literal 8 goes into
@@ -497,8 +501,8 @@ that is a chain, look up, move on, look up, and every step waits for the one bef
 chains that do not wait for each other, and a CPU works on them side by side. With 4 streams a
 literal took 2.9 cycles to decode, and 8 streams made decoding a page 4% faster than 4. The streams
 cost no bits for the codes, which depend only on the literal, but each stream's size is in the header,
-2 bytes each, and each stream is filled up to a whole byte: going from 4 to 8 streams cost 0.1 to
-0.2 points.
+and each stream is filled up to a whole byte: going from 4 to 8 streams cost 0.1 to 0.2 points, when
+a size took 2 bytes.
 
 > [!NOTE]
 > **The 8 streams have nothing to do with the 8 tables.** All 8 streams of a page are coded with the
@@ -517,7 +521,12 @@ and 4096 fits into 13 bits, so the top bit of the 2 bytes is free: set means cod
 | kind of page | layout |
 | --- | --- |
 | **literals as they are** | 2 bytes: the number of literals · the literals · the bitstream |
-| **coded literals** | 2 bytes: the number of literals with the top bit set · 1 byte: which literal table · 8 × 2 bytes: the size of each stream · the 8 streams · the bitstream |
+| **coded literals** | 2 bytes: the number of literals with the top bit set · 1 byte: which literal table, and how many bits `w` each stream size takes · `w` bytes: the 8 sizes of `w` bits each · the 8 streams · the bitstream |
+
+The 8 sizes take as many bits as the largest stream needs: 8 numbers of `w` bits are exactly `w`
+bytes. A page whose largest stream has 100 bytes takes 7 bits per size, a header of 3 + 7 = 10 bytes.
+Most pages have streams below 128 bytes. With 2 bytes per size, as until 5th October, the header was
+19 bytes, and pages were 5.2 and 5.5 bytes larger on average.
 
 The bitstream has no length of its own: it goes to the end of the compressed page, and zram stores
 that page's size.
@@ -759,6 +768,7 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 | one repeat offset | three, as in `zstd` | 17% fewer decode cycles | 0.2 points: the other two were 11% of the matches |
 | two classes for offsets that are multiples of 8 | only plain offsets | 24 and 2 bytes less per page in the kernel | 0.2 µs more time per page written |
 | only complete Huffman codes | checks for invalid codes | 6% fewer instructions in the decoder | |
+| trained codes for the length values | the symbol in 5 plain bits | 3.2 and 2.8 bytes less per page | two more tables in the format |
 
 </details>
 
@@ -769,7 +779,8 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 | --- | --- | --- | --- |
 | fixed tables | a table built for each page | 13% and 15% faster writes | 0.3 and 4.6 points |
 | one of 8 literal tables per page | one table for all pages | pages 10.2% and 12.5% smaller than without coded literals, where one table gives 7.3% and 6.3% | 8 tables of 2 KiB to decode with |
-| literals in 8 streams | 4 streams | 4% fewer decode cycles, 8676 instead of 9070 per page | 8 more bytes of header: 0.1 to 0.2 points |
+| literals in 8 streams | 4 streams | 4% fewer decode cycles, 8676 instead of 9070 per page | 8 more bytes of header, with sizes of 2 bytes: 0.1 to 0.2 points |
+| stream sizes in as many bits as the largest needs | 2 bytes each | 5.2 and 5.5 bytes less per page, 0.13 points, no time measured | 5 bits of byte 2 |
 | literals coded only if that saves 1/16 of them | coded whenever it saves anything | no decoding of literals on pages where it saves only a few bytes | less than 0.1 points |
 
 </details>
