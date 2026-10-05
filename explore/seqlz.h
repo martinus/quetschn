@@ -59,7 +59,7 @@ extern "C" {
 #define SEQLZ_HEADER 2U
 
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
- * produces and what zram's dictionary parameter can carry: 3123 bytes for 4 KiB pages. */
+ * produces; the ones compiled in, seqlz_default_own, are part of the format. */
 struct seqlz_lengths {
     unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
     unsigned char ll[SEQLZ_LEN_SYMBOLS];
@@ -124,9 +124,9 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
 extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS) /* literals per stream and refill: a refill leaves 56 bits */
 #define SEQLZ_LIT_HEADER 19U
-/* where the decoder decodes coded literals: 16 bytes for the literal copies, and 8 rounds of 8 streams
- * less one literal decoded past the end */
-#define SEQLZ_SCRATCH (SEQLZ_PAGE + 48U)
+/* where the decoder decodes coded literals: 16 bytes behind them for the literal copies, which read 16
+ * bytes at a time */
+#define SEQLZ_SCRATCH (SEQLZ_PAGE + 16U)
 
 /* Writes the page for these sequences and literals, the last sequence with match 0; with coded set,
  * the literals coded where that pays. dst_cap must be at least two pages. Returns the length, or 0 if

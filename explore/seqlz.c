@@ -705,7 +705,8 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     }
     if (SEQLZ_LIT_HEADER + total > src_len)
         return 0;
-    for (k = 0; k < n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {
+    /* full rounds only: the last, partial one below decodes no literal that does not exist */
+    for (k = 0; k + 8U * SEQLZ_LIT_ROUNDS <= n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {
         unsigned int j;
         const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3], *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
 
@@ -737,11 +738,27 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
         }
     }
     {
-        const long slack = (long)(SEQLZ_LIT_ROUNDS * SEQLZ_LIT_BITS);
         u64 bb[8] = {b0, b1, b2, b3, b4, b5, b6, b7};
 
+        /* the partial round, each stream only its own literals, at most 5 */
+        if (k < n_lit) {
+            unsigned int j;
+
+            for (j = 0; j < 8U && k + j < n_lit; j++) {
+                const u8* i = ip[j];
+                u64 b = bb[j];
+                unsigned int m;
+
+                LIT_REFILL(i, b);
+                for (m = k + j; m < n_lit; m += 8U)
+                    LIT_DECODE(out[m], b);
+                ip[j] = i;
+                bb[j] = b;
+            }
+        }
+        /* the codes of each stream's literals fit into its size */
         for (k = 0; k < 8U; k++)
-            if (8L * (ip[k] - start[k]) + __builtin_ctzll(bb[k]) > 8L * sz[k] + slack)
+            if (8L * (ip[k] - start[k]) + __builtin_ctzll(bb[k]) > 8L * sz[k])
                 return 0;
     }
     return q + total;
