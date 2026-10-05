@@ -702,10 +702,13 @@ TEST_CASE("seqlz: the compressor needs a code for every symbol") {
 namespace {
 
 // seqlz written from its description in seqlz.h alone, to pin the format: encoder and decoder share
-// code, so a change to that code would still roundtrip and only change the format.
+// code, so a change to that code would still roundtrip and only change the format. last_mlf and
+// last_cls write the last sequence's token with other fields than the format allows.
 std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
                                             std::vector<seqlz_sequence> const& seq,
-                                            std::vector<unsigned char> const& literals) {
+                                            std::vector<unsigned char> const& literals,
+                                            unsigned last_mlf = 0,
+                                            unsigned last_cls = 0) {
     // canonical Huffman codes, the first code of each length after the codes of all shorter lengths,
     // written least significant bit first, so bit reversed
     auto codes = [](unsigned char const* len, unsigned n) {
@@ -759,9 +762,13 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         // class 0: the last offset, 1: below 16 in 4 raw bits, 2: below 256 in 8, 3: in 12; 4 and 5 the
         // multiples of 8 from 16, divided by 8, in 5 and 9
         auto const aligned = o >= 16 && o % 8 == 0;
-        auto const cls = last || o == last_offset ? 0U : o < 16 ? 1U : o < 256 ? (aligned ? 4U : 2U) : (aligned ? 5U : 3U);
-        auto const tok = std::min(l, SEQLZ_LL_CAP) + ((m == 0 ? 0U : std::min(m - 4U, SEQLZ_ML_CAP)) << SEQLZ_LL_BITS) +
-                         (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
+        auto const cls = last               ? last_cls
+                         : o == last_offset ? 0U
+                         : o < 16           ? 1U
+                         : o < 256          ? (aligned ? 4U : 2U)
+                                            : (aligned ? 5U : 3U);
+        auto const mlf = last ? last_mlf : std::min(m - 4U, SEQLZ_ML_CAP);
+        auto const tok = std::min(l, SEQLZ_LL_CAP) + (mlf << SEQLZ_LL_BITS) + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
         if (lengths.token[tok] != 0) {
             put(token[tok], lengths.token[tok]);
         } else {
@@ -813,6 +820,31 @@ TEST_CASE("seqlz: the encoder writes the format as seqlz.h describes it") {
                                       0);
         got.resize(len);
         CHECK(got == reference_encode(seqlz_default_own, p.sequences, p.literals));
+    }
+}
+
+TEST_CASE("seqlz: the last sequence has ml - 4 = 0 and class 0, any other is invalid") {
+    // 8 literals, 4080 bytes from 3 back, 8 literals that end the page
+    auto const t = default_tables();
+    auto literals = std::vector<unsigned char>(16);
+    for (unsigned i = 0; i < 16; ++i) {
+        literals[i] = static_cast<unsigned char>(i * 37 + 5);
+    }
+    auto const seq = std::vector<seqlz_sequence>{{8, 4080, 3}, {8, 0, 8}};
+    auto page = std::vector<unsigned char>(literals.begin(), literals.begin() + 8);
+    for (unsigned i = 0; i < 4080; ++i) {
+        page.push_back(page[page.size() - 3]);
+    }
+    page.insert(page.end(), literals.begin() + 8, literals.end());
+    auto out = std::vector<unsigned char>(4096);
+    auto const good = reference_encode(seqlz_default_own, seq, literals);
+    REQUIRE(seqlz_decode(t.get(), good.data(), static_cast<unsigned>(good.size()), out.data(), nullptr) == 0);
+    CHECK(out == page);
+    for (auto const [mlf, cls] : {std::pair{1U, 0U}, {31U, 0U}, {0U, 1U}, {0U, 3U}, {0U, 4U}, {0U, 5U}, {2U, 2U}}) {
+        CAPTURE(mlf);
+        CAPTURE(cls);
+        auto const bad = reference_encode(seqlz_default_own, seq, literals, mlf, cls);
+        CHECK(seqlz_decode(t.get(), bad.data(), static_cast<unsigned>(bad.size()), out.data(), nullptr) == -1);
     }
 }
 

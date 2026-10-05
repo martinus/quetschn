@@ -153,6 +153,8 @@ def decode(page, tables, page_bits):
         out += bytes(lits[used : used + ll])
         used += ll
         if len(out) == size:
+            if mlf != 0 or c != 0:
+                raise Invalid
             break
         ml = mlf + 4
         if mlf == 31:

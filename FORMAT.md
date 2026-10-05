@@ -233,7 +233,9 @@ being written, `last` is 1.
         if ll == 15: ll = 15 + value(LL)
         if ll > n - used or ll > PAGE - |out|: invalid
         append lits[used] to lits[used + ll - 1] to out; used = used + ll
-        if |out| == PAGE: stop                      the last sequence
+        if |out| == PAGE:                           the last sequence
+            if mlf != 0 or c != 0: invalid
+            stop
         ml = mlf + 4
         if mlf == 31: ml = 35 + value(ML)
         last = off
@@ -248,9 +250,10 @@ like `memcpy` gives other bytes when `off < ml`.
 
 There is no count of the sequences. The page ends with the sequence whose literals fill it, and that is
 the only way it ends: a page whose last match reaches the end of the page has one more sequence with
-`ll = 0`. The last sequence's token and offset bits are read like any other, but its `mlf` and its
-offset are not used and not checked. Every sequence before it writes at least 4 bytes, so a decoder
-stops after at most `PAGE / 4 + 1` sequences, also on pages that are not valid.
+`ll = 0`. The last sequence's token must have `mlf = 0` and class 0, so it has no offset bits; any other
+token there makes the page invalid. *Why:* the compressor writes nothing else, and the check is one
+compare per page. Every sequence before it writes at least 4 bytes, so a decoder stops after at most
+`PAGE / 4 + 1` sequences, also on pages that are not valid.
 
 Two things follow from the rules: a valid page has `n >= 1`, because the first match needs a byte
 before it, and the first match's offset is at most that sequence's `ll`.
@@ -292,7 +295,6 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
   one, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of classes 1 to 3 that holds
   it;
 - the escape only for a token without a code;
-- for the last sequence `mlf = 0` and class 0, which needs no offset bits;
 - zero bits to fill the last byte of the bitstream and of each literal stream, and nothing after the
   bitstream;
 - coded literals only when `19 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
@@ -302,13 +304,10 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
 The compressed page is at most `2 * PAGE` bytes, which is the buffer zram gives the compressor. zram
 stores a page that does not compress well enough as it is, so that page never reaches the decoder.
 
-## Open points
+## No version in the page
 
-1. **The last sequence's unused fields.** Its `mlf` and offset can be anything (see
-   [Decoding](#decoding)). Requiring `mlf = 0` and class 0, as the compressor writes them, would cost one
-   compare per page and make one more kind of damaged page invalid.
-2. **No version in the page.** A new format would be a new algorithm name in zram, which stores the name
-   per device.
+A new format would be a new algorithm name in zram, which stores the name per device. The values of
+byte 2 with its top bits set are invalid now and free for such a format.
 
 ## How this file was checked
 

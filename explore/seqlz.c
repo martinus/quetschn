@@ -992,8 +992,12 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         copy_literals(d, d_end, lit, lit_bound, nl);
         d += nl;
         lit += nl;
-        if (d == d_end)
-            break; /* the last sequence */
+        if (d == d_end) {
+            /* the last sequence: ml - 4 = 0 and class 0, nothing else is a valid page */
+            if (len != 4U || ((tok >> 6) & 63U) != 0U)
+                return -1;
+            break;
+        }
 
         if (len == SEQLZ_ML_CAP + 4U) {
             refill(&br);
