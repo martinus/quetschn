@@ -3,7 +3,7 @@
 // Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of seqlz's own
 // matcher on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables.c, or with --blob the
-// 2099 bytes that zram's dictionary parameter can carry. With --lit-sets the literal tables of
+// struct seqlz_lengths as bytes, for experiments. With --lit-sets the literal tables of
 // explore/seqlz_lit_sets.c instead.
 
 #include "harness.h"
@@ -278,7 +278,7 @@ void usage() {
                  "usage: quetschn-seqlz-train --corpus <base> [--blob <file>] [--lit-sets]\n"
                  "\n"
                  "Counts seqlz's symbols over the matches of its own matcher on every page. Prints the code\n"
-                 "lengths as a C initializer, or writes them to --blob for zram's dictionary parameter.\n"
+                 "lengths as a C initializer, or writes the struct seqlz_lengths to --blob.\n"
                  "--lit-sets prints the literal tables of explore/seqlz_lit_sets.c instead, from the pages with\n"
                  "more than 64 literals.\n");
 }
