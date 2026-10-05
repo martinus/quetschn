@@ -840,7 +840,7 @@ TEST_CASE("seqlz: the last sequence has ml - 4 = 0 and class 0, any other is inv
     auto const good = reference_encode(seqlz_default_own, seq, literals);
     REQUIRE(seqlz_decode(t.get(), good.data(), static_cast<unsigned>(good.size()), out.data(), nullptr) == 0);
     CHECK(out == page);
-    for (auto const [mlf, cls] : {std::pair{1U, 0U}, {31U, 0U}, {0U, 1U}, {0U, 3U}, {0U, 4U}, {0U, 5U}, {2U, 2U}}) {
+    for (auto const& [mlf, cls] : {std::pair{1U, 0U}, {31U, 0U}, {0U, 1U}, {0U, 3U}, {0U, 4U}, {0U, 5U}, {2U, 2U}}) {
         CAPTURE(mlf);
         CAPTURE(cls);
         auto const bad = reference_encode(seqlz_default_own, seq, literals, mlf, cls);
