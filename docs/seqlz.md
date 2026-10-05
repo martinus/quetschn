@@ -32,27 +32,69 @@ decided it. The history of every idea, also of the ones that failed, is in
 <details>
 <summary><b>Glossary</b>: the words this document uses, click to open</summary>
 
+Many of these words sound alike and are not. They belong to three levels: what is on the page, how a
+sequence becomes numbers, and how numbers become bits.
+
+**What is on the page**
+
 | word | meaning |
 | --- | --- |
 | **page** | 4096 bytes of memory, the unit the kernel swaps out and zram compresses |
 | **literal** | a byte stored as it is, because the matcher found no earlier copy of it |
 | **match** | "copy `ml` bytes from `offset` bytes back": bytes that appeared earlier in the page |
 | **offset** | how many bytes back the copy of a match starts |
-| **sequence** | `ll` literals followed by one match; the compressor turns a page into a list of sequences |
 | **`ll`** | literal length: how many literals a sequence has, 0 or more |
 | **`ml`** | match length: how many bytes the match copies, 4 or more |
+| **sequence** | `ll` literals followed by one match; the compressor turns a page into a list of sequences, and the last one has literals only |
+
+**How a sequence becomes numbers**
+
+| word | meaning |
+| --- | --- |
+| **token** | one number for `ll`, `ml - 4` and the offset class of a sequence together, 3072 of them; one token is one symbol of the token table |
+| **offset class** | one of 6 ways to store the offset, e.g. class 0 "the same as the match before", in 0 bits |
+| **offset bits** | the bits after the token that hold the offset, as many as its class says |
+| **length value** | the rest of `ll` or `ml` when it is too large for the token: a symbol of its own table and some extra bits |
+| **escape** | a symbol of the token table that says "the token follows in 12 plain bits", for the rare tokens that have no code |
+
+**How numbers become bits**
+
+| word | meaning |
+| --- | --- |
+| **symbol** | whatever is coded: in the token table a token, in a literal table a byte value, in a length table a length or a range of lengths. Token and literal are kinds of symbols |
+| **code** | the bits written for one symbol, e.g. `11100010011` for token 1010. Frequent symbols get short codes, rare ones long codes |
+| **code length** | how many bits a symbol's code has; a table stores only these, the codes follow from them by a fixed rule |
+| **prefix code** | a set of codes where no code is the start of another, so a decoder reading bit by bit knows where a code ends: `0`, `10`, `11` is one, `0`, `01` is not |
+| **Huffman code** | a prefix code built from how often each symbol occurs; seqlz's tables are Huffman codes |
+| **table** | the code lengths of all symbols of one kind. seqlz has 11: tokens, literal length values, match length values, and 8 literal tables |
+| **literal table** | one of the 8 tables for literals; a page with coded literals uses one of them for all its literals |
+| **static table** | a table that is fixed and the same for every page; seqlz's tables are part of its format |
+| **bitstream** | codes and bits written one after the other, not aligned to bytes |
+
+**The compressed page**
+
+| word | meaning |
+| --- | --- |
+| **header** | the first bytes: the number of literals, and with coded literals the literal table and the 8 stream sizes |
+| **raw literals** | the layout where the literals are stored as they are, one byte each |
+| **coded literals** | the layout where each literal is written as its code from one literal table, which takes fewer bits |
+| **stream** | coded literals are split into 8 streams, literal `k` into stream `k % 8`, all coded with the same table, so that the decoder can work on 8 at a time |
+
+E.g. the 9 bytes `02 00 61 62 47 96 7b fb 19` are a page of `ab` 2048 times: `02 00` is the header,
+2 raw literals; `61 62` are the literals `a` and `b`; the 40 bits after them are the code of token 1010
+(`ll` 2, offset class 1, a long match), 4 offset bits for offset 2, a length value for `ml` 4094, and
+the code of token 0, which ends the page. [FORMAT.md](../FORMAT.md#example) takes it apart bit by bit.
+
+**The compressor, the decoder, and the measurements**
+
+| word | meaning |
+| --- | --- |
 | **matcher** | the first half of the compressor: it walks through the page and looks for matches. It decides where the matches are, and the bytes between them are the literals |
 | **hash table** | the matcher's table of 4096 positions, one per hash of 5 bytes; a slot keeps only the newest position, see [the encoder](#the-hash-table-is-a-cache-not-a-map) |
 | **greedy** | a matcher that takes a match as soon as it finds one, without checking whether a match that starts a byte later would be longer |
 | **encoder** | the second half of the compressor: it writes the matcher's sequences and literals in the format |
 | **decoder** | turns a compressed page back into its 4096 bytes |
-| **stream** | coded literals are split into 8 streams, literal `k` into stream `k % 8`, all coded with the same table |
-| **scratch** | work memory of the codec; the decoder decodes coded literals into it, 4144 bytes per CPU |
-| **offset class** | one of 6 ways to store the offset, e.g. "the same as the match before", in 0 bits |
-| **token** | one Huffman coded symbol for `ll`, `ml` and the offset class of a sequence |
-| **Huffman code** | a code where frequent symbols get few bits and rare ones many; see below |
-| **static table** | a Huffman table fixed in the code, the same for every page |
-| **bitstream** | the codes written one after the other, bit by bit, not aligned to bytes |
+| **scratch** | work memory of the codec; the decoder decodes coded literals into it, 4112 bytes per CPU |
 | **zsmalloc** | the allocator zram stores compressed pages in, in size classes |
 | **µs** | a microsecond, a millionth of a second |
 | **mean** | the average time over all pages |
