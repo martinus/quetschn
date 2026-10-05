@@ -59,19 +59,30 @@ static inline unsigned int load16(const u8* p) {
     return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
 }
 
+/* Numbers of 4 and 8 bytes, little endian as in the format, whatever the CPU: the first byte is the
+ * lowest. On a big-endian CPU the bytes are swapped; on x86-64 and arm64 these are plain loads. */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#    define PAGE_LZ_LE32(x) __builtin_bswap32(x)
+#    define PAGE_LZ_LE64(x) __builtin_bswap64(x)
+#else
+#    define PAGE_LZ_LE32(x) (x)
+#    define PAGE_LZ_LE64(x) (x)
+#endif
+
 static inline u32 load32(const u8* p) {
     u32 v;
     __builtin_memcpy(&v, p, 4);
-    return v;
+    return PAGE_LZ_LE32(v);
 }
 
 static inline u64 load64(const u8* p) {
     u64 v;
     __builtin_memcpy(&v, p, 8);
-    return v;
+    return PAGE_LZ_LE64(v);
 }
 
 static inline void store64(u8* p, u64 v) {
+    v = PAGE_LZ_LE64(v);
     __builtin_memcpy(p, &v, 8);
 }
 
@@ -148,11 +159,7 @@ static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_
         u64 v_next = load64(src + pos + 1);
         unsigned int h_next = hash5(v_next), m, len;
         /* the first 4 bytes of the 8 for the hash, without a second load */
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
         u32 cur = (u32)v;
-#else
-        u32 cur = (u32)(v >> 32);
-#endif
         /* One branch for both candidates, not three: the last offset always points into the page (it
          * starts at 1, the search at position 1), and so does a table entry, so both can be read before
          * it is known whether they count. Three branches mispredicted almost twice as often as lz4's
@@ -247,16 +254,16 @@ static ALWAYS_INLINE void copy_match(u8* d, const u8* d_end, unsigned int off, u
             unsigned int bits = 8U * off;
 
             /* d - off + 7 < d + 8 <= d_end: inside the page */
-            __builtin_memcpy(&w, d - off, 8);
+            w = load64(d - off);
             pat = w & ((1ULL << bits) - 1ULL);
             pat |= pat << bits;
             pat |= (pat << ((2U * bits) & 63U)) & (0ULL - (u64)(2U * bits < 64U));
             pat |= (pat << ((4U * bits) & 63U)) & (0ULL - (u64)(4U * bits < 64U));
-            __builtin_memcpy(d, &pat, 8);
+            store64(d, pat);
             /* step bytes on, a multiple of off, it is the same 8 bytes again: stores only, without
              * a load that waits for the store before it */
             for (k = step; k < len && (unsigned int)(d_end - d) >= k + 8U; k += step)
-                __builtin_memcpy(d + k, &pat, 8);
+                store64(d + k, pat);
             back = 0;
         } else {
             back = 0; /* at the end of the page: one by one below */
