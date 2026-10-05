@@ -474,13 +474,15 @@ per literal.
 
 </details>
 
-**The 1/16 rule.** The encoder codes the literals only if the 8 streams and 19 bytes more are smaller
-than 15/16 of the literals as they are, `coded + 19 < n − n / 16` in
+**The 1/16 rule.** The encoder codes the literals only if the 8 streams and 51 bytes more are smaller
+than 15/16 of the literals as they are, `coded + 51 < n − n / 16` in
 [`code_literals()`](../explore/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
 apart, so saving a few bytes mostly saves nothing, and coding the literals whenever they save
-anything gave less than 0.1 points more, for decoding time on every such page. The 19 bytes were the
-header when each stream size took 2 bytes. Counting the smaller header of today instead coded 10% more
-pages, 2 bytes smaller each, for 0.22 µs more per page written on the phone's little core.
+anything gave less than 0.1 points more, for decoding time on every such page. The 51 bytes are for
+the phone: a page with coded literals costs a fixed time to read, its literal table and the buffer the
+literals are decoded into, and on the phone's little core that is several µs. With 51 instead of 19
+bytes, pages are 7.9 bytes larger and the time per page written 2.7 µs shorter on the phone's little
+core, 1.1 µs on its big core; on the PC it is 11 bytes for 0.1 µs.
 `seqlz-fast` never codes literals.
 
 **8 streams, all with the same table.** The coded literals are dealt out like cards: literal 0 goes

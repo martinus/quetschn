@@ -1032,6 +1032,67 @@ to 76 on the big core and from 0.2 to 15 on the little core, with `seqlz-fast` a
 
 ![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
 
+## Coded literals only where they save 51 bytes: 2.7 µs per page written less on the A55, kept
+
+*The encoder codes a page's literals where that saves 1/16 of them and 19 bytes. On the phone's
+little core, `seqlz-fast-lit` was the best choice only up to 15 bytes per µs: decoding the literals
+costs time on every read.* Two ways to code fewer pages, a larger part of the literals or a larger
+minimum, the rule `coded + min < n - n * k / 16`. zsmalloc cost in bytes per page, all pages:
+
+| rule | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
+| --- | --- | --- | --- | --- |
+| 1/16 and 19, before | 991.7 | 1306.3 | 699.5 | 888.5 |
+| 1/16 and 51, kept | 1002.8 | 1312.3 | 705.3 | 896.3 |
+| 1/16 and 115 | 1019.1 | 1323.3 | 719.8 | 913.3 |
+| 2/16 and 19 | 1005.5 | 1316.7 | 708.4 | 901.2 |
+| 2/16 and 51 | 1015.7 | 1324.6 | 716.6 | 911.3 |
+| 3/16 and 19 | 1021.1 | 1352.2 | 720.1 | 920.5 |
+| 4/16 and 19 | 1044.6 | 1411.5 | 730.0 | 934.3 |
+
+The minimum in finer steps, 1/16 each, and the pages coded in the 20 000 pages timed below:
+
+| minimum | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 | pages coded |
+| --- | --- | --- | --- | --- | --- |
+| 19 | 991.7 | 1306.3 | 699.5 | 888.5 | 38.8% |
+| 27 | 994.4 | 1308.1 | 701.0 | 890.5 | 33.9% |
+| 35 | 997.4 | 1309.7 | 702.4 | 892.4 | 30.2% |
+| 43 | 1000.2 | 1311.1 | 703.8 | 894.3 | 27.5% |
+| 51 | 1002.8 | 1312.3 | 705.3 | 896.3 | 24.9% |
+| 59 | 1004.9 | 1313.6 | 707.1 | 898.5 | 22.5% |
+| 67 | 1007.3 | 1314.8 | 708.9 | 900.7 | 20.3% |
+| 83 | 1010.8 | 1317.3 | 713.1 | 905.2 | 16.3% |
+| 115 | 1019.1 | 1323.3 | 719.8 | 913.3 | 10.9% |
+
+The bytes grow evenly with the minimum, 0.25 to 0.37 bytes per page for each byte of it, without a
+bend. Where the time stops falling is only measured at 19, 51 and 115, so 51 is the best of three, not
+a measured optimum; 43 would cost 2 bytes less if it saved as much time.
+
+The times in the phone's own kernel, each rule its own module next to `lz4`, `lzo` and `zstd`, the
+`seqlz` ones never next to each other, 20 000 pages of the second phone dump, clocks fixed, means of the
+time per page written, write + 0.34 × cold read, in µs, two runs with the rule before in each:
+
+| rule | bytes per page | pages coded | A55 | A76 |
+| --- | --- | --- | --- | --- |
+| 1/16 and 19, before | 929.0 | 38.8% | 59.41 / 59.32 | 16.91 / 17.12 |
+| 2/16 and 19 | 941.3 | 24.3% | 57.25 | 16.33 |
+| 4/16 and 19 | 976.5 | 6.0% | 55.53 | 16.02 |
+| 1/16 and 51 | 936.9 | 24.9% | 56.61 | 16.02 |
+| 1/16 and 115 | 955.4 | 10.9% | 56.16 | 16.44 |
+
+The pages that 2/16 no longer codes saved 85 bytes each and cost 15 µs per page written on the A55, far
+more than their literals' decoding: a page with coded literals costs a fixed time, its literal table
+and the 4 KiB it decodes them into, with the little core's few misses in flight. A minimum takes out
+the pages with few literals first, so 51 bytes codes as few pages as 2/16 for 7.9 instead of 12.3
+bytes, and saves more time: 2.7 µs per page written on the A55, 2.9 bytes per µs, and 1.1 µs on the A76,
+7.2 bytes per µs. From 51 to 115 bytes is another 18.5 bytes for 0.45 µs on the A55.
+
+On the PC it does not pay. Kernel VM, 20 000 pages of the first desktop dump, two boots each taking
+turns, `lz4` in each: 1034.9 and 1055.3 bytes per page, `seqlz-fast-lit` 7.32 / 7.51 and 7.18 / 7.41 µs
+per page written, 1.21 / 1.42 and 1.11 / 1.32 µs more than `lz4`; 0.1 µs, less than two boots of the
+same build differ, for 20 bytes on this sample and 11 on the whole dump, about 200 bytes per µs, where
+`seqlz-fast-lit` is the best choice up to 153. Kept for the phone, the target: `SEQLZ_LIT_CODED_MIN`
+is 51. zram's level parameter could set it per device instead, which `seqlz` ignores so far; not done.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals

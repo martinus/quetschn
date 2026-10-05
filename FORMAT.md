@@ -297,8 +297,8 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
 - the escape only for a token without a code;
 - zero bits to fill the last byte of the bitstream and of each literal stream, and nothing after the
   bitstream;
-- coded literals only when `19 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
-  them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 19 is not the
+- coded literals only when `51 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
+  them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the
   size of the header; with it, a page has to save enough to be worth decoding its literals.
 
 The compressed page is at most `2 * PAGE` bytes, which is the buffer zram gives the compressor. zram
