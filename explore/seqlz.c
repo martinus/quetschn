@@ -630,7 +630,7 @@ static inline void refill(struct bit_reader* r) {
         u64 v;
 
         /* count is at least 0 here: it only goes negative at the end of the stream */
-        __builtin_memcpy(&v, r->p, 8);
+        v = load64(r->p);
         r->bits |= v << r->count;
         r->p += (63 - r->count) >> 3;
         r->count |= 56;
@@ -969,15 +969,16 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
                                               0x0100000000000001ULL};
                 unsigned int step = step_for[off], k;
 
-                __builtin_memcpy(&a, d - off, 8);
+                /* little endian, so that the off bytes before d are the low ones */
+                a = load64(d - off);
                 a = (a & (~0ULL >> (64U - 8U * off))) * repeat[off];
-                __builtin_memcpy(d, &a, 8);
-                __builtin_memcpy(d + step, &a, 8);
-                __builtin_memcpy(d + 2U * step, &a, 8);
-                __builtin_memcpy(d + 3U * step, &a, 8);
-                __builtin_memcpy(d + 4U * step, &a, 8);
+                store64(d, a);
+                store64(d + step, a);
+                store64(d + 2U * step, a);
+                store64(d + 3U * step, a);
+                store64(d + 4U * step, a);
                 for (k = 5U * step; k < len; k += step)
-                    __builtin_memcpy(d + k, &a, 8);
+                    store64(d + k, a);
             }
             d += len;
             continue;
