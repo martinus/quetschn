@@ -12,7 +12,9 @@ Short version so far: the gap between `lz4` and `zstd -1` is mostly how the sequ
 `zstd -1`, 25.2% against 26.9%, and decodes faster than it, but is still 1.4 µs slower than `lz4` at
 cold p99. Two decoders beat `lz4` on cold p99, but only with formats that need 55.7% and 70.5% of the
 uncompressed size, against 34.5% for `lz4`. The ratio has to come from repeats across the whole page;
-local tricks on 8 or 64 bytes do not get there.
+local tricks on 8 or 64 bytes do not get there. On a phone that swaps 25 apps with the same RAM for zram,
+no app had to start again with `seqlz-fast` in 3 runs, 54 launches did with `lz4`, see
+[Apps on the phone](#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4).
 
 ## How the numbers are measured
 
@@ -620,6 +622,169 @@ both cores, for 20% less memory, and at 1.07 times `lz4`'s cold p99 on the littl
 is left: 1.38 times `lz4`'s time per page written on the little core, 1.13 on the big one. `-lit` saves
 55 bytes per page more, but costs 4.2 µs per page written and 1.6 times the cold p99 on the little core,
 so on a phone `seqlz-fast` is the better trade.
+
+## In the phone's own kernel: cold reads on the little core cost seqlz-fast 9 µs more than lz4
+
+*zram on the Mi 9T's Linux 4.14, not the harness.* zram on 4.14 takes any registered crypto compressor,
+so `seqlz-fast` and `seqlz-fast-lit` became a module, `lz4` too, which this kernel does not have. Xiaomi
+did not publish the source of this kernel; the modules are built against `phoenix-r-oss` of
+`MiCode/Xiaomi_Kernel_OpenSource`, the Redmi K30's kernel, also 4.14.180 for the same SoC family, with
+the phone's `/proc/config.gz`, NDK r21e's clang 9 and the version string of the phone's kernel. Its
+symbol CRCs match the phone's only for 356 of 970 symbols, the drivers only in the phone's kernel change
+structs that many CRCs depend on; `struct module` has the same size and offsets. So the modules' version
+table got the phone's CRC where one of the phone's own modules uses the symbol, and lost the entry for
+the other kernel symbols. They loaded without a problem.
+
+A tool like `tools/zram-vm/init.c` wrote 19 752 pages of the second phone dump to four new zram devices,
+one per algorithm, and read them back with `O_DIRECT`, the devices taking turns per page; warm after a
+read of another page, cold after reading 2 MiB of other data. Median of 3 runs per page, clock fixed,
+µs:
+
+| | `lzo` | `lz4` | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- |
+| zram's `mem_used` | 24.1 MB | 25.8 MB | 19.6 MB | 18.5 MB |
+| little, write p50 / p99 | 28.0 / 50.3 | 24.7 / 54.1 | 29.8 / 59.4 | 32.4 / 79.3 |
+| little, read warm p50 / p99 | 11.7 / 18.0 | 10.2 / 17.1 | 12.6 / 21.5 | 13.1 / 30.4 |
+| little, read cold p50 / p99 | 45.6 / 62.3 | 45.2 / 63.6 | 54.3 / 75.0 | 56.4 / 81.8 |
+| big, write p50 / p99 | 10.3 / 19.9 | 9.6 / 18.6 | 11.0 / 20.8 | 10.6 / 22.5 |
+| big, read warm p50 / p99 | 5.1 / 10.6 | 3.9 / 6.3 | 4.3 / 6.8 | 4.1 / 8.8 |
+| big, read cold p50 / p99 | 7.6 / 13.0 | 6.7 / 9.2 | 7.9 / 10.8 | 8.0 / 14.0 |
+
+`seqlz-fast` needs 19% less memory than `lzo`, the phone's algorithm, and 24% less than `lz4`. On the
+big core it is within 1.1 to 1.2 times `lz4` everywhere and reads cold faster than `lzo` at p99. On the
+little core the cold read is the outlier: 9.2 µs more than `lz4` at p50, 11.4 at p99, while warm it is
+2.4 and 4.3 µs; the harness, whose tables stay in the cache, never saw this. The decoder's tables are 12
+KiB, the token table alone 8 KiB since #60, prefetched as 192 lines before each page, and the little core
+has few misses in flight.
+
+**Smaller tables and fewer prefetches, in the kernel, not kept.** Each variant its own module and name,
+the devices taking turns per page in one run, cold reads on the little core, p50 in µs:
+
+| decoder | run 1 | run 2 | warm p50, run 2 |
+| --- | --- | --- | --- |
+| `lz4` | 45.9 | 45.6 | 10.6 |
+| `main` | 56.7 | 55.7 | 14.0 |
+| without the prefetch of the length tables | 59.7 | | |
+| without any prefetch | 73.0 | | |
+| `main` with token entries of 2 bytes, 4 KiB | | 56.1 | 14.7 |
+| before #60, 4 KiB | 53.1 | 55.2 | 15.0 |
+
+The prefetch is needed on the little core, also the one of the length tables, though they are rarely
+read; on the big core no prefetch was 0.5 µs faster. The 4 KiB table looked 3.6 µs faster in the first
+run and was not in the second: the same decoder moved by up to 2 µs between runs, so a difference of 1
+or 2 µs needs several runs. The gap to `lz4` stays at about 10 µs, and it fits what a cold read has to
+fetch from DRAM, the 12 KiB of tables and the decoder's code, where `lz4` has no tables. Fewer table
+bytes would need shorter token codes, which changes the format. How cold a read really is depends on
+bursts: after the first swap-in of a burst the tables are in L2 again.
+
+**How cold is cold: the read time by the data read in between.** The same tool, the reads after
+reading 0, 64 KiB, 256 KiB, 1 MiB or 2 MiB of other data, the little core, p50 in µs:
+
+| other data | `lzo` | `lz4` | `seqlz-fast` | `seqlz-fast` - `lz4` |
+| --- | --- | --- | --- | --- |
+| 0 | 11.7 | 10.4 | 13.5 | 3.1 |
+| 64 KiB | 12.6 | 11.3 | 14.9 | 3.6 |
+| 256 KiB | 13.9 | 12.7 | 16.3 | 3.6 |
+| 1 MiB | 22.9 | 20.5 | 27.3 | 6.8 |
+| 2 MiB | 45.7 | 45.6 | 56.8 | 11.1 |
+
+Up to 256 KiB of other work between two swap-ins the gap stays at 3.1 to 3.6 µs; it grows when the
+other data pushes the tables out of the 1 MiB L3. Already the warm gap is larger than in the harness,
+where `seqlz-fast` decodes these pages 2.0 µs slower than `lz4` at p50 on the same core.
+
+Two causes for the kernel's extra, measured, neither is it:
+
+* **Tables from `kzalloc` instead of `vzalloc`**, in the linear map instead of 4 KiB pages of their
+  own: cold p50 54.8 instead of 56.6 µs, warm 13.3 instead of 13.4. The TLB misses of the tables cost
+  about 2 µs at most of the 11.
+* **`seqlz.o` built with clang 21 instead of the kernel's clang 9**, the rest of the module the same:
+  warm reads 0.1 to 0.2 µs faster, writes 0.3 to 0.4 µs, cold reads the same.
+
+
+## Apps on the phone: with the same RAM, no cold launch in 6 runs of seqlz, 54 in 3 runs of lz4
+
+*Android 11 on the Mi 9T, the modules of the previous section, 25 apps. Not the harness.* The question
+here is if the smaller pages change anything a user sees, and if the slower reads do. `tools/phone-apps/`
+launches 25 apps in turn with `am start -W`, which reports the launch time and if the app was still
+there: cold means it was killed in between and starts from scratch, warm or hot means it came back from
+memory, with what zram has of it. Chrome opens 4 pages in round 1, every app gets 2 swipes. Before each
+run the phone reboots and waits 90 s, then `hog` locks 1536 MiB, so the 25 apps do not fit into the
+phone's 5.4 GiB, and `zram0` gets the algorithm. 4 rounds; round 1 starts most apps cold, so all numbers
+are of rounds 2 to 4, 75 launches per run. 3 runs per algorithm, each repetition starts at another
+algorithm.
+
+Two settings of Android decide before memory does, so both are changed:
+
+* The kernel's lowmemorykiller of this phone kills by free memory and ignores swap. With it and the
+  limit below, almost all launches after round 1 were cold. `setup.sh` switches it off and hides its parameters, so `lmkd`
+  kills by memory pressure (PSI), like on current phones.
+* ActivityManager keeps at most 32 cached processes here and kills the rest by count. `device_config`
+  raises it to 96; a flag sync after boot sets it back, so `swapbench.sh` checks it before every
+  launch. It was reset 17 times in series C, always in round 1.
+
+**The same disksize for all, the phone's 2.5 GiB.** Mean of 3 runs, the launch times of rounds 2 to 4,
+cold launches the sum of the 3 runs:
+
+| | `lz4` | `lzo` | `seqlz-fast` | `seqlz-fast-lit` | `zstd` |
+| --- | --- | --- | --- | --- | --- |
+| zram's `mem_used` | 687 MiB | 650 MiB | 526 MiB | 484 MiB | 459 MiB |
+| cold launches | 24 | 21 | 18 | 3 | 6 |
+| all launches, median | 427 ms | 433 ms | 462 ms | 446 ms | 451 ms |
+| all launches, mean | 536 ms | 573 ms | 575 ms | 516 ms | 551 ms |
+| warm and hot only, median | 391 ms | 414 ms | 421 ms | 439 ms | 441 ms |
+| pages swapped out | 1.90 M | 1.84 M | 1.72 M | 1.63 M | 1.65 M |
+| kswapd CPU | 136 s | 140 s | 145 s | 132 s | 199 s |
+
+In every run the 2.5 GiB were full, about 2200 MiB of pages, and about 1 million pages were swapped in.
+`lmkd` also kills when swap runs low, and it counts swap in pages, not in RAM, so with the same disksize
+a better ratio helps only with the RAM it frees. It did help `seqlz-fast-lit` and `zstd`, 3 and 6 cold
+launches against 24 for `lz4`; `seqlz-fast`, with 18, hardly.
+
+The median of the warm and hot launches alone made `seqlz-fast-lit` look 48 ms slower than `lz4`, and
+that is mostly because it kept more apps: an app that survives makes a slow warm launch, with lots of
+swap-ins, instead of a cold one that is not counted there. With the cold launches the median is 19 ms
+above `lz4` and the mean 20 ms below. `zstd` costs 60 s more CPU in `kswapd` per run than all others,
+that is its compression; both `seqlz` variants are at `lz4`'s and `lzo`'s.
+
+**The same RAM for all: the disksize scaled by the ratio.** That is what a phone vendor would do who
+picks the disksize for the algorithm. Every algorithm gets the RAM that `lzo` gets with 2.5 GiB, with the
+ratios of the runs above: 2.33 GiB for `lz4`, 3.05 GiB for `seqlz-fast`, 3.26 GiB for `seqlz-fast-lit`,
+3.42 GiB for `zstd`. Mean of 3 runs:
+
+| | `lz4` | `lzo` | `seqlz-fast` | `seqlz-fast-lit` | `zstd` |
+| --- | --- | --- | --- | --- | --- |
+| zram's `mem_used` | 647 MiB | 644 MiB | 653 MiB | 617 MiB | 558 MiB |
+| pages in zram | 2080 MiB | 2217 MiB | 2699 MiB | 2708 MiB | 2587 MiB |
+| cold launches | 54 | 23 | 0 | 0 | 0 |
+| killed processes per run | 145 | 124 | 63 | 66 | 71 |
+| all launches, median | 534 ms | 440 ms | 417 ms | 411 ms | 459 ms |
+| all launches, mean | 624 ms | 570 ms | 470 ms | 466 ms | 508 ms |
+| warm and hot only, median | 426 ms | 411 ms | 417 ms | 411 ms | 459 ms |
+| kswapd CPU | 145 s | 139 s | 133 s | 138 s | 200 s |
+
+No app was killed between two rounds in any of the 9 runs of `seqlz-fast`, `seqlz-fast-lit` and `zstd`;
+`lz4` had 11, 20 and 23 cold launches. The mean of all launches is 154 ms lower with `seqlz-fast` than
+with `lz4`, and even the warm and hot launches alone are not slower. `zstd` keeps all apps too, but its
+launches are about 45 ms slower than `seqlz`'s, and its 3.42 GiB were full before its RAM was.
+
+**Where the slower reads went.** `swapbench.sh` reads `pswpin` before and after every launch, the
+median launch swapped in about 3000 pages. A line through the launch time against these pages, all warm
+and hot launches of an algorithm: 37.9 µs per page for `lz4`, 38.4 `lzo`, 45.7 `seqlz-fast`, 42.9
+`seqlz-fast-lit`, 51.8 `zstd`. The runs of one algorithm spread by up to 14 µs per page. The slope also
+holds the work of apps that need more pages, so only differences mean something: `zstd`'s slower reads
+show, and the 3 to 11 µs per page that `seqlz-fast` reads slower in the previous section are within the
+spread. Per launch that is 10 to 30 ms, less than what one cold launch more costs.
+
+Before that, with the lowmemorykiller off and nothing killed at all, 10 apps, 6 rounds, 3 runs each:
+`seqlz-fast` used 367 MiB against 481 MiB of `lz4` and 468 MiB of `lzo`, swapped in 146 000 pages against
+177 000 and 231 000, and its launches took 469 ms on average against 480 and 483 ms.
+
+All of this is one phone, one set of apps, 3 runs per setting; the median of one algorithm moved by up
+to 90 ms between runs, so differences of 30 ms in a single row mean nothing. The cold launches are
+counts of a few dozen, but the order held in every run of the second table. In one run of the second
+table, the launch of YouTube stopped at a Google sign-in and the run hung; that run was repeated and
+`swapbench.sh` now gives up a launch after 30 s, which happened once more. The first table ran without
+the swap-ins per launch.
 
 ## Where the ratio of `zstd` comes from
 
