@@ -28,8 +28,8 @@
  *   u16 number of literals, the literals, the bitstream (the rest)
  * or with the literals Huffman coded, where that saves at least 1/16 of them:
  *   u16 0x8000 | number of literals, u8 which of the SEQLZ_LIT_SETS literal tables | (w - 5) << 3, the sizes
- *   of the literals' 8 bitstreams in w bits each (SEQLZ_LIT_HEADER), those streams, the sequences'
- *   bitstream (the rest). Literal k is in stream k % 8, most significant bit first, with canonical
+ *   of the literals' 4 bitstreams in w bits each (SEQLZ_LIT_HEADER), those streams, the sequences'
+ *   bitstream (the rest). Literal k is in stream k % 4, most significant bit first, with canonical
  *   codes of at most SEQLZ_LIT_BITS bits.
  */
 
@@ -125,12 +125,12 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
 extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS) /* literals per stream and refill: a refill leaves 56 bits */
 /* The header of a page with coded literals: the 2 bytes of every page, a byte with the literal table in
- * bits 0 to 2, w - SEQLZ_SIZE_BITS_MIN in bits 3 to 5 and bits 6 and 7 zero, then the 8 stream sizes of
- * w bits each, lowest bit first, in w bytes. w is 5 to 12: a stream has at most every 8th literal, of at
- * most SEQLZ_LIT_BITS bits, 640 bytes in a 4 KiB page and 2560 in a 16 KiB page. The encoder takes the
+ * bits 0 to 2, w - SEQLZ_SIZE_BITS_MIN in bits 3 to 5 and bits 6 and 7 zero, then the 4 stream sizes of
+ * w bits each, lowest bit first, in (4w + 7) / 8 bytes. w is 5 to 12: a stream has at most every 4th
+ * literal, of at most SEQLZ_LIT_BITS bits, 1280 bytes in a 4 KiB page; 16 KiB pages would need 13 bits. The encoder takes the
  * smallest w from 5 on: sizes of 2 bytes each made pages 5.2 and 5.5 bytes larger on the two dumps, and
  * widths of 3 and 4 bits were 0.1% to 3% of the pages. */
-#define SEQLZ_LIT_HEADER(w) (3U + (w))
+#define SEQLZ_LIT_HEADER(w) (3U + (4U * (w) + 7U) / 8U)
 #define SEQLZ_SIZE_BITS_MIN 5U
 #define SEQLZ_SIZE_BITS_MAX 12U
 /* The encoder codes literals only where that saves 1/16 of them and 51 bytes. A page with coded literals

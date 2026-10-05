@@ -39,7 +39,7 @@ struct lit_table {
 #define LIT_COST_WORDS ((SEQLZ_LIT_SETS + 7U) / 8U)
 _Static_assert(SEQLZ_LIT_BITS * 25U <= 255U, "lit_cost has lanes of 8 bits");
 _Static_assert(SEQLZ_LIT_SETS == 8U && SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
-                   (SEQLZ_PAGE / 8U * SEQLZ_LIT_BITS + 7U) / 8U < 1U << SEQLZ_SIZE_BITS_MAX,
+                   (SEQLZ_PAGE / 4U * SEQLZ_LIT_BITS + 7U) / 8U < 1U << SEQLZ_SIZE_BITS_MAX,
                "byte 2 has 3 bits for the table and 3 for the width, which holds the largest stream");
 
 struct seqlz_tables {
@@ -450,11 +450,11 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
     const u64 lanes = 0x00ff00ff00ff00ffULL;
     const unsigned int n_literals = load16(d), body = len - SEQLZ_HEADER;
     const u8* literals = d + SEQLZ_HEADER;
-    unsigned int bits = ~0U, k, j, coded, set = 0, sizes[8], all, width, header;
+    unsigned int bits = ~0U, k, j, coded, set = 0, sizes[4], all, width, header;
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
     u64 even[8][LIT_COST_WORDS] = {{0}}, odd[8][LIT_COST_WORDS] = {{0}};
     unsigned int w;
-    u8* q[9];
+    u8* q[5];
     const struct lit_table* lt;
 
     /* the bits of each stream in each table, 25 literals of a stream per sum of 8-bit lanes */
@@ -487,8 +487,10 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
         }
     }
     lt = &t->lit[set];
-    for (j = 0, coded = 0, all = 0; j < 8U; j++) {
-        sizes[j] = (((unsigned int)((set & 1U ? odd : even)[j][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) + 7U) / 8U;
+    for (j = 0, coded = 0, all = 0; j < 4U; j++) {
+        sizes[j] = (((unsigned int)((set & 1U ? odd : even)[j][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) +
+                    ((unsigned int)((set & 1U ? odd : even)[j + 4][set / 8] >> (16U * (set % 8 / 2))) & 0xffffU) + 7U) /
+                   8U;
         coded += sizes[j];
         all |= sizes[j];
     }
@@ -504,75 +506,66 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
     literals = d + 2U * SEQLZ_PAGE - body;
     __builtin_memmove(d + 2U * SEQLZ_PAGE - body, d + SEQLZ_HEADER, body);
     q[0] = d + header;
-    for (j = 0; j < 8U; j++)
+    for (j = 0; j < 4U; j++)
         q[j + 1] = q[j] + sizes[j];
-    /* Eight streams, literal k in stream k % 8, so that the decoder has eight chains side by side; most
-     * significant bit first, see decode_literals(). Four at a time, each straight to its place: one
-     * stream after the other waited for its accumulator, 3.5 cycles per literal. */
+    /* Four streams, literal k in stream k % 4, so that the decoder has four chains side by side; most
+     * significant bit first, see decode_literals(). All four at a time, each straight to its place. */
     {
         const u32* const enc = lt->enc;
-        unsigned int half;
+        u8 *p0 = q[0], *p1 = q[1], *p2 = q[2], *p3 = q[3];
+        u8 *e0 = p1, *e1 = p2, *e2 = p3, *e3 = q[4];
+        u64 a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+        unsigned int c0 = 0, c1 = 0, c2 = 0, c3 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0;
 
-        for (half = 0; half < 8U; half += 4) {
-            u8 *p0 = q[half], *p1 = q[half + 1], *p2 = q[half + 2], *p3 = q[half + 3];
-            u8 *e0 = p1, *e1 = p2, *e2 = p3, *e3 = q[half + 4];
-            u64 a0 = 0, a1 = 0, a2 = 0, a3 = 0;
-            unsigned int c0 = 0, c1 = 0, c2 = 0, c3 = 0, s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-
-            for (k = half; k + 28U < n_literals; k += 32) {
-                for (j = 0; j < 32U; j += 8) {
-                    ENC_LIT(a0, s0, literals[k + j]);
-                    ENC_LIT(a1, s1, literals[k + j + 1]);
-                    ENC_LIT(a2, s2, literals[k + j + 2]);
-                    ENC_LIT(a3, s3, literals[k + j + 3]);
-                }
-                ENC_FLUSH(p0, e0, a0, c0, s0);
-                ENC_FLUSH(p1, e1, a1, c1, s1);
-                ENC_FLUSH(p2, e2, a2, c2, s2);
-                ENC_FLUSH(p3, e3, a3, c3, s3);
-            }
-            /* the rest, fewer than 4 literals per stream */
-            for (; k < n_literals; k++) {
-                switch (k & 7U) {
-                case 0:
-                case 4:
-                    ENC_LIT(a0, s0, literals[k]);
-                    break;
-                case 1:
-                case 5:
-                    ENC_LIT(a1, s1, literals[k]);
-                    break;
-                case 2:
-                case 6:
-                    ENC_LIT(a2, s2, literals[k]);
-                    break;
-                default:
-                    ENC_LIT(a3, s3, literals[k]);
-                }
-                if ((k & 3U) == 3U)
-                    k += 4;
+        for (k = 0; k + 15U < n_literals; k += 16) {
+            for (j = 0; j < 16U; j += 4) {
+                ENC_LIT(a0, s0, literals[k + j]);
+                ENC_LIT(a1, s1, literals[k + j + 1]);
+                ENC_LIT(a2, s2, literals[k + j + 2]);
+                ENC_LIT(a3, s3, literals[k + j + 3]);
             }
             ENC_FLUSH(p0, e0, a0, c0, s0);
             ENC_FLUSH(p1, e1, a1, c1, s1);
             ENC_FLUSH(p2, e2, a2, c2, s2);
             ENC_FLUSH(p3, e3, a3, c3, s3);
         }
+        for (; k < n_literals; k++) {
+            switch (k & 3U) {
+            case 0:
+                ENC_LIT(a0, s0, literals[k]);
+                break;
+            case 1:
+                ENC_LIT(a1, s1, literals[k]);
+                break;
+            case 2:
+                ENC_LIT(a2, s2, literals[k]);
+                break;
+            default:
+                ENC_LIT(a3, s3, literals[k]);
+            }
+        }
+        ENC_FLUSH(p0, e0, a0, c0, s0);
+        ENC_FLUSH(p1, e1, a1, c1, s1);
+        ENC_FLUSH(p2, e2, a2, c2, s2);
+        ENC_FLUSH(p3, e3, a3, c3, s3);
     }
     store16(d, 0x8000U | n_literals);
     d[2] = (u8)(set | (width - SEQLZ_SIZE_BITS_MIN) << 3);
-    /* the 8 sizes, width bits each, lowest bit first: exactly width bytes */
+    /* the 4 sizes, width bits each, lowest bit first, the last byte filled up with zeros */
     {
         u64 acc = 0;
         unsigned int cnt = 0;
         u8* p = d + 3;
 
-        for (j = 0; j < 8U; j++) {
+        for (j = 0; j < 4U; j++) {
             acc |= (u64)sizes[j] << cnt;
             for (cnt += width; cnt >= 8U; cnt -= 8U) {
                 *p++ = (u8)acc;
                 acc >>= 8;
             }
         }
+        if (cnt > 0)
+            *p++ = (u8)acc;
     }
     coded += header;
     __builtin_memmove(d + coded, literals + n_literals, body - n_literals);
@@ -717,10 +710,10 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     const u8* const end = s + src_len;
     const unsigned int width = SEQLZ_SIZE_BITS_MIN + (src_len > 2U ? (s[2] >> 3) & 7U : 0U);
     const u8* q = s + SEQLZ_LIT_HEADER(width);
-    const u8* ip[8];
-    const u8* start[8];
-    unsigned int sz[8];
-    u64 b0 = 1, b1 = 1, b2 = 1, b3 = 1, b4 = 1, b5 = 1, b6 = 1, b7 = 1;
+    const u8* ip[4];
+    const u8* start[4];
+    unsigned int sz[4];
+    u64 b0 = 1, b1 = 1, b2 = 1, b3 = 1;
     unsigned int k;
     u64 total = 0;
     const u16* lt;
@@ -730,11 +723,10 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     lt = t->lit[s[2] & 7U].decode;
     prefetch_lines(lt, sizeof(t->lit[0].decode));
     {
-        /* the sizes copied out first: a 4-byte load at the last one's byte reads past the header */
         u8 h[SEQLZ_SIZE_BITS_MAX + 4U] = {0};
 
-        __builtin_memcpy(h, s + 3, width);
-        for (k = 0; k < 8U; k++) {
+        __builtin_memcpy(h, s + 3, SEQLZ_LIT_HEADER(width) - 3U);
+        for (k = 0; k < 4U; k++) {
             sz[k] = (load32(h + k * width / 8U) >> (k * width % 8U)) & ((1U << width) - 1U);
             start[k] = q + total;
             ip[k] = start[k];
@@ -743,89 +735,54 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     }
     if (SEQLZ_LIT_HEADER(width) + total > src_len)
         return 0;
-    /* full rounds only: the last, partial one below decodes no literal that does not exist */
-    for (k = 0; k + 8U * SEQLZ_LIT_ROUNDS <= n_lit; k += 8U * SEQLZ_LIT_ROUNDS) {
+    for (k = 0; k + 4U * SEQLZ_LIT_ROUNDS <= n_lit; k += 4U * SEQLZ_LIT_ROUNDS) {
         unsigned int j;
-        const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3], *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
+        const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3];
 
         LIT_REFILL(i0, b0);
         LIT_REFILL(i1, b1);
         LIT_REFILL(i2, b2);
         LIT_REFILL(i3, b3);
-        LIT_REFILL(i4, b4);
-        LIT_REFILL(i5, b5);
-        LIT_REFILL(i6, b6);
-        LIT_REFILL(i7, b7);
         ip[0] = i0;
         ip[1] = i1;
         ip[2] = i2;
         ip[3] = i3;
-        ip[4] = i4;
-        ip[5] = i5;
-        ip[6] = i6;
-        ip[7] = i7;
         for (j = 0; j < SEQLZ_LIT_ROUNDS; j++) {
-            LIT_DECODE(out[k + 8 * j], b0);
-            LIT_DECODE(out[k + 8 * j + 1], b1);
-            LIT_DECODE(out[k + 8 * j + 2], b2);
-            LIT_DECODE(out[k + 8 * j + 3], b3);
-            LIT_DECODE(out[k + 8 * j + 4], b4);
-            LIT_DECODE(out[k + 8 * j + 5], b5);
-            LIT_DECODE(out[k + 8 * j + 6], b6);
-            LIT_DECODE(out[k + 8 * j + 7], b7);
+            LIT_DECODE(out[k + 4 * j], b0);
+            LIT_DECODE(out[k + 4 * j + 1], b1);
+            LIT_DECODE(out[k + 4 * j + 2], b2);
+            LIT_DECODE(out[k + 4 * j + 3], b3);
         }
     }
     {
-        /* The rest, fewer than 40 literals: steps of all 8 streams, then one more in which the streams
-         * at r and above, which have no literal left, decode one and do not move on, so that each stream
-         * ends right behind its own codes. What they decode lands behind the literals, in the 16 bytes the
-         * scratch has there. The same steps for every stream; a loop per stream ends after a different
-         * number of literals on every page. */
-        const unsigned int rest = n_lit - k, steps = rest >> 3, r = rest & 7U;
-        const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3], *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
+        const unsigned int rest = n_lit - k, steps = rest >> 2, r = rest & 3U;
+        const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3];
         unsigned int j;
 
         LIT_REFILL(i0, b0);
         LIT_REFILL(i1, b1);
         LIT_REFILL(i2, b2);
         LIT_REFILL(i3, b3);
-        LIT_REFILL(i4, b4);
-        LIT_REFILL(i5, b5);
-        LIT_REFILL(i6, b6);
-        LIT_REFILL(i7, b7);
         for (j = 0; j < steps; j++) {
-            LIT_DECODE(out[k + 8 * j], b0);
-            LIT_DECODE(out[k + 8 * j + 1], b1);
-            LIT_DECODE(out[k + 8 * j + 2], b2);
-            LIT_DECODE(out[k + 8 * j + 3], b3);
-            LIT_DECODE(out[k + 8 * j + 4], b4);
-            LIT_DECODE(out[k + 8 * j + 5], b5);
-            LIT_DECODE(out[k + 8 * j + 6], b6);
-            LIT_DECODE(out[k + 8 * j + 7], b7);
+            LIT_DECODE(out[k + 4 * j], b0);
+            LIT_DECODE(out[k + 4 * j + 1], b1);
+            LIT_DECODE(out[k + 4 * j + 2], b2);
+            LIT_DECODE(out[k + 4 * j + 3], b3);
         }
-        k += 8 * steps;
+        k += 4 * steps;
         LIT_DECODE_MASKED(out[k], b0, (0U - (0U < r)) & 63U);
         LIT_DECODE_MASKED(out[k + 1], b1, (0U - (1U < r)) & 63U);
         LIT_DECODE_MASKED(out[k + 2], b2, (0U - (2U < r)) & 63U);
         LIT_DECODE_MASKED(out[k + 3], b3, (0U - (3U < r)) & 63U);
-        LIT_DECODE_MASKED(out[k + 4], b4, (0U - (4U < r)) & 63U);
-        LIT_DECODE_MASKED(out[k + 5], b5, (0U - (5U < r)) & 63U);
-        LIT_DECODE_MASKED(out[k + 6], b6, (0U - (6U < r)) & 63U);
-        LIT_DECODE_MASKED(out[k + 7], b7, (0U - (7U < r)) & 63U);
         ip[0] = i0;
         ip[1] = i1;
         ip[2] = i2;
         ip[3] = i3;
-        ip[4] = i4;
-        ip[5] = i5;
-        ip[6] = i6;
-        ip[7] = i7;
     }
     {
-        u64 bb[8] = {b0, b1, b2, b3, b4, b5, b6, b7};
+        u64 bb[4] = {b0, b1, b2, b3};
 
-        /* the codes of each stream's literals fit into its size */
-        for (k = 0; k < 8U; k++)
+        for (k = 0; k < 4U; k++)
             if (8L * (ip[k] - start[k]) + __builtin_ctzll(bb[k]) > 8L * sz[k])
                 return 0;
     }
