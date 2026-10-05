@@ -1,0 +1,1273 @@
+<title>seqlz Bit by Bit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a logic analyzer for one page. Compressed bits on the left, the decoder's step in the
+   middle, the page filling up on the right, a transport bar with the timeline at the bottom. */
+:root {
+  --bg: #eef1f5;
+  --panel: #fbfcfd;
+  --panel-2: #f2f4f8;
+  --line: #d9dee7;
+  --ink: #18202e;
+  --ink-2: #4a5568;
+  --ink-3: #7b8597;
+  --accent: #2f6fe4;
+  --k-hdr: #5b6b82;
+  --k-set: #3a475b;
+  --k-size: #8d9ab0;
+  --k-lit: #d99a0b;
+  --k-tok: #2f6fe4;
+  --k-esc: #c2410c;
+  --k-off: #0f9e87;
+  --k-len: #d6409f;
+  --k-pad: #c4cad6;
+  --c-match: #4f86ea;
+  --c0: #0f9e87;
+  --c1: #9dbcf2;
+  --c2: #5a8be6;
+  --c3: #234fae;
+  --c4: #c6a2ef;
+  --c5: #7b4fd6;
+  --empty: #e3e7ee;
+  --glow: #ffffff;
+  --ok: #0f8a5f;
+  --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 4px 16px rgba(20, 30, 50, .06);
+  --f-display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d121c; --panel: #141b28; --panel-2: #19212f; --line: #263044; --ink: #e6ebf3; --ink-2: #aab4c6;
+    --ink-3: #74809a; --accent: #6a93ff; --k-hdr: #7d8ba3; --k-set: #a9b5c9; --k-size: #536079; --k-lit: #e8ae2e;
+    --k-tok: #6a93ff; --k-esc: #e5683a; --k-off: #26b79c; --k-len: #ec6fb5; --k-pad: #2b3447; --c-match: #5f8bf5;
+    --c0: #26b79c; --c1: #a9c3f7; --c2: #6a93ff; --c3: #3a62c9; --c4: #cfaef5; --c5: #9468e6; --empty: #1c2433;
+    --glow: #ffffff; --ok: #3fc58f; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d121c; --panel: #141b28; --panel-2: #19212f; --line: #263044; --ink: #e6ebf3; --ink-2: #aab4c6;
+  --ink-3: #74809a; --accent: #6a93ff; --k-hdr: #7d8ba3; --k-set: #a9b5c9; --k-size: #536079; --k-lit: #e8ae2e;
+  --k-tok: #6a93ff; --k-esc: #e5683a; --k-off: #26b79c; --k-len: #ec6fb5; --k-pad: #2b3447; --c-match: #5f8bf5;
+  --c0: #26b79c; --c1: #a9c3f7; --c2: #6a93ff; --c3: #3a62c9; --c4: #cfaef5; --c5: #9468e6; --empty: #1c2433;
+  --glow: #ffffff; --ok: #3fc58f; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1680px; margin: 0 auto; padding-inline: 20px; padding-block: 20px 140px; display: grid; gap: 16px; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: clamp(26px, 3.2vw, 40px); line-height: 1.05; }
+h2 { font-size: 17px; }
+h3 { font-size: 15px; }
+code, .mono { font-family: var(--f-mono); font-size: .92em; }
+.muted { color: var(--ink-2); }
+.small { font-size: 12.5px; }
+.tnum { font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* top */
+.top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 32px; align-items: end; }
+.top p { margin: 6px 0 0; max-width: 70ch; color: var(--ink-2); }
+.brand-bits { display: inline-flex; gap: 2px; vertical-align: middle; margin-left: 10px; }
+.brand-bits i { display: block; width: 5px; border-radius: 1px; background: var(--k-tok); }
+.brand-bits i:nth-child(3n+2) { background: var(--k-off); }
+.brand-bits i:nth-child(4n+3) { background: var(--k-lit); }
+.pickers { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; color: var(--ink-2); font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* summary */
+.summary { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); min-width: 0; }
+.sizes { display: grid; gap: 7px; }
+.sizes .row { display: grid; grid-template-columns: 118px minmax(0, 1fr) 64px; align-items: center; gap: 10px; }
+.sizes .bar { height: 14px; border-radius: 4px; background: var(--ink-3); opacity: .55; transition: width .5s cubic-bezier(.2, .8, .2, 1); }
+.sizes .row.me .bar { background: linear-gradient(90deg, var(--k-tok), var(--k-off)); opacity: 1; }
+.sizes .row.me .name { font-weight: 600; }
+.sizes .num { text-align: right; font-family: var(--f-mono); font-size: 12.5px; }
+.layoutbar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; gap: 2px; }
+.layoutbar div { min-width: 2px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.desc { margin: 0; color: var(--ink-2); }
+
+/* the bench */
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.panel-head .muted { font-size: 12px; }
+.mapbox { position: relative; overflow-y: auto; max-height: 560px; border-radius: 8px; background: var(--panel-2); padding: 6px; scrollbar-width: thin; }
+canvas { display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.hatch { background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .55) 0 1.5px, transparent 1.5px 4px); }
+
+/* the decoder card */
+.stepcard { display: grid; gap: 12px; }
+.eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+.steptitle { font-family: var(--f-display); font-size: 22px; font-weight: 700; line-height: 1.15; }
+.ops { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ops li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 10px; border-radius: 9px; background: var(--panel-2); animation: rise .35s cubic-bezier(.2, .8, .2, 1) both; }
+.ops li:nth-child(2) { animation-delay: .12s; }
+.ops li:nth-child(3) { animation-delay: .24s; }
+.ops li:nth-child(4) { animation-delay: .36s; }
+.ops li:nth-child(5) { animation-delay: .48s; }
+.ops li:nth-child(6) { animation-delay: .6s; }
+.ops li:nth-child(7) { animation-delay: .72s; }
+body.quick .ops li { animation: none; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.ops .dot { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; font-family: var(--f-mono); }
+.ops p { margin: 0; }
+.ops p + p { margin-top: 4px; }
+.k { display: inline-block; padding: 0 5px; border-radius: 4px; font-family: var(--f-mono); font-size: 12.5px; color: #fff; line-height: 1.6; }
+.bits { font-family: var(--f-mono); letter-spacing: .08em; }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.chip { font-family: var(--f-mono); font-size: 11.5px; padding: 1px 4px; border-radius: 4px; min-width: 22px; text-align: center; color: #fff; line-height: 1.5; }
+.chip small { opacity: .8; font-size: 10px; margin-left: 2px; }
+.chip.more { background: transparent; color: var(--ink-3); }
+.path { border-radius: 9px; padding: 10px 12px; border: 1px dashed var(--line); font-size: 13px; }
+.path b { font-family: var(--f-display); }
+.path.fast { border-color: color-mix(in srgb, var(--k-off) 60%, transparent); background: color-mix(in srgb, var(--k-off) 8%, transparent); }
+.path.slow { border-color: color-mix(in srgb, var(--k-esc) 55%, transparent); background: color-mix(in srgb, var(--k-esc) 7%, transparent); }
+.cost { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; font-size: 12.5px; }
+.cost .cbar { display: flex; height: 12px; gap: 1px; }
+.cost .cbar div { height: 100%; border-radius: 2px; transition: width .4s; }
+.entry { display: grid; grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); gap: 4px; margin-top: 6px; }
+.entry div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-size: 11px; color: var(--ink-3); }
+.entry b { display: block; font-family: var(--f-mono); color: var(--ink); font-size: 12.5px; font-weight: 600; }
+
+/* register and lanes */
+.reg { display: grid; gap: 6px; }
+.regrow { display: grid; grid-template-columns: repeat(32, minmax(0, 1fr)); gap: 2px; }
+.rb { height: 24px; border-radius: 3px; display: grid; place-items: center; font-family: var(--f-mono); font-size: 11px; font-weight: 600; color: #fff; position: relative; transition: background-color .3s, opacity .3s; }
+.rb.z { opacity: .55; }
+.rb.nl { background: transparent !important; color: var(--ink-3); border: 1px dashed var(--line); font-weight: 400; }
+.rb.dim { opacity: .3; }
+.rb.cur { box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .25); }
+.regcap { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-3); }
+.lanes { display: grid; gap: 4px; }
+.lane { display: grid; grid-template-columns: 58px minmax(0, 1fr) 54px 50px; gap: 8px; align-items: center; font-size: 12px; }
+.lane > .mono { white-space: nowrap; }
+.lane .win { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 2px; }
+.lane .win div { height: 20px; border-radius: 3px; display: grid; place-items: center; font-family: var(--f-mono); font-size: 11px; color: #fff; }
+.lane .win div.rest { background: transparent; border: 1px dashed var(--line); color: var(--ink-3); }
+.lane .prog { height: 4px; background: var(--empty); border-radius: 2px; overflow: hidden; grid-column: 2; margin-top: -2px; }
+.lane .prog i { display: block; height: 100%; background: var(--k-lit); transition: width .3s; }
+
+/* the decoded page */
+.pagewrap { position: relative; }
+.pagewrap svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.arc { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 600; stroke-dashoffset: 600; animation: draw .6s ease-out forwards; }
+body.quick .arc { animation-duration: .01s; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.box-src { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.box-dst { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.litbar { margin-top: 12px; }
+.hexpeek { margin-top: 12px; font-family: var(--f-mono); font-size: 11.5px; display: grid; gap: 2px; overflow-x: auto; }
+.hexrow { display: grid; grid-template-columns: 32px repeat(16, minmax(15px, 1fr)) 4px auto; gap: 1px; align-items: center; }
+.hexrow .asc { white-space: pre; color: var(--ink-2); font-size: 11px; }
+.hexrow .a { color: var(--ink-3); font-size: 10.5px; }
+.hexrow .h { text-align: center; border-radius: 3px; padding: 1px 0; color: #fff; }
+.hexrow .h.e { color: var(--ink-3); background: transparent; }
+.hexrow .h.now { outline: 2px solid var(--ink); outline-offset: -1px; }
+
+/* lower row */
+.lower { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.budget { display: grid; gap: 10px; }
+.bb { display: grid; grid-template-columns: 116px minmax(0, 1fr) 70px; gap: 10px; align-items: center; }
+.bb .track { position: relative; height: 22px; background: var(--panel-2); border-radius: 5px; overflow: hidden; }
+.bb .ghost, .bb .fill { position: absolute; inset: 0 auto 0 0; display: flex; gap: 1px; }
+.bb .ghost { opacity: .22; }
+.bb .fill div, .bb .ghost div { height: 100%; transition: width .35s cubic-bezier(.2, .8, .2, 1); }
+.bb .num { font-family: var(--f-mono); font-size: 12px; text-align: right; }
+.refline { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .7; }
+.bbtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.bbtable td, .bbtable th { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.bbtable th { font-weight: 600; color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.bbtable td:first-child, .bbtable th:first-child { text-align: left; }
+.fastlist { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.fastlist li { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.fastlist .big { font-family: var(--f-display); font-size: 22px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.fastlist p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.fastlist b { color: var(--ink); font-weight: 600; }
+.primer { display: grid; gap: 8px; font-size: 13px; }
+.primer p { margin: 0; color: var(--ink-2); }
+.primer b { color: var(--ink); }
+
+/* transport */
+.transport { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
+.transport .inner { max-width: 1680px; margin: 0 auto; display: grid; gap: 8px; }
+.tl { position: relative; height: 44px; cursor: pointer; touch-action: none; }
+.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; height: 34px; min-width: 38px; padding: 0 10px; cursor: pointer; display: inline-grid; place-items: center; font-weight: 600; }
+.btn:hover { border-color: var(--ink-3); }
+.btn.play { background: var(--ink); color: var(--panel); border-color: var(--ink); min-width: 92px; }
+.btn svg { width: 16px; height: 16px; fill: currentColor; }
+.ctrls .sep { flex: 1; }
+.ctrls label { font-size: 12px; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.ctrls select { font: inherit; border: 1px solid var(--line); border-radius: 7px; height: 30px; background: var(--panel); color: var(--ink); padding: 0 6px; }
+.stepno { font-family: var(--f-mono); font-size: 12.5px; color: var(--ink-2); min-width: 120px; text-align: right; }
+.jump { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.jump button { border: 0; background: transparent; color: var(--ink-2); padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.jump button:hover { background: var(--panel-2); color: var(--ink); }
+.jump i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+/* tooltip */
+#tip { position: fixed; z-index: 20; pointer-events: none; max-width: 340px; background: var(--ink); color: var(--panel); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 28px rgba(0, 0, 0, .25); opacity: 0; transform: translateY(4px); transition: opacity .12s, transform .12s; }
+#tip.on { opacity: 1; transform: none; }
+#tip b { font-family: var(--f-display); font-size: 13.5px; }
+#tip .tbits { font-family: var(--f-mono); letter-spacing: .06em; }
+#tip .tk { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+#tip hr { border: 0; border-top: 1px solid color-mix(in srgb, var(--panel) 25%, transparent); margin: 6px 0; }
+
+@media (max-width: 1280px) {
+  .bench { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "dec dec" "comp page"; }
+  .p-dec { grid-area: dec; } .p-comp { grid-area: comp; } .p-page { grid-area: page; }
+  .lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .lower .primer-card { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .top, .summary { grid-template-columns: minmax(0, 1fr); }
+  .pickers { justify-content: flex-start; }
+  .bench { grid-template-columns: minmax(0, 1fr); grid-template-areas: "dec" "page" "comp"; }
+  .lower { grid-template-columns: minmax(0, 1fr); }
+  .wrap { padding-inline: 16px; padding-block: 16px 170px; }
+  .transport { padding-inline: 16px; }
+  .stepno { min-width: 0; }
+  .sizes .row { grid-template-columns: 96px minmax(0, 1fr) 56px; }
+  .bb { grid-template-columns: 90px minmax(0, 1fr) 60px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>seqlz, bit by bit<span class="brand-bits" aria-hidden="true"><i style="height:22px"></i><i style="height:9px"></i><i style="height:22px"></i><i style="height:22px"></i><i style="height:9px"></i><i style="height:22px"></i><i style="height:9px"></i><i style="height:9px"></i></span></h1>
+      <p>A real 4 KiB memory page, compressed by <code>seqlz</code>, decoded one step at a time. Every bit of the compressed page is on screen, coloured by what it means. Hover over anything for details, click a bit to jump to the step that reads it.</p>
+    </div>
+    <div class="pickers">
+      <div class="seg" id="pagePick" role="group" aria-label="Page"></div>
+      <div class="seg" id="varPick" role="group" aria-label="Codec">
+        <button id="v-lit" data-v="lit" aria-pressed="true">seqlz-fast-lit</button>
+        <button id="v-fast" data-v="fast" aria-pressed="false">seqlz-fast</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="summary">
+    <div class="card">
+      <div class="panel-head"><h2 id="pageTitle">Page</h2><span class="muted small" id="pageNote"></span></div>
+      <p class="desc" id="pageDesc"></p>
+      <div class="layoutbar" id="layoutBar"></div>
+      <div class="muted small" id="layoutNote"></div>
+    </div>
+    <div class="card">
+      <div class="panel-head"><h2>This page, compressed</h2><span class="muted small">bytes, 4096 uncompressed</span></div>
+      <div class="sizes" id="sizes"></div>
+    </div>
+  </section>
+
+  <main class="bench">
+    <section class="card p-comp">
+      <div class="panel-head"><h2>Compressed page</h2><span class="muted" id="compNote"></span></div>
+      <div class="mapbox" id="compBox"><canvas id="compCv" aria-label="The compressed page, every bit coloured by its field"></canvas></div>
+      <div class="legend" id="compLegend"></div>
+      <p class="muted small" style="margin:8px 0 0">One cell is one byte, its 8 bits in the order the decoder reads them. A tall bar is a 1, a short bar a 0. Bright bits are read, the current step's bits are outlined.</p>
+    </section>
+
+    <section class="card p-dec">
+      <div class="stepcard" id="stepCard" aria-live="polite"></div>
+    </section>
+
+    <section class="card p-page">
+      <div class="panel-head"><h2>Decoded page</h2><span class="muted tnum" id="pageFill"></span></div>
+      <div class="pagewrap" id="pageWrap"><canvas id="pageCv" aria-label="The decoded page, 64 by 64 bytes"></canvas><svg id="pageSvg"></svg></div>
+      <div class="seg" id="colorPick" role="group" aria-label="Colour the page by" style="margin-top:10px">
+        <button data-m="origin" aria-pressed="true">Origin</button>
+        <button data-m="class" aria-pressed="false">Offset class</button>
+        <button data-m="seq" aria-pressed="false">Sequence</button>
+        <button data-m="value" aria-pressed="false">Byte value</button>
+      </div>
+      <div class="legend" id="pageLegend"></div>
+      <div class="litbar">
+        <div class="panel-head" style="margin-bottom:6px"><h3>Literal buffer</h3><span class="muted small tnum" id="litNote"></span></div>
+        <canvas id="litCv" aria-label="The literals of the page, in order"></canvas>
+      </div>
+      <div class="hexpeek" id="hexPeek"></div>
+    </section>
+  </main>
+
+  <section class="lower">
+    <div class="card">
+      <div class="panel-head"><h2>Where the bits go</h2><span class="muted small">so far, solid; whole page, faint</span></div>
+      <div class="budget" id="budget"></div>
+    </div>
+    <div class="card">
+      <div class="panel-head"><h2>Why it is fast</h2><span class="muted small">counted up to this step</span></div>
+      <ul class="fastlist" id="fastList"></ul>
+    </div>
+    <div class="card primer-card">
+      <div class="panel-head"><h2>The format in one minute</h2></div>
+      <div class="primer">
+        <p><b>Sequences.</b> The page is a list of sequences. Each one is <i>ll</i> literals, bytes stored as they are, then a match: copy <i>ml</i> bytes from <i>offset</i> bytes back. The last sequence has literals only.</p>
+        <p><b>Two parts.</b> All literals of the page come first, as they are or Huffman coded in 8 streams. Then the sequences as a bitstream, read lowest bit first.</p>
+        <p><b>The token.</b> One Huffman code says <i>ll</i> up to 14, <i>ml</i> up to 34 and the offset class together. One 11-bit table lookup gets all of it. Rare tokens are escaped and follow in 12 plain bits.</p>
+        <p><b>Offset classes.</b> 0: the repeat offset, 0 bits. 1, 2, 3: 4, 8 or 12 plain bits. 4, 5: 5 or 9 bits, times 8, for the many 8-byte things in memory.</p>
+        <p><b>Length values.</b> An <i>ll</i> of 15 or more, or an <i>ml</i> of 35 or more, adds a value after the offset: a short code and some plain bits.</p>
+        <p class="small">The exact rules are in <a href="https://github.com/martinus/quetschn/blob/main/FORMAT.md" target="_blank" rel="noopener">FORMAT.md</a>; why they are this way in <a href="https://github.com/martinus/quetschn/blob/main/docs/seqlz.md" target="_blank" rel="noopener">docs/seqlz.md</a>.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="transport">
+  <div class="inner">
+    <canvas class="tl" id="tlCv" aria-label="Timeline of all steps, bar height is the bits each step reads"></canvas>
+    <div class="ctrls">
+      <button class="btn" id="bFirst" title="First step (Home)" aria-label="First step"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+      <button class="btn" id="bPrev" title="Back (←), 10 back with Shift" aria-label="Previous step"><svg viewBox="0 0 16 16"><path d="M11 2v12L3 8z"/></svg></button>
+      <button class="btn play" id="bPlay" title="Play or pause (Space)"><span id="playLbl">Play</span></button>
+      <button class="btn" id="bNext" title="Forward (→), 10 on with Shift" aria-label="Next step"><svg viewBox="0 0 16 16"><path d="M5 2v12l8-6z"/></svg></button>
+      <button class="btn" id="bLast" title="Last step (End)" aria-label="Last step"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2v12l8-6z"/></svg></button>
+      <label for="speed">Speed
+        <select id="speed">
+          <option value="1">1 step/s</option>
+          <option value="2" selected>2 steps/s</option>
+          <option value="5">5 steps/s</option>
+          <option value="12">12 steps/s</option>
+          <option value="30">30 steps/s</option>
+          <option value="90">90 steps/s</option>
+        </select>
+      </label>
+      <span class="jump" id="jumps"></span>
+      <span class="sep"></span>
+      <span class="stepno" id="stepNo"></span>
+    </div>
+  </div>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script id="trace-data" type="application/json">/*DATA*/</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("trace-data").textContent);
+const $ = (s) => document.querySelector(s);
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const PAGE = 4096;
+const OFF_BITS = [0, 4, 8, 12, 5, 9];
+const K = { HDR: 0, SET: 1, SIZE: 2, LIT: 3, TOK: 4, ESC: 5, OFF: 6, LLV: 7, MLV: 8, PAD: 9 };
+const KNAME = ["Number of literals", "Literal table", "Stream sizes", "Literals", "Token code", "Escape and its 12 bits", "Offset bits", "ll value", "ml value", "Unused bits"];
+const KVAR = ["--k-hdr", "--k-set", "--k-size", "--k-lit", "--k-tok", "--k-esc", "--k-off", "--k-len", "--k-len", "--k-pad"];
+const CLASS_TXT = ["the repeat offset", "4 plain bits", "8 plain bits", "12 plain bits", "5 bits × 8", "9 bits × 8"];
+const S = { pi: 0, vk: "lit", cur: 0, playing: false, mode: "origin", col: {} };
+
+const hex2 = (v) => v.toString(16).padStart(2, "0");
+const ch = (v) => (v >= 32 && v < 127 ? String.fromCharCode(v) : "·");
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const chq = (v) => (v >= 32 && v < 127 ? esc(String.fromCharCode(v)) : "");
+const fmt = (n) => n.toLocaleString("en-US");
+const plural = (n, w) => `${fmt(n)} ${w}${n === 1 ? "" : "s"}`;
+
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = (v) => cs.getPropertyValue(v).trim();
+  S.col = {
+    k: KVAR.map(g), ink: g("--ink"), ink3: g("--ink-3"), empty: g("--empty"), panel: g("--panel"), panel2: g("--panel-2"),
+    line: g("--line"), match: g("--c-match"), cls: [0, 1, 2, 3, 4, 5].map((i) => g("--c" + i)), glow: g("--glow"),
+    dark: cs.colorScheme === "dark" || g("--bg").startsWith("#0"),
+  };
+}
+
+/* ---------- the model of one page and codec ---------- */
+function load() {
+  const P = D.pages[S.pi];
+  const T = P.variants[S.vk];
+  S.P = P; S.T = T;
+  S.comp = b64(T.comp); S.orig = b64(P.page);
+  const n = T.n, nb = S.comp.length * 8;
+  const steps = [{ k: "start" }, { k: "h" }];
+  if (T.layout === "coded") {
+    steps.push({ k: "set" }, { k: "sizes" });
+    for (let r = 0; r < Math.ceil(n / 8); r++) steps.push({ k: "lr", r });
+  } else steps.push({ k: "raw" });
+  S.seq0 = steps.length;
+  T.seqs.forEach((q, i) => steps.push({ k: "seq", i }));
+  steps.push({ k: "end" });
+  S.steps = steps;
+  S.stepIdx = {};
+  steps.forEach((s, i) => { if (!(s.k in S.stepIdx)) S.stepIdx[s.k] = i; });
+
+  // every bit: its field, its owner, the step that reads it
+  S.kind = new Uint8Array(nb).fill(K.PAD);
+  S.owner = new Int32Array(nb).fill(-1);
+  S.stepOf = new Int32Array(nb).fill(1 << 30);
+  const mark = (p, len, kind, owner, step) => {
+    for (let i = p; i < p + len && i < nb; i++) { S.kind[i] = kind; S.owner[i] = owner; S.stepOf[i] = step; }
+  };
+  mark(0, 16, K.HDR, 0, S.stepIdx.h);
+  if (T.layout === "coded") {
+    mark(16, 8, K.SET, 0, S.stepIdx.set);
+    for (let j = 0; j < 8; j++) mark(24 + 16 * j, 16, K.SIZE, j, S.stepIdx.sizes);
+    T.lits.forEach((l, k) => mark(l[0], l[1], K.LIT, k, S.stepIdx.lr + (k >> 3)));
+  } else {
+    mark(16, 8 * n, K.LIT, -1, S.stepIdx.raw);
+    for (let k = 0; k < n; k++) S.owner.fill(k, 16 + 8 * k, 24 + 8 * k);
+  }
+  T.seqs.forEach((q, i) => {
+    const st = S.seq0 + i;
+    if (q.ep !== undefined) { mark(q.tp, q.tc.length, K.ESC, i, st); mark(q.ep, 12, K.ESC, i, st); }
+    else mark(q.tp, q.tc.length, K.TOK, i, st);
+    mark(q.rp, q.rl, K.OFF, i, st);
+    if (q.llv) mark(q.llv.p, q.llv.cl + q.llv.xl, K.LLV, i, st);
+    if (q.mlv) mark(q.mlv.p, q.mlv.cl + q.mlv.xl, K.MLV, i, st);
+  });
+  // unused bits: read by nobody, shown with the end
+  for (let i = 0; i < nb; i++) if (S.kind[i] === K.PAD) S.stepOf[i] = steps.length - 1;
+
+  // the literals, and where each byte of the page comes from
+  S.lits = T.layout === "coded" ? T.lits.map((l) => l[2]) : Array.from(S.comp.subarray(2, 2 + n));
+  S.litBits = T.layout === "coded" ? T.lits.map((l) => l[1]) : new Array(n).fill(8);
+  S.oSeq = new Int32Array(PAGE); S.oKind = new Uint8Array(PAGE); S.oSrc = new Int32Array(PAGE).fill(-1);
+  S.oLit = new Int32Array(PAGE); S.oCls = new Uint8Array(PAGE);
+  T.seqs.forEach((q, i) => {
+    for (let j = 0; j < q.ll; j++) { const d = q.d + j; S.oSeq[d] = i; S.oKind[d] = 0; S.oLit[d] = q.li + j; }
+    for (let j = 0; j < q.ml; j++) {
+      const d = q.d + q.ll + j, s = d - q.off;
+      S.oSeq[d] = i; S.oKind[d] = 1; S.oSrc[d] = s; S.oLit[d] = S.oLit[s]; S.oCls[d] = q.cls;
+    }
+  });
+
+  // per step: bytes written, literals decoded and used, the bit budget, the counters
+  const L = steps.length;
+  S.outLen = new Int32Array(L); S.litFill = new Int32Array(L); S.litUsed = new Int32Array(L);
+  S.stepBits = new Float32Array(L);
+  const cats = ["hdr", "lit", "tok", "off", "len", "pad"], lcats = ["tok", "lit", "off", "len"];
+  S.bud = []; S.lbud = []; S.cnt = [];
+  let b = { hdr: 0, lit: 0, tok: 0, off: 0, len: 0, pad: 0 }, lb = { tok: 0, lit: 0, off: 0, len: 0 };
+  let c = { tokLook: 0, litLook: 0, refills: 0, litRefills: 0, fast: 0, slow: 0, written: 0, needed: 0, seqs: 0, esc: 0 };
+  let out = 0, fill = 0, used = 0;
+  steps.forEach((s, i) => {
+    let bits = 0;
+    if (s.k === "h") { b.hdr += 16; bits = 16; }
+    if (s.k === "set") { b.hdr += 8; bits = 8; }
+    if (s.k === "sizes") { b.hdr += 128; bits = 128; }
+    if (s.k === "lr") {
+      const k0 = 8 * s.r, k1 = Math.min(n, k0 + 8);
+      fill = k1; c.litLook += k1 - k0;
+      if (s.r % 5 === 0) c.litRefills += 8;
+      for (let k = k0; k < k1; k++) bits += S.litBits[k];
+    }
+    if (s.k === "raw") { fill = n; bits = 8 * n; }
+    if (s.k === "seq") {
+      const q = T.seqs[s.i];
+      const tb = q.tc.length + (q.ep !== undefined ? 12 : 0);
+      const lv = (q.llv ? q.llv.cl + q.llv.xl : 0) + (q.mlv ? q.mlv.cl + q.mlv.xl : 0);
+      let litb = 0;
+      for (let k = q.li; k < q.li + q.ll; k++) litb += S.litBits[k];
+      b.tok += tb; b.off += q.rl; b.len += lv; b.lit += litb;
+      const last = s.i === T.seqs.length - 1;
+      lb.tok += 8; lb.lit += 8 * q.ll;
+      if (q.ll >= 15) lb.len += 8 * (1 + Math.floor((q.ll - 15) / 255));
+      if (!last) { lb.off += 16; if (q.ml - 4 >= 15) lb.len += 8 * (1 + Math.floor((q.ml - 19) / 255)); }
+      c.seqs++; c.tokLook++; if (q.ep !== undefined) c.esc++;
+      c.tokLook += (q.llv ? 1 : 0) + (q.mlv ? 1 : 0);
+      c.refills += q.ev.length;
+      if (q.fast) { c.fast++; c.written += 16 + matchWritten(q); c.needed += q.ll + q.ml; } else c.slow++;
+      out = q.d + q.ll + q.ml; used = q.li + q.ll;
+      bits = tb + q.rl + lv;
+      S.seqCost = S.seqCost || [];
+    }
+    if (s.k === "end") { b.pad = nb - (b.hdr + b.lit + b.tok + b.off + b.len); bits = b.pad; }
+    S.outLen[i] = out; S.litFill[i] = fill; S.litUsed[i] = used; S.stepBits[i] = bits;
+    S.bud.push({ ...b }); S.lbud.push({ ...lb }); S.cnt.push({ ...c });
+  });
+  S.cats = cats; S.lcats = lcats;
+}
+
+// bytes the fast path stores for the match, see seqlz.c
+function matchWritten(q) {
+  if (q.off >= 8) return q.ml > 32 ? 40 : q.ml > 16 ? 32 : 16;
+  const step = [0, 8, 8, 6, 8, 5, 6, 7][q.off];
+  let k = 5 * step;
+  while (k < q.ml) k += step;
+  return k - step + 8;
+}
+
+/* ---------- drawing helpers ---------- */
+function fitCanvas(cv, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+function rgba(hex, a) {
+  const h = hex.replace("#", "");
+  const v = parseInt(h.length === 3 ? h.split("").map((x) => x + x).join("") : h, 16);
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${a})`;
+}
+function bitAt(pos) {
+  const byte = pos >> 3, idx = pos & 7;
+  const msb = S.kind[pos] === K.LIT && S.T.layout === "coded" || S.kind[pos] === K.SIZE || S.kind[pos] === K.HDR || S.kind[pos] === K.SET;
+  // header bytes are shown as numbers, lowest bit first like the bitstream; literal streams highest first
+  const lsb = !(S.kind[pos] === K.LIT && S.T.layout === "coded") && !(S.kind[pos] === K.PAD && inStreams(byte));
+  return (S.comp[byte] >> (lsb ? idx : 7 - idx)) & 1;
+}
+function inStreams(byte) {
+  return S.T.layout === "coded" && byte >= 19 && byte < S.T.starts[8];
+}
+
+/* the compressed page: one cell per byte, 8 bars per cell */
+const COLS = 32;
+function layoutComp() {
+  const box = $("#compBox");
+  const w = box.clientWidth - 12;
+  S.cc = Math.max(9, Math.floor(w / COLS));
+  const rows = Math.ceil(S.comp.length / COLS);
+  S.compCtx = fitCanvas($("#compCv"), S.cc * COLS, S.cc * rows);
+}
+function drawComp() {
+  const ctx = S.compCtx, c = S.cc, comp = S.comp, cur = S.cur, col = S.col;
+  ctx.clearRect(0, 0, c * COLS, c * Math.ceil(comp.length / COLS));
+  const sw = (c - 2) / 8;
+  for (let b = 0; b < comp.length; b++) {
+    const x = (b % COLS) * c, y = Math.floor(b / COLS) * c;
+    for (let i = 0; i < 8; i++) {
+      const p = b * 8 + i, k = S.kind[p], st = S.stepOf[p];
+      const on = bitAt(p);
+      const alpha = st < cur ? 0.95 : st === cur ? 1 : 0.22;
+      const alt = S.owner[p] & 1 && k >= K.LIT && k !== K.PAD ? 0.72 : 1;
+      ctx.fillStyle = rgba(col.k[k], alpha * alt);
+      const h = on ? c - 2 : Math.max(2, (c - 2) * 0.34);
+      ctx.fillRect(x + 1 + i * sw, y + c - 1 - h, Math.max(0.6, sw - 0.35), h);
+    }
+  }
+  // outline the bits of this step
+  ctx.strokeStyle = col.ink; ctx.lineWidth = 1.5;
+  const seen = new Set();
+  const nb = comp.length * 8;
+  const lo = S.curBitLo, hi = S.curBitHi;
+  for (let p = lo; p < hi && p < nb; p++) {
+    if (S.stepOf[p] !== cur) continue;
+    const b = p >> 3;
+    if (seen.has(b)) continue;
+    seen.add(b);
+    const x = (b % COLS) * c, y = Math.floor(b / COLS) * c;
+    let i0 = 8, i1 = -1;
+    for (let i = 0; i < 8; i++) if (S.stepOf[b * 8 + i] === cur) { i0 = Math.min(i0, i); i1 = i; }
+    ctx.strokeRect(x + 1 + i0 * sw - 0.5, y + 0.5, (i1 - i0 + 1) * sw + 1, c - 1);
+  }
+}
+function curBitRange() {
+  // the bit range a step reads, for the outline and the auto scroll
+  const s = S.steps[S.cur], T = S.T;
+  let lo = 0, hi = 0;
+  if (s.k === "h") { lo = 0; hi = 16; }
+  else if (s.k === "set") { lo = 16; hi = 24; }
+  else if (s.k === "sizes") { lo = 24; hi = 152; }
+  else if (s.k === "raw") { lo = 16; hi = 16 + 8 * T.n; }
+  else if (s.k === "lr") { lo = 152; hi = 8 * T.starts[8]; }
+  else if (s.k === "seq") { const q = T.seqs[s.i]; lo = q.tp; hi = (T.seqs[s.i + 1] ? T.seqs[s.i + 1].tp : S.comp.length * 8); }
+  else if (s.k === "end") { lo = 0; hi = S.comp.length * 8; }
+  S.curBitLo = lo; S.curBitHi = hi;
+}
+function scrollComp() {
+  const s = S.steps[S.cur];
+  let p = S.curBitLo;
+  if (s.k === "lr") { const k = 8 * s.r; p = S.T.lits[k][0]; }
+  const row = Math.floor((p >> 3) / COLS);
+  const box = $("#compBox"), y = row * S.cc;
+  if (y < box.scrollTop + 20 || y > box.scrollTop + box.clientHeight - 40) {
+    box.scrollTo({ top: Math.max(0, y - box.clientHeight / 3), behavior: S.playing && S.speed > 12 ? "auto" : "smooth" });
+  }
+}
+
+/* the decoded page: 64 x 64 bytes */
+function layoutPage() {
+  const w = $("#pageWrap").clientWidth;
+  S.pc = Math.max(4, Math.floor(w / 64));
+  S.pageCtx = fitCanvas($("#pageCv"), S.pc * 64, S.pc * 64);
+  const svg = $("#pageSvg");
+  svg.setAttribute("viewBox", `0 0 ${S.pc * 64} ${S.pc * 64}`);
+  svg.style.width = S.pc * 64 + "px"; svg.style.height = S.pc * 64 + "px";
+  const lw = $(".litbar").clientWidth;
+  S.litW = lw;
+  S.litCtx = fitCanvas($("#litCv"), lw, 26);
+}
+function byteColor(d) {
+  const col = S.col, m = S.mode;
+  if (m === "value") {
+    const v = S.orig[d], l = col.dark ? 18 + v / 255 * 72 : 92 - v / 255 * 76;
+    return `hsl(220 18% ${l}%)`;
+  }
+  if (m === "seq") return `hsl(${(S.oSeq[d] * 137.508) % 360} 58% ${col.dark ? 60 : 55}%)`;
+  if (S.oKind[d] === 0) return col.k[K.LIT];
+  return m === "class" ? col.cls[S.oCls[d]] : col.match;
+}
+function drawPage(now) {
+  const ctx = S.pageCtx, c = S.pc, col = S.col;
+  const out = S.outLen[S.cur], prev = S.cur > 0 ? S.outLen[S.cur - 1] : 0;
+  ctx.clearRect(0, 0, c * 64, c * 64);
+  const g = c > 5 ? 1 : 0.5;
+  for (let d = 0; d < PAGE; d++) {
+    const x = (d & 63) * c, y = (d >> 6) * c;
+    if (d < out) ctx.fillStyle = byteColor(d);
+    else ctx.fillStyle = col.empty;
+    ctx.fillRect(x + g / 2, y + g / 2, c - g, c - g);
+  }
+  // overshoot of the fast path: bytes stored now and overwritten by the next sequence
+  const s = S.steps[S.cur];
+  if (s.k === "seq") {
+    const q = S.T.seqs[s.i];
+    if (q.fast) {
+      const end = q.d + q.ll + q.ml;
+      const w1 = Math.max(q.d + 16, q.d + q.ll + matchWritten(q));
+      ctx.fillStyle = rgba(col.ink3, 0.35);
+      for (let d = end; d < Math.min(PAGE, w1); d++) {
+        const x = (d & 63) * c, y = (d >> 6) * c;
+        ctx.fillRect(x + g / 2, y + g / 2, c - g, c - g);
+      }
+    }
+  }
+  // the glow of bytes written in this step
+  if (S.flash && now !== undefined) {
+    const t = (now - S.flash.t) / 650;
+    if (t < 1) {
+      ctx.fillStyle = rgba(col.glow.startsWith("#") ? col.glow : "#ffffff", 0.75 * (1 - t) * (1 - t));
+      for (let d = S.flash.a; d < S.flash.b; d++) {
+        const x = (d & 63) * c, y = (d >> 6) * c;
+        ctx.fillRect(x, y, c, c);
+      }
+      requestAnimationFrame(drawPage);
+    } else S.flash = null;
+  }
+  $("#pageFill").textContent = `${fmt(out)} of 4096 bytes`;
+}
+function runRects(a, b) {
+  // rectangles covering bytes [a, b) of the 64-wide grid
+  const c = S.pc, r = [];
+  let d = a;
+  while (d < b) {
+    const row = d >> 6, e = Math.min(b, (row + 1) * 64);
+    r.push([(d & 63) * c, row * c, (e - d) * c, c]);
+    d = e;
+  }
+  return r;
+}
+function drawArc() {
+  const svg = $("#pageSvg"), s = S.steps[S.cur];
+  svg.innerHTML = "";
+  if (s.k !== "seq") return;
+  const q = S.T.seqs[s.i], c = S.pc;
+  const ns = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const a in attrs) e.setAttribute(a, attrs[a]); svg.appendChild(e); return e; };
+  if (q.ll) runRects(q.d, q.d + q.ll).forEach(([x, y, w, h]) => add("rect", { x: x + .5, y: y + .5, width: w - 1, height: h - 1, class: "box-dst", rx: 1.5, style: `stroke:${S.col.k[K.LIT]}` }));
+  if (!q.ml) return;
+  const d0 = q.d + q.ll, s0 = d0 - q.off;
+  runRects(s0, Math.min(s0 + q.ml, d0)).forEach(([x, y, w, h]) => add("rect", { x: x + .5, y: y + .5, width: w - 1, height: h - 1, class: "box-src", rx: 1.5 }));
+  runRects(d0, d0 + q.ml).forEach(([x, y, w, h]) => add("rect", { x: x + .5, y: y + .5, width: w - 1, height: h - 1, class: "box-dst", rx: 1.5 }));
+  const cx = (d) => (d & 63) * c + c / 2, cy = (d) => (d >> 6) * c + c / 2;
+  const x1 = cx(s0), y1 = cy(s0), x2 = cx(d0), y2 = cy(d0);
+  const dist = Math.hypot(x2 - x1, y2 - y1);
+  const lift = Math.min(90, 14 + dist * 0.35);
+  const mx = (x1 + x2) / 2;
+  let my = Math.min(y1, y2) - lift;
+  if (my < 4) my = Math.max(y1, y2) + lift; // near the top the arc bends down, inside the page
+  add("path", { d: `M${x1},${y1} Q${mx},${my} ${x2},${y2}`, class: "arc" });
+  add("circle", { cx: x2, cy: y2, r: 3, fill: S.col.ink });
+}
+function drawLits() {
+  const ctx = S.litCtx, w = S.litW, n = S.T.n, col = S.col;
+  ctx.clearRect(0, 0, w, 26);
+  const fill = S.litFill[S.cur], used = S.litUsed[S.cur];
+  const s = S.steps[S.cur];
+  let h0 = -1, h1 = -1;
+  if (s.k === "lr") { h0 = 8 * s.r; h1 = Math.min(n, h0 + 8); }
+  if (s.k === "seq") { const q = S.T.seqs[s.i]; h0 = q.li; h1 = q.li + q.ll; }
+  const cw = w / Math.max(n, 1);
+  for (let k = 0; k < n; k++) {
+    const x = k * cw;
+    let a = k < fill ? (k < used ? 0.35 : 0.95) : 0.12;
+    if (k >= h0 && k < h1) a = 1;
+    ctx.fillStyle = rgba(col.k[K.LIT], a);
+    const hh = k >= h0 && k < h1 ? 26 : 18;
+    ctx.fillRect(x, 26 - hh, Math.max(cw - (cw > 2 ? 0.5 : 0), 0.6), hh);
+  }
+  $("#litNote").textContent = n ? `${fmt(fill)} decoded, ${fmt(used)} copied into the page, of ${fmt(n)}` : "no literals";
+}
+function drawHex() {
+  const s = S.steps[S.cur], out = S.outLen[S.cur];
+  let focus = out;
+  if (s.k === "seq") focus = S.T.seqs[s.i].d;
+  const start = Math.max(0, Math.min(PAGE - 64, (focus & ~15) - 16));
+  let html = "";
+  let hi0 = -1, hi1 = -1;
+  if (s.k === "seq") { const q = S.T.seqs[s.i]; hi0 = q.d; hi1 = q.d + q.ll + q.ml; }
+  for (let r = 0; r < 4; r++) {
+    const a = start + 16 * r;
+    let h = `<div class="hexrow"><span class="a">${a.toString(16).padStart(4, "0")}</span>`, t = "";
+    for (let j = 0; j < 16; j++) {
+      const d = a + j;
+      if (d < out) {
+        const now = d >= hi0 && d < hi1 ? " now" : "";
+        h += `<span class="h${now}" style="background:${byteColor(d)}" data-d="${d}">${hex2(S.orig[d])}</span>`;
+        t += chq(S.orig[d]) || "·";
+      } else { h += `<span class="h e">··</span>`; t += " "; }
+    }
+    html += h + `<span></span><span class="asc">${t}</span></div>`;
+  }
+  $("#hexPeek").innerHTML = html;
+}
+
+/* the timeline: one bar per step, its height the bits the step reads */
+function layoutTl() {
+  const cv = $("#tlCv"), w = cv.parentElement.clientWidth;
+  S.tlW = w;
+  S.tlCtx = fitCanvas(cv, w, 44);
+}
+function drawTl() {
+  const ctx = S.tlCtx, w = S.tlW, L = S.steps.length, col = S.col;
+  ctx.clearRect(0, 0, w, 44);
+  let max = 0;
+  for (let i = 0; i < L; i++) if (S.steps[i].k === "seq" || S.steps[i].k === "lr") max = Math.max(max, S.stepBits[i]);
+  const bw = w / L;
+  for (let i = 0; i < L; i++) {
+    const s = S.steps[i];
+    const kcol = s.k === "lr" || s.k === "raw" ? col.k[K.LIT] : s.k === "seq" ? col.k[K.TOK] : col.k[K.HDR];
+    const h = s.k === "seq" || s.k === "lr" ? 6 + 30 * Math.min(1, S.stepBits[i] / max) : 10;
+    ctx.fillStyle = rgba(kcol, i <= S.cur ? 0.95 : 0.3);
+    ctx.fillRect(i * bw, 40 - h, Math.max(bw - (bw > 3 ? 1 : 0), 0.7), h);
+  }
+  const x = (S.cur + 0.5) * bw;
+  ctx.fillStyle = col.ink;
+  ctx.fillRect(x - 1, 0, 2, 44);
+  ctx.beginPath(); ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 6); ctx.fill();
+}
+
+/* ---------- the step card ---------- */
+const kc = (k) => `var(${KVAR[k]})`;
+function chip(v, color) { return `<span class="chip" style="background:${color}">${hex2(v)}${chq(v) ? `<small>${chq(v)}</small>` : ""}</span>`; }
+function chipsOf(bytes, color, max = 24) {
+  let h = '<div class="chips">';
+  bytes.slice(0, max).forEach((v) => (h += chip(v, color)));
+  if (bytes.length > max) h += `<span class="chip more">+${fmt(bytes.length - max)} more</span>`;
+  return h + "</div>";
+}
+function bitsSpan(s, k) { return `<span class="k bits" style="background:${kc(k)}">${s}</span>`; }
+function readBits(pos, n) { let s = ""; for (let i = 0; i < n; i++) s += bitAt(pos + i); return s; }
+function op(color, label, body) { return `<li><span class="dot" style="background:${color}">${label}</span><div>${body}</div></li>`; }
+
+function tokenEntry(t, n) {
+  const cls = t >> 9, raw = OFF_BITS[cls], drop = n + raw, ll = t & 15, ml = ((t >> 4) & 31) + 4;
+  const flag = ll === 15 || ml === 35 ? 1 : 0;
+  const v = (((64 - drop) & 63) | (((64 - raw) & 63) << 6) | ((cls >= 4 ? 3 : 0) << 12) | (drop << 14) | (ll << 19) | (ml << 23) | (flag << 30)) >>> 0;
+  return { v, drop, raw, shift: cls >= 4 ? 3 : 0, ll, ml, flag };
+}
+
+function register(q) {
+  // the decoder's 64-bit register at the token lookup, in reading order
+  const cnt = q.cnt, base = q.tp, nb = S.comp.length * 8;
+  const T = S.T, i = T.seqs.indexOf(q);
+  let h = '<div class="reg"><div class="regcap"><span>bit 0, read first</span><span>' + plural(cnt, "bit") + " loaded</span><span>bit 63</span></div>";
+  for (let r = 0; r < 2; r++) {
+    h += '<div class="regrow">';
+    for (let j = 0; j < 32; j++) {
+      const off = r * 32 + j, p = base + off;
+      if (off >= cnt || p >= nb) { h += `<div class="rb nl">·</div>`; continue; }
+      const k = S.kind[p], own = S.owner[p], b = bitAt(p);
+      const mine = own === i && k >= K.TOK;
+      const cls = (b ? "" : " z") + (mine ? " cur" : " dim");
+      h += `<div class="rb${cls}" style="background:${kc(k)}" data-p="${p}">${b}</div>`;
+    }
+    h += "</div>";
+  }
+  return h + "</div>";
+}
+
+function card() {
+  const s = S.steps[S.cur], T = S.T, n = T.n;
+  const eyebrow = (t) => `<div class="eyebrow">${t}</div>`;
+  let h = "";
+  if (s.k === "start") {
+    const sz = S.comp.length;
+    h += eyebrow("Before the first step");
+    h += `<div class="steptitle">${fmt(sz)} bytes to turn back into 4096</div>`;
+    h += `<ul class="ops">`;
+    h += op("var(--k-hdr)", "1", `<p><b>The header</b> says how many literals the page has and how they are stored.</p>`);
+    h += op("var(--k-lit)", "2", T.layout === "coded"
+      ? `<p><b>${fmt(n)} literals</b>, Huffman coded with one of 8 fixed tables, dealt into 8 streams. The decoder decodes all of them first, 8 at a time, into a buffer.</p>`
+      : `<p><b>${fmt(n)} literals</b>, stored as they are. Coding them would not have saved 1/16 of their size, so the encoder left them.</p>`);
+    h += op("var(--k-tok)", "3", `<p><b>${fmt(T.seqs.length)} sequences</b> in a bitstream: per sequence a token code, the offset bits, rarely a length value. Each copies its literals into the page, then a match from earlier in the page.</p>`);
+    h += `</ul><p class="muted small" style="margin:0">Press <b>Play</b>, the arrow keys, or click anywhere in the compressed page or the timeline.</p>`;
+  }
+  if (s.k === "h") {
+    const v = S.comp[0] | (S.comp[1] << 8);
+    h += eyebrow("Header · bytes 0 and 1");
+    h += `<div class="steptitle">${fmt(n)} literals, ${v & 0x8000 ? "coded" : "as they are"}</div><ul class="ops">`;
+    h += op(kc(K.HDR), "16", `<p>Bytes <code>${hex2(S.comp[0])} ${hex2(S.comp[1])}</code> are one 16-bit number, lowest byte first: <code>0x${v.toString(16).padStart(4, "0")}</code>.</p>
+      <p>The top bit is <b>${v >> 15}</b>: ${v & 0x8000 ? "the literals are Huffman coded, a byte for the table and 16 bytes of stream sizes follow." : "the literals follow as they are, right after these 2 bytes."}</p>
+      <p>The other 15 bits are <b>${fmt(n)}</b>, the number of literals. A page has at most 4096, so 13 bits would do; the top bit is free for the flag.</p>`);
+    h += `</ul>`;
+  }
+  if (s.k === "set") {
+    const set = T.set;
+    const costs = D.lit_len.length ? Array.from({ length: 8 }, (_, t) => S.lits.reduce((a, v) => a + D.lit_len[256 * t + v], 0)) : [];
+    const max = Math.max(...costs, 8 * n);
+    h += eyebrow("Header · byte 2");
+    h += `<div class="steptitle">Literal table ${set} of 8</div><ul class="ops">`;
+    let bars = '<div class="cost" style="margin-top:8px">';
+    costs.forEach((cst, t) => {
+      bars += `<span class="small${t === set ? "" : " muted"}">table ${t}</span><div class="cbar"><div style="width:${(100 * cst) / max}%;background:${t === set ? kc(K.LIT) : "var(--ink-3)"};opacity:${t === set ? 1 : 0.45}"></div></div><span class="small mono">${fmt(Math.ceil(cst / 8))} B</span>`;
+    });
+    bars += `<span class="small muted">as they are</span><div class="cbar"><div style="width:${(100 * 8 * n) / max}%;background:var(--ink-3);opacity:.3"></div></div><span class="small mono">${fmt(n)} B</span></div>`;
+    h += op(kc(K.SET), "8", `<p>The 8 literal tables are fixed in the code, each the Huffman code of a group of similar pages. The encoder added up the code lengths of all ${fmt(n)} literals in every table and took the smallest sum:</p>${bars}`);
+    const t = D.lit_len.slice(256 * set, 256 * set + 256);
+    const top = [...t.keys()].sort((a, b) => t[a] - t[b]).slice(0, 8);
+    h += op(kc(K.LIT), "→", `<p>The shortest codes of table ${set}:</p><div class="chips">${top.map((v) => `<span class="chip" style="background:${kc(K.LIT)}">${hex2(v)}${chq(v) ? `<small>${chq(v)}</small>` : ""} · ${t[v]}b</span>`).join("")}</div>`);
+    h += `</ul>`;
+  }
+  if (s.k === "sizes") {
+    const max = Math.max(...T.sizes);
+    let bars = '<div class="cost" style="margin-top:8px">';
+    T.sizes.forEach((z, j) => {
+      bars += `<span class="small">stream ${j}</span><div class="cbar"><div style="width:${(100 * z) / max}%;background:${kc(K.LIT)};opacity:${j & 1 ? 0.72 : 1}"></div></div><span class="small mono">${z} B</span>`;
+    });
+    bars += "</div>";
+    h += eyebrow("Header · bytes 3 to 18");
+    h += `<div class="steptitle">Where the 8 streams start</div><ul class="ops">`;
+    h += op(kc(K.SIZE), "16", `<p>8 sizes of 2 bytes each. The streams lie one after the other from byte 19, so the decoder adds them up: stream 0 starts at byte 19, the sequences' bitstream at byte <b>${T.starts[8]}</b>.</p>${bars}`);
+    h += op(kc(K.LIT), "÷8", `<p>Literal <i>k</i> is in stream <i>k</i> mod 8, like cards dealt to 8 players. That is only for speed: 8 streams are 8 chains of work the CPU runs side by side.</p>`);
+    h += `</ul>`;
+  }
+  if (s.k === "lr") {
+    const k0 = 8 * s.r, k1 = Math.min(n, k0 + 8), R = Math.ceil(n / 8);
+    h += eyebrow(`Literals · round ${s.r + 1} of ${R}`);
+    h += `<div class="steptitle">Literals ${fmt(k0)} to ${fmt(k1 - 1)}, one from each stream</div>`;
+    h += `<div class="lanes">`;
+    for (let j = 0; j < 8; j++) {
+      const k = k0 + j;
+      if (k >= n) { h += `<div class="lane"><span class="muted">stream ${j}</span><span class="muted small">no literal left</span><span></span><span></span></div>`; continue; }
+      const [p, len, v] = T.lits[k];
+      let win = '<div class="win">';
+      for (let b = 0; b < 10; b++) {
+        const pp = p + b;
+        const bit = pp < S.comp.length * 8 ? bitAt(pp) : 0;
+        win += b < len ? `<div style="background:${kc(K.LIT)}">${bit}</div>` : `<div class="rest">${bit}</div>`;
+      }
+      win += "</div>";
+      const used = p + len - 8 * T.starts[j], all = 8 * T.sizes[j];
+      h += `<div class="lane" data-lit="${k}"><span class="small">stream ${j}</span>${win}<span class="mono small">${len} bits</span>${chip(v, kc(K.LIT))}
+        <span></span><div class="prog"><i style="width:${(100 * used) / all}%"></i></div></div>`;
+    }
+    h += `</div><ul class="ops">`;
+    h += op(kc(K.LIT), "8×", `<p>Each stream looks up its next <b>10 bits</b> in the table of 1024 entries: the entry has the byte and the code's length, and the stream moves on by that length. Dashed bits belong to the next code.</p>
+      <p>Each stream is a chain, look up, move on, look up. The 8 chains do not wait for each other, so the CPU works on all of them at once.</p>`);
+    if (s.r % 5 === 0) h += op(kc(K.HDR), "↻", `<p><b>Refill:</b> every stream loads its next 8 bytes. That leaves at least 56 bits, enough for 5 codes of up to 10 bits, so the next 5 rounds need no check.</p>`);
+    if (s.r === R - 1) {
+      const chk = T.sizes.map((z, j) => {
+        let endp = 8 * T.starts[j];
+        for (let k = j; k < n; k += 8) endp = T.lits[k][0] + T.lits[k][1];
+        return [endp - 8 * T.starts[j], 8 * z];
+      });
+      h += op("var(--ok)", "✓", `<p><b>Every stream stayed inside its size</b>, otherwise the page would be invalid: ${chk.map(([u, a], j) => `${j}: ${u}/${a}`).join(", ")} bits. The last few bits of a stream fill its last byte.</p>`);
+    }
+    h += `</ul>`;
+  }
+  if (s.k === "raw") {
+    h += eyebrow(`Literals · bytes 2 to ${n + 1}`);
+    h += `<div class="steptitle">${fmt(n)} literals, as they are</div><ul class="ops">`;
+    h += op(kc(K.LIT), "→", `<p>Nothing to decode: the sequences copy their literals straight from the compressed page. The sequences' bitstream starts right after them, at byte <b>${2 + n}</b>.</p>${chipsOf(S.lits, kc(K.LIT), 40)}`);
+    h += `</ul>`;
+  }
+  if (s.k === "seq") h += seqCard(s.i);
+  if (s.k === "end") {
+    const b = S.bud[S.cur], tot = S.comp.length * 8;
+    h += eyebrow("Done");
+    h += `<div class="steptitle">4096 bytes, from ${fmt(S.comp.length)}</div><ul class="ops">`;
+    h += op("var(--ok)", "✓", `<p>The last sequence filled the page: <b>4096</b> bytes written.</p>`);
+    h += op("var(--ok)", "✓", `<p>All <b>${fmt(n)}</b> literals were used, none left over.</p>`);
+    const lastPos = T.seqs[T.seqs.length - 1];
+    h += op("var(--ok)", "✓", `<p>The bitstream did not run past the end of the page. ${plural(b.pad, "bit")} of the page are read by nobody: the rest of each stream's last byte, and of the bitstream's.</p>`);
+    h += op(kc(K.TOK), "Σ", `<p>${fmt(T.seqs.length)} sequences, ${fmt(S.cnt[S.cur].fast)} on the fast path. Ratio <b>${(4096 / S.comp.length).toFixed(2)}:1</b>, ${((100 * S.comp.length) / 4096).toFixed(1)}% of the page.</p>`);
+    h += `</ul>`;
+  }
+  $("#stepCard").innerHTML = h;
+}
+
+function seqCard(i) {
+  const T = S.T, q = T.seqs[i], last = i === T.seqs.length - 1;
+  const t = q.t, cls = q.cls, tll = t & 15, tml = ((t >> 4) & 31) + 4;
+  const escd = q.ep !== undefined;
+  let h = `<div class="eyebrow">Sequence ${fmt(i + 1)} of ${fmt(T.seqs.length)} · page byte ${fmt(q.d)}</div>`;
+  const title = last ? `${plural(q.ll, "literal")}, the end of the page`
+    : `${plural(q.ll, "literal")}, then ${fmt(q.ml)} bytes from ${fmt(q.off)} back`;
+  h += `<div class="steptitle">${title}</div>`;
+  h += register(q);
+  h += `<ul class="ops">`;
+  // the token
+  const n = q.tc.length;
+  const idx11 = readBits(q.tp, 11);
+  if (escd) {
+    h += op(kc(K.ESC), "T", `<p>The low 11 bits <span class="bits">${idx11}</span> start with the escape's code ${bitsSpan(q.tc, K.ESC)}: this token is rare and has no code of its own.</p>
+      <p>Its number follows in 12 plain bits ${bitsSpan(readBits(q.ep, 12), K.ESC)}, lowest bit first: token <b>${t}</b>. ${n + 12} bits for the token.</p>`);
+  } else {
+    const fills = 1 << (11 - n);
+    h += op(kc(K.TOK), "T", fills > 1
+      ? `<p>Look up the low 11 bits <span class="bits">${idx11}</span> in the token table. The first ${n} are the code ${bitsSpan(q.tc, K.TOK)} of token <b>${t}</b>; the table has its entry in all ${fmt(fills)} slots that start with them, so one lookup finds it whatever follows.</p>`
+      : `<p>Look up the low 11 bits <span class="bits">${idx11}</span> in the token table. All 11 are the code ${bitsSpan(q.tc, K.TOK)} of token <b>${t}</b>, a rare one: its entry is in exactly one slot.</p>`);
+  }
+  const e = tokenEntry(t, escd ? 0 : n);
+  h += op(kc(K.TOK), "=", `<p>${t} = ${tll} + 16 × ${tml - 4} + 512 × ${cls}: <b>ll ${tll === 15 ? "15+" : tll}</b>, <b>ml ${tml === 35 ? "35+" : tml}</b>, <b>class ${cls}</b>. The 32-bit table entry has all of it ready, so the decoder unpacks nothing:</p>
+    <div class="entry"><div>entry<b>${e.v.toString(16).padStart(8, "0")}</b></div><div>bits to drop<b>${e.drop}</b></div><div>offset bits<b>${e.raw}</b></div><div>shift<b>${e.shift}</b></div><div>ll<b>${e.ll}</b></div><div>ml<b>${e.ml}</b></div><div>length value<b>${e.flag ? "yes" : "no"}</b></div></div>`);
+  // the offset
+  if (!last || q.rl) {
+    let txt;
+    if (cls === 0) txt = `<p><b>Class 0, the repeat offset:</b> no bits at all. The offset is the one of the match before${i === 0 ? ", which starts as 1" : ""}: <b>${fmt(q.off)}</b>.</p>`;
+    else {
+      const b = readBits(q.rp, q.rl);
+      txt = `<p><b>Class ${cls}, ${CLASS_TXT[cls]}:</b> ${bitsSpan(b, K.OFF)}, lowest bit first, is ${fmt(q.raw)}${cls >= 4 ? `, times 8 is <b>${fmt(q.off)}</b>` : `: offset <b>${fmt(q.off)}</b>`}.</p>`;
+      if (cls >= 4) txt += `<p class="small muted">Memory is full of 8-byte things, so offsets that are multiples of 8 are common and are stored 3 bits shorter.</p>`;
+    }
+    if (!last) txt += `<p class="small muted">No branch on the class: the entry's shift and mask cut the offset bits out, and class 0 picks the repeat offset with a conditional move.</p>`;
+    h += op(kc(K.OFF), "O", txt);
+  }
+  // the length values
+  const lv = (v, which, base) => {
+    const extra = v.xl ? ` and ${v.xl} plain bits ${bitsSpan(readBits(v.p + v.cl, v.xl), which === "ll" ? K.LLV : K.MLV)} = ${fmt(v.x)}` : "";
+    const val = v.sym < 16 ? `the value ${v.sym}` : `2<sup>${v.xl}</sup> + ${fmt(v.x)} = ${fmt(v.v)}`;
+    return `<p><b>${which} value:</b> code ${bitsSpan(v.code, which === "ll" ? K.LLV : K.MLV)} is symbol ${v.sym}${extra}: ${val}. ${which} = ${base} + ${fmt(v.v)} = <b>${fmt(base + v.v)}</b>.</p>`;
+  };
+  if (q.llv) h += op(kc(K.LLV), "L", lv(q.llv, "ll", 15));
+  if (q.mlv) h += op(kc(K.MLV), "M", lv(q.mlv, "ml", 35));
+  // the copies
+  const litBytes = S.lits.slice(q.li, q.li + q.ll);
+  let cp = q.ll ? `<p>Copy ${plural(q.ll, "literal")} from the literal buffer:</p>${chipsOf(litBytes, kc(K.LIT))}` : `<p>No literals.</p>`;
+  if (!last) {
+    const mb = Array.from(S.orig.subarray(q.d + q.ll, q.d + q.ll + q.ml));
+    cp += `<p style="margin-top:8px">Copy ${fmt(q.ml)} bytes from ${fmt(q.off)} back, page byte ${fmt(q.d + q.ll - q.off)} on${q.off < q.ml ? `, overlapping: each byte copied may be one this match just wrote` : ""}:</p>${chipsOf(mb, "var(--c-match)")}`;
+  } else cp += `<p style="margin-top:8px">The page is full: this is the last sequence, and it has no match.</p>`;
+  h += op(kc(K.LIT), "C", cp);
+  h += `</ul>`;
+  // fast or slow path
+  if (q.fast) {
+    let small = "";
+    if (q.off < 8) {
+      const step = [0, 8, 8, 6, 8, 5, 6, 7][q.off];
+      small = ` The offset ${q.off} is shorter than 8: the ${plural(q.off, "byte")} before are repeated into one 8-byte register and stored again and again, ${step} bytes apart.`;
+    }
+    const mw = matchWritten(q);
+    h += `<div class="path fast"><b>Fast path.</b> Both lengths fit the token and the page has 64 bytes of room. The decoder looks up the next token first, then copies 16 literal bytes and ${mw} match bytes with fixed 8-byte moves, no loop. Only ${q.ll} + ${q.ml} of them count; the rest, grey in the page, the next sequence overwrites.${small}</div>`;
+  } else {
+    const why = last ? "the last sequence: its literals end the page" : q.llv || q.mlv ? "a length value follows" : q.d > PAGE - 64 ? "less than 64 bytes of room left in the page" : "the literals are close to the end of the input";
+    h += `<div class="path slow"><b>Careful path:</b> ${why}. The copies check the room in the page and the literals left, then copy exactly.</div>`;
+  }
+  // refills
+  if (q.ev.length) {
+    const why = { token: "before the token", escape: "after the escape", ll: "before the ll value", ml: "before the ml value" };
+    h += `<p class="small muted" style="margin:0">${q.ev.map(([w, a, b]) => `Refill ${why[w]}: ${a} bits left in the register, ${b} after loading 8 bytes.`).join(" ")}</p>`;
+  }
+  // the cost against lz4
+  const litb = S.litBits.slice(q.li, q.li + q.ll).reduce((a, v) => a + v, 0);
+  const tb = n + (escd ? 12 : 0), lvb = (q.llv ? q.llv.cl + q.llv.xl : 0) + (q.mlv ? q.mlv.cl + q.mlv.xl : 0);
+  const sq = tb + q.rl + lvb + litb;
+  const l4len = (q.ll >= 15 ? 8 * (1 + Math.floor((q.ll - 15) / 255)) : 0) + (!last && q.ml - 4 >= 15 ? 8 * (1 + Math.floor((q.ml - 19) / 255)) : 0);
+  const l4 = 8 + 8 * q.ll + (last ? 0 : 16) + l4len;
+  const max = Math.max(sq, l4);
+  const seg = (v, k) => (v ? `<div style="width:${(100 * v) / max}%;background:${kc(k)}" title=""></div>` : "");
+  h += `<div class="cost"><span class="small"><b>seqlz</b></span><div class="cbar">${seg(tb, escd ? K.ESC : K.TOK)}${seg(q.rl, K.OFF)}${seg(lvb, K.LLV)}${seg(litb, K.LIT)}</div><span class="mono small">${sq} bits</span>
+    <span class="small muted">lz4 format</span><div class="cbar">${seg(8, K.TOK)}${seg(last ? 0 : 16, K.OFF)}${seg(l4len, K.LLV)}${seg(8 * q.ll, K.LIT)}</div><span class="mono small">${l4} bits</span></div>`;
+  return h;
+}
+
+/* ---------- the lower panels ---------- */
+const CAT_K = { hdr: K.HDR, lit: K.LIT, tok: K.TOK, off: K.OFF, len: K.LLV, pad: K.PAD };
+const CAT_NAME = { hdr: "Header", lit: "Literals", tok: "Tokens", off: "Offsets", len: "Length values", pad: "Unused bits" };
+function drawBudget() {
+  const b = S.bud[S.cur], lb = S.lbud[S.cur], B = S.bud[S.steps.length - 1], LB = S.lbud[S.steps.length - 1];
+  const tot = (o) => Object.values(o).reduce((a, v) => a + v, 0);
+  const max = Math.max(tot(LB), tot(B), 8 * S.P.lz4) * 1.02;
+  const bar = (cur, full, cats) => {
+    const seg = (o) => cats.map((c) => `<div style="width:${(100 * o[c]) / max}%;background:${kc(CAT_K[c])}"></div>`).join("");
+    return `<div class="track"><div class="ghost">${seg(full)}</div><div class="fill">${seg(cur)}</div></div>`;
+  };
+  let h = `<div class="bb"><span class="small"><b>seqlz</b></span>${bar(b, B, S.cats)}<span class="num">${fmt(Math.ceil(tot(b) / 8))} B</span></div>`;
+  h += `<div class="bb"><span class="small">the same sequences in lz4's format</span>${bar(lb, LB, S.lcats)}<span class="num">${fmt(Math.ceil(tot(lb) / 8))} B</span></div>`;
+  h += `<table class="bbtable"><thead><tr><th>bytes</th><th>seqlz</th><th>lz4 format</th><th>saved</th></tr></thead><tbody>`;
+  const row = (name, k, a, c) => `<tr><td><span class="tk" style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${kc(k)}"></span>${name}</td><td>${fmt(Math.round(a / 8))}</td><td>${c === null ? "–" : fmt(Math.round(c / 8))}</td><td>${c === null ? "–" : fmt(Math.round((c - a) / 8))}</td></tr>`;
+  h += row("Tokens", K.TOK, b.tok, lb.tok) + row("Offsets", K.OFF, b.off, lb.off) + row("Length values", K.LLV, b.len, lb.len) + row("Literals", K.LIT, b.lit, lb.lit) + row("Header", K.HDR, b.hdr, 0) + row("Unused bits", K.PAD, b.pad, null);
+  h += `</tbody></table><p class="muted small" style="margin:0">The real <code>lz4</code> finds other matches and takes ${fmt(S.P.lz4)} bytes for this page, <code>zstd</code> at level 3 ${fmt(S.P.zstd)}.</p>`;
+  $("#budget").innerHTML = h;
+}
+function drawFast() {
+  const c = S.cnt[S.cur], n = S.T.n;
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+  const items = [
+    [fmt(c.tokLook), `<b>table lookups for ${plural(c.seqs, "sequence")}</b>: one per token${c.esc ? `, the ${plural(c.esc, "escape")} included` : ""}, one per length value. ll, ml and the offset class come from the same lookup.`],
+    [c.seqs ? pct(c.fast, c.seqs) + "%" : "–", `<b>on the fast path</b>, ${fmt(c.fast)} of ${fmt(c.seqs)}: no length value, no loop, fixed copies of 16 bytes and more.`],
+    [c.needed ? (c.written / c.needed).toFixed(1) + "×" : "–", `<b>bytes stored per byte needed</b> on the fast path, ${fmt(c.written)} for ${fmt(c.needed)}. Storing too much is cheaper than finding out how much is enough.`],
+    [fmt(c.refills), `<b>register refills</b> for the bitstream: one 8-byte load gives 56 bits or more, enough for two or three sequences.`],
+    S.T.layout === "coded"
+      ? [fmt(c.litLook), `<b>literal lookups</b> of ${fmt(n)}, 8 streams side by side, with ${fmt(c.litRefills)} loads of 8 bytes.`]
+      : ["0", `<b>literal lookups</b>: the literals are stored as they are and copied straight from the input.`],
+    ["0", `<b>tables built for this page</b>. All 11 tables are fixed, built once, and small enough for the CPU's fastest cache.`],
+  ];
+  $("#fastList").innerHTML = items.map(([a, b]) => `<li><span class="big">${a}</span><p>${b}</p></li>`).join("");
+}
+
+/* ---------- the top ---------- */
+function drawTop() {
+  const P = S.P, T = S.T;
+  $("#pageTitle").textContent = P.title;
+  $("#pageDesc").textContent = P.desc;
+  const lit = P.variants.lit, fast = P.variants.fast;
+  const same = lit.comp === fast.comp;
+  $("#v-lit").disabled = false; $("#v-fast").disabled = false;
+  $("#pageNote").textContent = same ? "both codecs write the same bytes for this page" : "";
+  const sz = S.comp.length;
+  const parts = T.layout === "coded"
+    ? [["header", 19, K.HDR], ["8 literal streams", T.starts[8] - 19, K.LIT], ["sequences", sz - T.starts[8], K.TOK]]
+    : [["2", 2, K.HDR], ["literals", T.n, K.LIT], ["sequences", sz - 2 - T.n, K.TOK]];
+  $("#layoutBar").innerHTML = parts.map(([nm, b, k]) => `<div style="flex:${b};background:${kc(k)}" title="${nm}: ${b} bytes">${b > sz / 12 ? `${nm} · ${fmt(b)} B` : ""}</div>`).join("");
+  $("#layoutNote").textContent = parts.map(([nm, b]) => `${nm === "2" ? "header" : nm}: ${fmt(b)} bytes`).join(" · ");
+  const rows = [["lz4", P.lz4], ["zstd 3", P.zstd], ["seqlz-fast", b64(fast.comp).length], ["seqlz-fast-lit", b64(lit.comp).length]];
+  const me = S.vk === "lit" ? "seqlz-fast-lit" : "seqlz-fast";
+  $("#sizes").innerHTML = rows.map(([nm, v]) => `<div class="row${nm === me ? " me" : ""}"><span class="name">${nm}</span><div class="bar" style="width:${(100 * v) / 4096}%"></div><span class="num">${fmt(v)}</span></div>`).join("");
+  $("#compNote").textContent = `${fmt(sz)} bytes, ${fmt(sz * 8)} bits`;
+  const used = new Set(Array.from(S.kind));
+  $("#compLegend").innerHTML = KNAME.map((nm, k) => (used.has(k) && !(k === K.MLV && !used.has(K.MLV)) ? `<span><i style="background:${kc(k)}"></i>${nm}</span>` : "")).join("");
+  document.querySelectorAll("#pagePick button").forEach((b, i) => b.setAttribute("aria-pressed", i === S.pi));
+  document.querySelectorAll("#varPick button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === S.vk));
+  // jump buttons
+  const J = [["Header", "h", K.HDR], [T.layout === "coded" ? "Literals" : "Literals", T.layout === "coded" ? "lr" : "raw", K.LIT], ["Sequences", "seq", K.TOK], ["End", "end", K.PAD]];
+  $("#jumps").innerHTML = J.map(([nm, k, kk]) => `<button data-j="${k}"><i style="background:${kc(kk)}"></i>${nm}</button>`).join("");
+}
+function drawPageLegend() {
+  const m = S.mode, col = S.col;
+  let h = "";
+  if (m === "origin") h = `<span><i style="background:${kc(K.LIT)}"></i>from a literal</span><span><i style="background:var(--c-match)"></i>from a match</span><span><i style="background:var(--ink-3);opacity:.45"></i>stored too much, overwritten next</span>`;
+  if (m === "class") h = [["literal", "var(--k-lit)"], ["0 repeat", "var(--c0)"], ["1 · 4 bits", "var(--c1)"], ["2 · 8 bits", "var(--c2)"], ["3 · 12 bits", "var(--c3)"], ["4 · 5 bits ×8", "var(--c4)"], ["5 · 9 bits ×8", "var(--c5)"]].map(([a, b]) => `<span><i style="background:${b}"></i>${a}</span>`).join("");
+  if (m === "seq") h = `<span>each sequence its own colour: the literals and the match it wrote</span>`;
+  if (m === "value") h = `<span>${col.dark ? "darker" : "lighter"} is a smaller byte value, 00 is the ${col.dark ? "darkest" : "lightest"}</span>`;
+  $("#pageLegend").innerHTML = h;
+  document.querySelectorAll("#colorPick button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.m === m));
+}
+
+/* ---------- moving between steps ---------- */
+function go(i, opts = {}) {
+  i = Math.max(0, Math.min(S.steps.length - 1, i));
+  const prev = S.cur;
+  S.cur = i;
+  curBitRange();
+  const a = i > 0 ? S.outLen[i - 1] : 0, b = S.outLen[i];
+  if (i === prev + 1 && b > a) S.flash = { t: performance.now(), a, b };
+  else S.flash = null;
+  document.body.classList.toggle("quick", S.playing && S.speed > 3);
+  drawComp(); drawPage(performance.now()); drawArc(); drawLits(); drawHex(); drawTl();
+  card(); drawBudget(); drawFast();
+  scrollComp();
+  $("#stepNo").textContent = `step ${fmt(i + 1)} of ${fmt(S.steps.length)}`;
+}
+function setPage(pi, vk) {
+  stop();
+  S.pi = pi; S.vk = vk;
+  load(); drawTop(); layoutAll(); drawPageLegend();
+  go(0);
+}
+function layoutAll() { readColors(); layoutComp(); layoutPage(); layoutTl(); }
+
+let timer = null, lastT = 0, acc = 0;
+function tick(t) {
+  if (!S.playing) return;
+  acc += (t - lastT) / 1000 * S.speed;
+  lastT = t;
+  if (acc >= 1) {
+    const k = Math.floor(acc);
+    acc -= k;
+    if (S.cur + k >= S.steps.length - 1) { go(S.steps.length - 1); stop(); return; }
+    go(S.cur + k);
+  }
+  timer = requestAnimationFrame(tick);
+}
+function play() {
+  if (S.cur >= S.steps.length - 1) go(0);
+  S.playing = true; $("#playLbl").textContent = "Pause";
+  lastT = performance.now(); acc = 1;
+  timer = requestAnimationFrame(tick);
+}
+function stop() {
+  S.playing = false; $("#playLbl").textContent = "Play";
+  if (timer) cancelAnimationFrame(timer);
+  document.body.classList.remove("quick");
+}
+
+/* ---------- hover and clicks ---------- */
+const tip = $("#tip");
+function showTip(e, html) {
+  tip.innerHTML = html;
+  tip.classList.add("on");
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = e.clientY - h - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tip.classList.remove("on"); }
+const sw = (k) => `<span class="tk" style="background:${kc(k)}"></span>`;
+
+function describeBit(p) {
+  const k = S.kind[p], o = S.owner[p], T = S.T;
+  if (k === K.HDR) return `${sw(k)}Header: the number of literals and the flag`;
+  if (k === K.SET) return `${sw(k)}Header: literal table ${T.set}`;
+  if (k === K.SIZE) return `${sw(k)}Header: size of stream ${o}, ${T.sizes[o]} bytes`;
+  if (k === K.LIT) {
+    if (T.layout === "raw") return `${sw(k)}Literal ${fmt(o)}, as it is: ${hex2(S.lits[o])} ${chq(S.lits[o])}`;
+    const l = T.lits[o];
+    return `${sw(k)}Literal ${fmt(o)} in stream ${o % 8}: code <span class="tbits">${l[3]}</span>, ${l[1]} bits, the byte ${hex2(l[2])} ${chq(l[2])}`;
+  }
+  if (k === K.PAD) return `${sw(k)}Unused: filling up a stream's or the bitstream's last byte`;
+  const q = T.seqs[o];
+  const name = { [K.TOK]: `token code <span class="tbits">${q.tc}</span>, token ${q.t}`, [K.ESC]: `escape, then token ${q.t} in 12 bits`, [K.OFF]: `${q.rl} offset bits, class ${q.cls}, offset ${fmt(q.off)}`, [K.LLV]: `ll value, ll ${fmt(q.ll)}`, [K.MLV]: `ml value, ml ${fmt(q.ml)}` }[k];
+  return `${sw(k)}Sequence ${fmt(o + 1)}: ${name}`;
+}
+function compHit(e) {
+  const r = $("#compCv").getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const col = Math.floor(x / S.cc), row = Math.floor(y / S.cc);
+  if (col < 0 || col >= COLS || row < 0) return null;
+  const b = row * COLS + col;
+  if (b >= S.comp.length) return null;
+  const i = Math.max(0, Math.min(7, Math.floor((x - col * S.cc - 1) / ((S.cc - 2) / 8))));
+  return { b, p: b * 8 + i };
+}
+$("#compCv").addEventListener("mousemove", (e) => {
+  const h = compHit(e);
+  if (!h) return hideTip();
+  const { b, p } = h, v = S.comp[b];
+  const seen = new Set(), lines = [];
+  for (let j = 0; j < 8; j++) {
+    const key = S.kind[b * 8 + j] + ":" + S.owner[b * 8 + j];
+    if (!seen.has(key)) { seen.add(key); lines.push(describeBit(b * 8 + j)); }
+  }
+  let order = "";
+  for (let j = 0; j < 8; j++) order += bitAt(b * 8 + j);
+  showTip(e, `<b>Byte ${fmt(b)}</b> · <span class="tbits">0x${hex2(v)}</span> · ${v.toString(2).padStart(8, "0")} as a number<br>bits in reading order: <span class="tbits">${order}</span><hr>${lines.join("<br>")}<hr><span style="opacity:.75">Pointing at bit ${p & 7}: ${describeBit(p).replace(/<span class="tk"[^>]*><\/span>/, "")}. Click to go to that step.</span>`);
+});
+$("#compCv").addEventListener("mouseleave", hideTip);
+$("#compCv").addEventListener("click", (e) => { const h = compHit(e); if (h) { stop(); go(S.stepOf[h.p]); } });
+
+function pageHit(e) {
+  const r = $("#pageCv").getBoundingClientRect();
+  const c = Math.floor((e.clientX - r.left) / S.pc), rr = Math.floor((e.clientY - r.top) / S.pc);
+  if (c < 0 || c > 63 || rr < 0 || rr > 63) return -1;
+  return rr * 64 + c;
+}
+function describeByte(d) {
+  const v = S.orig[d], q = S.T.seqs[S.oSeq[d]];
+  let h = `<b>Page byte ${fmt(d)}</b> · <span class="tbits">0x${hex2(v)}</span>${chq(v) ? ` · '${chq(v)}'` : ""}`;
+  if (d >= S.outLen[S.cur]) return h + `<hr>Not written yet: sequence ${fmt(S.oSeq[d] + 1)} writes it.`;
+  if (S.oKind[d] === 0) {
+    const k = S.oLit[d];
+    h += `<hr>${sw(K.LIT)}Literal ${fmt(k)}, copied by sequence ${fmt(S.oSeq[d] + 1)}`;
+    if (S.T.layout === "coded") h += `<br>from stream ${k % 8}, code <span class="tbits">${S.T.lits[k][3]}</span>: ${S.T.lits[k][1]} bits instead of 8`;
+  } else {
+    h += `<hr><span class="tk" style="background:var(--c-match)"></span>Match of sequence ${fmt(S.oSeq[d] + 1)}: ${fmt(q.ml)} bytes from ${fmt(q.off)} back, class ${q.cls}`;
+    h += `<br>copied from byte ${fmt(S.oSrc[d])}`;
+    let s = S.oSrc[d], hops = 1;
+    while (S.oKind[s] === 1) { s = S.oSrc[s]; hops++; }
+    h += `<br>first written as literal ${fmt(S.oLit[d])} at byte ${fmt(s)}, ${plural(hops, "copy")} ago`.replace("copys", "copies");
+  }
+  return h + `<hr><span style="opacity:.75">Click to go to sequence ${fmt(S.oSeq[d] + 1)}.</span>`;
+}
+$("#pageCv").addEventListener("mousemove", (e) => { const d = pageHit(e); if (d < 0) return hideTip(); showTip(e, describeByte(d)); });
+$("#pageCv").addEventListener("mouseleave", hideTip);
+$("#pageCv").addEventListener("click", (e) => { const d = pageHit(e); if (d >= 0) { stop(); go(S.seq0 + S.oSeq[d]); } });
+$("#hexPeek").addEventListener("mousemove", (e) => { const t = e.target.closest("[data-d]"); if (!t) return hideTip(); showTip(e, describeByte(+t.dataset.d)); });
+$("#hexPeek").addEventListener("mouseleave", hideTip);
+
+$("#litCv").addEventListener("mousemove", (e) => {
+  const r = $("#litCv").getBoundingClientRect(), n = S.T.n;
+  const k = Math.floor(((e.clientX - r.left) / r.width) * n);
+  if (k < 0 || k >= n) return hideTip();
+  const v = S.lits[k];
+  let h = `<b>Literal ${fmt(k)}</b> · <span class="tbits">0x${hex2(v)}</span>${chq(v) ? ` · '${chq(v)}'` : ""}`;
+  if (S.T.layout === "coded") h += `<br>stream ${k % 8}, code <span class="tbits">${S.T.lits[k][3]}</span>, ${S.T.lits[k][1]} bits`;
+  const sq = S.T.seqs.findIndex((q) => k >= q.li && k < q.li + q.ll);
+  h += `<br>copied into the page by sequence ${fmt(sq + 1)}`;
+  showTip(e, h);
+});
+$("#litCv").addEventListener("mouseleave", hideTip);
+
+$("#stepCard").addEventListener("mousemove", (e) => {
+  const t = e.target.closest("[data-p]");
+  if (t) return showTip(e, describeBit(+t.dataset.p) + `<br><span style="opacity:.75">bit ${fmt(+t.dataset.p - 8 * S.T.bs)} of the bitstream</span>`);
+  const l = e.target.closest("[data-lit]");
+  if (l) { const k = +l.dataset.lit, x = S.T.lits[k]; return showTip(e, `<b>Literal ${fmt(k)}</b><br>code <span class="tbits">${x[3]}</span>, ${x[1]} bits → byte ${hex2(x[2])} ${chq(x[2])}<br>table ${S.T.set} gives this byte ${D.lit_len[256 * S.T.set + x[2]]} bits`); }
+  hideTip();
+});
+$("#stepCard").addEventListener("mouseleave", hideTip);
+
+function tlStep(e) {
+  const r = $("#tlCv").getBoundingClientRect();
+  return Math.floor(((e.clientX - r.left) / r.width) * S.steps.length);
+}
+function stepName(i) {
+  const s = S.steps[i];
+  return { start: "Start", h: "Header: number of literals", set: "Header: literal table", sizes: "Header: stream sizes", raw: "The literals, as they are", end: "End" }[s.k]
+    || (s.k === "lr" ? `Literals, round ${s.r + 1}` : `Sequence ${fmt(s.i + 1)}`);
+}
+let dragging = false;
+$("#tlCv").addEventListener("pointerdown", (e) => { dragging = true; $("#tlCv").setPointerCapture(e.pointerId); stop(); go(tlStep(e)); });
+$("#tlCv").addEventListener("pointermove", (e) => {
+  const i = Math.max(0, Math.min(S.steps.length - 1, tlStep(e)));
+  if (dragging) go(i);
+  showTip(e, `<b>Step ${fmt(i + 1)}</b> · ${stepName(i)}<br>${plural(Math.round(S.stepBits[i]), "bit")} read`);
+});
+$("#tlCv").addEventListener("pointerup", () => (dragging = false));
+$("#tlCv").addEventListener("pointerleave", hideTip);
+
+$("#bPlay").addEventListener("click", () => (S.playing ? stop() : play()));
+$("#bPrev").addEventListener("click", () => { stop(); go(S.cur - 1); });
+$("#bNext").addEventListener("click", () => { stop(); go(S.cur + 1); });
+$("#bFirst").addEventListener("click", () => { stop(); go(0); });
+$("#bLast").addEventListener("click", () => { stop(); go(S.steps.length - 1); });
+$("#speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
+S.speed = +$("#speed").value;
+$("#jumps").addEventListener("click", (e) => { const b = e.target.closest("[data-j]"); if (b) { stop(); go(S.stepIdx[b.dataset.j]); } });
+$("#colorPick").addEventListener("click", (e) => { const b = e.target.closest("[data-m]"); if (!b) return; S.mode = b.dataset.m; drawPageLegend(); drawPage(); drawHex(); });
+$("#varPick").addEventListener("click", (e) => { const b = e.target.closest("[data-v]"); if (b && b.dataset.v !== S.vk) setPage(S.pi, b.dataset.v); });
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("select, input, textarea")) return;
+  const step = e.shiftKey ? 10 : 1;
+  if (e.key === "ArrowRight") { stop(); go(S.cur + step); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { stop(); go(S.cur - step); e.preventDefault(); }
+  else if (e.key === " ") { S.playing ? stop() : play(); e.preventDefault(); }
+  else if (e.key === "Home") { stop(); go(0); e.preventDefault(); }
+  else if (e.key === "End") { stop(); go(S.steps.length - 1); e.preventDefault(); }
+});
+
+$("#pagePick").innerHTML = D.pages.map((p, i) => `<button data-p="${i}" aria-pressed="${i === 0}">${p.title}</button>`).join("");
+$("#pagePick").addEventListener("click", (e) => { const b = e.target.closest("[data-p]"); if (b) setPage(+b.dataset.p, S.vk); });
+
+let rz = null;
+new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => { layoutAll(); go(S.cur); }, 80); }).observe(document.querySelector(".bench"));
+const redrawTheme = () => { readColors(); drawTop(); drawPageLegend(); go(S.cur); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawTheme);
+new MutationObserver(redrawTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+// a link can name the page, the codec and the step: #text, #heap-fast, #relro-s120
+const m = /^#?(heap|text|relro)?-?(fast|lit)?-?(?:s(\d+))?$/.exec(location.hash);
+const hp = m && m[1] ? D.pages.findIndex((p) => p.key === m[1]) : 0;
+setPage(Math.max(0, hp), m && m[2] ? m[2] : "lit");
+// open on a sequence, so the first view shows a step of the decoder at work
+go(m && m[3] ? +m[3] - 1 : S.seq0 + 12);
+
+</script>
