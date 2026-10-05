@@ -1093,6 +1093,192 @@ same build differ, for 20 bytes on this sample and 11 on the whole dump, about 2
 `seqlz-fast-lit` is the best choice up to 153. Kept for the phone, the target: `SEQLZ_LIT_CODED_MIN`
 is 51. zram's level parameter could set it per device instead, which `seqlz` ignores so far; not done.
 
+## Six choices made on the PC, measured on the phone: the token table and its prefetch matter, the rest does not
+
+*Six parts of `seqlz` were chosen with measurements on x86-64: the token table's 11 bits, the literal
+tables' 10 bits, 8 literal streams, prefetching all tables before each read, the matcher's hash of 5
+bytes into 4096 slots, and the fast path's fixed copies. Each again, in the Mi 9T's own kernel.* Three
+of them change the format, which is still free to change before upstreaming.
+
+How: each variant is its own module (`~/opt/mi9t-kernel/mkvar.sh`) next to `lz4`, `lzo` and `zstd`, the
+`seqlz` ones never next to each other, `zramphone` on 20 000 pages of the second phone dump, clocks
+fixed, on the A76 (CPU 7) and the A55 (CPU 2). 2 or 3 rounds, the order of the variants rotated by one
+each round, the current `seqlz-fast-lit` with the 51-byte rule in every run. Cold means a read after
+reading 2 MiB of other data. Time per page written is write + 0.34 × cold read, in µs.
+
+The noise first, because it decides what can be seen. On the A76 the same module gives the same time per
+page written within 0.15 µs from round to round. On the A55 it moves by up to 3.6 µs, 55.6 to 59.2,
+because the cold reads of all codecs drift together between rounds; within a round two variants differ by
+±2 µs for no reason. Also, modules that differ only in the decoder write at different speeds, by up to
+0.6 µs: the layout of the module, as in "seqlz-fast on the phone". So for a change to the decoder only
+the reads count, and on the A55 only differences of several µs.
+
+zsmalloc bytes per page of `seqlz-fast-lit`, all pages of the four dumps, from the harness; phone 10-03
+is part of the pages the tables are trained on:
+
+| variant | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
+| --- | --- | --- | --- | --- |
+| as now | 1002.8 | 1312.3 | 705.3 | 896.3 |
+| token table of 10 bits | 1005.8 | 1318.5 | 707.2 | 899.0 |
+| token table of 9 bits | 1009.5 | 1325.6 | 709.4 | 901.9 |
+| literal tables trained again, 10 bits | 997.1 | 1308.8 | 707.3 | 896.9 |
+| literal tables of 9 bits | 1011.3 | 1376.5 | 708.7 | 899.3 |
+| 4 literal streams | 1000.5 | 1309.7 | 703.9 | 894.5 |
+| hash of 4 bytes | 1021.0 | 1347.7 | 724.6 | 918.6 |
+| hash table of 2048 slots | 1004.3 | 1315.0 | 705.8 | 897.1 |
+| hash table of 8192 slots | 1002.0 | 1311.4 | 704.9 | 895.9 |
+
+### 1. The token table in 10 bits: cold reads 2 to 3 µs faster on both cores, for 3 to 6 bytes
+
+The token table has 2048 entries of 4 bytes, 8 KiB, and the decoder prefetches all of it before each
+page. With 10 bits it is 4 KiB, with 9 bits 2 KiB. Fewer tokens get a code of their own: the trainer
+gives 512 tokens a code with 11 bits, 320 with 10, the others take the escape and 12 raw bits. Trained
+again on the same pages, the 11 bits gave exactly the tables compiled in. Two runs, the first with 2
+rounds, the second with 3, means in µs:
+
+| token table | bytes | A76 warm | A76 cold | A76 cold p99 | A55 warm | A55 cold | A55 cold p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 11 bits, as now | 936.9 | 4.74 / 4.78 | 11.00 / 11.81 | 20.08 / 21.68 | 15.19 / 15.34 | 63.16 / 61.72 | 90.91 / 88.85 |
+| 10 bits | 941.7 | 4.93 / 5.04 | 9.04 / 9.48 | 16.09 / 16.98 | 15.24 / 15.43 | 60.73 / 59.38 | 88.44 / 86.56 |
+| 9 bits | 944.4 | 5.04 | 9.64 | 17.05 | 15.50 | 59.59 | 87.10 |
+
+10 bits reads cold 2.0 and 2.3 µs faster on the A76 and 2.4 and 2.3 on the A55, at p99 4.0 and 4.7 µs
+faster on the A76; a third run, in item 4, gave 2.7 and 3.2 µs. Per page written that is 0.65 µs on the
+A76 and about 0.8 on the A55, for 4.8 bytes on these pages and 2 to 6 on the dumps: 6 to 7 bytes per µs.
+The warm reads are 0.2 µs slower, more tokens take the escape. 9 bits gains nothing more for 2.7 bytes.
+On the A76 the cold p99 of 21.7 µs is more than twice `lz4`'s 9.7, with 10 bits it is 17.0.
+
+On the PC it costs almost no time. Kernel VM, 20 000 pages of the first desktop dump, two boots each
+taking turns: cold reads 2.86 and 2.85 µs against 2.83 and 2.83, at p99 4.96 against 4.77, warm reads
+2.33 against 2.32 and 2.33, writes the same except one boot with 11 bits. zsmalloc took 1051.9 against
+1055.3 bytes per page there, for some reason 3.4 bytes less with 10 bits on these 20 000 pages. The hot
+loop decodes 2.4% slower, 7595 against 7418 cycles per page; 9 bits 7.6% slower. Where the time comes
+from is in the next item: on the A76 most of it is the prefetch of 64 lines less.
+
+### 2. The literal tables in 9 bits: no faster, up to 64 bytes larger, not kept
+
+Each literal table has 1024 entries of 2 bytes, the byte and its code length, 2 KiB; with 9 bits it is 1
+KiB, half the cache lines on a cold read. Trained again for 9 bits on the same pages, and for 10 bits for
+comparison, because the tables compiled in were trained with the old rule of 19 bytes. Three rounds:
+
+| literal tables | bytes, the 20 000 pages | A76 cold / per page written | A55 cold / per page written |
+| --- | --- | --- | --- |
+| as now | 936.9 | 11.51 / 16.40 | 60.83 / 57.16 |
+| trained again, 10 bits | 940.0 | 11.26 / 15.90 | 60.60 / 56.69 |
+| trained again, 9 bits | 940.4 | 11.30 / 16.55 | 60.21 / 56.83 |
+
+9 bits saves nothing measurable on either core, the warm read on the A76 is even 0.3 µs slower (4.93
+against 4.62), and desktop 2 gets 64 bytes per page larger, most likely its pages with literals that need
+codes longer than 9 bits. Not kept. The tables trained again for 51 bytes are 3.5 to 5.7 bytes smaller on
+the desktop dumps and 0.6 and 2.0 bytes larger on the phone dumps; their 0.5 µs on the A76 is in the
+write, which the literal tables do not change much, so most likely the layout of the module. Left as they
+are.
+
+### 3. 4 literal streams instead of 8: 2.7 bytes, no faster, not kept
+
+8 streams were chosen so that x86-64 decodes 8 chains side by side. With 4, the header has 4 sizes
+instead of 8 and every stream rounds up to a byte once less: 2.7 bytes per page on these pages, 1.4 to
+2.6 on the dumps. Two rounds, means:
+
+| streams | A76 cold / per page written | A55 cold / per page written |
+| --- | --- | --- |
+| 8, as now | 11.48 / 16.49 | 61.98 / 57.24 |
+| 4 | 11.74 / 16.47 | 60.92 / 56.58 |
+
+The A76 reads 0.26 µs slower, the A55 1.1 µs faster, both within what the rounds scatter. The PC's hot
+loop decodes 2.8% slower, 7627 against 7418 cycles per page. A format change for 2.7 bytes and no time:
+not kept. It would also need a 13th bit for the stream sizes of 16 KiB pages. The code is on the branch
+`seqlz-4-streams`: the encoder in one pass of 4 streams, `decode_literals()` with 4 chains.
+
+### 4. Prefetching the tables: the A55 needs it, the A76 is faster without
+
+`seqlz_decode()` prefetches the token table, 128 lines of 64 bytes, and the two tables of the length
+values, 16 lines each, before each page; `decode_literals()` the page's literal table, 32 lines. On x86
+that made the cold misses overlap. The variants, each run against the decoder as now, the decoder only,
+the bytes the same; cold reads, means in µs:
+
+| prefetch | runs × rounds | A76 cold, now / variant | A76 cold p99 | A55 cold, now / variant | A55 cold p99 |
+| --- | --- | --- | --- | --- | --- |
+| no table | 1 × 3 | 11.10 / 9.88 | 19.62 / 17.54 | 62.76 / 77.28 | 90.26 / 120.45 |
+| only the token table | 1 × 3 | 11.10 / 11.59 | 19.62 / 19.98 | 62.76 / 65.60 | 90.26 / 95.03 |
+| the literal table first | 1 × 2 | 11.08 / 10.51 | 19.79 / 19.58 | 62.01 / 62.59 | 89.35 / 90.23 |
+| not the token table | 1 × 3 | 11.87 / 10.58 | 21.74 / 19.81 | 63.06 / 75.35 | 90.94 / 110.52 |
+| not the token table, its codes in one range | 1 × 3 | 11.87 / 9.69 | 21.74 / 16.79 | 63.06 / 71.95 | 90.94 / 104.05 |
+| half of it, codes in one range | 1 × 3 | 10.96 / 9.97 | 19.46 / 17.50 | 63.49 / 68.72 | 91.01 / 98.25 |
+| a quarter, codes in one range | 1 × 3 | 10.96 / 10.13 | 19.46 / 17.69 | 63.49 / 71.21 | 91.01 / 102.80 |
+| the token table on in-order cores only, codes in one range | 1 × 2 | 10.87 / 9.64 | 20.00 / 16.74 | 61.73 / 61.99 | 88.57 / 89.35 |
+
+The two cores want opposite things. The A55 needs every prefetch: without them its cold reads are 14.5 µs
+slower and 30 µs at p99, and even the 32 lines of the length values cost it 2.8 µs. It is in order, and a
+miss it did not see coming stops it. The A76 reads 1.2 µs faster without any: a page touches only about
+55 of the token table's 128 lines, the out-of-order core fetches those as it needs them, and most likely
+the 128 prefetches are in the way of the misses that matter, on the compressed data and the page. The
+literal table first, before the token table, moves nothing beyond the noise.
+
+Codes in one range: the bitstream is read least significant bit first, so the 2^(11 - l) entries of a
+code of l bits are spread over the whole table, every 2^l entries. Indexed by the next 11 bits reversed,
+`__builtin_bitreverse32()` and a shift, one `rbit` more on arm64, the entries of a code are one range and
+a page touches 42.5 instead of 55.3 lines, counted on the 20 000 pages. That is decoder only, the format
+and the encoder stay. Without the token table's prefetch it makes the A76's cold reads another 0.9 µs
+faster than the spread layout, and the A55's 3.4 µs less slow. Prefetching only the first part does not
+suit both: by probability the codes take as much of the table as they are used, so the first half has 48%
+of the lookups, the first quarter 23%.
+
+What suits both is to ask which core it is: prefetch the token table only on an in-order core, here
+Cortex-A53, A55, A510, A520 and Qualcomm's Kryo silver cores by `read_cpuid_id()`, which the Mi 9T's
+little cores are (implementer 0x51, part 0x805; the big ones 0x804). The A76 then reads 1.2 µs faster and
+3.3 µs at p99, the A55 as before. On x86-64 the reversed index costs 19% more decode cycles in the hot
+loop, 9347 against 7838 per page with clang, because it has no instruction for it: arm64 only.
+
+With the token table of 10 bits, item 1, the A76 gets most of this already, it prefetches 64 lines less.
+Both together, 3 rounds against 10 bits alone and 11 bits as now: cold 9.49 against 9.57 and 12.30 µs on
+the A76, at p99 16.30 against 17.07 and 22.14; the A55 62.12 against 60.64 and 63.84, at p99 89.79
+against 88.00 and 91.34, within its noise. So:
+
+* **Decoder only**, the core asked and the codes in one range on arm64: the A76's cold reads 1.2 µs
+  faster and 3.3 µs at p99, the A55 unchanged, no bytes.
+* **10 bits**: 2.0 to 2.7 µs on the A76, 2.3 to 3.2 µs on the A55, for 4.8 bytes per page, a format
+  change.
+* **Both**: as 10 bits, and 0.8 µs less at p99 on the A76.
+
+Not decided yet, the measurements are here; nothing of it is in `seqlz.c` so far. Reading the CPU's id in
+a codec is arm64 specific and new for zram's backends.
+
+### 5. The matcher's hash: 5 bytes into 4096 slots stays
+
+A hash of 4 bytes instead of 5 finds more matches, which on x86-64 cost 5% more compress cycles for 0.6
+points of memory then. With today's tables it is the other way round: `seqlz-fast-lit` gets 18 to 35
+bytes per page larger, `seqlz-fast` 8 bytes on the phone dumps and the same on the desktop ones. Most
+likely a match of 4 bytes at a new offset takes more bits than the 4 coded literals it replaces, and the
+greedy matcher then skips the longer match behind it. Not timed: larger, and on x86-64 slower to
+compress. The table with 2048 and 8192 slots instead of 4096, three rounds:
+
+| slots | bytes | A76 write / per page written | A55 write / per page written |
+| --- | --- | --- | --- |
+| 4096, as now | 936.9 | 12.62 / 16.41 | 36.22 / 57.21 |
+| 2048 | 939.6 | 12.61 / 16.68 | 36.11 / 57.35 |
+| 8192 | 937.1 | 12.95 / 16.80 | 37.85 / 58.61 |
+
+Clearing 4 KiB less per page saves nothing measurable, 8 KiB more costs the A55 1.6 µs per write and
+needs 16 KiB per CPU, right at C5. Both not kept.
+
+### 6. The fast path's copies: as they are
+
+A sequence on the fast path copies 16 bytes of literals and 16 bytes of the match, and 16 or 8 more where
+the match is longer than 16 or 32 bytes, each behind a branch. On an in-order core a branch that
+mispredicts costs more than a store, so two variants without them for offsets of 8 and more: 32 bytes
+always and 8 more for matches longer than 32, and 40 bytes always. Three rounds, means:
+
+| copies | A76 warm / cold | A55 warm / cold | per page written, A76 / A55 |
+| --- | --- | --- | --- |
+| 16, 32 or 40, as now | 4.72 / 10.86 | 15.37 / 60.84 | 16.34 / 56.71 |
+| 32 or 40 | 4.84 / 11.95 | 15.87 / 62.49 | 16.80 / 57.72 |
+| always 40 | 4.87 / 12.08 | 16.18 / 62.71 | 16.67 / 57.37 |
+
+Both are slower: warm reads by 0.1 µs on the A76 and 0.5 to 0.8 µs on the A55, cold reads by 1.1 and 1.2
+µs on the A76. On the PC's hot loop too, 2% and 4% more cycles. 79% of the matches are at most 16 bytes,
+the copies behind them cost more than the branches they save. As they are.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
