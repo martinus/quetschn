@@ -1726,27 +1726,46 @@ clear, while every warm read pays 0.2 to 0.5 µs for the prefetches. On the A76 
 kept. The warm reads are 2.2 µs apart, so most of the 10.6 µs are misses that only a cold page has;
 the token table of 4 KiB in "In the phone's own kernel" did not show a clear difference either.
 
-## The worst case: compressing costs at most 2.3 to 4.1 times the median page, decoding any valid page 107 000 instructions on arm64
+## The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`
 
 *How slow can a page be? PLAN.md's Phase 4 wants the bound stated and measured.* The work is bounded by
 construction: the matcher moves forward at every position, with or without a match, and extends a
 match at most to the start of the literals before it and to the end of the page; the decoder stops
 after at most `PAGE / 4 + 1` sequences, and each copies at most what is left of the page. What the
 constants come to was measured with `tools/seqlz-worst/worst.c`. It counts instructions, branch misses
-and cycles in user space with `perf_event_open`, so the counts hold also on a busy machine, which time
-does not. Two sets of pages:
+and cycles in user space with `perf_event_open`; instructions are the same also on a busy machine, which
+time is not. On the A55 a single run's cycles can be 5 times the others, also for the same page, so the
+cycles below are medians over the 16 pages of a kind, and the instructions are the bound.
 
-* **Made-up pages for the compressor**, 16 each of seven kinds with their parameters, 400 in all: random
-  bytes, bytes from 2 to 16 symbols, 4-byte words from 16 to 1024 random ones, runs of a period from 1
-  to 7, skewed bytes that code well, random bytes with copies of 8 bytes, zeros with a few random
-  bytes. `count` compresses and decodes each as zram would.
-* **Valid compressed pages the matcher never writes**, from chosen sequences with `seqlz_encode()`: as
-  many sequences of 4 bytes as fit, offsets of 12 bits, every token escaped, offsets below 8, only
-  literals with long codes, length values, sequences of random shape. Each decodes to the page it was
-  made from.
+**The slowest pages found, and why they are slow.** Made-up pages of 9 kinds, 16 of each per parameter,
+512 in all (`quetschn-seqlz-worst pages`), and three searches with `tools/seqlz-worst/cost_fuzz.c`, a
+fuzz target that makes cost coverage, as PerfFuzz does: the instructions of a call pick one of 2048
+functions, so a page that costs more than any before is new to the fuzzer. 30 libFuzzer workers for
+about an hour together, on the compressor, on the decoder with a compressed page as input, and on the
+decoder with a list of sequences as input, which `seqlz_encode()` turns into a valid page, so that a
+mutation changes a sequence instead of breaking the Huffman code. Two things made the first runs
+useless: seqlz built with the fuzzer's coverage counters cost 3.6 times as much on one page and 6.6
+times on another, so the search climbed the wrong order, and buckets of 1024 instructions were too
+coarse to climb at all. Without the counters in seqlz, and with buckets of 16 instructions above the
+best known cost, the searches found pages 1.3% to 4.1% costlier than the made-up ones. Looking at what
+those pages are gave two kinds by hand that cost more than anything found:
+
+* **`records`**, the most for the compressor: records of 18 literals and 4 bytes that are the same in
+  every record. The literals are drawn with a weight of 2^(-0.9 * their code length in literal table
+  5): they code, but with as many bits as still pays, and every literal costs the whole way, the
+  position tried, counted in 8 tables, coded. 18 literals need a length value each time. And the 4
+  bytes match the record before at the last offset, which only the repeat check finds, 105 of the 180
+  matches have just these 4 bytes: the shortest matches, so the most sequences for the bytes they cover.
+  The costliest page of the second desktop dump is such a table of records, with 4-byte matches at the
+  last offset.
+* **`escaped`**, the most for the decoder: 6 literals and a match of 5 at an offset below 8, again and
+  again. No token with 6 literals and a match of 5 has a code, they are too rare, so 344 of 372 tokens
+  are escapes, a refill and 12 bits each, every match goes through the pattern copy, and the 2221
+  literals are coded.
 
 Instructions per page, against the samples of 20 000 pages of the dumps, without the same-filled pages
-zram never passes on, decode only of pages below 3625 bytes, which zram keeps compressed:
+zram never passes on, decode only of pages below 3625 bytes, which zram keeps compressed; x86-64 with
+gcc, arm64 with the NDK's clang:
 
 | pages | compress p50 | compress p99 | compress max | decode p50 | decode p99 | decode max |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1754,40 +1773,57 @@ zram never passes on, decode only of pages below 3625 bytes, which zram keeps co
 | x86-64, desktop 2 | 76 728 | 164 569 | 173 102 | 26 790 | 47 627 | 65 226 |
 | x86-64, phone 10-03 | 41 498 | 148 579 | 170 110 | 16 830 | 42 500 | 53 961 |
 | x86-64, phone 10-04 | 49 957 | 159 830 | 170 140 | 18 382 | 44 326 | 54 080 |
-| x86-64, made-up | 111 147 | 169 869 | 169 950 | 19 457 | 53 447 | 53 898 |
+| x86-64, made-up | 114 372 | 175 656 | 175 956 | 40 148 | 74 164 | 74 317 |
 | arm64, phone 10-04 | 41 459 | 123 931 | 129 708 | 13 156 | 35 090 | 40 645 |
-| arm64, made-up | 87 372 | 129 432 | 129 658 | 15 627 | 40 527 | 40 821 |
+| arm64, made-up | 88 945 | 136 119 | 136 439 | 30 755 | 56 404 | 56 515 |
 
-The made-up pages find nothing the real ones do not have: compressing costs at most 170 000 to 173 000
-instructions on x86-64 and 130 000 on arm64, 2.3 to 4.1 times the median page of a dump, and the pages
-that cost most are the ones with many literals and short matches, bytes from 6 to 16 symbols or skewed
-ones. Decoding a page the compressor wrote costs at most 65 000 and 41 000. On the A55 the costliest
-kinds compress in 126 000 to 128 000 cycles, the median of the first run of each of their pages, 70 µs
-at 1.8 GHz; the phone's own pages have 42 000 at p50 and 124 000 at p99.
+Compressing costs at most 2.3 to 4.2 times the median page of a dump, and the costliest real pages are
+within 2% of the costliest made-up ones on x86-64, 5% on arm64. Decoding costs at most 4.0 and 4.3 times
+the median of the phone, `escaped` 14% more than any real page on x86-64, 39% more than any of the
+phone's on arm64.
 
-The decoder on pages it only gets from a damaged zram, the most instructions of each kind's 16 pages,
-cycles the median of their first runs:
+In time on the Mi 9T, cycles, the real pages with the median cycles of the costliest made-up kind:
+
+| | compress p50 | compress p99 | costliest made-up | decode p50 | decode p99 | costliest made-up |
+| --- | --- | --- | --- | --- | --- | --- |
+| A55 | 42 130 | 123 528 | 129 581, `records` 17 | 12 548 | 33 971 | 43 484, `escaped` 7 |
+| A76 | 20 750 | 46 562 | 55 140, `alphabet` 4 | 6 677 | 15 977 | 20 102, `escaped` 3 |
+
+On the A55 the slowest compression takes 72 µs at 1.8 GHz, 1.05 times the real p99, the slowest decode
+24 µs, 1.3 times. Most of zram's cold read, 61 µs on average on the A55, are misses, not the decode;
+with the 17 µs its decode takes more than the median page's, the slowest page would read in about 78
+µs, an estimate, not measured.
+
+`lz4` has the same spread. Both codecs on the made-up pages and on phone 10-04,
+`quetschn-bench-interleaved` on the A55, median time per page of 5 loops:
+
+| | real p50 | real p99 | slowest made-up | slowest / p50 | slowest / p99 |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` compress | 15.3 µs | 34.9 µs | 42.7 µs, `alphabet` 8 | 2.8 | 1.22 |
+| `lz4` decode | 5.6 µs | 11.9 µs | 18.6 µs, `alphabet` 2 | 3.3 | 1.57 |
+| `seqlz-fast-lit` compress | 23.2 µs | 68.4 µs | 86.3 µs, `skewed` | 3.7 | 1.26 |
+| `seqlz-fast-lit` decode | 8.1 µs | 21.0 µs | 27.9 µs, `escaped` 5 | 3.5 | 1.33 |
+
+**The decoder on pages it only gets from a damaged zram**, valid pages the matcher never writes,
+written from chosen sequences (`quetschn-seqlz-worst decode`), the most instructions of each kind's 16
+pages, cycles the median:
 
 | kind | sequences | x86-64 instructions | arm64 instructions | A55 cycles | A76 cycles |
 | --- | --- | --- | --- | --- | --- |
-| as many sequences as fit, 4 bytes each | 1023 | 75 890 | 49 465 | 36 363 | 15 294 |
-| the same, offsets of 12 bits | 1023 | 75 186 | 48 948 | 35 707 | 14 101 |
-| every token escaped | 834 | 105 234 | 70 559 | 47 449 | 25 829 |
-| offsets below 8, 4 bytes, escaped | 1022 | 150 047 | 107 099 | 72 501 | 37 760 |
-| only literals, long codes | 1 | 39 937 | 32 984 | 30 061 | 11 550 |
-| 4 coded literals, then a match of 4 | 512 | 66 875 | 48 382 | 38 348 | 18 323 |
-| length values for `ll` and `ml` | 82 | 18 166 | 14 997 | 10 795 | 4 581 |
-| short sequences of random shape | 680 | 68 591 | 47 600 | 38 909 | 22 404 |
+| as many sequences as fit, 4 bytes each | 1023 | 75 890 | 49 465 | 35 842 | 15 466 |
+| the same, offsets of 12 bits | 1023 | 75 186 | 48 948 | 35 232 | 14 204 |
+| every token escaped | 834 | 105 234 | 70 559 | 46 696 | 25 927 |
+| offsets below 8, 4 bytes, escaped | 1022 | 150 047 | 107 099 | 71 468 | 38 155 |
+| only literals, long codes | 1 | 39 937 | 32 984 | 30 138 | 11 541 |
+| 4 coded literals, then a match of 4 | 512 | 66 875 | 48 382 | 38 003 | 18 466 |
+| length values for `ll` and `ml` | 82 | 18 166 | 14 997 | 10 926 | 4 579 |
+| short sequences of random shape | 680 | 68 591 | 47 600 | 38 523 | 22 265 |
 
-The costliest is a match of 4 bytes at an offset below 8 for every sequence: each one is an escape,
-because no token of class 1 with `ml` 4 has a code, and each goes through the pattern copy. 107 000
-instructions on arm64, 2.6 times the most of the compressor's pages, 72 500 cycles on the A55, 40 µs,
-still below what the costliest pages take to compress. Branch misses stay low on these pages, at most
-750 on the A55 for the random shapes, twice the 390 of the phone's page with the most.
-
-On the A55 a single run's cycles can be 5 times the others, also for the same page, so the cycles here
-are medians, and the instructions are the bound. Inputs that are not valid end early; `fuzz/afl.sh`
-stops any input after 1 s, and none of the decoder's targets had one.
+The most is a match of 4 bytes at an offset below 8 for every sequence, all escapes: 107 000
+instructions on arm64, 1.9 times `escaped`, 71 500 cycles on the A55, 40 µs, still below the slowest
+compression. The search on sequences found 1.3% more than that stream as it started from it, 158 890
+instructions with clang against 156 823. Inputs that are not valid end early; `fuzz/afl.sh` stops any
+input after 1 s, and none of the decoder's targets had one in 3.8 billion inputs.
 
 ## Where the ratio of `zstd` comes from
 

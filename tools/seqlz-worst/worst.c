@@ -20,6 +20,7 @@
  *   quetschn-seqlz-worst count-streams <file>...
  *       the decoder on compressed pages in files, e.g. what cost_fuzz.c found.
  */
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +56,10 @@ static const char* const kinds[] = {
     "skewed",   /* skewed bytes, few repeats: many literals that code well */
     "sparse",   /* random bytes, every v-th group of 8 a copy of an earlier one: long literal runs */
     "zeros",    /* zeros with v random bytes: long matches */
+    "records",  /* records of v literals that only just code well and 4 bytes the same in every record:
+                 * the most compress instructions found, see docs/explored-designs.md */
+    "escaped",  /* 6 literals and a match of 5 at offset v, again and again: tokens without a code and the
+                 * pattern copy, the most decode instructions found */
 };
 
 static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
@@ -104,9 +109,46 @@ static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
                     p[k + i] = (unsigned char)next();
         }
         break;
-    default:
+    case 6:
         for (i = 0; i < v; i++)
             p[below(SEQLZ_PAGE)] = (unsigned char)next();
+        break;
+    case 7: {
+        /* bytes with weight 2^(-0.9 * their code length in literal table 5): coded, but as many bits as
+         * still pay */
+        double w[256], sum = 0, x;
+        unsigned char magic[4];
+
+        for (i = 0; i < 256; i++)
+            sum += w[i] = seqlz_lit_sets[5][i] ? pow(2.0, -0.9 * seqlz_lit_sets[5][i]) : 0;
+        for (i = 0; i < 4; i++)
+            magic[i] = (unsigned char)next();
+        for (k = 0; k < SEQLZ_PAGE;) {
+            unsigned int j;
+
+            for (j = 0; j < v && k < SEQLZ_PAGE; j++) {
+                x = (double)(next() >> 11) / 9007199254740992.0 * sum;
+                for (i = 0; i < 255 && x >= w[i]; i++)
+                    x -= w[i];
+                p[k++] = (unsigned char)i;
+            }
+            for (j = 0; j < 4 && k < SEQLZ_PAGE; j++)
+                p[k++] = magic[j];
+        }
+        break;
+    }
+    default: {
+        static const char text[] = "etaoinshrdlucmfwypvbgkqjxz ETAOINSHRDLUCMFWYPVBGKQJXZ,.0123456789-_";
+
+        for (k = 0; k < 16; k++)
+            p[k] = (unsigned char)text[below(64)];
+        while (k < SEQLZ_PAGE) {
+            for (i = 0; i < 5 && k < SEQLZ_PAGE; i++, k++)
+                p[k] = p[k - v];
+            for (i = 0; i < 6 && k < SEQLZ_PAGE; i++)
+                p[k++] = (unsigned char)text[below(64)];
+        }
+    }
     }
 }
 
@@ -120,8 +162,10 @@ static int write_pages(const char* base) {
         {0},
         {2, 4, 16},
         {1, 16, 64, 256},
+        {14, 17, 18, 20},
+        {3, 5, 7},
     };
-    static const unsigned int n_params[] = {1, 6, 4, 6, 1, 3, 4};
+    static const unsigned int n_params[] = {1, 6, 4, 6, 1, 3, 4, 4, 3};
     char path[4096];
     unsigned char page[SEQLZ_PAGE];
     unsigned int kind, j, s, n = 0;
@@ -518,8 +562,9 @@ static int count_streams(int n, char** paths) {
         FILE* f = fopen(paths[i], "rb");
         struct cost x;
 
+        /* a fuzzer that still runs replaces its files */
         if (!f)
-            return 1;
+            continue;
         j.len = (unsigned int)fread(c, 1, sizeof c, f);
         fclose(f);
         if (do_decode(&j)) {
