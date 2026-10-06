@@ -6,7 +6,8 @@
 # zram-prefetch.patch applied to a copy, and an initramfs whose /init (init.c) writes the pages of a
 # corpus to /dev/zram0 and reads them back with O_DIRECT. The corpus pages go into the initramfs: it is
 # written with mode 600 and deleted at the end, like the corpus it contains private data. MODE=swap
-# measures zram as swap instead, the whole page fault of a swap-out and a swap-in (init.c).
+# measures zram as swap instead, the whole page fault of a swap-out and a swap-in (init.c). KARGS adds
+# to the kernel command line, e.g. KARGS=zram.zram_prefetch=8 for the backends' own prefetch.
 
 set -euo pipefail
 
@@ -47,6 +48,6 @@ chmod 600 "$work/initramfs.cpio"
 
 # CPU 2, as the other benchmarks; set a fixed frequency yourself
 taskset -c 2 qemu-system-x86_64 -enable-kvm -cpu host -smp 1 -m 2G -kernel "$work/build/arch/x86/boot/bzImage" \
-    -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=8 quetschn.algos=${ALGOS:-lz4} quetschn.mode=${MODE:-read} zswap.enabled=0" \
+    -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=8 quetschn.algos=${ALGOS:-lz4} quetschn.mode=${MODE:-read} zswap.enabled=0 ${KARGS:-}" \
     -nographic -no-reboot |
     grep -a RESULT

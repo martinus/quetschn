@@ -13,7 +13,8 @@
 // - swap-out of the whole mapping in one call, timed: the mean per page with reclaim's batching, then
 //   swap-in of every page, timed, after touching another page
 // - swap-out of every page in its own call, timed, with the cost of the call, then swap-in of every
-//   page after reading EVICT bytes of other data (default 2 MiB), outside the timed window
+//   page after reading other data, outside the timed window, once for each size in EVICT, a comma
+//   separated list in bytes (default 2 MiB); the last size is reported as "cold"
 // - write faults on new anonymous pages, the page fault without swap
 //
 // Swap-out is MADV_PAGEOUT, or /proc/self/reclaim where the kernel has that instead (Android's 4.14).
@@ -174,11 +175,23 @@ int main(int argc, char** argv) {
         perm[i] = perm[j];
         perm[j] = x;
     }
-    size_t evict = 2u << 20;
-    if (getenv("EVICT"))
-        evict = strtoul(getenv("EVICT"), NULL, 0);
-    char* other = malloc(evict + 64);
-    memset(other, 1, evict + 64);
+    /* the sizes of other data to read before a cold swap-in, a comma separated list in EVICT */
+    size_t evict[8], n_evict = 0, max_evict = 0;
+    {
+        const char* e = getenv("EVICT") ? getenv("EVICT") : "2097152";
+        char* end;
+        while (*e && n_evict < 8) {
+            evict[n_evict] = strtoul(e, &end, 0);
+            if (evict[n_evict] > max_evict)
+                max_evict = evict[n_evict];
+            n_evict++;
+            e = *end == ',' ? end + 1 : end;
+            if (end == e && *e != 0)
+                break;
+        }
+    }
+    char* other = malloc(max_evict + 64);
+    memset(other, 1, max_evict + 64);
 
     char cluster[16] = {0};
     {
@@ -190,7 +203,8 @@ int main(int argc, char** argv) {
     put("/proc/sys/vm/page-cluster", "0");
 
     char devs[MAX_ALGOS][64];
-    long long *t[MAX_ALGOS][3], *fresh[MAX_ALGOS], batch[MAX_ALGOS][REPS];
+    /* per algorithm: 0 swap-in warm, 1 swap-out per page, 2 + e swap-in after evict[e] bytes */
+    long long *t[MAX_ALGOS][2 + 8], *fresh[MAX_ALGOS], batch[MAX_ALGOS][REPS];
     for (int a = 0; a < n_algos; a++) {
         char path[128];
         static union {
@@ -202,7 +216,7 @@ int main(int argc, char** argv) {
         } hdr;
         int z = first + a;
 
-        for (int c = 0; c < 3; c++)
+        for (size_t c = 0; c < 2 + n_evict; c++)
             t[a][c] = malloc(sizeof(long long) * n * REPS);
         fresh[a] = malloc(sizeof(long long) * N_FRESH * REPS);
         snprintf(path, sizeof path, "/sys/block/zram%d/reset", z);
@@ -234,7 +248,10 @@ int main(int argc, char** argv) {
                 printf("swapon %s: %s\n", devs[a], strerror(errno));
                 return 1;
             }
-            for (int c = 0; c < 2; c++) {
+            for (size_t c = 0; c < 1 + n_evict; c++) {
+                /* c 0: one call for all, then swap-in warm; c > 0: one call per page, then swap-in
+                 * after evict[c - 1] bytes of other data */
+                long long* tc = t[a][c == 0 ? 0 : 1 + c] + (size_t)r * n;
                 char* m = mmap(NULL, n * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
                 madvise(m, n * 4096, MADV_NOHUGEPAGE);
                 memcpy(m, src, n * 4096);
@@ -246,18 +263,19 @@ int main(int argc, char** argv) {
                     for (size_t i = 0; i < n; i++) {
                         long long t1 = now();
                         pageout(m + perm[i] * 4096, 4096);
-                        t[a][2][(size_t)r * n + perm[i]] = now() - t1;
+                        if (c == 1)
+                            t[a][1][(size_t)r * n + perm[i]] = now() - t1;
                     }
                 if (c == 0)
                     batch[a][r] = (now() - t0) / (long long)n;
                 unsigned long out1 = vmstat("pswpout");
-                if (c == 0 && r == 0) {
+                if (c == 0) {
                     char path[128], st[256] = {0};
                     snprintf(path, sizeof path, "/sys/block/zram%d/mm_stat", first + a);
                     int sf = open(path, O_RDONLY);
                     read(sf, st, sizeof st - 1);
                     close(sf);
-                    printf("RESULT %-15s mm_stat %s", argv[4 + a], st);
+                    printf("RESULT %-15s %s mm_stat %s", argv[4 + a], r == 0 ? "" : "again", st);
                 }
                 unsigned char* vec = malloc(n);
                 size_t resident = 0;
@@ -268,23 +286,24 @@ int main(int argc, char** argv) {
                 unsigned long in0 = vmstat("pswpin");
                 for (size_t i = 0; i < n; i++) {
                     char* p = m + perm[i] * 4096;
-                    if (c == 1) {
+                    if (c > 0) {
                         unsigned long s = 0;
-                        for (size_t j = 0; j < evict; j += 64)
+                        for (size_t j = 0; j < evict[c - 1]; j += 64)
                             s += (unsigned char)other[j];
                         sink += (char)s;
                     }
                     long long t1 = now();
                     sink += *(volatile char*)p;
-                    t[a][c][(size_t)r * n + perm[i]] = now() - t1;
+                    tc[perm[i]] = now() - t1;
                 }
                 unsigned long in1 = vmstat("pswpin");
                 if (memcmp(m, src, n * 4096) != 0)
                     printf("RESULT %s: the pages came back different\n", argv[4 + a]);
-                printf("RESULT %-15s run %d %-17s: %lu pages out, %zu of %zu still resident, %lu in\n",
+                printf("RESULT %-15s run %d %-6s %8zu: %lu pages out, %zu of %zu still resident, %lu in\n",
                        argv[4 + a],
                        r,
-                       c == 0 ? "batch, warm" : "per page, cold",
+                       c == 0 ? "warm" : "evict",
+                       c == 0 ? 0 : evict[c - 1],
                        out1 - out0,
                        resident,
                        n,
@@ -314,12 +333,21 @@ int main(int argc, char** argv) {
                argv[4 + a],
                REPS,
                batch[a][REPS / 2]);
-        report(argv[4 + a], "swap-out, one call per page", t[a][2], codec, n_codec, n);
-        report(argv[4 + a], "swap-out, same-filled", t[a][2], same, n_same, n);
+        report(argv[4 + a], "swap-out, one call per page", t[a][1], codec, n_codec, n);
+        report(argv[4 + a], "swap-out, same-filled", t[a][1], same, n_same, n);
         report(argv[4 + a], "swap-in, warm", t[a][0], codec, n_codec, n);
         report(argv[4 + a], "swap-in, warm, same-filled", t[a][0], same, n_same, n);
-        report(argv[4 + a], "swap-in, cold", t[a][1], codec, n_codec, n);
-        report(argv[4 + a], "swap-in, cold, same-filled", t[a][1], same, n_same, n);
+        /* the last size of EVICT is "cold" */
+        for (size_t e = 0; e < n_evict; e++) {
+            char what[64];
+            if (e + 1 == n_evict)
+                snprintf(what, sizeof what, "swap-in, cold");
+            else
+                snprintf(what, sizeof what, "swap-in, after %zu KiB", evict[e] >> 10);
+            report(argv[4 + a], what, t[a][2 + e], codec, n_codec, n);
+            strcat(what, ", same-filled");
+            report(argv[4 + a], what, t[a][2 + e], same, n_same, n);
+        }
         for (size_t i = 0; i < N_FRESH; i++)
             all[i] = i;
         report(argv[4 + a], "write fault, new page", fresh[a], all, N_FRESH, N_FRESH);
@@ -329,7 +357,7 @@ int main(int argc, char** argv) {
         printf("PAGE %zu %d", i, same_filled(src + i * 4096));
         for (int a = 0; a < n_algos; a++)
             for (int k = 0; k < 3; k++) {
-                static const int col[3] = {2, 0, 1};
+                const size_t col[3] = {1, 0, 1 + n_evict};
                 long long v[REPS];
                 for (int r = 0; r < REPS; r++)
                     v[r] = t[a][col[k]][(size_t)r * n + i];

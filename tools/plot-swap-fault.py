@@ -200,13 +200,14 @@ def main():
         0.005,
         "Grey: the same fault on a same-filled page, which zram stores without the codec. Colour: what the codec adds. "
         "Dashed: lz4's time; the percentages are against it. Lower left is better.\n"
-        "PC: Ryzen 9 7950X at 4.5 GHz, Linux 7.3-rc1 in a VM, cold = the compressed data flushed. Phone: Mi 9T, its Linux 4.14, "
-        "cold = 2 MiB of other data read first, lzo instead of lzo-rle. 20 000 pages of a desktop zram dump.",
+        "PC: Ryzen 9 7950X at 4.5 GHz, Linux 7.3-rc1 in a VM, 20 000 pages of a desktop zram dump, cold = the compressed data flushed. "
+        "Phone: Mi 9T, its Linux 4.14, 20 000 pages of a phone zram dump,\ncold = 2 MiB of other data read first, lzo instead of lzo-rle. "
+        "seqlz prefetches the compressed data, as its backend does.",
         fontsize=8.5,
         color="#555555",
         va="bottom",
     )
-    fig.tight_layout(rect=(0, 0.045, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.055, 1, 0.96))
     for out in args.out:
         fig.savefig(out)
 

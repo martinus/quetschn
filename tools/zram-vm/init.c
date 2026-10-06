@@ -112,6 +112,8 @@ static int same_filled(const char* p) {
  * - swap-in of every page with the compressed data flushed from the cache first; the flush is in the
  *   timed window, the mean time of the flushes, which zram_flush_ns counts, is subtracted from each
  *   page that zram decompressed
+ * - swap-in again, flushed, with zcomp_decompress() timed alone in zram (zram_decomp_ns): the
+ *   kernel's part, zram's and zsmalloc's, and the decompression, means only
  * - write faults on new anonymous pages, the page fault without swap
  *
  * page-cluster 0 and the synchronous swap-in of zram read one page per fault. The algorithms take
@@ -176,6 +178,9 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
         close(fd);
     }
 
+    /* per algorithm and run, the swap-in of pass 2: same-filled, the others, zcomp_decompress() alone */
+    long long split[MAX_ALGOS][REPS][3];
+    long long* x3 = malloc(sizeof(long long) * n);
     for (int r = 0; r < REPS; r++) {
         for (int k = 0; k < n_algos; k++) {
             int a = (r + k) % n_algos;
@@ -189,11 +194,13 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
             char* m = mmap(NULL, n * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             madvise(m, n * 4096, MADV_NOHUGEPAGE);
             memcpy(m, src, n * 4096);
-            for (int c = 0; c < 2; c++) {
+            for (int c = 0; c < 3; c++) {
                 /* c 0: one call for all, then swap-in warm; 1: one call per page, then swap-in with
-                 * the compressed data flushed */
+                 * the compressed data flushed; 2: as 1 with zcomp_decompress() timed alone, apart
+                 * from the others because the timing takes time too */
+                long long* tc = c < 2 ? t[a][c] + (size_t)r * n : x3;
                 long long t0 = now();
-                if (c == 0)
+                if (c != 1)
                     madvise(m, n * 4096, MADV_PAGEOUT);
                 else
                     for (size_t i = 0; i < n; i++) {
@@ -217,7 +224,10 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
                 for (size_t i = 0; i < n; i++)
                     resident += vec[i] & 1;
                 free(vec);
-                put("/sys/module/zram/parameters/zram_flush_src", c == 1 ? "1" : "0");
+                put("/sys/module/zram/parameters/zram_flush_src", c >= 1 ? "1" : "0");
+                put("/sys/module/zram/parameters/zram_time_decomp", c == 2 ? "1" : "0");
+                unsigned long d0 = read_ulong("/sys/module/zram/parameters/zram_decomp_ns");
+                unsigned long dn0 = read_ulong("/sys/module/zram/parameters/zram_decomp_n");
                 char st0[256] = {0}, st1[256] = {0};
                 int fd = open(stat, O_RDONLY);
                 read(fd, st0, sizeof st0 - 1);
@@ -227,13 +237,25 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
                     char* p = m + perm[i] * 4096;
                     long long t1 = now();
                     sink += *(volatile char*)p;
-                    t[a][c][(size_t)r * n + perm[i]] = now() - t1;
+                    tc[perm[i]] = now() - t1;
                 }
                 /* the flushes' mean, off every page that zram decompressed */
                 long long flush = (long long)(read_ulong("/sys/module/zram/parameters/zram_flush_ns") - f0) / (long long)n_codec;
                 for (size_t k = 0; k < n_codec; k++)
-                    t[a][c][(size_t)r * n + codec[k]] -= flush;
+                    tc[codec[k]] -= flush;
                 put("/sys/module/zram/parameters/zram_flush_src", "0");
+                put("/sys/module/zram/parameters/zram_time_decomp", "0");
+                if (c == 2) {
+                    unsigned long dn = read_ulong("/sys/module/zram/parameters/zram_decomp_n") - dn0;
+                    long long sc = 0, ss = 0;
+                    for (size_t k = 0; k < n_codec; k++)
+                        sc += tc[codec[k]];
+                    for (size_t k = 0; k < n_same; k++)
+                        ss += tc[same[k]];
+                    split[a][r][0] = ss / (long long)n_same;
+                    split[a][r][1] = sc / (long long)n_codec;
+                    split[a][r][2] = dn ? (long long)((read_ulong("/sys/module/zram/parameters/zram_decomp_ns") - d0) / dn) : 0;
+                }
                 fd = open(stat, O_RDONLY);
                 read(fd, st1, sizeof st1 - 1);
                 close(fd);
@@ -243,7 +265,7 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
                 printf("RESULT %-9s run %d %s: %zu of %zu pages still resident, %lu reads, flush %lld ns per page\n",
                        algos[a],
                        r,
-                       c == 0 ? "batch, warm" : "per page, flushed",
+                       c == 0 ? "batch, warm" : c == 1 ? "per page, flushed" : "batch, flushed, timed",
                        resident,
                        n,
                        strtoul(st1, NULL, 10) - strtoul(st0, NULL, 10),
@@ -280,6 +302,18 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
         for (size_t i = 0; i < N_FRESH; i++)
             all[i] = i;
         print_medians(algos[a], "write fault, new page", fresh[a], all, N_FRESH, N_FRESH);
+        long long sp[3][REPS];
+        for (int r = 0; r < REPS; r++)
+            for (int j = 0; j < 3; j++)
+                sp[j][r] = split[a][r][j];
+        for (int j = 0; j < 3; j++)
+            qsort(sp[j], REPS, sizeof sp[j][0], cmp);
+        printf("RESULT %-9s swap-in, flushed, decompress timed: same-filled %lld, others %lld, of it zcomp_decompress() %lld ns, means, median of %d runs\n",
+               algos[a],
+               sp[0][REPS / 2],
+               sp[1][REPS / 2],
+               sp[2][REPS / 2],
+               REPS);
     }
     /* per page the medians, for plots: index, same-filled, then per algorithm swap-out, swap-in warm, flushed */
     for (size_t i = 0; i < n; i++) {

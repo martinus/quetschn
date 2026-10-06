@@ -179,75 +179,98 @@ another: 1.5 times `lz4` in the codec is less for the task that waits for the pa
 
 **Measured.** `MODE=swap tools/zram-vm/run.sh` in the VM, `tools/swap-fault/swap_fault.c` on the Mi 9T,
 in its own Linux 4.14 with `seqlz` as a module built from this branch. zram is the only swap, one
-device per codec, swapped on in turn. The 20 000 pages of the first desktop dump and 2000 same-filled
-pages are in one anonymous mapping, swapped out with `MADV_PAGEOUT` (on 4.14 `/proc/self/reclaim`) and
-touched in a random order, one fault each, `page-cluster` 0. zram stores a same-filled page without the
-codec, so its fault is the kernel's part: the page fault, the swap entry, zram's slot and a `memset()`
-of the page. The rest of a page's time is the codec's, with zsmalloc's mapping and the compression
-stream. Cold on the PC is the compressed data flushed before the decompression, the flushes' mean
-(207 to 224 ns) subtracted; on the phone 2 MiB of other data read before each fault, which also evicts
-the kernel's code and data. Swap-out one page per `madvise()` call, which has the call's cost in it,
-and all pages in one call, where reclaim batches, the mean over all 22 000 pages. Means over the pages
-of the median of 3 runs, µs, the kernel's part in parentheses:
+device per codec, swapped on in turn. 20 000 pages and 2000 same-filled ones are in one anonymous
+mapping, swapped out with `MADV_PAGEOUT` (on 4.14 `/proc/self/reclaim`) and touched in a random order,
+one fault each, `page-cluster` 0. The VM has the two desktop dumps, the phone the second phone dump.
+zram stores a same-filled page without the codec, so its fault is the kernel's part: the page fault,
+the swap entry, zram's slot and a `memset()` of the page. The rest of a page's time is the codec's,
+with zsmalloc's mapping and the compression stream. `seqlz` prefetches the compressed data before
+`seqlz_decode()`, as its backend does (`KARGS=zram.zram_prefetch=8` in the VM, the module's glue on the
+phone); the others have no prefetch of their own. Cold on the PC is the compressed data flushed before
+the decompression, the flushes' mean (207 to 224 ns) subtracted. On the phone 64 KiB, 256 KiB or
+2 MiB of other data are read before each fault; 2 MiB also evicts the kernel's code and data, and is
+"cold" here. Swap-out one page per `madvise()` call, which has the call's cost in it, and all pages in
+one call, where reclaim batches, the mean over all 22 000 pages. Means over the pages of the median of
+3 runs, µs, the kernel's part in parentheses:
 
 | PC, VM, first / second dump | bytes per page | swap-in cold | swap-in warm | swap-out per page | swap-out, all in one call |
 | --- | --- | --- | --- | --- | --- |
-| `lz4` | 1470 / 1792 | 3.21 / 3.30 (1.80) | 3.13 / 3.21 (1.81) | 6.44 / 7.06 (2.51) | 5.32 / 5.73 |
-| `lzo-rle` | 1379 / 1714 | 3.69 / 3.92 (1.81) | 3.61 / 3.81 (1.82) | 6.28 / 7.04 (2.55) | 5.13 / 5.67 |
-| `zstd` 3 | 1026 / 1223 | 6.48 / 6.79 (1.89) | 6.32 / 6.61 (1.90) | 14.71 / 16.04 (2.64) | 13.00 / 13.88 |
-| `seqlz-fast` | 1138 / 1508 | 3.83 / 4.09 (1.82) | 3.63 / 3.86 (1.84) | 7.06 / 7.68 (2.57) | 5.85 / 6.28 |
-| `seqlz-fast-lit` | 1069 / 1367 | 3.98 / 4.39 (1.83) | 3.81 / 4.17 (1.83) | 7.57 / 8.43 (2.59) | 6.31 / 6.97 |
+| `lz4` | 1470 / 1792 | 3.25 / 3.30 (1.82) | 3.16 / 3.22 (1.80) | 6.48 / 7.11 (2.50) | 5.33 / 5.76 |
+| `lzo-rle` | 1379 / 1714 | 3.70 / 3.92 (1.84) | 3.60 / 3.83 (1.82) | 6.32 / 7.05 (2.55) | 5.16 / 5.69 |
+| `zstd` 3 | 1026 / 1223 | 6.48 / 6.82 (1.90) | 6.30 / 6.62 (1.90) | 14.78 / 16.09 (2.64) | 13.11 / 14.02 |
+| `seqlz-fast` | 1138 / 1508 | 3.67 / 3.86 (1.83) | 3.60 / 3.79 (1.83) | 7.03 / 7.69 (2.56) | 5.82 / 6.27 |
+| `seqlz-fast-lit` | 1069 / 1367 | 3.84 / 4.17 (1.83) | 3.77 / 4.10 (1.84) | 7.57 / 8.48 (2.59) | 6.34 / 7.01 |
 
-| Mi 9T, big core A76 / little core A55 | swap-in cold | swap-in warm | swap-out per page | swap-out, all in one call |
-| --- | --- | --- | --- | --- |
-| `lz4` | 8.87 (5.30) / 72.01 (50.99) | 5.60 (2.60) / 17.14 (6.12) | 15.76 / 43.92 | 11.75 / 32.92 |
-| `lzo` | 10.20 (5.35) / 74.82 (52.40) | 6.77 (2.64) / 18.42 (6.34) | 16.79 / 46.41 | 12.69 / 35.29 |
-| `zstd` 3 | 24.97 (5.63) / 148.51 (60.00) | 18.76 (2.79) / 53.04 (8.19) | 47.73 / 177.99 | 37.34 / 146.85 |
-| `seqlz-fast` | 10.22 (5.34) / 81.58 (53.21) | 6.21 (2.72) / 19.25 (6.23) | 17.26 / 50.03 | 13.09 / 38.70 |
-| `seqlz-fast-lit` | 11.28 (5.41) / 86.11 (53.27) | 6.74 (2.79) / 21.46 (6.35) | 18.39 / 54.16 | 14.11 / 42.19 |
+| Mi 9T, phone pages, A76 | bytes per page | warm | after 64 KiB | after 256 KiB | cold, after 2 MiB | swap-out per page | all in one call |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 1300 | 5.25 (2.54) | 4.96 (2.59) | 5.22 (2.77) | 8.34 (5.11) | 14.39 | 10.27 |
+| `lzo` | 1216 | 6.41 (2.60) | 6.02 (2.61) | 6.33 (2.76) | 9.72 (5.11) | 15.49 | 11.25 |
+| `zstd` 3 | 898 | 16.94 (2.70) | 16.58 (2.73) | 17.06 (2.84) | 23.48 (5.61) | 41.90 | 32.92 |
+| `seqlz-fast-lit` | 934 | 5.91 (2.60) | 5.71 (2.66) | 6.19 (2.81) | 10.48 (5.23) | 16.48 | 12.25 |
 
-The phone stores 1470, 1356, 1003, 1126 and 1041 bytes per page, from the big core's run. The little
-core's first run of `lz4` and `lzo` got about 2400 pages of the system as well: the phone's own zram0
-was off for the measurement and gave 575 MB back.
+| Mi 9T, phone pages, A55 | bytes per page | warm | after 64 KiB | after 256 KiB | cold, after 2 MiB | swap-out per page | all in one call |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 1300 | 15.91 (5.99) | 14.38 (5.93) | 16.51 (7.48) | 71.26 (50.97) | 41.41 | 30.90 |
+| `lzo` | 1216 | 17.44 (6.10) | 16.02 (5.97) | 18.38 (7.54) | 72.95 (50.78) | 44.50 | 33.66 |
+| `zstd` 3 | 898 | 48.28 (8.28) | 44.34 (6.61) | 46.87 (8.22) | 140.36 (57.59) | 163.54 | 132.39 |
+| `seqlz-fast-lit` | 934 | 17.90 (6.01) | 17.51 (6.04) | 20.78 (7.52) | 82.92 (51.65) | 49.83 | 38.71 |
+
+**Where the codec's part goes, PC.** A third swap-in per run, flushed, with `zcomp_decompress()` timed
+alone in zram (`zram_decomp_ns` of `zram-prefetch.patch`); the timing adds about 0.1 µs to the fault, so
+this pass is apart from the table. First dump, means in µs:
+
+| codec | whole swap-in | the kernel's part | zram and zsmalloc | `zcomp_decompress()` | its share |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 3.51 | 1.93 | 0.16 | 1.43 | 41% |
+| `lzo-rle` | 3.98 | 1.94 | 0.16 | 1.88 | 47% |
+| `zstd` 3 | 6.88 | 2.04 | 0.11 | 4.73 | 69% |
+| `seqlz-fast` | 3.95 | 1.99 | 0.09 | 1.87 | 47% |
+| `seqlz-fast-lit` | 4.13 | 1.97 | 0.13 | 2.04 | 49% |
 
 ![The whole page fault per codec, the kernel's part in grey](plots/swap-fault.svg)
 
 What it says:
 
-* **The kernel's part on the PC is 1.8 µs, the codec's 1.4 to 2.6 µs for all but `zstd`.** Here the
-  codec is not 10% of a swap-in: 44% for `lz4`, 54% for `seqlz-fast-lit`, cold, on the first dump.
-  How the 0.32 µs of the talk were measured, the slide does not say; the codec's part here has
-  zsmalloc and a destination page that is new in it.
-* **`seqlz-fast-lit` swaps in 24% and 33% slower than `lz4` on the PC, the codec alone is 52% and
-  67%.** On the A76 20% warm and 27% cold (the codec 32% and 64%), on the A55 25% warm and 20% cold
-  (the codec 37% and 56%). `zstd` takes twice `lz4`'s swap-in on the PC and on the A55 cold, 3 times
-  on the A55 warm.
-* **On the A55, cold is mostly the kernel waiting for memory.** After 2 MiB of other data a fault on a
-  same-filled page takes 51 µs, warm 6.1. zramphone's cold reads on the little core, 52 µs for `lz4`
-  in "The numbers again, with the bit order and the token table's prefetch", are mostly that too.
-* **A fault on a new anonymous page, without swap, is 0.76 µs on the PC** (p50), so zram's swap path
+* **Decompression is 41% of `lz4`'s cold swap-in on the PC, not 10%.** 1.43 µs of 3.51, zram and
+  zsmalloc 0.16, the kernel 1.93. How the 0.32 µs of the talk were measured, the slide does not say;
+  here the compressed data is cold and the page decompressed into is new.
+* **The kernel's part is the same for every codec, so the gaps shrink.** `seqlz-fast-lit` swaps in 18%
+  and 26% slower than `lz4` on the PC's two dumps, the codec alone 41% and 55%, and stores 27% and 24%
+  less. On the phone's own pages it stores 28% less than `lz4` and 4% more than `zstd`, and swaps in
+  13% slower warm on both cores, 15% to 26% with other data before. `zstd` takes 2 to 3.2 times
+  `lz4`'s swap-in.
+* **On the A55, 2 MiB of other data is mostly the kernel waiting for memory.** A same-filled page takes
+  51 µs then, 6 µs warm and 7.5 µs after 256 KiB. Up to 256 KiB the kernel's code and data stay in
+  the caches; which of these a real swap-in sees depends on what ran before it. The first fault of a
+  burst after an app was in the background is closer to 2 MiB, the ones after it to 256 KiB or warm.
+* **A fault on a new anonymous page, without swap, is 0.78 µs on the PC** (p50), so zram's swap path
   adds about 1 µs to it. On the phone this baseline ran with a bug that touched some pages twice, so
   it is left out.
-* **Swap-out:** the same-filled page takes 2.5 µs per call on the PC, `seqlz-fast-lit` 18% to 19%
-  more than `lz4` per page, 19% to 22% in one call.
+* **Swap-out:** the same-filled page takes 2.5 µs per call on the PC, `seqlz-fast-lit` 17% to 19% more
+  than `lz4` per page, 19% to 22% in one call. On the phone 15% to 25%.
 
-Not explained: in the fault `seqlz-fast-lit` takes 0.77 µs more than `lz4` on the first dump, in "The
-numbers again, with the bit order and the token table's prefetch" zram's cold read took 0.08 µs more.
-The old read mode, only these two codecs and the 2000 page sample, gives 0.29 to 0.46 µs more:
+**The read harness and the fault disagree on `seqlz-fast-lit`.** In zram's `O_DIRECT` read it is 0.12 to
+0.20 µs slower than `lz4` with its prefetch, 0.22 to 0.35 µs without, whether the codecs take turns on
+every page or each has a boot of its own (first dump, means in µs):
 
-| `ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh`, 2000 pages | `lz4` | `seqlz-fast-lit` |
+| `run.sh` read mode, first dump | `lz4` | `seqlz-fast-lit` |
 | --- | --- | --- |
-| compressed data flushed | 2.61 | 2.90 |
-| compressed data and destination flushed | 2.67 | 3.03 |
-| flushed, another page read first | 2.66 | 3.12 |
+| one codec per boot, compressed data flushed, without / with the prefetch | 2.59 / 2.51 | 2.81 / 2.63 |
+| one codec per boot, flushed, another page first, without / with | 2.64 / 2.56 | 2.94 / 2.76 |
+| five codecs taking turns, compressed data flushed, without / with | 2.50 / 2.45 | 2.85 / 2.63 |
+| five codecs taking turns, flushed, another page first, without / with | 2.62 / 2.59 | 2.90 / 2.72 |
 
-The destination is not it, flushing it costs both about the same. That table had all five codecs
-taking turns on every page, here and in the fault they don't; that the other codecs in the run move a
-codec's times is in [The harness on the
-PC](#the-harness-on-the-pc-a-codecs-times-depend-on-the-other-codecs-in-the-run-not-found-why). In
-the fault each codec runs all pages in a row, as in a burst of swap-ins of one device. If the fault's
-numbers hold, `seqlz-fast-lit` costs `r * 0.69` µs, 0.23 µs at `r = 0.34`, per page written more
-against `lz4` than the score has now; not recomputed yet.
+In the fault it is 0.59 µs slower, and `zcomp_decompress()` alone shows the same 0.61. So the decoder
+itself is slower in a fault. Likely, not measured: the fault path touches page tables, the allocator,
+the rmap and the LRU between two decompressions, which pushes `seqlz`'s tables out of the caches;
+`lz4` has none. The fault is closer to a real swap-in, so its numbers are the ones to use. If they
+hold, `seqlz-fast-lit` costs `r * 0.51` µs, 0.17 µs at `r = 0.34`, per page written more against
+`lz4` than the score has now, which has it 0.08 µs slower; not recomputed yet. Tables that stay in the caches, or a prefetch of all
+of them on x86, might get some of it back.
+
+Without the prefetch in the module, on the same phone pages, `seqlz-fast-lit` swapped in 1 µs slower
+on the A55 warm and 0.2 µs slower on the A76 cold, as "The phone's module did not prefetch the
+compressed data" found for zram's reads.
 
 ## Baselines
 
