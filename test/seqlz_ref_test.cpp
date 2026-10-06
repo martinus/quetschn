@@ -58,7 +58,7 @@ std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
         break;
     case 3: // a short pattern with noise: small offsets and long matches
         for (std::size_t k = 0; k < p.size(); ++k) {
-            p[k] = static_cast<unsigned char>(rng() % 50 == 0 ? rng() : k % (1 + kind % 7));
+            p[k] = static_cast<unsigned char>(rng() % 50 == 0 ? rng() : k % 4);
         }
         break;
     case 4: // copies of earlier pieces at any distance, long and short
@@ -96,8 +96,9 @@ std::vector<unsigned char> compress(seqlz_tables const* t, std::vector<unsigned 
     return c;
 }
 
-// both decoders on the same input: the same verdict, and for a valid page the same bytes
-void check_same(seqlz_tables const* t, seqlz_ref const* r, std::vector<unsigned char> const& c) {
+// Both decoders on the same input: the same verdict, and for a valid page the same bytes. Returns the
+// page, empty for an invalid input.
+std::vector<unsigned char> check_same(seqlz_tables const* t, seqlz_ref const* r, std::vector<unsigned char> const& c) {
     auto fast = std::vector<unsigned char>(SEQLZ_PAGE, 0xa5);
     auto slow = std::vector<unsigned char>(SEQLZ_PAGE, 0x5a);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
@@ -108,9 +109,11 @@ void check_same(seqlz_tables const* t, seqlz_ref const* r, std::vector<unsigned 
     auto const r_ref = seqlz_ref_decode(r, in.get(), c.size(), slow.data());
     REQUIRE((r_ref == 0 || r_ref == -1));
     REQUIRE((r_fast == 0) == (r_ref == 0));
-    if (r_ref == 0) {
-        REQUIRE(fast == slow);
+    if (r_ref != 0) {
+        return {};
     }
+    REQUIRE(fast == slow);
+    return slow;
 }
 
 // Bits most significant first, as FORMAT.md writes the bitstream, for pages made by hand.
@@ -201,10 +204,7 @@ TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders,
         for (int lit = 0; lit < 2; ++lit) {
             auto const c = compress(t.get(), page, lit);
             coded += (c[1] & 0x80) != 0;
-            auto out = std::vector<unsigned char>(SEQLZ_PAGE);
-            REQUIRE(seqlz_ref_decode(r.get(), c.data(), c.size(), out.data()) == 0);
-            REQUIRE(out == page);
-            check_same(t.get(), r.get(), c);
+            REQUIRE(check_same(t.get(), r.get(), c) == page);
         }
     }
     // the pages have to exercise both layouts
@@ -215,26 +215,25 @@ TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike
     auto const t = fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(43);
-    for (int round = 0; round < 4000; ++round) {
+    for (int round = 0; round < 1000; ++round) {
         CAPTURE(round);
-        auto c = compress(t.get(), make_page(rng, round / 4), round % 2);
-        switch (round % 4) {
-        case 0: // bits flipped
-            for (int f = 0; f < 1 + round % 3; ++f) {
-                c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
-            }
-            break;
-        case 1: // cut short
-            c.resize(rng() % c.size());
-            break;
-        case 2: // bytes appended, which a valid page ignores
-            for (int k = 0; k < 1 + round % 9; ++k) {
-                c.push_back(static_cast<unsigned char>(rng()));
-            }
-            break;
-        default: // a byte replaced, often in the headers
-            c[rng() % std::min<std::size_t>(c.size(), 1 + round % 24)] = static_cast<unsigned char>(rng());
+        auto const page = compress(t.get(), make_page(rng, round), round % 2);
+        // each damage on its own copy of the page
+        auto c = page;
+        for (int f = 0; f < 1 + round % 3; ++f) { // bits flipped
+            c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
         }
+        check_same(t.get(), r.get(), c);
+        c = page; // cut short
+        c.resize(rng() % c.size());
+        check_same(t.get(), r.get(), c);
+        c = page; // bytes appended, which a valid page ignores
+        for (int k = 0; k < 1 + round % 9; ++k) {
+            c.push_back(static_cast<unsigned char>(rng()));
+        }
+        check_same(t.get(), r.get(), c);
+        c = page; // a byte replaced, often in the headers
+        c[rng() % std::min<std::size_t>(c.size(), 1 + round % 24)] = static_cast<unsigned char>(rng());
         check_same(t.get(), r.get(), c);
     }
 }

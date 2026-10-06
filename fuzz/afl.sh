@@ -12,6 +12,7 @@ OUT=$(realpath -m "${1:?usage: afl.sh <out dir> [jobs] [cmake args]}")
 JOBS=${2:-9}
 CMAKE_ARGS=("${@:3}")
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+targets=(decode roundtrip diff)
 bin() { if [ -n "${AFL:-}" ]; then echo "$AFL/$1"; else command -v "$1"; fi; }
 
 build() { # variant, then the environment afl-clang-lto needs for it
@@ -20,20 +21,20 @@ build() { # variant, then the environment afl-clang-lto needs for it
     env AFL_QUIET=1 "$@" cmake -S "$REPO" -B "$b" -DCMAKE_C_COMPILER="$(bin afl-clang-lto)" \
         -DCMAKE_CXX_COMPILER="$(bin afl-clang-lto++)" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
         -DQUETSCHN_FUZZ=ON "${CMAKE_ARGS[@]}" > /dev/null
-    env AFL_QUIET=1 "$@" cmake --build "$b" \
-        --target seqlz_decode_fuzz seqlz_roundtrip_fuzz seqlz_diff_fuzz quetschn-fuzz-seeds > /dev/null
+    env AFL_QUIET=1 "$@" cmake --build "$b" --target $(printf "seqlz_%s_fuzz " "${targets[@]}") quetschn-fuzz-seeds \
+        > /dev/null
 }
 build plain
 build asan AFL_USE_ASAN=1 AFL_USE_UBSAN=1
 build cmplog AFL_LLVM_CMPLOG=1
 mkdir -p "$OUT"/seeds-{decode,roundtrip}
 "$OUT/build-plain/quetschn-fuzz-seeds" "$OUT/seeds-decode" "$OUT/seeds-roundtrip"
+# diff takes compressed pages, as decode does
+ln -sfn seeds-decode "$OUT/seeds-diff"
 
 # the longest input each target takes, from the page size the build has
 page=$((1 << $(sed -n 's/^QUETSCHN_PAGE_BITS:STRING=//p' "$OUT/build-plain/CMakeCache.txt")))
 declare -A max_len=([decode]=$((2 * page)) [roundtrip]=$((page + 1)) [diff]=$((2 * page)))
-# diff takes compressed pages, as decode does
-declare -A seeds=([decode]=decode [roundtrip]=roundtrip [diff]=decode)
 
 export AFL_SKIP_CPUFREQ=1 AFL_NO_UI=1 AFL_TRY_AFFINITY=1
 # where core dumps go to a program (systemd-coredump on Fedora), afl-fuzz refuses to start; only root
@@ -44,11 +45,11 @@ fi
 start() { # target, name, role, extra args
     local t=$1 name=$2 role=$3
     shift 3
-    nohup "$(bin afl-fuzz)" -o "$OUT/$t" "$role" "$name" -i "$OUT/seeds-${seeds[$t]}" -t 1000 -G "${max_len[$t]}" "$@" \
+    nohup "$(bin afl-fuzz)" -o "$OUT/$t" "$role" "$name" -i "$OUT/seeds-$t" -t 1000 -G "${max_len[$t]}" "$@" \
         > "$OUT/$t-$name.log" 2>&1 < /dev/null &
 }
-n=$((JOBS / 3))
-for t in decode roundtrip diff; do
+n=$((JOBS / ${#targets[@]}))
+for t in "${targets[@]}"; do
     target=seqlz_${t}_fuzz
     start $t main -M -- "$OUT/build-plain/$target"
     for ((k = 1; k < n; k++)); do
@@ -59,4 +60,4 @@ for t in decode roundtrip diff; do
         esac
     done
 done
-echo "started $((3 * n)) instances, results in $OUT/decode, $OUT/roundtrip and $OUT/diff"
+echo "started $((${#targets[@]} * n)) instances, results in $OUT, a directory per target: ${targets[*]}"
