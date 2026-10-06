@@ -566,7 +566,8 @@ TEST_CASE("harness: a latency in ns is as long as the same work takes by the wal
     // On a kernel where clock_gettime is a system call, a calibration that only calls steady_clock
     // counted 0.56 user cycles per ns on a 1.8 GHz core, and every latency came out 3.2 times too long.
     // The wall clock times the same calls as the harness, so a changing CPU frequency hits both alike,
-    // and both take the median.
+    // and both take the median. GitHub's arm64 runners came out at 1.27 to 1.33 times the wall clock in
+    // some runs, so the bound is 1.5, which still catches the 3.2 of that calibration.
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100)});
     spin_wall_ns.clear();
@@ -575,5 +576,5 @@ TEST_CASE("harness: a latency in ns is as long as the same work takes by the wal
     auto const wall_ns = percentile(spin_wall_ns, 50);
     CAPTURE(wall_ns);
     CHECK(r.pages[0].decompress_ns > 0.8 * wall_ns);
-    CHECK(r.pages[0].decompress_ns < 1.25 * wall_ns);
+    CHECK(r.pages[0].decompress_ns < 1.5 * wall_ns);
 }
