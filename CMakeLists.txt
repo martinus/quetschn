@@ -85,12 +85,15 @@ if(QUETSCHN_FUZZ)
         target_compile_options(quetschn_fuzz_seqlz PRIVATE -fsanitize=fuzzer-no-link)
     endif()
     target_link_libraries(quetschn_fuzz_seqlz PRIVATE quetschn_warnings)
-    foreach(target seqlz_decode_fuzz seqlz_roundtrip_fuzz)
+    foreach(target seqlz_decode_fuzz seqlz_roundtrip_fuzz seqlz_diff_fuzz)
         add_executable(${target} fuzz/${target}.c)
         target_compile_options(${target} PRIVATE -fsanitize=fuzzer)
         target_link_options(${target} PRIVATE -fsanitize=fuzzer)
         target_link_libraries(${target} PRIVATE quetschn_fuzz_seqlz quetschn_warnings)
     endforeach()
+    # the decoder written from FORMAT.md, instrumented like the target
+    target_sources(seqlz_diff_fuzz PRIVATE tools/seqlz_ref.c)
+    target_include_directories(seqlz_diff_fuzz PRIVATE tools)
     add_executable(quetschn-fuzz-seeds fuzz/make_seeds.c)
     target_link_libraries(quetschn-fuzz-seeds PRIVATE quetschn_explore quetschn_warnings)
 endif()
@@ -110,9 +113,10 @@ if(BUILD_TESTING)
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
                                  test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp
                                  test/compare_test.cpp test/score_test.cpp test/spike_test.cpp
-                                 test/explore_test.cpp)
+                                 test/explore_test.cpp test/seqlz_ref_test.cpp tools/seqlz_ref.c)
     target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_spike quetschn_explore quetschn_warnings
                                                 doctest::doctest)
+    target_include_directories(quetschn_test PRIVATE tools)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp test/lz_analysis_test.cpp bench/lz_analysis.cpp)
         target_link_libraries(quetschn_test PRIVATE quetschn_kernel_lz4 quetschn_kernel_lzo quetschn_kernel_zstd
