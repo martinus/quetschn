@@ -76,7 +76,8 @@ std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
         break;
     case 5: // bytes of skewed frequencies and few repeats: literals that code well
         for (auto& b : p) {
-            b = static_cast<unsigned char>(32 + std::min(std::countr_zero(rng() | 1ULL << 40), 30) * 3 + rng() % 3);
+            b = static_cast<unsigned char>(
+                32U + static_cast<unsigned>(std::min(std::countr_zero(rng() | 1ULL << 40), 30)) * 3U + rng() % 3);
         }
         break;
     default: // mostly zeros, as in many swapped pages
@@ -233,7 +234,8 @@ TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike
         }
         check_same(t.get(), r.get(), c);
         c = page; // a byte replaced, often in the headers
-        c[rng() % std::min<std::size_t>(c.size(), 1 + round % 24)] = static_cast<unsigned char>(rng());
+        c[rng() % std::min<std::size_t>(c.size(), 1U + static_cast<unsigned>(round) % 24U)] =
+            static_cast<unsigned char>(rng());
         check_same(t.get(), r.get(), c);
     }
 }
