@@ -15,6 +15,10 @@
  *       compressed pages written by seqlz_encode() from chosen sequences, valid pages the matcher never
  *       writes: every token escaped, as many sequences as fit, offsets below 8, ... Per kind the most
  *       instructions and branch misses of the decode of its 16 pages.
+ *   quetschn-seqlz-worst streams <dir>
+ *       writes 4 of those per kind into dir, one file each, as seeds for cost_fuzz.c.
+ *   quetschn-seqlz-worst count-streams <file>...
+ *       the decoder on compressed pages in files, e.g. what cost_fuzz.c found.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -477,6 +481,57 @@ static int count_pages(const char* path) {
     return fclose(f);
 }
 
+/* the made-up streams, one file per page, as seeds for seqlz_decode_cost_fuzz */
+static int write_streams(const char* dir) {
+    static struct built b;
+    static unsigned char c[3 * SEQLZ_PAGE];
+    const struct seqlz_tables* t = tables();
+    unsigned int kind, k, len;
+    char path[4096];
+
+    for (kind = 0; build(kind, &b); kind++)
+        for (k = 0; k < 4; k++) {
+            FILE* f;
+
+            build(kind, &b);
+            len = seqlz_encode(t, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 1);
+            snprintf(path, sizeof path, "%s/stream-%u-%u", dir, kind, k);
+            if (!len || !(f = fopen(path, "wb")) || fwrite(c, 1, len, f) != len || fclose(f))
+                return 1;
+        }
+    return 0;
+}
+
+/* the decoder on compressed pages in files, as the fuzzer found them: instructions, branch misses and
+ * cycles, or invalid */
+static int count_streams(int n, char** paths) {
+    static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    struct job j = {tables(), 0, 0, c, out, scratch, 0};
+    struct counters ctr;
+    struct cost empty;
+    int i;
+
+    if (counters_open(&ctr))
+        return 1;
+    empty = measure(&ctr, do_nothing, 0);
+    for (i = 0; i < n; i++) {
+        FILE* f = fopen(paths[i], "rb");
+        struct cost x;
+
+        if (!f)
+            return 1;
+        j.len = (unsigned int)fread(c, 1, sizeof c, f);
+        fclose(f);
+        if (do_decode(&j)) {
+            printf("%s\t%u\tinvalid\n", paths[i], j.len);
+            continue;
+        }
+        x = measure(&ctr, do_decode, &j);
+        printf("%s\t%u\t%llu\t%llu\t%llu\n", paths[i], j.len, x.insn - empty.insn, x.miss, x.cycles);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "pages"))
         return write_pages(argv[2]);
@@ -484,6 +539,12 @@ int main(int argc, char** argv) {
         return count_decode();
     if (argc == 3 && !strcmp(argv[1], "count"))
         return count_pages(argv[2]);
-    fprintf(stderr, "usage: quetschn-seqlz-worst pages <base> | decode | count <pages file>\n");
+    if (argc == 3 && !strcmp(argv[1], "streams"))
+        return write_streams(argv[2]);
+    if (argc >= 3 && !strcmp(argv[1], "count-streams"))
+        return count_streams(argc - 2, argv + 2);
+    fprintf(stderr,
+            "usage: quetschn-seqlz-worst pages <base> | count <pages file> | decode | streams <dir> | "
+            "count-streams <file>...\n");
     return 1;
 }
