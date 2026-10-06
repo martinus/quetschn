@@ -19,8 +19,8 @@
  *   length value v:     v < 16 is the symbol itself; otherwise b = bit_width(v) - 1, the symbol is 12 +
  *                       b, and the b low bits of v follow as extra bits. ll and ml have their own tables
  *                       of at most SEQLZ_MAX_BITS bits.
- * Everything goes into one bitstream, read least significant bit first: per sequence the token, the
- * offset, then the length values if any, each symbol followed by its extra bits. The last sequence's
+ * Everything goes into one bitstream, read most significant bit first, as the literals' streams: per
+ * sequence the token, the offset, then the length values if any, each symbol followed by its extra bits. The last sequence's
  * token has ml - 4 = 0 and class 0. There is no count of the sequences: the last one is the one whose
  * literals fill the page.
  *

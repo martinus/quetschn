@@ -709,8 +709,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
                                             std::vector<unsigned char> const& literals,
                                             unsigned last_mlf = 0,
                                             unsigned last_cls = 0) {
-    // canonical Huffman codes, the first code of each length after the codes of all shorter lengths,
-    // written least significant bit first, so bit reversed
+    // canonical Huffman codes, the first code of each length after the codes of all shorter lengths
     auto codes = [](unsigned char const* len, unsigned n) {
         auto count = std::array<unsigned, 17>{};
         for (unsigned s = 0; s < n; ++s) {
@@ -725,12 +724,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         }
         auto out = std::vector<unsigned>(n);
         for (unsigned s = 0; s < n; ++s) {
-            auto c = next[len[s]]++;
-            auto r = 0U;
-            for (unsigned i = 0; i < len[s]; ++i) {
-                r |= ((c >> i) & 1U) << (len[s] - 1 - i);
-            }
-            out[s] = r;
+            out[s] = next[len[s]]++;
         }
         return out;
     };
@@ -738,9 +732,10 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
     auto const ll = codes(lengths.ll, SEQLZ_LEN_SYMBOLS);
     auto const ml = codes(lengths.ml, SEQLZ_LEN_SYMBOLS);
 
+    // the bitstream most significant bit first: of each code and number, and of each byte
     auto bits = std::vector<bool>();
     auto put = [&](unsigned v, unsigned n) {
-        for (unsigned i = 0; i < n; ++i) {
+        for (unsigned i = n; i-- > 0;) {
             bits.push_back(((v >> i) & 1U) != 0);
         }
     };
@@ -794,7 +789,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
     for (std::size_t i = 0; i < bits.size(); i += 8) {
         auto byte = 0U;
         for (std::size_t k = 0; k < 8 && i + k < bits.size(); ++k) {
-            byte |= (bits[i + k] ? 1U : 0U) << k;
+            byte |= (bits[i + k] ? 1U : 0U) << (7 - k);
         }
         out.push_back(static_cast<unsigned char>(byte));
     }

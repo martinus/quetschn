@@ -318,7 +318,7 @@ body.quick .arc { animation-duration: .01s; }
       <div class="panel-head"><h2>The format in one minute</h2></div>
       <div class="primer">
         <p><b>Sequences.</b> The page is a list of sequences. Each one is <i>ll</i> literals, bytes stored as they are, then a match: copy <i>ml</i> bytes from <i>offset</i> bytes back. The last sequence has literals only.</p>
-        <p><b>Two parts.</b> All literals of the page come first, as they are or Huffman coded in 8 streams. Then the sequences as a bitstream, read lowest bit first.</p>
+        <p><b>Two parts.</b> All literals of the page come first, as they are or Huffman coded in 8 streams. Then the sequences as a bitstream, read highest bit first, as the literal streams.</p>
         <p><b>The token.</b> One Huffman code says <i>ll</i> up to 14, <i>ml</i> up to 34 and the offset class together. One 11-bit table lookup gets all of it. Rare tokens are escaped and follow in 12 plain bits.</p>
         <p><b>Offset classes.</b> 0: the repeat offset, 0 bits. 1, 2, 3: 4, 8 or 12 plain bits. 4, 5: 5 or 9 bits, times 8, for the many 8-byte things in memory.</p>
         <p><b>Length values.</b> An <i>ll</i> of 15 or more, or an <i>ml</i> of 35 or more, adds a value after the offset: a short code and some plain bits.</p>
@@ -517,13 +517,9 @@ function rgba(hex, a) {
 }
 function bitAt(pos) {
   const byte = pos >> 3, idx = pos & 7;
-  const msb = S.kind[pos] === K.LIT && S.T.layout === "coded" || S.kind[pos] === K.SIZE || S.kind[pos] === K.HDR || S.kind[pos] === K.SET;
-  // header bytes are shown as numbers, lowest bit first like the bitstream; literal streams highest first
-  const lsb = !(S.kind[pos] === K.LIT && S.T.layout === "coded") && !(S.kind[pos] === K.PAD && inStreams(byte));
+  // the header's numbers lowest bit first, as the stream sizes are packed; every bitstream highest first
+  const k = S.kind[pos], lsb = k === K.HDR || k === K.SET || k === K.SIZE;
   return (S.comp[byte] >> (lsb ? idx : 7 - idx)) & 1;
-}
-function inStreams(byte) {
-  return S.T.layout === "coded" && byte >= S.T.starts[0] && byte < S.T.starts[8];
 }
 
 /* the compressed page: one cell per byte, 8 bars per cell */
@@ -769,7 +765,7 @@ function op(color, label, body) { return `<li><span class="dot" style="backgroun
 function tokenEntry(t, n) {
   const cls = t >> 9, raw = OFF_BITS[cls], drop = n + raw, ll = t & 15, ml = ((t >> 4) & 31) + 4;
   const flag = ll === 15 || ml === 35 ? 1 : 0;
-  const v = (((64 - drop) & 63) | (((64 - raw) & 63) << 6) | ((cls >= 4 ? 3 : 0) << 12) | (drop << 14) | (ll << 19) | (ml << 23) | (flag << 30)) >>> 0;
+  const v = ((n & 63) | (((64 - raw) & 63) << 6) | ((cls >= 4 ? 3 : 0) << 12) | (drop << 14) | (ll << 19) | (ml << 23) | (flag << 30)) >>> 0;
   return { v, drop, raw, shift: cls >= 4 ? 3 : 0, ll, ml, flag };
 }
 
@@ -777,7 +773,7 @@ function register(q) {
   // the decoder's 64-bit register at the token lookup, in reading order
   const cnt = q.cnt, base = q.tp, nb = S.comp.length * 8;
   const T = S.T, i = T.seqs.indexOf(q);
-  let h = '<div class="reg"><div class="regcap"><span>bit 0, read first</span><span>' + plural(cnt, "bit") + " loaded</span><span>bit 63</span></div>";
+  let h = '<div class="reg"><div class="regcap"><span>bit 63, read first</span><span>' + plural(cnt, "bit") + " loaded</span><span>bit 0</span></div>";
   for (let r = 0; r < 2; r++) {
     h += '<div class="regrow">';
     for (let j = 0; j < 32; j++) {
@@ -933,13 +929,13 @@ function seqCard(i) {
   const n = q.tc.length;
   const idx11 = readBits(q.tp, 11);
   if (escd) {
-    h += op(kc(K.ESC), "T", `<p>The low 11 bits <span class="bits">${idx11}</span> start with the escape's code ${bitsSpan(q.tc, K.ESC)}: this token is rare and has no code of its own.</p>
-      <p>Its number follows in 12 plain bits ${bitsSpan(readBits(q.ep, 12), K.ESC)}, lowest bit first: token <b>${t}</b>. ${n + 12} bits for the token.</p>`);
+    h += op(kc(K.ESC), "T", `<p>The top 11 bits <span class="bits">${idx11}</span> start with the escape's code ${bitsSpan(q.tc, K.ESC)}: this token is rare and has no code of its own.</p>
+      <p>Its number follows in 12 plain bits ${bitsSpan(readBits(q.ep, 12), K.ESC)}, highest bit first: token <b>${t}</b>. ${n + 12} bits for the token.</p>`);
   } else {
     const fills = 1 << (11 - n);
     h += op(kc(K.TOK), "T", fills > 1
-      ? `<p>Look up the low 11 bits <span class="bits">${idx11}</span> in the token table. The first ${n} are the code ${bitsSpan(q.tc, K.TOK)} of token <b>${t}</b>; the table has its entry in all ${fmt(fills)} slots that start with them, so one lookup finds it whatever follows.</p>`
-      : `<p>Look up the low 11 bits <span class="bits">${idx11}</span> in the token table. All 11 are the code ${bitsSpan(q.tc, K.TOK)} of token <b>${t}</b>, a rare one: its entry is in exactly one slot.</p>`);
+      ? `<p>Look up the top 11 bits <span class="bits">${idx11}</span> in the token table. The first ${n} are the code ${bitsSpan(q.tc, K.TOK)} of token <b>${t}</b>; the table has its entry in all ${fmt(fills)} slots that start with them, so one lookup finds it whatever follows. Those slots are next to each other, ${fmt(fills * 4)} bytes, so the frequent tokens of a page need few of the table's cache lines.</p>`
+      : `<p>Look up the top 11 bits <span class="bits">${idx11}</span> in the token table. All 11 are the code ${bitsSpan(q.tc, K.TOK)} of token <b>${t}</b>, a rare one: its entry is in exactly one slot.</p>`);
   }
   const e = tokenEntry(t, escd ? 0 : n);
   h += op(kc(K.TOK), "=", `<p>${t} = ${tll} + 16 × ${tml - 4} + 512 × ${cls}: <b>ll ${tll === 15 ? "15+" : tll}</b>, <b>ml ${tml === 35 ? "35+" : tml}</b>, <b>class ${cls}</b>. The 32-bit table entry has all of it ready, so the decoder unpacks nothing:</p>
@@ -950,7 +946,7 @@ function seqCard(i) {
     if (cls === 0) txt = `<p><b>Class 0, the repeat offset:</b> no bits at all. The offset is the one of the match before${i === 0 ? ", which starts as 1" : ""}: <b>${fmt(q.off)}</b>.</p>`;
     else {
       const b = readBits(q.rp, q.rl);
-      txt = `<p><b>Class ${cls}, ${CLASS_TXT[cls]}:</b> ${bitsSpan(b, K.OFF)}, lowest bit first, is ${fmt(q.raw)}${cls >= 4 ? `, times 8 is <b>${fmt(q.off)}</b>` : `: offset <b>${fmt(q.off)}</b>`}.</p>`;
+      txt = `<p><b>Class ${cls}, ${CLASS_TXT[cls]}:</b> ${bitsSpan(b, K.OFF)}, highest bit first, is ${fmt(q.raw)}${cls >= 4 ? `, times 8 is <b>${fmt(q.off)}</b>` : `: offset <b>${fmt(q.off)}</b>`}.</p>`;
       if (cls >= 4) txt += `<p class="small muted">Memory is full of 8-byte things, so offsets that are multiples of 8 are common and are stored 3 bits shorter.</p>`;
     }
     if (!last) txt += `<p class="small muted">No branch on the class: the entry's shift and mask cut the offset bits out, and class 0 picks the repeat offset with a conditional move.</p>`;
