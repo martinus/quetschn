@@ -251,7 +251,7 @@ body.quick .arc { animation-duration: .01s; }
   <header class="top">
     <div>
       <h1>seqlz, bit by bit<span class="brand-bits" aria-hidden="true"><i style="height:22px"></i><i style="height:9px"></i><i style="height:22px"></i><i style="height:22px"></i><i style="height:9px"></i><i style="height:22px"></i><i style="height:9px"></i><i style="height:9px"></i></span></h1>
-      <p>A real 4 KiB memory page, compressed by <code>seqlz</code>, decoded one step at a time. Every bit of the compressed page is on screen, coloured by what it means. Hover over anything for details, click a bit to jump to the step that reads it.</p>
+      <p>A real 4 KiB memory page, compressed by <code>seqlz</code>, decoded one step at a time. Every bit of the compressed page is on screen, coloured by what it means. Hover over anything for details, click a bit to jump to the step that reads it. The way in is <a href="seqlz-compressed.html">seqlz, compressed</a>.</p>
     </div>
     <div class="pickers">
       <div class="seg" id="pagePick" role="group" aria-label="Page"></div>
@@ -589,8 +589,9 @@ function scrollComp() {
 
 /* the decoded page: 64 x 64 bytes */
 function layoutPage() {
-  const w = $("#pageWrap").clientWidth;
-  S.pc = Math.max(4, Math.floor(w / 64));
+  // never wider than the screen, whatever the card measured before the layout settled
+  const w = Math.min($("#pageWrap").clientWidth, document.documentElement.clientWidth - 64);
+  S.pc = Math.max(3, Math.floor(w / 64));
   S.pageCtx = fitCanvas($("#pageCv"), S.pc * 64, S.pc * 64);
   const svg = $("#pageSvg");
   svg.setAttribute("viewBox", `0 0 ${S.pc * 64} ${S.pc * 64}`);
