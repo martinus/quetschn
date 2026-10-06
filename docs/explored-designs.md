@@ -1497,6 +1497,200 @@ little core, `seqlz-fast` up to 36. `tools/plot-devices.py`, docs/plots/devices.
 
 ![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
 
+## How tight the bits are: ANS would give 0.3% at most, the offsets have 2%, 16 literal tables 0.1% to 2%
+
+*`seqlz-fast-lit` is about 4% above `zstd` 3 in bytes. Is there room in how tightly it packs the bits,
+without a slower parse?* `tools/seqlz-bound/bound.c` compresses every page of a dump, counts the bits of
+each kind of field, and checks per page that they add up to the compressed size; `bound.py` puts next to
+each kind the bits of Huffman codes fitted to that same dump, without a length limit, and the entropy of
+the dump's own counts. Fitted codes minus the entropy is what a coder with fractional bits, ANS as in
+`zstd`'s FSE, could take off with the same model. `seqlz`'s codes minus the fitted ones is what the
+tables lose by being fixed, trained on other pages and limited to 11 and 10 bits. Bytes per page, of the
+pages zram keeps compressed:
+
+| | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
+| --- | --- | --- | --- | --- |
+| all | 911.5 | 1174.2 | 648.4 | 792.2 |
+| tokens | 200.2 | 252.7 | 144.7 | 164.5 |
+| of them the escaped ones | 29.9 | 60.2 | 16.5 | 27.0 |
+| coded literals | 264.4 | 493.1 | 145.4 | 215.0 |
+| raw literals | 284.1 | 227.5 | 254.3 | 296.8 |
+| offset bits | 138.0 | 175.6 | 86.7 | 95.6 |
+| length values, codes and extra bits | 18.3 | 17.0 | 12.4 | 15.0 |
+| headers and fill bits | 6.4 | 8.3 | 4.8 | 5.3 |
+| ANS could take off, tokens, length values and coded literals | 2.4 | 3.5 | 1.4 | 1.9 |
+| the fixed tables lose, the same | 14.4 | 75.7 | 4.6 | 6.4 |
+| the entropy of the offsets, by class | 118.1 | 156.4 | 70.5 | 80.5 |
+
+* **ANS: 0.2% to 0.3%.** Huffman codes fitted to a dump are 1.4 to 3.5 bytes per page above its
+  entropy. Not worth a coder whose decoder is a state machine on every symbol.
+* **The tables: little on three dumps, 76 bytes on desktop 2,** 22 in the tokens and 54 in the coded
+  literals, against tables fitted to desktop 2 itself, so an upper bound. Its literals fit the 8 tables
+  badly, which more literal tables fix, see below. Its tokens fit badly too: 30 escaped tokens per page,
+  16 bits each.
+* **The offsets: 15 to 20 bytes per page, 2%,** stored as plain bits where their entropy is less.
+  Class 1, the offsets 1 to 15 in 4 bits, carries about 2 bits: offset 2 is 39% to 48% of it and offset
+  8 30% to 45%. Classes 3 and 5 give 2 to 7 bytes each. Getting that needs a code for the offset, a
+  second lookup per sequence on the decoder's chain, or classes for the frequent offsets in the token,
+  which grows the token's alphabet; "Offset classes from a histogram" found two more classes worth 0.1
+  points at most. Classes for the offsets 2 and 8 alone are worth more, 5.8 to 9.2 bytes per page,
+  but not a format change, see below.
+* **Raw literals:** one Huffman table fitted to all of them would take 12 to 17 bytes per page off,
+  6%, but per page they do not save 1/16 and 51 bytes, which is why they are raw.
+
+**16 literal tables instead of 8.** Byte 2 holds the table in 4 bits, the width of the stream sizes in
+bits 4 to 6, bit 7 stays zero. Trained on the same pages, with the same k-means, zsmalloc bytes per page
+of all pages:
+
+| literal tables | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 | compress cycles, hot loop | decode cycles |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8, as now | 1002.8 | 1312.3 | 705.3 | 896.3 | 21 609 | 7350 |
+| 8, trained again | 997.1 | 1308.8 | 707.3 | 896.9 | | |
+| 16 | 994.1 | 1283.8 | 704.9 | 893.0 | 23 137 | 7343 |
+| 32 | 990.3 | 1279.5 | 699.1 | 889.0 | 26 453 | 7451 |
+
+16 tables store 8.7, 28.5, 0.4 and 3.3 bytes per page less than now, 3.0, 25.0, 2.4 and 3.9 less than 8
+tables trained the same way. The decoder is as fast, it still looks up one table per page, and needs 26
+KiB more for the tables, once, not per CPU. The encoder counts the literals in 16 tables, 2 adds per
+literal instead of 1: 7.1% more compress cycles on the PC, perf over the 2000 page sample of the first
+dump, CPU 2 at 4.5 GHz, median of 3. 32 tables save about 4 bytes more on every dump, for 22% more
+compress cycles, and take the last 2 free bits of byte 2.
+
+On the phone 16 tables cost more than they save. The Mi 9T, 20 000 pages of phone 10-04 in zram, 5
+rounds with the order of the codecs rotated, both codecs in modules built the same way:
+
+| Mi 9T, means of 5 rounds | bytes per page | write A76 | write A55 | time per page written A76 | A55 |
+| --- | --- | --- | --- | --- | --- |
+| 8 literal tables, as now | 936.9 | 12.75 µs | 36.52 µs | 15.93 µs | 57.22 µs |
+| 16 literal tables | 935.0 | 13.18 µs | 38.53 µs | 16.51 µs | 59.24 µs |
+
+1.9 bytes per page for 2.0 µs more per write on the A55, 5.5%, and 0.43 µs on the A76: about 1 byte
+per µs, where the A55 trades at 6 to 12. The writes of each codec stay within 1.4 µs of each other over
+the 5 rounds on the A55, within 0.3 µs on the A76. Not built.
+
+**Offsets 2 and 8 as classes of their own: 0.6% to 0.9% smaller, the decoder 1% to 3% slower, not
+built.** Class 1 spends 4 raw bits on offsets of which 2 and 8 are 70% to 85%. With a class each,
+without raw bits, the token says the offset, and the other offsets below 16 go to the class of 8 raw
+bits, which they share with 16 to 255. 7 classes instead of 6, 3584 tokens instead of 3072, the
+escape still sends 12 bits. `tools/seqlz-bound/seqs.c` writes the sequences of every page,
+`offsets.py` prices layouts of the classes on them: the token with an 11-bit Huffman code and an
+escape, trained on the other three dumps, plus the raw bits. Bytes per page against today's layout:
+
+| layout, model | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
+| --- | --- | --- | --- | --- |
+| offsets 2 and 8 as classes, 8 classes | -9.1 | -4.8 | -7.7 | -6.3 |
+| 2 and 8 in one class with 1 raw bit, 7 classes | -7.5 | -3.7 | -6.3 | -5.1 |
+| 2 and 8 as classes, the rest of 1 to 15 in 8 bits, 7 classes | -9.1 | -5.5 | -7.3 | -5.6 |
+| ... and multiples of 8 from 256 to 2047 in 8 bits, 8 classes | -11.2 | -6.6 | -8.7 | -7.1 |
+| multiples of 4 as classes of their own, 8 classes | +0.5 | +2.0 | -0.8 | -1.0 |
+
+Built, the 7 classes in that order: the last offset, 2, 8, below 256, below 4096, multiples of 8 below
+256 and below 4096. Tables trained the same way as the ones of today, on
+`train-resident-phone1003`, which gives the tables of today again for 6 classes. zsmalloc bytes per
+page of all pages, and the hot loops on the PC as above, median of 5:
+
+| | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 | compress cycles | decode cycles |
+| --- | --- | --- | --- | --- | --- | --- |
+| 6 classes, as now | 1002.8 | 1312.3 | 705.3 | 896.3 | 21 755 | 7414 |
+| 7 classes | 993.6 | 1306.5 | 698.1 | 890.4 | 21 793 | 7620 |
+| 8 classes, the multiples of 8 from 256 to 2047 in 8 bits | 991.6 | 1305.2 | 696.7 | 889.0 | 22 191 | 7690 |
+
+The model was right within 0.3 bytes. The decoder's entry for the classes 2 and 8 has no raw bits and the
+offset's log2 in the field of the shift, so the offset is `shift ? 1 << shift : last` where it was
+`last`: 3 more instructions per sequence on the A55 and the A76, `tst`, `lsl` and `csel`. The first
+try nested that into the existing select, and gcc made it a branch: 8392 decode cycles, 13% more. The
+encoder's class went through `off == 2` and `off == 8` first, which made gcc branch on `off >= 256`,
+since those two only exist below it: 5.9% more compress cycles. The two offsets as 2-bit fields of
+the constant `0x10020`, shifted by the offset up to 15, give the same class without the branch.
+
+On the Mi 9T, as for the literal tables above, 6 rounds of the three, the order rotated:
+
+| Mi 9T, means of 6 rounds | bytes per page | write A76 | warm read A76 | cold read A76 | time per page written A76 | write A55 | warm read A55 | time per page written A55 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 6 classes, as now | 936.9 | 12.61 µs | 4.89 µs | 9.49 µs | 15.84 µs | 36.55 µs | 13.31 µs | 57.83 µs |
+| 7 classes | 931.3 | 12.73 µs | 4.96 µs | 9.54 µs | 15.98 µs | 36.90 µs | 13.50 µs | 57.78 µs |
+| 8 classes | 931.3 | 12.81 µs | 5.01 µs | 10.18 µs | 16.27 µs | 37.33 µs | 13.63 µs | 58.49 µs |
+
+7 classes store 5.6 bytes per page less. The warm read is 1.4% slower on both cores, 0.07 and 0.19 µs,
+the write 0.12 and 0.35 µs. A run of 5 rounds before, 6 against 7 classes only, gave 0.06 and 0.17 µs
+on the write. With the warm read's difference in place of the cold one, that is 0.1 to 0.2 µs per page
+written on the A76 and 0.2 to 0.4 µs on the A55, for 5.6 bytes: 28 to 56 bytes per µs and 14 to 28,
+the A55's above the 6 to 12 it trades at. That assumes the cold read loses what the warm one does,
+which is not measured: the cold read of the A55 moves by up to 4 µs between rounds and does not tell
+the two apart, and the time per page written of the A76 is within the 0.66 µs that the placement of a
+module moves it. The 8 classes compress 1.4 bytes per page less than 7 on the PC, but in zsmalloc on
+the phone they took the same memory, and the encoder needs more work for the extra class, 2% more
+compress cycles on the PC, 0.4 µs per write on the A55: not worth it.
+
+Not built: 0.6% is too little for a format change and a 1.4% slower read. The read is slower for sure,
+any gain in time per page written is within the noise, and the change would touch `FORMAT.md`, the
+reference decoder, the tests, both sets of tables and the visualisation pages, for 3 more instructions
+per sequence in the decoder and a class rule written around gcc. Should the token's alphabet change for
+another reason, the two classes cost little on top.
+
+## The A55 again: the write as on 4 October, the decoder's code prefetched for cold reads, not kept
+
+*With the ratio close to what this design can give, the time on the little core is the larger gap:
+per page written `seqlz-fast-lit` takes 57.1 µs on the Mi 9T's A55, `lz4` 43.9, 30% more.* The write
+is 36.4 against 27.5 µs of that, the cold read 60.8 against 48.0.
+
+**The write.** `quetschn-bench-interleaved` from `main`, NDK r30 (clang 21), on the A55 with the clock
+fixed at 1.8 GHz, the 20 000 pages of phone 10-04, `simpleperf stat` of 6 passes minus 1, median of 3:
+
+| codec | cycles per page | instructions |
+| --- | --- | --- |
+| `lz4` | 30 032 | 25 095 |
+| `seqlz-fast` | 42 298 | 37 870 |
+| `seqlz-fast-lit` | 47 776 | 44 189 |
+
+17 700 cycles apart are 9.8 µs, about the 8.9 µs between the writes in zram. `simpleperf record` by
+source line, the share of `seqlz-fast-lit`'s compression:
+
+| part | share |
+| --- | --- |
+| the positions without a match, with the hash | 36% |
+| `count()` | 19.5% |
+| writing the sequences | 18% |
+| `code_literals()` | 13% |
+| after a hit: the backward extension, the restart after the match | 9.6% |
+| clearing the hash table, `memset` of 8 KiB | 3.6% |
+
+The same picture as on 4 October ("The matcher's table with the bytes, its loop in assembly"), whose C
+variants of the loop over the positions all lost against the chain clang makes of it. A page has 643
+literals and 163 sequences, a run without a match is 4 positions long. `code_literals()` counts each
+literal in all 8 tables at once, a load of the byte, a load of its 8 costs and an add, on every page,
+also on the 3 of 4 that stay raw. clang added an add per byte for the address, because the index is
+32 bits: with a pointer instead, 380 instructions per page fewer, but the cycles the same, 48 056
+against 47 687, median of 5 alternating, the loop waits for its loads. Not kept. Nothing else new to
+try here in C.
+
+**The cold read.** In userspace, the same build and pages, `--cold` reads 2 MiB of other data and
+flushes the page and the output before each decode, mean over the pages of the median of 3 loops:
+
+| codec | cold | warm | cold - warm |
+| --- | --- | --- | --- |
+| `lz4` | 9.14 µs | 5.58 µs | 3.56 µs |
+| `seqlz-fast` | 13.64 µs | 7.27 µs | 6.37 µs |
+| `seqlz-fast-lit` | 15.92 µs | 8.32 µs | 7.60 µs |
+
+In zram the same difference is 36.7 µs for `lz4` and 47.3 µs for `seqlz-fast-lit`, 10.6 µs apart,
+where userspace has 4.0. "In the phone's own kernel" above put the gap on the tables and the code that
+come from DRAM, and the tables are prefetched since. The code is not: in the kernel module
+`seqlz_decode` is 2760 bytes, `decode_literals` 4036, 108 lines of 64 bytes next to the 192 of the
+tables. So the decoder's code prefetched like its tables, at the start of `seqlz_decode`. 3 codecs
+alternating per round, 6 rounds, mean of each round, paired against `main` in the same round:
+
+| variant | A55 cold | A55 warm | A76 cold |
+| --- | --- | --- | --- |
+| the first 3 KiB of `seqlz_decode` | -1.66 µs [-4.09, +0.51] | +0.09 to +0.37 µs | +0.40 to +0.78 µs |
+| and the 4 KiB of `decode_literals` | -0.94 µs [-3.30, +1.24] | +0.36 to +0.69 µs | +0.87 to +1.36 µs |
+| the first 3 KiB, on the A55 only, the modules loaded again | -0.83 µs [-3.20, +1.68] | +0.22 to +0.48 µs | the same |
+
+On the A55 the cold read moves by up to 4 µs between rounds; against that, about 1 µs less is not
+clear, while every warm read pays 0.2 to 0.5 µs for the prefetches. On the A76 they only cost. Not
+kept. The warm reads are 2.2 µs apart, so most of the 10.6 µs are misses that only a cold page has;
+the token table of 4 KiB in "In the phone's own kernel" did not show a clear difference either.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
