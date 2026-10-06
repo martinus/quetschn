@@ -73,6 +73,10 @@ add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c ${QUETSCH
 target_include_directories(quetschn_explore PUBLIC explore)
 target_link_libraries(quetschn_explore PRIVATE quetschn_warnings)
 
+# pages made to be slow for seqlz, for its worst-case time
+add_executable(quetschn-seqlz-worst tools/seqlz-worst/worst.c)
+target_link_libraries(quetschn-seqlz-worst PRIVATE quetschn_explore quetschn_warnings)
+
 # The fuzz targets of fuzz/, in libFuzzer's interface: built with clang they are libFuzzer binaries,
 # built with AFL++'s afl-clang-lto as CC they run under afl-fuzz. seqlz itself gets the coverage
 # instrumentation too, in a library of its own; make_seeds uses the plain one.
