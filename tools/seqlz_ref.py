@@ -73,21 +73,23 @@ def canonical(lengths, max_bits):
 
 
 class Bits:
-    """the bits of data from byte start on, 0 past its end: the sequences' bitstream least significant
-    bit first in each byte, a literal stream most significant bit first"""
+    """the bits of data from byte start on, 0 past its end, most significant bit first in each byte"""
 
-    def __init__(self, data, start=0, msb=False):
-        self.data, self.pos, self.msb = data, 8 * start, msb
+    def __init__(self, data, start=0):
+        self.data, self.pos = data, 8 * start
 
     def bit(self):
         i = self.pos
         self.pos += 1
         if i >= 8 * len(self.data):
             return 0
-        return (self.data[i // 8] >> (7 - i % 8 if self.msb else i % 8)) & 1
+        return (self.data[i // 8] >> (7 - i % 8)) & 1
 
     def read(self, n):
-        return sum(self.bit() << k for k in range(n))
+        v = 0
+        for _ in range(n):
+            v = v << 1 | self.bit()
+        return v
 
     def symbol(self, codes):
         code, length = 0, 0
@@ -117,7 +119,7 @@ def decode(page, tables, page_bits):
             raise Invalid
         lits = [0] * n
         for j in range(8):
-            r = Bits(page, start[j], msb=True)
+            r = Bits(page, start[j])
             for k in range(j, n, 8):
                 lits[k] = r.symbol(lit_codes[page[2] & 7])
             if r.pos > 8 * start[j + 1]:

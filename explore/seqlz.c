@@ -54,14 +54,6 @@ __SIZE_TYPE__ seqlz_tables_size(void) {
     return sizeof(struct seqlz_tables);
 }
 
-static unsigned int reverse(unsigned int code, unsigned int len) {
-    unsigned int r = 0, i;
-
-    for (i = 0; i < len; i++)
-        r |= ((code >> i) & 1U) << (len - 1 - i);
-    return r;
-}
-
 /* base and extra bits of a length value symbol, see seqlz.h */
 static u32 length_entry(unsigned int s) {
     if (s < 16)
@@ -78,7 +70,7 @@ _Static_assert(sizeof(((struct token_table*)0)->decode) % 512U == 0 && sizeof(((
 
 /*
  * The decoder's entry for token symbol s with a code of n bits: what it needs, ready to use.
- *   bits  0..5:  64 - n - raw bits of the offset, mod 64: the stream shifted left by it has the raw bits on top
+ *   bits  0..5:  n: the stream shifted left by it has the raw bits of the offset on top
  *   bits  6..11: 64 - raw bits, mod 64: then shifted right by it they are the number; 0 for the last offset
  *   bits 12..13: the shift of the offset, 3 for classes 4 and 5
  *   bits 14..18: n + raw bits, the bits of the sequence
@@ -94,8 +86,8 @@ static u32 token_entry(unsigned int s, unsigned int n) {
 
     if (s == SEQLZ_ESCAPE)
         return 1U << 31 | n << 14;
-    return ((64U - drop) & 63U) | ((64U - raw_bits) & 63U) << 6 | SEQLZ_OFF_SHIFT(cls) << 12 | drop << 14 | ll << 19 |
-           (ml + 4U) << 23 | (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << 30;
+    return n | ((64U - raw_bits) & 63U) << 6 | SEQLZ_OFF_SHIFT(cls) << 12 | drop << 14 | ll << 19 | (ml + 4U) << 23 |
+           (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << 30;
 }
 
 /*
@@ -124,21 +116,21 @@ static int first_codes(const u8* len, unsigned int n, unsigned int bits, unsigne
     return 0;
 }
 
-/* The token's codes, bit reversed for the bitstream read least significant bit first, and its decode
- * table: token_entry() at every index whose low bits are the code. */
+/* The token's codes and its decode table: the bitstream is read most significant bit first, so the
+ * entries of a code are one range, token_entry() at every index whose top bits are the code. */
 static int build_token(const u8* len, struct token_table* t) {
     unsigned int next[16], s, k;
 
     if (first_codes(len, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, next))
         return -1;
     for (s = 0; s <= SEQLZ_TOKEN_SYMBOLS; s++) {
-        unsigned int l = len[s], r;
+        unsigned int l = len[s], c;
 
         if (l == 0)
             continue;
-        r = reverse(next[l]++, l);
-        t->enc[s] = (u16)(r | l << 12);
-        for (k = r; k < (1U << SEQLZ_TOKEN_BITS); k += 1U << l)
+        c = next[l]++;
+        t->enc[s] = (u16)(c | l << 12);
+        for (k = c << (SEQLZ_TOKEN_BITS - l); k < (c + 1U) << (SEQLZ_TOKEN_BITS - l); k++)
             t->decode[k] = token_entry(s, l);
     }
     return 0;
@@ -151,13 +143,13 @@ static int build_values(const u8* len, struct value_table* t) {
     if (first_codes(len, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, next))
         return -1;
     for (s = 0; s < SEQLZ_LEN_SYMBOLS; s++) {
-        unsigned int l = len[s], r;
+        unsigned int l = len[s], c;
 
         if (l == 0)
             continue;
-        r = reverse(next[l]++, l);
-        t->enc[s] = r | l << 16;
-        for (k = r; k < (1U << SEQLZ_MAX_BITS); k += 1U << l)
+        c = next[l]++;
+        t->enc[s] = c | l << 16;
+        for (k = c << (SEQLZ_MAX_BITS - l); k < (c + 1U) << (SEQLZ_MAX_BITS - l); k++)
             t->decode[k] = length_entry(s) | l;
     }
     return 0;
@@ -269,9 +261,9 @@ struct encoder {
     unsigned int last; /* the last offset */
 };
 
-/* v has n bits, n < 64 - cnt */
+/* v has n bits, n < 64 - cnt; most significant bit first, the bits in acc are its low cnt bits */
 static ALWAYS_INLINE void enc_put(struct encoder* e, u64 v, unsigned int n) {
-    e->acc |= v << (e->cnt & 63U);
+    e->acc = e->acc << (n & 63U) | v;
     e->cnt += n;
 }
 
@@ -280,13 +272,13 @@ static ALWAYS_INLINE void enc_put_code(struct encoder* e, u32 entry, unsigned in
     unsigned int len = entry >> 16 & 15U;
 
     n_extra &= 31U;
-    enc_put(e, (entry & 0xffffU) | (u64)(extra & ((1U << n_extra) - 1U)) << len, len + n_extra);
+    enc_put(e, (u64)(entry & 0xffffU) << n_extra | (extra & ((1U << n_extra) - 1U)), len + n_extra);
 }
 
+/* the whole bytes out, big endian; the bits of acc above cnt are old ones, shifted out here */
 static ALWAYS_INLINE void enc_flush(struct encoder* e) {
-    store64(e->p, e->acc);
+    store64(e->p, __builtin_bswap64(e->acc << ((64U - e->cnt) & 63U)));
     e->p += e->cnt >> 3;
-    e->acc >>= e->cnt & 56U;
     e->cnt &= 7U;
 }
 
@@ -306,7 +298,7 @@ static ALWAYS_INLINE u32 token_code(const struct seqlz_tables* t, unsigned int t
     }
     ee = t->token.enc[SEQLZ_ESCAPE];
     *len = (ee >> 12) + SEQLZ_ESCAPE_BITS;
-    return (ee & 0xfffU) | tok << (ee >> 12);
+    return (ee & 0xfffU) << SEQLZ_ESCAPE_BITS | tok;
 }
 
 /* one sequence: its literals from in, ml 0 for the last one */
@@ -345,7 +337,7 @@ static ALWAYS_INLINE void encode_emit(void* ctx, const u8* in, unsigned int ll, 
 
         /* An offset of class 1 to 5 has no more bits than the class sends, so only class 0, the last
          * offset, needs a mask: it sends none. */
-        enc_put(e, code | (u64)((off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0))) << tlen, tlen + raw_bits);
+        enc_put(e, (u64)code << raw_bits | ((off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0))), tlen + raw_bits);
         if (ll >= SEQLZ_LL_CAP) {
             put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
             enc_flush(e);
@@ -367,7 +359,7 @@ static unsigned int encoder_finish(struct encoder* e, u8* d) {
     unsigned int n_lit = (unsigned int)(e->lit - (d + SEQLZ_HEADER)), bytes;
 
     if (e->cnt > 0) {
-        store64(e->p, e->acc);
+        store64(e->p, __builtin_bswap64(e->acc << ((64U - e->cnt) & 63U)));
         e->p++;
     }
     bytes = (unsigned int)(e->p - bits);
@@ -613,10 +605,36 @@ unsigned int seqlz_compress(
 /* ---- decoder ---- */
 
 /*
- * Least significant bit first. Refill loads 8 bytes at once while at least 8 are left in the stream,
- * and byte by byte at the end, so it never reads past the stream. Past the end it shifts in zeros and
- * count goes negative; memory safety does not depend on the bits, every length and offset is checked
- * where it is used.
+ * Whether to prefetch the token table, 2048 entries of 4 bytes, before a page. An in-order core waits
+ * for each miss it did not see coming: a Cortex-A55 read cold 14.5 us slower without the prefetches.
+ * An out-of-order core fetches the 43 or so lines a page needs as it needs them, and the 128
+ * prefetches are in the way: a Cortex-A76 read cold 1.3 to 2.6 us faster without this one
+ * (docs/explored-designs.md). On arm64 kernels by the core's id, every other build prefetches.
+ */
+#if defined(__KERNEL__) && defined(__aarch64__)
+#    include <asm/cputype.h>
+/* Cortex-A53, A55, A510, A520, and Qualcomm's Kryo silver cores */
+static inline int prefetch_tokens(void) {
+    u32 m = read_cpuid_id(), imp = m >> 24, part = (m >> 4) & 0xfffU;
+
+    return (imp == 0x41U && (part == 0xd03U || part == 0xd05U || part == 0xd46U || part == 0xd80U)) ||
+           (imp == 0x51U && (part == 0x803U || part == 0x805U));
+}
+#else
+static inline int prefetch_tokens(void) {
+    return 1;
+}
+#endif
+
+static inline u64 load_be64(const u8* p) {
+    return __builtin_bswap64(load64(p));
+}
+
+/*
+ * Most significant bit first, the next bits on top of bits. Refill loads 8 bytes at once while at least
+ * 8 are left in the stream, and byte by byte at the end, so it never reads past the stream. Past the end
+ * it shifts in zeros and count goes negative; memory safety does not depend on the bits, every length
+ * and offset is checked where it is used.
  */
 struct bit_reader {
     const u8* p;
@@ -630,29 +648,30 @@ static inline void refill(struct bit_reader* r) {
         u64 v;
 
         /* count is at least 0 here: it only goes negative at the end of the stream */
-        v = load64(r->p);
-        r->bits |= v << r->count;
+        v = load_be64(r->p);
+        r->bits |= v >> r->count;
         r->p += (63 - r->count) >> 3;
         r->count |= 56;
     } else {
         while (r->count >= 0 && r->count <= 56 && r->p < r->end) {
-            r->bits |= (u64)*r->p++ << r->count;
+            r->bits |= (u64)*r->p++ << (56 - r->count);
             r->count += 8;
         }
     }
 }
 
 static inline void drop(struct bit_reader* r, unsigned int n) {
-    r->bits >>= n;
+    r->bits <<= n;
     r->count -= (int)n;
 }
 
 /* One value: the table entry of the next code, then base + extra bits, in one step. Needs 9 + 12
  * bits, refilled before. The entry is 0 for bits that start no code. */
 static inline unsigned int value(struct bit_reader* r, const struct value_table* t, u32* entry) {
-    u32 e = t->decode[r->bits & ((1U << SEQLZ_MAX_BITS) - 1U)];
+    u32 e = t->decode[r->bits >> (64U - SEQLZ_MAX_BITS)];
     unsigned int n = e & 15U, x = (e >> 4) & 15U;
-    unsigned int v = ((e >> 8) & 0xffffU) + (unsigned int)((r->bits >> n) & ((1ULL << x) - 1ULL));
+    /* the x bits behind the code, in two shifts: one of 64 - x is undefined for x = 0 */
+    unsigned int v = ((e >> 8) & 0xffffU) + (unsigned int)(((r->bits << n) >> 1) >> (63U - x));
 
     *entry = e;
     drop(r, n + x);
@@ -667,10 +686,6 @@ static inline unsigned int value(struct bit_reader* r, const struct value_table*
  * pointer, a container and a counter each did not fit into the registers of x86-64. A refill leaves
  * at least 56 bits, the marker is never reached.
  */
-static inline u64 load_be64(const u8* p) {
-    return __builtin_bswap64(load64(p));
-}
-
 /* the 8 bytes at ip, zeros behind end */
 static __attribute__((__noinline__, __cold__)) u64 lit_load_tail(const u8* ip, const u8* end) {
     u8 b[8] = {0};
@@ -846,7 +861,8 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
     if (src_len < SEQLZ_HEADER)
         return -1;
     /* the decoder's tables, so that their misses overlap when they are cold */
-    prefetch_lines(t->token.decode, sizeof(t->token.decode[0]) << SEQLZ_TOKEN_BITS);
+    if (prefetch_tokens())
+        prefetch_lines(t->token.decode, sizeof(t->token.decode[0]) << SEQLZ_TOKEN_BITS);
     prefetch_lines(t->ll.decode, sizeof(t->ll.decode[0]) << SEQLZ_MAX_BITS);
     prefetch_lines(t->ml.decode, sizeof(t->ml.decode[0]) << SEQLZ_MAX_BITS);
     n_lit = load16(s);
@@ -878,11 +894,11 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
      * does not wait for the refill's load, and a refill leaves 56 bits for two or three sequences. The
      * escape and the length values refill before they read. The token's entry has the class of the
      * offset, so its raw bits are known without a second lookup. */
-#define NEXT_TOKEN()                                                      \
-    do {                                                                  \
-        if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))      \
-            refill(&br);                                                  \
-        tok = t->token.decode[br.bits & ((1U << SEQLZ_TOKEN_BITS) - 1U)]; \
+#define NEXT_TOKEN()                                                 \
+    do {                                                             \
+        if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS)) \
+            refill(&br);                                             \
+        tok = t->token.decode[br.bits >> (64U - SEQLZ_TOKEN_BITS)];  \
     } while (0)
 
     NEXT_TOKEN();
@@ -896,14 +912,14 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
 
             drop(&br, (tok >> 14) & 31U);
             refill(&br);
-            idx = (unsigned int)br.bits & ((1U << SEQLZ_ESCAPE_BITS) - 1U);
+            idx = (unsigned int)(br.bits >> (64U - SEQLZ_ESCAPE_BITS));
             drop(&br, SEQLZ_ESCAPE_BITS);
             if (idx >= SEQLZ_TOKEN_SYMBOLS)
                 return -1;
             tok = token_entry(idx, 0);
         }
         {
-            /* the raw bits: the bits of the sequence shifted to the top, then down to their place */
+            /* the raw bits: the token's code shifted out on top, then down to their place */
             unsigned int back = (tok >> 6) & 63U;
             unsigned int raw = (unsigned int)((br.bits << (tok & 63U)) >> back) << ((tok >> 12) & 3U);
 
