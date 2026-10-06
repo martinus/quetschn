@@ -1553,9 +1553,19 @@ tables trained the same way. The decoder is as fast, it still looks up one table
 KiB more for the tables, once, not per CPU. The encoder counts the literals in 16 tables, 2 adds per
 literal instead of 1: 7.1% more compress cycles on the PC, perf over the 2000 page sample of the first
 dump, CPU 2 at 4.5 GHz, median of 3. 32 tables save about 4 bytes more on every dump, for 22% more
-compress cycles, and take the last 2 free bits of byte 2. Not on the phone yet, where the write is most
-of the time per page written: 16 tables are worth it there if they cost less than about 0.3 to 0.5 µs
-per write on the A55, at its 6 to 12 bytes per µs.
+compress cycles, and take the last 2 free bits of byte 2.
+
+On the phone 16 tables cost more than they save. The Mi 9T, 20 000 pages of phone 10-04 in zram, 5
+rounds with the order of the codecs rotated, both codecs in modules built the same way:
+
+| Mi 9T, means of 5 rounds | bytes per page | write A76 | write A55 | time per page written A76 | A55 |
+| --- | --- | --- | --- | --- | --- |
+| 8 literal tables, as now | 936.9 | 12.75 µs | 36.52 µs | 15.93 µs | 57.22 µs |
+| 16 literal tables | 935.0 | 13.18 µs | 38.53 µs | 16.51 µs | 59.24 µs |
+
+1.9 bytes per page for 2.0 µs more per write on the A55, 5.5%, and 0.43 µs on the A76: about 1 byte
+per µs, where the A55 trades at 6 to 12. The writes of each codec stay within 1.4 µs of each other over
+the 5 rounds on the A55, within 0.3 µs on the A76. Not built.
 
 ## Where the ratio of `zstd` comes from
 
