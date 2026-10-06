@@ -1243,7 +1243,8 @@ against 88.00 and 91.34, within its noise. So:
   µs faster and 3.3 to 6 µs at p99, the A55 unchanged, no bytes.
 * **10 bits**: 2.0 to 2.7 µs on the A76, 2.3 to 3.2 µs on the A55, for 4.8 bytes per page, a format
   change.
-* **Both**: as 10 bits, and 0.8 µs less at p99 on the A76.
+* **Both**: the A76 as with the decoder only, the A55 2.0 to 2.6 µs of cold reads faster from the 10
+  bits, measured again with the compressed data prefetched in item 7.
 
 Not decided yet, the measurements are here; nothing of it is in `seqlz.c` so far. Reading the CPU's id in
 a codec is arm64 specific and new for zram's backends.
@@ -1324,6 +1325,18 @@ With the compressed data prefetched, item 4's decoder again, and with the token 
 The decoder-only change holds: the A76's cold reads 2.5 µs faster and 6 µs at p99, the A55 the same,
 its warm reads 0.3 µs slower. 10 bits adds 0.24 µs on the A76 and 1.7 on the A55, which is within the
 A55's noise. Time per page written on the A76: 15.94 and 15.93 µs, `lz4` 12.79.
+
+10 bits on top of that, again with a second build of both under other names, two runs of 3 rounds,
+cold reads in µs, 10 bits against 11:
+
+| run | A76 | A55 | A55 per page written |
+| --- | --- | --- | --- |
+| 1 | 9.45 and 9.66 against 9.91 | 60.17 and 60.52 against 62.31 | 56.46 and 56.68 against 57.48 |
+| 2 | 9.49 against 9.37 and 9.33 | 60.10 against 62.38 and 63.03 | 56.78 against 57.78 and 57.91 |
+
+With the token table prefetched only on in-order cores, 10 bits gives the A76 nothing, its warm reads
+are 0.1 to 0.3 µs slower, and the A55 2.0 to 2.6 µs of cold reads, 0.8 to 1.1 µs per page written: 4.8
+bytes for that is 5 to 7 bytes per µs, on the little core only.
 
 Also without the prefetches of the length and literal tables on the A76, 64 lines more, in a run of its
 own: cold 9.84 against 9.90 µs, at p99 16.49 against 16.60, the decoder as now 11.99 and 21.56. Only
