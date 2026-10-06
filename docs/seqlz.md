@@ -697,7 +697,11 @@ used, so a damaged page is rejected and never makes the decoder read or write ou
 A literal stream whose literals need more bits than its size makes the page invalid: the decoder reads
 8 bytes of a stream at a time and may read into the next one, so it checks at the end that each stream
 stayed within its bytes. The fuzz tests in [`fuzz/`](../fuzz) feed the decoder billions of random and
-damaged pages to keep it that way.
+damaged pages to keep it that way, and hold it against a second decoder, `tools/seqlz_ref.c`, written
+from [FORMAT.md](../FORMAT.md) alone: both have to call the same pages valid and decode them to the same
+bytes. The work per page has a bound, at most `PAGE / 4 + 1` sequences; the slowest pages found decode
+in 1.3 times the p99 of real pages
+([explored-designs.md](explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
 
 </details>
 
@@ -761,7 +765,10 @@ things make the difference, each measured:
 >   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
 > * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 784 bytes of
 >   work memory per CPU, twice `lz4`'s, which breaks the project's limit of `lz4`'s work memory. A way
->   around it is built and measured, but not kept, see [explored-designs.md](explored-designs.md).
+>   around it is built and measured, but not kept, see [explored-designs.md](explored-designs.md). Their
+>   tables are trained and measured on 2052 pages made of four adjacent 4 KiB pages each; there is no
+>   real 16 KiB page yet, and the format for 16 KiB pages is not fixed
+>   ([FORMAT.md](../FORMAT.md#status)).
 > * **Writes at p99** take 1.21 and 1.19 times `lz4`'s time.
 
 ## The choices, with their numbers
