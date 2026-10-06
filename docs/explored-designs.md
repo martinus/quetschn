@@ -1825,6 +1825,55 @@ compression. The search on sequences found 1.3% more than that stream as it star
 instructions with clang against 156 823. Inputs that are not valid end early; `fuzz/afl.sh` stops any
 input after 1 s, and none of the decoder's targets had one in 3.8 billion inputs.
 
+**The other codecs, searched the same way: `seqlz-fast-lit` has the smallest worst case against its
+own p99.** `cost_fuzz.c` with `-DCOST_CODEC=quetschn_codec_<codec>` calls any codec of
+`bench/kernel_codecs/zram_codec.h` as zram does, with the kernel's flags and zram's default level: the
+compressor's instructions, and the decoder's on what it wrote if that is below 3625 bytes, which zram
+keeps compressed. One search per codec, 7 to 9 libFuzzer workers, 3 rounds of 10 minutes with the base
+of the fine buckets 1% below the best so far, seeded with made-up pages only: the 512 of
+`quetschn-seqlz-worst pages`, 20 of `records` and `escaped`, 60 for `zstd` and 24 rebuilt from the
+sequences `lz4` found in real pages, with new literals. `zstd` needed its own: a fuzzer that changes
+bytes rarely gets it past raw literals and its predefined tables, the pages that cost most are a few
+byte values with rare other ones strewn in, so that the literals are Huffman coded in 4 streams and
+the lengths and offsets get tables of their own. A search seeded with real pages too found up to 4%
+more, 18% for `lzo-rle`'s decode, but those pages are made of real data.
+
+The costliest page of each codec and objective is in `tools/seqlz-worst/pages/`, its instructions with
+all four codecs in `instructions.tsv`. None of the 8 pages shares a 16-byte window with 4 or more
+different bytes with any page of the dumps, the resident pages or the corpus the tables were trained on.
+Instructions, clang, each page in a process of its own, against the 80 000 pages of the four samples,
+decode only of pages that zram keeps compressed:
+
+| codec | compress p50 | p99 | max | costliest found | / p99 | decode p50 | p99 | max | costliest found | / p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 27 499 | 67 538 | 85 996 | 84 673 | 1.25 | 11 612 | 21 852 | 37 177 | 56 306 | 2.58 |
+| `lzo-rle` | 27 556 | 72 848 | 96 757 | 105 773 | 1.45 | 15 446 | 33 255 | 55 618 | 57 756 | 1.74 |
+| `zstd` 3 | 152 316 | 346 973 | 400 506 | 431 955 | 1.24 | 54 647 | 106 322 | 146 343 | 169 935 | 1.60 |
+| `seqlz-fast-lit` | 61 521 | 164 794 | 184 486 | 188 090 | 1.14 | 23 706 | 50 495 | 69 392 | 80 394 | 1.59 |
+
+* Against its own p99 `seqlz-fast-lit` has the smallest worst case of the four, 1.14 for compress and
+  1.59 for decode, `zstd` 1.60. `lz4`'s decode has the most, 2.58.
+* In instructions `seqlz-fast-lit`'s worst compress is 2.2 times `lz4`'s and 0.44 times `zstd`'s, its
+  worst decode 1.43 times `lz4`'s, 1.39 times `lzo-rle`'s and 0.47 times `zstd`'s, the same order as
+  the medians.
+* `lz4`'s costliest decode is the same weakness as `escaped`: 1020 matches of 4 bytes and 13 literals,
+  offsets 2 and 4 most, and below 8 `lz4` takes its slower copy for overlapping matches. The page has 3
+  different bytes.
+* For `lz4`'s compression the search stayed 1.5% below the costliest real page.
+
+The 8 pages with each codec, instructions compress / decode, 0 where zram stores the page as it is:
+
+| page | `lz4` | `lzo-rle` | `zstd` 3 | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- |
+| `lz4-compress` | 84 673 / 24 103 | 92 023 / 0 | 315 564 / 98 486 | 171 639 / 79 656 |
+| `lz4-decode` | 52 867 / 56 306 | 19 195 / 16 396 | 52 390 / 27 203 | 31 275 / 17 627 |
+| `lzo-rle-compress` | 79 884 / 0 | 105 773 / 0 | 380 695 / 75 456 | 118 468 / 0 |
+| `lzo-rle-decode` | 54 025 / 35 704 | 65 857 / 57 756 | 241 956 / 83 766 | 91 008 / 33 735 |
+| `zstd-compress` | 64 788 / 30 214 | 69 275 / 41 604 | 431 955 / 135 991 | 163 071 / 57 022 |
+| `zstd-decode` | 58 791 / 33 547 | 64 617 / 46 239 | 419 741 / 169 935 | 159 175 / 60 281 |
+| `seqlz-fast-lit-compress` | 80 424 / 0 | 99 128 / 0 | 367 411 / 79 354 | 188 090 / 59 880 |
+| `seqlz-fast-lit-decode` | 84 634 / 24 155 | 91 820 / 0 | 310 223 / 96 864 | 171 457 / 80 394 |
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals

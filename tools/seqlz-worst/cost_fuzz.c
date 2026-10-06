@@ -8,6 +8,10 @@
  *   seqlz_compress_cost_fuzz  the input is a page: the compressor's instructions, and in the upper
  *                             half of the buckets the decoder's on what it wrote
  *   seqlz_decode_cost_fuzz    the input is a compressed page: the decoder's instructions if it is valid
+ *   <codec>_cost_fuzz         with -DCOST_CODEC=quetschn_codec_<codec>: any of the codecs of
+ *                             bench/kernel_codecs/zram_codec.h, built with kernel flags, as zram calls
+ *                             it: the input is a page, the compressor's instructions and the decoder's
+ *                             on what it wrote, if zram would keep that compressed
  *   seqlz_sequence_cost_fuzz  the input is a list of sequences, 4 bytes each, that seqlz_encode() makes
  *                             a valid page of: the decoder's instructions. A mutation changes a
  *                             sequence instead of breaking the Huffman coded stream
@@ -25,6 +29,9 @@
 #include <unistd.h>
 
 #include "seqlz.h"
+#ifdef COST_CODEC
+#    include "zram_codec.h"
+#endif
 
 #define COST_BUCKETS 2048U
 
@@ -58,12 +65,12 @@ static const mark_fn marks[COST_BUCKETS] = {REF256(1) REF256(2) REF256(3) REF256
 static unsigned long long cost_last[2];
 
 /* Objective k (0 or 1) has 1024 buckets from 1024 * k on: 64 by steps of step up to the base in the
- * environment variable COST_BASE_<k>, if set, and 960 by steps of 16 from there on, 15 360
- * instructions, so that near the best known cost a few instructions more are new coverage too. The
- * last bucket takes all above, so the base has to move up with the best. COST_PRINT=1 prints each
- * cost. */
+ * environment variable COST_BASE_<k>, if set, and 960 from there on by steps of 16 instructions or
+ * 1/16384 of the base, whichever is more, so that near the best known cost a few instructions more
+ * are new coverage too. The last bucket takes all above, so the base has to move up with the best.
+ * COST_PRINT=1 prints each cost. */
 static void mark(unsigned long long cost, unsigned int k, unsigned int step) {
-    static unsigned long long base[2];
+    static unsigned long long base[2], fine[2];
     static int have_base[2];
     unsigned long long b;
 
@@ -75,6 +82,7 @@ static void mark(unsigned long long cost, unsigned int k, unsigned int step) {
         name[10] = (char)('0' + k);
         v = getenv(name);
         base[k] = v ? strtoull(v, 0, 10) : ~0ULL;
+        fine[k] = v && base[k] / 16384U > 16U ? base[k] / 16384U : 16U;
         have_base[k] = 1;
     }
     if (getenv("COST_PRINT"))
@@ -82,7 +90,7 @@ static void mark(unsigned long long cost, unsigned int k, unsigned int step) {
     if (cost < base[k])
         b = cost / step < 63U ? cost / step : 63U;
     else
-        b = 64U + ((cost - base[k]) / 16U < 959U ? (cost - base[k]) / 16U : 959U);
+        b = 64U + ((cost - base[k]) / fine[k] < 959U ? (cost - base[k]) / fine[k] : 959U);
     marks[1024U * k + (unsigned int)b]();
 }
 
@@ -96,8 +104,13 @@ static unsigned long long instructions(void) {
     return v;
 }
 
+#ifndef COST_CODEC
 static struct seqlz_tables* tables;
-static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+#endif
+static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
+#ifndef COST_CODEC
+static unsigned char scratch[SEQLZ_SCRATCH];
+#endif
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 
@@ -114,11 +127,55 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         a.exclude_kernel = 1;
         a.exclude_hv = 1;
         insn_fd = (int)syscall(SYS_perf_event_open, &a, 0, -1, -1, 0);
-        tables = malloc(seqlz_tables_size());
-        if (insn_fd < 0 || !tables || seqlz_tables_init(tables, &seqlz_default_own))
+        if (insn_fd < 0)
             abort();
+#ifndef COST_CODEC
+        tables = malloc(seqlz_tables_size());
+        if (!tables || seqlz_tables_init(tables, &seqlz_default_own))
+            abort();
+#endif
     }
-#ifdef COST_COMPRESS
+#ifdef COST_CODEC
+    {
+        /* as zram: params once per device with the codec's default level, a stream per CPU, a buffer of
+         * two pages, pages of 3625 bytes and more stored as they are */
+        static struct quetschn_params params;
+        static struct quetschn_stream stream;
+        static int ready;
+        unsigned int clen = sizeof c, dlen = SEQLZ_PAGE;
+
+        if (!ready) {
+            params.level = QUETSCHN_LEVEL_DEFAULT;
+            params.page_size = SEQLZ_PAGE;
+            if (COST_CODEC.setup_params(&params) || COST_CODEC.create(&params, &stream))
+                abort();
+            ready = 1;
+        }
+        if (size != SEQLZ_PAGE)
+            return 0;
+        i0 = instructions();
+        if (COST_CODEC.compress(&params, &stream, data, SEQLZ_PAGE, c, &clen))
+            abort();
+        i1 = instructions();
+        /* COST_DUMP=<file>: what the codec wrote */
+        if (getenv("COST_DUMP")) {
+            FILE* f = fopen(getenv("COST_DUMP"), "wb");
+
+            if (!f || fwrite(c, 1, clen, f) != clen || fclose(f))
+                abort();
+        }
+        mark(i1 - i0, 0, 1024);
+        if (clen < 3625U) {
+            i0 = instructions();
+            if (COST_CODEC.decompress(&params, &stream, c, clen, out, &dlen))
+                abort();
+            i1 = instructions();
+            if (dlen != SEQLZ_PAGE || memcmp(out, data, SEQLZ_PAGE))
+                abort();
+            mark(i1 - i0, 1, 512);
+        }
+    }
+#elif defined(COST_COMPRESS)
     static struct seqlz_state st;
     unsigned int len;
 
@@ -226,22 +283,33 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
 #ifdef COST_MAIN
 /* Built without -fsanitize=fuzzer and with -DCOST_MAIN: each file through the target, the cost of each
- * objective, for compress the compressor's and the decoder's on its output. */
+ * objective, for compress the compressor's and the decoder's on its output. A file of more than two pages
+ * is a corpus of pages, one line per page. */
 int main(int argc, char** argv) {
-    static unsigned char buf[2 * SEQLZ_PAGE];
+    static unsigned char buf[2 * SEQLZ_PAGE + 1];
     int i;
 
     for (i = 1; i < argc; i++) {
         FILE* f = fopen(argv[i], "rb");
         size_t n;
+        unsigned int page = 0;
 
         if (!f)
             continue;
         n = fread(buf, 1, sizeof buf, f);
+        if (n <= 2 * SEQLZ_PAGE) {
+            cost_last[0] = cost_last[1] = 0;
+            LLVMFuzzerTestOneInput(buf, n);
+            printf("%llu\t%llu\t%s\n", cost_last[0], cost_last[1], argv[i]);
+        } else {
+            fseek(f, 0, SEEK_SET);
+            while (fread(buf, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
+                cost_last[0] = cost_last[1] = 0;
+                LLVMFuzzerTestOneInput(buf, SEQLZ_PAGE);
+                printf("%llu\t%llu\t%s:%u\n", cost_last[0], cost_last[1], argv[i], page++);
+            }
+        }
         fclose(f);
-        cost_last[0] = cost_last[1] = 0;
-        LLVMFuzzerTestOneInput(buf, n);
-        printf("%llu\t%llu\t%s\n", cost_last[0], cost_last[1], argv[i]);
     }
     return 0;
 }
