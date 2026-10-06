@@ -10,8 +10,8 @@ compression, is in [docs/seqlz.md](docs/seqlz.md).
 `seqlz-fast` and `seqlz-fast-lit` are the same format: `seqlz-fast` always stores the literals as they
 are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both.
 
-`tools/seqlz_ref.py` is a decoder written from this file, slow on purpose, and checked against
-`seqlz_decode()`, see [How this file was checked](#how-this-file-was-checked).
+`tools/seqlz_ref.py` and `tools/seqlz_ref.c` are decoders written from this file, slow on purpose, and
+checked against `seqlz_decode()`, see [How this file was checked](#how-this-file-was-checked).
 
 ## The idea
 
@@ -317,3 +317,10 @@ byte 2 with its top bits set are invalid now and free for such a format.
 `tools/seqlz_ref.py` decodes bit by bit, from this file alone, and agreed with `seqlz_decode()` on
 every input it was given, valid and damaged pages of both page sizes; the numbers are in
 [docs/explored-designs.md](docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
+
+`tools/seqlz_ref.c` is the same in C, also from this file alone, fast enough to be fuzzed:
+`fuzz/seqlz_diff_fuzz.c` gives any input to both decoders and fails when they disagree, whether a page
+is valid or what it decodes to. `fuzz/smoke.sh` runs it for a minute in CI, `fuzz/afl.sh` for longer.
+`test/seqlz_ref_test.cpp` checks the example above, the compressor's pages, damaged pages, and pages
+made by hand for the rules that damage rarely reaches: the top bits of `t`, a literal code outside its
+stream, the last sequence's class.
