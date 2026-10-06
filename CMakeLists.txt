@@ -73,6 +73,10 @@ add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c ${QUETSCH
 target_include_directories(quetschn_explore PUBLIC explore)
 target_link_libraries(quetschn_explore PRIVATE quetschn_warnings)
 
+# pages made to be slow for seqlz, for its worst-case time
+add_executable(quetschn-seqlz-worst tools/seqlz-worst/worst.c)
+target_link_libraries(quetschn-seqlz-worst PRIVATE quetschn_explore quetschn_warnings m)
+
 # The fuzz targets of fuzz/, in libFuzzer's interface: built with clang they are libFuzzer binaries,
 # built with AFL++'s afl-clang-lto as CC they run under afl-fuzz. seqlz itself gets the coverage
 # instrumentation too, in a library of its own; make_seeds uses the plain one.
@@ -94,11 +98,41 @@ if(QUETSCHN_FUZZ)
     # the decoder written from FORMAT.md, instrumented like the target
     target_sources(seqlz_diff_fuzz PRIVATE tools/seqlz_ref.c)
     target_include_directories(seqlz_diff_fuzz PRIVATE tools)
+    # Searches for slow pages, see tools/seqlz-worst/cost_fuzz.c; not part of afl.sh or smoke.sh. With
+    # seqlz without coverage instrumentation, which made some pages 3.6 and others 6.6 times costlier
+    # and so changed which ones cost most: the only coverage is the target's own.
+    foreach(target seqlz_compress_cost_fuzz seqlz_decode_cost_fuzz seqlz_sequence_cost_fuzz)
+        add_executable(${target} tools/seqlz-worst/cost_fuzz.c)
+        target_compile_options(${target} PRIVATE -fsanitize=fuzzer)
+        target_link_options(${target} PRIVATE -fsanitize=fuzzer)
+        target_link_libraries(${target} PRIVATE quetschn_explore quetschn_warnings)
+    endforeach()
+    target_compile_definitions(seqlz_compress_cost_fuzz PRIVATE COST_COMPRESS)
+    target_compile_definitions(seqlz_sequence_cost_fuzz PRIVATE COST_SEQUENCES)
     add_executable(quetschn-fuzz-seeds fuzz/make_seeds.c)
     target_link_libraries(quetschn-fuzz-seeds PRIVATE quetschn_explore quetschn_warnings)
 endif()
 
 include(cmake/kernel_codecs.cmake)
+
+# The search for slow pages on the kernel's codecs as zram calls them, all with kernel flags, see
+# tools/seqlz-worst/cost_fuzz.c
+if(QUETSCHN_FUZZ AND QUETSCHN_HAVE_KERNEL_CODECS)
+    foreach(codec lz4 lzo_rle zstd seqlz_fast_lit)
+        set(lib quetschn_kernel_${codec})
+        if(codec STREQUAL "lzo_rle")
+            set(lib quetschn_kernel_lzo)
+        elseif(codec STREQUAL "seqlz_fast_lit")
+            set(lib quetschn_kernel_seqlz)
+        endif()
+        add_executable(${codec}_cost_fuzz tools/seqlz-worst/cost_fuzz.c)
+        target_compile_definitions(${codec}_cost_fuzz PRIVATE COST_CODEC=quetschn_codec_${codec})
+        target_compile_options(${codec}_cost_fuzz PRIVATE -fsanitize=fuzzer)
+        target_link_options(${codec}_cost_fuzz PRIVATE -fsanitize=fuzzer)
+        target_include_directories(${codec}_cost_fuzz PRIVATE explore bench/kernel_codecs)
+        target_link_libraries(${codec}_cost_fuzz PRIVATE ${lib} quetschn_warnings)
+    endforeach()
+endif()
 
 include(CTest)
 if(BUILD_TESTING)

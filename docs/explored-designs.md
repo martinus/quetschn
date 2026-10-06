@@ -1726,6 +1726,154 @@ clear, while every warm read pays 0.2 to 0.5 µs for the prefetches. On the A76 
 kept. The warm reads are 2.2 µs apart, so most of the 10.6 µs are misses that only a cold page has;
 the token table of 4 KiB in "In the phone's own kernel" did not show a clear difference either.
 
+## The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`
+
+*How slow can a page be? PLAN.md's Phase 4 wants the bound stated and measured.* The work is bounded by
+construction: the matcher moves forward at every position, with or without a match, and extends a
+match at most to the start of the literals before it and to the end of the page; the decoder stops
+after at most `PAGE / 4 + 1` sequences, and each copies at most what is left of the page. What the
+constants come to was measured with `tools/seqlz-worst/worst.c`. It counts instructions, branch misses
+and cycles in user space with `perf_event_open`; instructions are the same also on a busy machine, which
+time is not. On the A55 a single run's cycles can be 5 times the others, also for the same page, so the
+cycles below are medians over the 16 pages of a kind, and the instructions are the bound.
+
+**The slowest pages found, and why they are slow.** Made-up pages of 9 kinds, 16 of each per parameter,
+512 in all (`quetschn-seqlz-worst pages`), and three searches with `tools/seqlz-worst/cost_fuzz.c`, a
+fuzz target that makes cost coverage, as PerfFuzz does: the instructions of a call pick one of 2048
+functions, so a page that costs more than any before is new to the fuzzer. 30 libFuzzer workers for
+about an hour together, on the compressor, on the decoder with a compressed page as input, and on the
+decoder with a list of sequences as input, which `seqlz_encode()` turns into a valid page, so that a
+mutation changes a sequence instead of breaking the Huffman code. Two things made the first runs
+useless: seqlz built with the fuzzer's coverage counters cost 3.6 times as much on one page and 6.6
+times on another, so the search climbed the wrong order, and buckets of 1024 instructions were too
+coarse to climb at all. Without the counters in seqlz, and with buckets of 16 instructions above the
+best known cost, the searches found pages 1.3% to 4.2% costlier than the made-up ones. Looking at what
+those pages are gave two kinds by hand that cost more than anything found:
+
+* **`records`**, the most for the compressor: records of 18 literals and 4 bytes that are the same in
+  every record. The literals are drawn with a weight of 2^(-0.9 * their code length in literal table
+  5): they code, but with as many bits as still pays, and every literal costs the whole way, the
+  position tried, counted in 8 tables, coded. 18 literals need a length value each time. And the 4
+  bytes match the record before at the last offset, which only the repeat check finds, 105 of the 180
+  matches have just these 4 bytes: the shortest matches, so the most sequences for the bytes they cover.
+  The costliest page of the second desktop dump is such a table of records, with 4-byte matches at the
+  last offset.
+* **`escaped`**, the most for the decoder: 6 literals and a match of 5 at an offset below 8, again and
+  again. No token with 6 literals and a match of 5 has a code, they are too rare, so 344 of 372 tokens
+  are escapes, a refill and 12 bits each, every match goes through the pattern copy, and the 2221
+  literals are coded.
+
+Instructions per page, against the samples of 20 000 pages of the dumps, without the same-filled pages
+zram never passes on, decode only of pages below 3625 bytes, which zram keeps compressed; x86-64 with
+gcc, arm64 with the NDK's clang:
+
+| pages | compress p50 | compress p99 | compress max | decode p50 | decode p99 | decode max |
+| --- | --- | --- | --- | --- | --- | --- |
+| x86-64, desktop 1 | 61 714 | 146 649 | 171 088 | 22 800 | 46 950 | 58 623 |
+| x86-64, desktop 2 | 76 728 | 164 569 | 173 102 | 26 790 | 47 627 | 65 226 |
+| x86-64, phone 10-03 | 41 498 | 148 579 | 170 110 | 16 830 | 42 500 | 53 961 |
+| x86-64, phone 10-04 | 49 957 | 159 830 | 170 140 | 18 382 | 44 326 | 54 080 |
+| x86-64, made-up | 114 372 | 175 656 | 175 956 | 40 148 | 74 164 | 74 317 |
+| arm64, phone 10-04 | 41 459 | 123 931 | 129 708 | 13 156 | 35 090 | 40 645 |
+| arm64, made-up | 88 945 | 136 119 | 136 439 | 30 755 | 56 404 | 56 515 |
+
+Compressing costs at most 2.3 to 4.2 times the median page of a dump, and the costliest real pages are
+within 2% of the costliest made-up ones on x86-64, 5% on arm64. Decoding costs at most 4.0 and 4.3 times
+the median of the phone, `escaped` 14% more than any real page on x86-64, 39% more than any of the
+phone's on arm64.
+
+In time on the Mi 9T, cycles, the real pages with the median cycles of the costliest made-up kind:
+
+| | compress p50 | compress p99 | costliest made-up | decode p50 | decode p99 | costliest made-up |
+| --- | --- | --- | --- | --- | --- | --- |
+| A55 | 42 130 | 123 528 | 129 581, `records` 17 | 12 548 | 33 971 | 43 484, `escaped` 7 |
+| A76 | 20 750 | 46 562 | 55 140, `alphabet` 4 | 6 677 | 15 977 | 20 102, `escaped` 3 |
+
+On the A55 the slowest compression takes 72 µs at 1.8 GHz, 1.05 times the real p99, the slowest decode
+24 µs, 1.3 times. Most of zram's cold read, 61 µs on average on the A55, are misses, not the decode;
+with the 17 µs its decode takes more than the median page's, the slowest page would read in about 78
+µs, an estimate, not measured.
+
+`lz4` has the same spread. Both codecs on the made-up pages and on phone 10-04,
+`quetschn-bench-interleaved` on the A55, median time per page of 5 loops:
+
+| | real p50 | real p99 | slowest made-up | slowest / p50 | slowest / p99 |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` compress | 15.3 µs | 34.9 µs | 42.7 µs, `alphabet` 8 | 2.8 | 1.22 |
+| `lz4` decode | 5.6 µs | 11.9 µs | 18.6 µs, `alphabet` 2 | 3.3 | 1.57 |
+| `seqlz-fast-lit` compress | 23.2 µs | 68.4 µs | 86.3 µs, `skewed` | 3.7 | 1.26 |
+| `seqlz-fast-lit` decode | 8.1 µs | 21.0 µs | 27.9 µs, `escaped` 5 | 3.5 | 1.33 |
+
+**The decoder on pages it only gets from a damaged zram**, valid pages the matcher never writes,
+written from chosen sequences (`quetschn-seqlz-worst decode`), the most instructions of each kind's 16
+pages, cycles the median:
+
+| kind | sequences | x86-64 instructions | arm64 instructions | A55 cycles | A76 cycles |
+| --- | --- | --- | --- | --- | --- |
+| as many sequences as fit, 4 bytes each | 1023 | 75 890 | 49 465 | 35 842 | 15 466 |
+| the same, offsets of 12 bits | 1023 | 75 186 | 48 948 | 35 232 | 14 204 |
+| every token escaped | 834 | 105 234 | 70 559 | 46 696 | 25 927 |
+| offsets below 8, 4 bytes, escaped | 1022 | 150 047 | 107 099 | 71 468 | 38 155 |
+| only literals, long codes | 1 | 39 937 | 32 984 | 30 138 | 11 541 |
+| 4 coded literals, then a match of 4 | 512 | 66 875 | 48 382 | 38 003 | 18 466 |
+| length values for `ll` and `ml` | 82 | 18 166 | 14 997 | 10 926 | 4 579 |
+| short sequences of random shape | 680 | 68 591 | 47 600 | 38 523 | 22 265 |
+
+The most is a match of 4 bytes at an offset below 8 for every sequence, all escapes: 107 000
+instructions on arm64, 1.9 times `escaped`, 71 500 cycles on the A55, 40 µs, still below the slowest
+compression. The search on sequences found 1.3% more than that stream as it started from it, 158 890
+instructions with clang against 156 823. Inputs that are not valid end early; `fuzz/afl.sh` stops any
+input after 1 s, and none of the decoder's targets had one in 3.8 billion inputs.
+
+**The other codecs, searched the same way: `seqlz-fast-lit` has the smallest worst case against its
+own p99.** `cost_fuzz.c` with `-DCOST_CODEC=quetschn_codec_<codec>` calls any codec of
+`bench/kernel_codecs/zram_codec.h` as zram does, with the kernel's flags and zram's default level: the
+compressor's instructions, and the decoder's on what it wrote if that is below 3625 bytes, which zram
+keeps compressed. One search per codec, 7 to 9 libFuzzer workers, 3 rounds of 10 minutes with the base
+of the fine buckets 1% below the best so far, seeded with made-up pages only: the 512 of
+`quetschn-seqlz-worst pages`, 20 of `records` and `escaped`, 60 for `zstd` and 24 rebuilt from the
+sequences `lz4` found in real pages, with new literals. `zstd` needed its own: a fuzzer that changes
+bytes rarely gets it past raw literals and its predefined tables, the pages that cost most are a few
+byte values with rare other ones strewn in, so that the literals are Huffman coded in 4 streams and
+the lengths and offsets get tables of their own. A search seeded with real pages too found up to 4%
+more, 18% for `lzo-rle`'s decode, but those pages are made of real data.
+
+The costliest page of each codec and objective is in `tools/seqlz-worst/pages/`, its instructions with
+all four codecs in `instructions.tsv`. None of the 8 pages shares a 16-byte window with 4 or more
+different bytes with any page of the dumps, the resident pages or the corpus the tables were trained on.
+Instructions, clang, each page in a process of its own, against the 80 000 pages of the four samples,
+decode only of pages that zram keeps compressed:
+
+| codec | compress p50 | p99 | max | costliest found | / p99 | decode p50 | p99 | max | costliest found | / p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 27 499 | 67 538 | 85 996 | 84 673 | 1.25 | 11 612 | 21 852 | 37 177 | 56 306 | 2.58 |
+| `lzo-rle` | 27 556 | 72 848 | 96 757 | 105 773 | 1.45 | 15 446 | 33 255 | 55 618 | 57 756 | 1.74 |
+| `zstd` 3 | 152 316 | 346 973 | 400 506 | 431 955 | 1.24 | 54 647 | 106 322 | 146 343 | 169 935 | 1.60 |
+| `seqlz-fast-lit` | 61 521 | 164 794 | 184 486 | 188 090 | 1.14 | 23 706 | 50 495 | 69 392 | 80 394 | 1.59 |
+
+* Against its own p99 `seqlz-fast-lit` has the smallest worst case of the four, 1.14 for compress and
+  1.59 for decode, `zstd` 1.60. `lz4`'s decode has the most, 2.58.
+* In instructions `seqlz-fast-lit`'s worst compress is 2.2 times `lz4`'s and 0.44 times `zstd`'s, its
+  worst decode 1.43 times `lz4`'s, 1.39 times `lzo-rle`'s and 0.47 times `zstd`'s, the same order as
+  the medians.
+* `lz4`'s costliest decode is the same weakness as `escaped`: 1020 matches of 4 bytes and 13 literals,
+  offsets 2 and 4 most, and below 8 `lz4` takes its slower copy for overlapping matches. The page has 3
+  different bytes.
+* For `lz4`'s compression the search stayed 1.5% below the costliest real page.
+
+The 8 pages with each codec, instructions compress / decode, 0 where zram stores the page as it is:
+
+| page | `lz4` | `lzo-rle` | `zstd` 3 | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- |
+| `lz4-compress` | 84 673 / 24 103 | 92 023 / 0 | 315 564 / 98 486 | 171 639 / 79 656 |
+| `lz4-decode` | 52 867 / 56 306 | 19 195 / 16 396 | 52 390 / 27 203 | 31 275 / 17 627 |
+| `lzo-rle-compress` | 79 884 / 0 | 105 773 / 0 | 380 695 / 75 456 | 118 468 / 0 |
+| `lzo-rle-decode` | 54 025 / 35 704 | 65 857 / 57 756 | 241 956 / 83 766 | 91 008 / 33 735 |
+| `zstd-compress` | 64 788 / 30 214 | 69 275 / 41 604 | 431 955 / 135 991 | 163 071 / 57 022 |
+| `zstd-decode` | 58 791 / 33 547 | 64 617 / 46 239 | 419 741 / 169 935 | 159 175 / 60 281 |
+| `seqlz-fast-lit-compress` | 80 424 / 0 | 99 128 / 0 | 367 411 / 79 354 | 188 090 / 59 880 |
+| `seqlz-fast-lit-decode` | 84 634 / 24 155 | 91 820 / 0 | 310 223 / 96 864 | 171 457 / 80 394 |
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
