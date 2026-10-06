@@ -1533,7 +1533,8 @@ pages zram keeps compressed:
   8 30% to 45%. Classes 3 and 5 give 2 to 7 bytes each. Getting that needs a code for the offset, a
   second lookup per sequence on the decoder's chain, or classes for the frequent offsets in the token,
   which grows the token's alphabet; "Offset classes from a histogram" found two more classes worth 0.1
-  points at most. Not built.
+  points at most. Classes for the offsets 2 and 8 alone are worth more, 5.8 to 9.2 bytes per page,
+  see below.
 * **Raw literals:** one Huffman table fitted to all of them would take 12 to 17 bytes per page off,
   6%, but per page they do not save 1/16 and 51 bytes, which is why they are raw.
 
@@ -1566,6 +1567,59 @@ rounds with the order of the codecs rotated, both codecs in modules built the sa
 1.9 bytes per page for 2.0 µs more per write on the A55, 5.5%, and 0.43 µs on the A76: about 1 byte
 per µs, where the A55 trades at 6 to 12. The writes of each codec stay within 1.4 µs of each other over
 the 5 rounds on the A55, within 0.3 µs on the A76. Not built.
+
+**Offsets 2 and 8 as classes of their own: 0.6% to 0.9% smaller, the decoder 1% to 3% slower.** Class 1
+spends 4 raw bits on offsets of which 2 and 8 are 70% to 85%. With a class each, without raw bits, the
+token says the offset, and the other offsets below 16 go to the class of 8 raw bits, which they share
+with 16 to 255. 7 classes instead of 6, 3584 tokens instead of 3072, the escape still sends 12 bits.
+`tools/seqlz-bound/seqs.c` writes the sequences of every page, `offsets.py` prices layouts of the
+classes on them: the token with an 11-bit Huffman code and an escape, trained on the other three dumps,
+plus the raw bits. Bytes per page against today's layout:
+
+| layout, model | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
+| --- | --- | --- | --- | --- |
+| offsets 2 and 8 as classes, 8 classes | -9.1 | -4.8 | -7.7 | -6.3 |
+| 2 and 8 in one class with 1 raw bit, 7 classes | -7.5 | -3.7 | -6.3 | -5.1 |
+| 2 and 8 as classes, the rest of 1 to 15 in 8 bits, 7 classes | -9.1 | -5.5 | -7.3 | -5.6 |
+| ... and multiples of 8 from 256 to 2047 in 8 bits, 8 classes | -11.2 | -6.6 | -8.7 | -7.1 |
+| multiples of 4 as classes of their own, 8 classes | +0.5 | +2.0 | -0.8 | -1.0 |
+
+Built, the 7 classes in that order: the last offset, 2, 8, below 256, below 4096, multiples of 8 below
+256 and below 4096. Tables trained the same way as the ones of today, on
+`train-resident-phone1003`, which gives the tables of today again for 6 classes. zsmalloc bytes per
+page of all pages, and the hot loops on the PC as above, median of 5:
+
+| | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 | compress cycles | decode cycles |
+| --- | --- | --- | --- | --- | --- | --- |
+| 6 classes, as now | 1002.8 | 1312.3 | 705.3 | 896.3 | 21 755 | 7414 |
+| 7 classes | 993.6 | 1306.5 | 698.1 | 890.4 | 21 793 | 7620 |
+| 8 classes, the multiples of 8 from 256 to 2047 in 8 bits | 991.6 | 1305.2 | 696.7 | 889.0 | 22 191 | 7690 |
+
+The model was right within 0.3 bytes. The decoder's entry for the classes 2 and 8 has no raw bits and the
+offset's log2 in the field of the shift, so the offset is `shift ? 1 << shift : last` where it was
+`last`: 3 more instructions per sequence on the A55 and the A76, `tst`, `lsl` and `csel`. The first
+try nested that into the existing select, and gcc made it a branch: 8392 decode cycles, 13% more. The
+encoder's class went through `off == 2` and `off == 8` first, which made gcc branch on `off >= 256`,
+since those two only exist below it: 5.9% more compress cycles. The two offsets as 2-bit fields of
+the constant `0x10020`, shifted by the offset up to 15, give the same class without the branch.
+
+On the Mi 9T, as for the literal tables above, 6 rounds of the three, the order rotated:
+
+| Mi 9T, means of 6 rounds | bytes per page | write A76 | warm read A76 | cold read A76 | time per page written A76 | write A55 | warm read A55 | time per page written A55 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 6 classes, as now | 936.9 | 12.61 µs | 4.89 µs | 9.49 µs | 15.84 µs | 36.55 µs | 13.31 µs | 57.83 µs |
+| 7 classes | 931.3 | 12.73 µs | 4.96 µs | 9.54 µs | 15.98 µs | 36.90 µs | 13.50 µs | 57.78 µs |
+| 8 classes | 931.3 | 12.81 µs | 5.01 µs | 10.18 µs | 16.27 µs | 37.33 µs | 13.63 µs | 58.49 µs |
+
+7 classes store 5.6 bytes per page less. The warm read is 1.4% slower on both cores, 0.07 and 0.19 µs,
+the write 0.12 and 0.35 µs. A run of 5 rounds before, 6 against 7 classes only, gave 0.06 and 0.17 µs
+on the write. With the warm read's difference in place of the cold one, that is 0.1 to 0.2 µs per page
+written on the A76 and 0.2 to 0.4 µs on the A55, for 5.6 bytes: 28 to 56 bytes per µs and 14 to 28,
+the A55's above the 6 to 12 it trades at. Its cold read moves by up to 4 µs between rounds and does
+not tell the two apart. The 8 classes compress
+1.4 bytes per page less than 7 on the PC, but in zsmalloc on the phone they took the same memory, and
+the encoder needs more work for the extra class, 2% more compress cycles on the PC, 0.4 µs per write on
+the A55: not worth it. Not built yet: the 7 classes change the format.
 
 ## Where the ratio of `zstd` comes from
 
