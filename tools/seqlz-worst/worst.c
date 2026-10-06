@@ -2,20 +2,28 @@
 /*
  * Pages made to be slow for seqlz, for its worst-case time (PLAN.md, Phase 4).
  *
+ * Counts instructions and branch misses in user space with perf_event_open: they do not change with the
+ * load on the machine, as time does.
+ *
  *   quetschn-seqlz-worst pages <base>
  *       writes made-up pages of the kinds below as a corpus, <base>.pages and <base>.tsv, with the kind of
- *       each page in the .tsv: quetschn-bench-<codec> --decode-loop n [--compress] [--cold] --out times
- *       them as zram would, the compressor's own pages included.
- *   quetschn-seqlz-worst decode [reps]
+ *       each page in the .tsv, for count or for the harness.
+ *   quetschn-seqlz-worst count <pages file>
+ *       compresses and decodes each page as zram would, one line per page: compressed length,
+ *       instructions and branch misses of both. For the made-up pages and for real ones alike.
+ *   quetschn-seqlz-worst decode
  *       compressed pages written by seqlz_encode() from chosen sequences, valid pages the matcher never
- *       writes: every token escaped, as many sequences as fit, offsets below 8, ... Prints, per kind, the
- *       median time of reps decodes of each page, the largest and the mean over the pages.
+ *       writes: every token escaped, as many sequences as fit, offsets below 8, ... Per kind the most
+ *       instructions and branch misses of the decode of its 16 pages.
  */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <unistd.h>
+
+#include <linux/perf_event.h>
+#include <sys/syscall.h>
 
 #include "seqlz.h"
 
@@ -256,71 +264,226 @@ static const char* build(unsigned int kind, struct built* b) {
             add(b, 15, 35, 1 + below(b->pos), lit_random);
         add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
         return "length values for ll and ml";
+    case 7: /* each sequence's shape at random, for the branches: ll 0 to 2, ml 4 to 6, offsets below 8
+             * or not, escaped tokens or not */
+        add(b, 8, 4, 1, lit_random);
+        while (b->pos + 8 < SEQLZ_PAGE) {
+            unsigned int l = below(3), m = 4 + below(3);
+
+            off = below(2) ? 1 + below(7) : 1 + below(b->pos + l);
+            add(b, l, m, off > b->pos + l ? b->pos + l : off, lit_random);
+        }
+        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        return "short sequences of random shape";
     default:
         return 0;
     }
 }
 
-static double now_ns(void) {
-    struct timespec ts;
+/* Instructions, branch misses and cycles in user space, of this thread. Instructions are the same on
+ * a busy machine, unlike time; they are the fewest of a few runs, which takes out what an interrupt
+ * adds. Branch misses and cycles are those of the first run, after another page, as the branches of the
+ * runs after it are learned; cycles only mean something on an idle machine. */
+struct counters {
+    int insn, miss, cycles;
+};
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+static int perf_open(unsigned long long config) {
+    struct perf_event_attr a;
+
+    memset(&a, 0, sizeof a);
+    a.type = PERF_TYPE_HARDWARE;
+    a.size = sizeof a;
+    a.config = config;
+    a.exclude_kernel = 1;
+    a.exclude_hv = 1;
+    return (int)syscall(SYS_perf_event_open, &a, 0, -1, -1, 0);
 }
 
-static int cmp_double(const void* a, const void* b) {
-    double x = *(const double*)a, y = *(const double*)b;
+static int counters_open(struct counters* c) {
+    c->insn = perf_open(PERF_COUNT_HW_INSTRUCTIONS);
+    c->miss = perf_open(PERF_COUNT_HW_BRANCH_MISSES);
+    c->cycles = perf_open(PERF_COUNT_HW_CPU_CYCLES);
+    if (c->insn < 0 || c->miss < 0 || c->cycles < 0) {
+        perror("perf_event_open");
+        return -1;
+    }
+    return 0;
+}
+
+static unsigned long long counter(int fd) {
+    unsigned long long v = 0;
+
+    if (read(fd, &v, sizeof v) != (ssize_t)sizeof v)
+        abort();
+    return v;
+}
+
+/* what one call of f(arg) costs, see above */
+struct cost {
+    unsigned long long insn, miss, cycles;
+};
+
+static struct cost measure(const struct counters* c, int (*f)(void*), void* arg) {
+    struct cost best = {~0ULL, ~0ULL, ~0ULL};
+    int r;
+
+    for (r = 0; r < 5; r++) {
+        unsigned long long i0 = counter(c->insn), m0 = counter(c->miss), c0 = counter(c->cycles), i1, m1, c1;
+
+        if (f(arg) != 0)
+            abort();
+        c1 = counter(c->cycles);
+        m1 = counter(c->miss);
+        i1 = counter(c->insn);
+        if (i1 - i0 < best.insn)
+            best.insn = i1 - i0;
+        if (r == 0) {
+            best.miss = m1 - m0;
+            best.cycles = c1 - c0;
+        }
+    }
+    return best;
+}
+
+struct job {
+    const struct seqlz_tables* t;
+    struct seqlz_state* st;
+    const unsigned char* page;
+    unsigned char *c, *out, *scratch;
+    unsigned int len;
+};
+
+static int do_compress(void* arg) {
+    struct job* j = arg;
+
+    j->len = seqlz_compress(j->t, j->st, j->page, j->c, 2 * SEQLZ_PAGE, 1);
+    return j->len ? 0 : -1;
+}
+
+static int do_decode(void* arg) {
+    struct job* j = arg;
+
+    return seqlz_decode(j->t, j->c, j->len, j->out, j->scratch);
+}
+
+static int do_nothing(void* arg) {
+    (void)arg;
+    return 0;
+}
+
+static int cmp_u64(const void* a, const void* b) {
+    unsigned long long x = *(const unsigned long long*)a, y = *(const unsigned long long*)b;
 
     return (x > y) - (x < y);
 }
 
-static int time_decode(unsigned int reps) {
+static struct seqlz_tables* tables(void) {
+    struct seqlz_tables* t = malloc(seqlz_tables_size());
+
+    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+        abort();
+    return t;
+}
+
+/* The decoder on the made-up streams, per kind the most instructions and branch misses of its 16 pages,
+ * and the median of their cycles: a single run's cycles can be far off on a phone. */
+static int count_decode(void) {
     static struct built b;
     static unsigned char c[3 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
-    double* ns = malloc(reps * sizeof *ns);
-    unsigned int kind, k, r;
+    struct job j = {tables(), 0, 0, c, out, scratch, 0};
+    struct counters ctr;
+    struct cost empty;
+    unsigned int kind, k;
 
-    if (!t || !ns || seqlz_tables_init(t, &seqlz_default_own))
+    if (counters_open(&ctr))
         return 1;
-    printf("%-36s %6s %5s %6s %10s %10s\n", "kind", "bytes", "seqs", "coded", "max ns", "mean ns");
+    empty = measure(&ctr, do_nothing, 0);
+    /* one decode first, so that the first page measured does not pay for the code and tables alone */
+    build(0, &b);
+    j.len = seqlz_encode(j.t, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 1);
+    if (!j.len || do_decode(&j))
+        return 1;
+    printf(
+        "%-36s %6s %5s %6s %12s %12s %12s\n", "kind", "bytes", "seqs", "coded", "instructions", "branch miss", "cycles p50");
     for (kind = 0;; kind++) {
-        double max = 0, sum = 0;
-        unsigned int len = 0, coded = 0;
+        struct cost most = {0, 0, 0};
+        unsigned long long cycles[16];
         const char* name = build(kind, &b);
 
         if (!name)
             break;
         for (k = 0; k < 16; k++) {
+            struct cost x;
+
             if (k)
                 build(kind, &b);
-            len = seqlz_encode(t, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 1);
-            if (!len || seqlz_decode(t, c, len, out, scratch) || memcmp(out, b.page, SEQLZ_PAGE)) {
+            j.len = seqlz_encode(j.t, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 1);
+            if (!j.len || do_decode(&j) || memcmp(out, b.page, SEQLZ_PAGE)) {
                 fprintf(stderr, "%s: page %u does not come back\n", name, k);
                 return 1;
             }
-            coded = c[1] >> 7;
-            for (r = 0; r < reps; r++) {
-                double t0 = now_ns();
-
-                seqlz_decode(t, c, len, out, scratch);
-                ns[r] = now_ns() - t0;
-            }
-            qsort(ns, reps, sizeof *ns, cmp_double);
-            if (ns[reps / 2] > max)
-                max = ns[reps / 2];
-            sum += ns[reps / 2];
+            x = measure(&ctr, do_decode, &j);
+            if (x.insn - empty.insn > most.insn)
+                most.insn = x.insn - empty.insn;
+            if (x.miss > most.miss)
+                most.miss = x.miss;
+            cycles[k] = x.cycles;
         }
-        printf("%-36s %6u %5u %6s %10.0f %10.0f\n", name, len, b.n_seq, coded ? "yes" : "no", max, sum / 16);
+        qsort(cycles, 16, sizeof cycles[0], cmp_u64);
+        most.cycles = cycles[8];
+        printf("%-36s %6u %5u %6s %12llu %12llu %12llu\n",
+               name,
+               j.len,
+               b.n_seq,
+               c[1] >> 7 ? "yes" : "no",
+               most.insn,
+               most.miss,
+               most.cycles);
     }
     return 0;
+}
+
+/* Each page of a corpus compressed and decoded as zram would, one line per page: compressed length,
+ * instructions and branch misses of the compression and of the decode. */
+static int count_pages(const char* path) {
+    static unsigned char page[SEQLZ_PAGE], c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static struct seqlz_state st;
+    struct job j = {tables(), &st, page, c, out, scratch, 0};
+    struct counters ctr;
+    struct cost empty;
+    FILE* f = fopen(path, "rb");
+    unsigned int n = 0;
+
+    if (!f || counters_open(&ctr))
+        return 1;
+    empty = measure(&ctr, do_nothing, 0);
+    printf("page\tlength\tcompress_insn\tcompress_miss\tcompress_cycles\tdecode_insn\tdecode_miss\tdecode_cycles\n");
+    while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
+        struct cost cc = measure(&ctr, do_compress, &j), dc = measure(&ctr, do_decode, &j);
+
+        if (memcmp(out, page, SEQLZ_PAGE))
+            return 1;
+        printf("%u\t%u\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\n",
+               n++,
+               j.len,
+               cc.insn - empty.insn,
+               cc.miss,
+               cc.cycles,
+               dc.insn - empty.insn,
+               dc.miss,
+               dc.cycles);
+    }
+    return fclose(f);
 }
 
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "pages"))
         return write_pages(argv[2]);
-    if (argc >= 2 && !strcmp(argv[1], "decode"))
-        return time_decode(argc > 2 ? (unsigned int)atoi(argv[2]) : 1001);
-    fprintf(stderr, "usage: quetschn-seqlz-worst pages <base> | decode [reps]\n");
+    if (argc == 2 && !strcmp(argv[1], "decode"))
+        return count_decode();
+    if (argc == 3 && !strcmp(argv[1], "count"))
+        return count_pages(argv[2]);
+    fprintf(stderr, "usage: quetschn-seqlz-worst pages <base> | decode | count <pages file>\n");
     return 1;
 }
