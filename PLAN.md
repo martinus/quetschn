@@ -677,22 +677,32 @@ hand-tuned to one corpus.
 
 ## 6. Repository layout
 
+The plan had the codec in `src/` and the kernel files in `kernel/`. The codec grew up in `explore/`
+next to the designs it beat, and stays there until the kernel port of Phase 5 splits it into a
+`lib/` part and a zram backend:
+
 ```
-include/quetschn.h          C11, freestanding, no libc
-src/quetschn.c              the codec core
-src/quetschn_ref.c          independent reference decoder (from FORMAT.md only)
+explore/seqlz.c, seqlz.h    the codec: encoder, decoder, tables, freestanding C
+explore/page_lz.h           the matcher seqlz shares with bytelz
+explore/seqlz_*tables*      the trained tables, part of the format
+explore/zram_seqlz.c        seqlz as a zram backend calls it, for the harness
+explore/ (the rest)         the other designs of Phase 3, see docs/explored-designs.md
 FORMAT.md                   byte-exact format specification
-tools/collect/              corpus collectors (C++)
-tools/analyze/              page statistics (C++)
-bench/                      harness: per-page timing loop + kernel-sourced codecs
-bench/zsmalloc_cost.*       zsmalloc cost model (§3.1)
-bench/kernel_codecs/        zram's calls into lib/lz4 and lib/lzo, and the headers to build them in userspace
+tools/seqlz_ref.py, .c      reference decoders written from FORMAT.md alone
+tools/collect/              corpus collectors and page statistics (C++)
+tools/seqlz-bound/          bits per field and their entropy, layouts of the offset classes
+tools/seqlz-worst/          the worst case: instruction counts, slow pages, a search for slower ones
+tools/seqlz-viz/            the two pages that show seqlz step by step (docs/seqlz-*.html)
+tools/zram-vm/              the kernel VM: a backend for zram and a script that boots and measures
+tools/phone-apps/           the app launch test on the phone
+bench/                      harness: per-page timing loop, zsmalloc cost model, training
+bench/kernel_codecs/        zram's calls into lib/lz4, lib/lzo and zstd, built in userspace
 cmake/kernel_codecs.cmake   builds them from QUETSCHN_KERNEL_TREE with kernel flags; sources never copied
+spike/                      the decoder latency spike of Phase 2b
 test/                       doctest unit tests
-fuzz/                       AFL++ / libFuzzer targets
-kernel/                     backend_quetschn.c + Kconfig/Makefile fragments + patch generator
-results/                    published measurements (no raw pages, ever)
-.github/workflows/          CI incl. kernel-flag build, checkpatch, big-endian, fuzz smoke
+fuzz/                       AFL++ / libFuzzer targets, the CI smoke run and the long runs
+docs/                       seqlz.md, explored-designs.md, plots, the two step-by-step pages
+.github/workflows/ci.yml    CI: gcc and clang, ASan and UBSan, arm64, big-endian, fuzz smoke, format
 ```
 
 ---
@@ -726,7 +736,35 @@ results/                    published measurements (no raw pages, ever)
 
 ---
 
-## 9. Immediate next actions
+## 9. Where the project stands, and the next actions
+
+As of 6 October 2026:
+
+- **Phases 0 to 3: done.** The harness, the collectors, zram dumps of the desktop and of the Mi 9T,
+  and the design: `seqlz-fast-lit` (docs/seqlz.md), with every alternative that was measured in
+  docs/explored-designs.md.
+- **Phase 4: mostly done.** `FORMAT.md`, fixed for 4 KiB pages. Two reference decoders written from it.
+  Fuzzing of the decoder, the roundtrip, and the decoder against the reference decoder in C, which
+  found no difference in 1.7 billion inputs. ASan and UBSan in CI, big-endian on s390x in CI. The worst
+  case measured: the slowest pages found cost 1.3 times the p99 of real pages, as for `lz4`. Open: MSan,
+  continuous fuzzing (ClusterFuzzLite), and the tests with 16 KiB pages in CI.
+- **Phase 5: started.** The kernel VM of `tools/zram-vm/` runs seqlz as a zram backend and measures
+  `mm_stat`. Open: the split into `lib/` and a backend, swap thrash under KASAN and lockdep, the zram
+  selftests.
+- **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages: done. Open: 16 KiB pages and a current phone.
+  The 16 KiB tables are trained on pages made of four 4 KiB pages, and with 16 KiB pages
+  `seqlz-fast-lit` needs twice `lz4`'s work memory per CPU, above C5.
+
+Next, in this order:
+
+1. A corpus from the Android emulator, Android 17 with 16 KiB pages and with 4 KiB pages: train and
+   check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
+   Android.
+2. The work memory with 16 KiB pages, within C5 or a reason why not.
+3. Phase 5: `lib/` and the backend, swap thrash under KASAN and lockdep, the selftests.
+4. MSan and continuous fuzzing.
+
+### The first actions, Phases 0 to 2
 
 1. ~~Get the old phone and root it (§4).~~ Done: a Xiaomi Mi 9T.
 2. ~~Check the employer rules (R8).~~ Done.

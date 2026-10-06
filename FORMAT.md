@@ -13,6 +13,18 @@ are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both
 `tools/seqlz_ref.py` and `tools/seqlz_ref.c` are decoders written from this file, slow on purpose, and
 checked against `seqlz_decode()`, see [How this file was checked](#how-this-file-was-checked).
 
+## Status
+
+The format for 4 KiB pages is fixed since 6 October 2026: a page that decodes now decodes the same way
+in every later seqlz, and a change to anything in this file, the tables included, is a new format with
+a new name in zram, see [No version in the page](#no-version-in-the-page).
+
+The format for 16 KiB pages is not fixed yet. Its tables were trained on 2052 pages made of four
+adjacent resident 4 KiB pages each, and measured on the same pages; there was no real 16 KiB page yet. A
+corpus from a system with 16 KiB pages may still change them. And with 16 KiB pages `seqlz-fast-lit`
+needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
+([docs/seqlz.md](docs/seqlz.md#what-is-not-known-yet)).
+
 ## The idea
 
 Like lz4 and zstd, seqlz describes a page as a list of **sequences**. Each sequence says: copy the next

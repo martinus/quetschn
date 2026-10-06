@@ -16,6 +16,30 @@ cmake --build build
 
 `-DQUETSCHN_SANITIZE=ON` builds with ASan and UBSan. Formatting is checked with clang-format 21.
 
+## Checking seqlz
+
+[FORMAT.md](FORMAT.md) describes the compressed bytes. Two decoders are written from it alone, slow on
+purpose, and checked against `seqlz_decode()`: `tools/seqlz_ref.py`, and `tools/seqlz_ref.c`, which
+the tests and the fuzzers use.
+
+The fuzz targets in `fuzz/` take any input: the decoder alone, the roundtrip, and the decoder against
+`tools/seqlz_ref.c`. CI runs each for a minute with libFuzzer, ASan and UBSan. A change to the codec
+gets a longer run with AFL++ before it is merged: 1 billion inputs without a crash, the gate of
+PLAN.md's Phase 4.
+
+```sh
+fuzz/smoke.sh 60 build-fuzz                 # the CI run, needs clang
+AFL=$HOME/AFLplusplus fuzz/afl.sh out 30    # 30 AFL++ instances in the background, a third per target
+```
+
+Two tools measure what the codec does with the bits and with the time:
+
+- `tools/seqlz-bound/`: per kind of field the bits a dump's pages take, next to their entropy, and
+  what other layouts of the offset classes would take.
+- `tools/seqlz-worst/`: `quetschn-seqlz-worst` counts the instructions of every page of a corpus and
+  writes made-up pages that are slow; `cost_fuzz.c` searches for slower ones. The numbers are in
+  [docs/explored-designs.md](docs/explored-designs.md).
+
 ## Benchmarking the kernel's codecs
 
 The harness builds zram's `lz4`, `lzo`, `lzo-rle` and `zstd` from a Linux source tree, with the
