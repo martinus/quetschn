@@ -1394,6 +1394,51 @@ faster than 51. 51 stays, with less reason than it had: the A55's 0.8 µs is wit
 rounds, only its warm reads, 0.37 µs faster, are clear, and the A76's 0.4 µs is within what modules
 differ.
 
+## The sequences' bitstream most significant bit first: the token table's codes in one range on every CPU
+
+*In "Six choices made on the PC" the token table indexed by the reversed bits, one `rbit` on arm64,
+made the A76's cold reads faster without the table's prefetch, and cost 19% on x86-64, which has no
+instruction for it. The same layout comes without any reversal when the bitstream is read most
+significant bit first, as the literals' streams already are: the next token is the top 11 bits.* A
+format change: the same bits, in the other order. The encoder writes the canonical codes as they are,
+the decoder takes each field from the top and shifts left, the refill loads 8 bytes big endian. Code on
+the branch `seqlz-msb-first`. The bytes are exactly the same on all four dumps.
+
+On the PC it costs nothing. Hot loop, perf over the 2000 page sample of the first dump, gcc, median of
+3: decoding 7370 against 7410 cycles per page, compressing 21 609 against 21 910. Kernel VM, 20 000
+pages of the first desktop dump, two boots each, cold reads 2.82 against 2.84 µs, writes 6.21 against 6.21,
+and the same without the token table's prefetch: there the tables stay in the cache when the VM reads
+cold, so the VM cannot say what the layout gives on x86-64.
+
+On the phone, four decoders, each built twice under two names, all with the compressed data prefetched
+as in item 7: as now, the token table prefetched only on in-order cores with today's spread layout,
+the same with the reversed index, and the same read most significant bit first. Four runs of three of
+them, 3 rounds each, so that every two met twice; µs, the means over all rounds of a build:
+
+| decoder | build | A76 warm / cold / cold p99 | A55 warm / cold / cold p99 | per page written, A76 / A55 |
+| --- | --- | --- | --- | --- |
+| as now | 1 | 4.94 / 11.79 / 21.93 | 13.03 / 60.36 / 84.26 | 16.70 / 56.97 |
+| as now | 2 | 4.93 / 11.95 / 21.63 | 13.09 / 61.43 / 85.62 | 16.69 / 57.35 |
+| per core, spread | 1 | 4.93 / 9.39 / 16.08 | 13.18 / 60.17 / 84.18 | 15.81 / 57.05 |
+| per core, spread | 2 | 4.89 / 10.50 / 19.32 | 13.16 / 61.95 / 86.24 | 16.23 / 57.22 |
+| per core, `rbit` | 1 | 5.02 / 9.73 / 16.36 | 13.38 / 60.61 / 84.67 | 15.92 / 56.94 |
+| per core, `rbit` | 2 | 4.89 / 9.57 / 15.75 | 13.33 / 61.64 / 85.87 | 15.91 / 57.29 |
+| per core, most significant bit first | 1 | 4.97 / 9.60 / 16.31 | 13.28 / 61.22 / 85.43 | 15.98 / 57.23 |
+| per core, most significant bit first | 2 | 4.88 / 9.60 / 16.04 | 13.21 / 60.73 / 84.93 | 15.91 / 56.65 |
+
+The token table's prefetch only on in-order cores is what makes the A76 faster, 1.3 to 2.6 µs of cold
+reads. The layout decides whether that holds: with the codes in one range both builds read cold in 9.57
+to 9.73 µs and at p99 in 15.75 to 16.36, in every run; with today's spread layout one build read in 9.39
+and 16.08, the other in 10.50 and 19.32, twice. The spread layout touches 55 of the 128 lines, the
+codes in one range 42.5, and for some reason the spread one depends on where the module's tables
+land. Most significant bit first and the reversed index are the same on the phone, 9.60 against 9.57
+and 9.73. On the A55 all four are within its noise, cold 60.2 to 62.0 µs; the warm reads with the
+reversed index are 0.2 µs slower than without, most significant bit first 0.1.
+
+So the order of the bits gives the layout that holds without `rbit`, on every CPU and with one
+decoder, at no cost on the PC. Not in the format yet: FORMAT.md, `tools/seqlz_ref.py`, the bit by bit
+page and the tests that build pages by hand still read least significant bit first.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
