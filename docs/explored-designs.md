@@ -1028,9 +1028,9 @@ the same matcher on the same page just before, its write on the big core was 13.
 `seqlz-fast`'s; the table is from a second run with the two apart, `lz4 seqlz lzo seqlz-lit zstd`. On
 the score's hull `seqlz-fast-lit` is the best choice from 2.8 to 153 bytes per µs on the PC, from 0.8
 to 76 on the big core and from 0.2 to 15 on the little core, with `seqlz-fast` above it up to 36 and
-`lzo` above that. `tools/plot-devices.py` draws the three side by side, docs/plots/devices.svg:
+`lzo` above that. `tools/plot-devices.py` draws the three side by side, docs/plots/devices-2026-10-05.svg:
 
-![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
+![The codecs on the PC and the phone, in the kernel, 5th October](plots/devices-2026-10-05.svg)
 
 ## Coded literals only where they save 51 bytes: 2.7 µs per page written less on the A55, kept
 
@@ -1246,8 +1246,9 @@ against 88.00 and 91.34, within its noise. So:
 * **Both**: the A76 as with the decoder only, the A55 2.0 to 2.6 µs of cold reads faster from the 10
   bits, measured again with the compressed data prefetched in item 7.
 
-Not decided yet, the measurements are here; nothing of it is in `seqlz.c` so far. Reading the CPU's id in
-a codec is arm64 specific and new for zram's backends.
+Decided in "The sequences' bitstream most significant bit first" below: the token table prefetched only
+on in-order cores, with a code's entries in one range by the bit order, and 11 bits. Reading the CPU's
+id in a codec is arm64 specific and new for zram's backends.
 
 ### 5. The matcher's hash: 5 bytes into 4096 slots stays
 
@@ -1393,6 +1394,108 @@ bytes per µs, against `seqlz-fast-lit`'s 78 and 12 against `seqlz-fast` (item 7
 faster than 51. 51 stays, with less reason than it had: the A55's 0.8 µs is within its noise between
 rounds, only its warm reads, 0.37 µs faster, are clear, and the A76's 0.4 µs is within what modules
 differ.
+
+## The sequences' bitstream most significant bit first: the token table's codes in one range on every CPU, kept
+
+*In "Six choices made on the PC" the token table indexed by the reversed bits, one `rbit` on arm64,
+made the A76's cold reads faster without the table's prefetch, and cost 19% on x86-64, which has no
+instruction for it. The same layout comes without any reversal when the bitstream is read most
+significant bit first, as the literals' streams already are: the next token is the top 11 bits.* A
+format change: the same bits, in the other order. The encoder writes the canonical codes as they are,
+the decoder takes each field from the top and shifts left, the refill loads 8 bytes big endian. Code on
+the branch `seqlz-msb-first`. The bytes are exactly the same on all four dumps.
+
+On the PC it costs nothing. Hot loop, perf over the 2000 page sample of the first dump, gcc, median of
+3: decoding 7370 against 7410 cycles per page, compressing 21 609 against 21 910. Kernel VM, 20 000
+pages of the first desktop dump, two boots each, cold reads 2.82 against 2.84 µs, writes 6.21 against 6.21,
+and the same without the token table's prefetch: there the tables stay in the cache when the VM reads
+cold, so the VM cannot say what the layout gives on x86-64.
+
+On the phone, four decoders, each built twice under two names, all with the compressed data prefetched
+as in item 7: as now, the token table prefetched only on in-order cores with today's spread layout,
+the same with the reversed index, and the same read most significant bit first. Four runs of three of
+them, 3 rounds each, so that every two met twice; µs, the means over all rounds of a build:
+
+| decoder | build | A76 warm / cold / cold p99 | A55 warm / cold / cold p99 | per page written, A76 / A55 |
+| --- | --- | --- | --- | --- |
+| as now | 1 | 4.94 / 11.79 / 21.93 | 13.03 / 60.36 / 84.26 | 16.70 / 56.97 |
+| as now | 2 | 4.93 / 11.95 / 21.63 | 13.09 / 61.43 / 85.62 | 16.69 / 57.35 |
+| per core, spread | 1 | 4.93 / 9.39 / 16.08 | 13.18 / 60.17 / 84.18 | 15.81 / 57.05 |
+| per core, spread | 2 | 4.89 / 10.50 / 19.32 | 13.16 / 61.95 / 86.24 | 16.23 / 57.22 |
+| per core, `rbit` | 1 | 5.02 / 9.73 / 16.36 | 13.38 / 60.61 / 84.67 | 15.92 / 56.94 |
+| per core, `rbit` | 2 | 4.89 / 9.57 / 15.75 | 13.33 / 61.64 / 85.87 | 15.91 / 57.29 |
+| per core, most significant bit first | 1 | 4.97 / 9.60 / 16.31 | 13.28 / 61.22 / 85.43 | 15.98 / 57.23 |
+| per core, most significant bit first | 2 | 4.88 / 9.60 / 16.04 | 13.21 / 60.73 / 84.93 | 15.91 / 56.65 |
+
+The token table's prefetch only on in-order cores is what makes the A76 faster, 1.3 to 2.6 µs of cold
+reads. The layout decides whether that holds: with the codes in one range both builds read cold in 9.57
+to 9.73 µs and at p99 in 15.75 to 16.36, in every run; with today's spread layout one build read in 9.39
+and 16.08, the other in 10.50 and 19.32, twice. The spread layout touches 55 of the 128 lines, the
+codes in one range 42.5, and for some reason the spread one depends on where the module's tables
+land. Most significant bit first and the reversed index are the same on the phone, 9.60 against 9.57
+and 9.73. On the A55 all four are within its noise, cold 60.2 to 62.0 µs; the warm reads with the
+reversed index are 0.2 µs slower than without, most significant bit first 0.1.
+
+So the order of the bits gives the layout that holds without `rbit`, on every CPU and with one
+decoder, at no cost on the PC. Kept, with the token table prefetched only on in-order cores, decided by
+`read_cpuid_id()` in arm64 kernels, and the token table at 11 bits: with this, 10 bits gave the A76
+nothing and the A55 2 to 2.6 µs of cold reads for 4.8 bytes per page. FORMAT.md, `tools/seqlz_ref.py`,
+the tests and the bit by bit page read most significant bit first now; `seqlz_ref.py` agreed with
+`seqlz_decode()` on 1800 pages from two dumps, 1040 valid and the others with a flipped bit or cut
+short.
+
+## The numbers again, with the bit order and the token table's prefetch: cold reads on the A76 3 µs faster
+
+*The bitstream most significant bit first and the token table prefetched only on in-order cores,
+measured as "The numbers again, with the format as it is now" was, on the same 20 000 pages of the first
+desktop dump on the PC and on the phone.* The phone's module prefetches the compressed data now, as the
+PC's backend always did.
+
+Kernel VM, one boot with all five codecs, means in µs:
+
+| codec | bytes per page | write | cold read | cold p99 | µs per page written |
+| --- | --- | --- | --- | --- | --- |
+| `lz4` | 1450.4 | 5.23 | 2.54 | 4.76 | 6.09 |
+| `lzo-rle` | 1361.1 | 5.07 | 2.72 | 4.86 | 5.99 |
+| `zstd` 3 | 1012.3 | 13.29 | 5.28 | 9.54 | 15.08 |
+| `seqlz-fast` | 1122.7 | 5.87 | 2.61 | 4.28 | 6.75 |
+| `seqlz-fast-lit` | 1055.3 | 6.30 | 2.62 | 4.35 | 7.19 |
+
+On 5th October `seqlz-fast-lit` stored 1034.9 bytes per page, wrote in 6.44 µs and read in 2.70: the 51
+bytes of "Coded literals only where they save 51 bytes" store 20 bytes more on this sample and write
+0.14 µs faster. The PC decodes as before, the token table is prefetched on x86-64.
+
+The Mi 9T, zramphone, cold after reading 2 MiB of other data, clocks fixed, the order `lz4 seqlz lzo
+seqlz-lit zstd`, µs, p50 / p99 / mean, the first of two runs; the means of the second were within 0.3
+µs on the big core and 2 µs on the little one, for every codec but `zstd`:
+
+| | `lz4` | `lzo` | `zstd` 3 | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- | --- |
+| memory, % of the pages | 36.0 | 33.1 | 24.6 | 27.5 | 25.5 |
+| big, write | 12.5 / 22.4 / 12.1 | 12.5 / 23.0 / 12.3 | 47.2 / 119.3 / 49.0 | 13.5 / 21.9 / 12.8 | 14.1 / 25.5 / 13.6 |
+| big, read cold | 7.2 / 9.7 / 7.2 | 8.2 / 13.9 / 8.3 | 25.1 / 37.1 / 24.0 | 9.3 / 12.6 / 9.1 | 9.4 / 15.8 / 9.7 |
+| big, read warm | 4.3 / 6.2 / 4.1 | 5.2 / 11.3 / 5.2 | 18.2 / 29.0 / 17.3 | 4.9 / 7.8 / 4.7 | 4.9 / 9.9 / 5.1 |
+| little, write | 30.5 / 61.4 / 30.9 | 32.1 / 55.0 / 32.3 | 164.3 / 616.3 / 185.8 | 36.0 / 64.9 / 35.8 | 38.8 / 80.1 / 39.5 |
+| little, read cold | 52.2 / 72.8 / 52.1 | 49.9 / 64.8 / 50.0 | 128.8 / 171.8 / 122.4 | 58.6 / 76.8 / 58.3 | 61.2 / 86.6 / 63.0 |
+| little, read warm | 11.5 / 18.1 / 11.5 | 12.4 / 19.1 / 12.5 | 46.7 / 91.4 / 45.8 | 13.2 / 20.2 / 13.0 | 13.9 / 28.3 / 14.5 |
+
+Against the table of 5th October, one module each, the little core's warm reads are 3.0 µs faster for
+`seqlz-fast` and 1.8 for `seqlz-fast-lit`, from the compressed data prefetched, and its cold reads 2.3
+for `seqlz-fast-lit`. The big core's cold reads look the same, 9.7 against 10.1, but modules differ by
+about 1 µs there. Directly, three modules in one run, 3 rounds, `seqlz-fast-lit` on these pages:
+
+| decoder | A76 cold / cold p99 / warm | A55 cold / cold p99 / warm |
+| --- | --- | --- |
+| main before this | 13.38 / 22.90 / 5.48 | 63.19 / 88.26 / 16.79 |
+| with the compressed data prefetched | 13.49 / 23.16 / 5.64 | 61.19 / 83.61 / 14.54 |
+| and the bit order and the token table's prefetch | 10.43 / 16.67 / 5.63 | 62.40 / 85.31 / 14.72 |
+
+The A76 reads cold 3.0 µs faster and 6.2 µs at p99, the A55 2.2 µs faster warm. On the score's hull
+`seqlz-fast-lit` is the best choice from 5.5 to 153 bytes per µs on the PC, from 0.9 to 82 on the big
+core, where `seqlz-fast` follows up to 252 and `lzo` is no longer on the hull, and from 0.2 to 16 on the
+little core, `seqlz-fast` up to 36. `tools/plot-devices.py`, docs/plots/devices.svg:
+
+![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
 
 ## Where the ratio of `zstd` comes from
 
