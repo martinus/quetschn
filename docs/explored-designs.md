@@ -1534,7 +1534,7 @@ pages zram keeps compressed:
   second lookup per sequence on the decoder's chain, or classes for the frequent offsets in the token,
   which grows the token's alphabet; "Offset classes from a histogram" found two more classes worth 0.1
   points at most. Classes for the offsets 2 and 8 alone are worth more, 5.8 to 9.2 bytes per page,
-  see below.
+  but not a format change, see below.
 * **Raw literals:** one Huffman table fitted to all of them would take 12 to 17 bytes per page off,
   6%, but per page they do not save 1/16 and 51 bytes, which is why they are raw.
 
@@ -1568,10 +1568,10 @@ rounds with the order of the codecs rotated, both codecs in modules built the sa
 per µs, where the A55 trades at 6 to 12. The writes of each codec stay within 1.4 µs of each other over
 the 5 rounds on the A55, within 0.3 µs on the A76. Not built.
 
-**Offsets 2 and 8 as classes of their own: 0.6% to 0.9% smaller, the decoder 1% to 3% slower.** Class 1
-spends 4 raw bits on offsets of which 2 and 8 are 70% to 85%. With a class each, without raw bits, the
-token says the offset, and the other offsets below 16 go to the class of 8 raw bits, which they share
-with 16 to 255. 7 classes instead of 6, 3584 tokens instead of 3072, the escape still sends 12 bits.
+**Offsets 2 and 8 as classes of their own: 0.6% to 0.9% smaller, the decoder 1% to 3% slower, not
+built.** Class 1 spends 4 raw bits on offsets of which 2 and 8 are 70% to 85%. With a class each,
+without raw bits, the token says the offset, and the other offsets below 16 go to the class of 8 raw
+bits, which they share with 16 to 255. 7 classes instead of 6, 3584 tokens instead of 3072, the escape still sends 12 bits.
 `tools/seqlz-bound/seqs.c` writes the sequences of every page, `offsets.py` prices layouts of the
 classes on them: the token with an 11-bit Huffman code and an escape, trained on the other three dumps,
 plus the raw bits. Bytes per page against today's layout:
@@ -1615,11 +1615,18 @@ On the Mi 9T, as for the literal tables above, 6 rounds of the three, the order 
 the write 0.12 and 0.35 µs. A run of 5 rounds before, 6 against 7 classes only, gave 0.06 and 0.17 µs
 on the write. With the warm read's difference in place of the cold one, that is 0.1 to 0.2 µs per page
 written on the A76 and 0.2 to 0.4 µs on the A55, for 5.6 bytes: 28 to 56 bytes per µs and 14 to 28,
-the A55's above the 6 to 12 it trades at. Its cold read moves by up to 4 µs between rounds and does
-not tell the two apart. The 8 classes compress
-1.4 bytes per page less than 7 on the PC, but in zsmalloc on the phone they took the same memory, and
-the encoder needs more work for the extra class, 2% more compress cycles on the PC, 0.4 µs per write on
-the A55: not worth it. Not built yet: the 7 classes change the format.
+the A55's above the 6 to 12 it trades at. That assumes the cold read loses what the warm one does,
+which is not measured: the cold read of the A55 moves by up to 4 µs between rounds and does not tell
+the two apart, and the time per page written of the A76 is within the 0.66 µs that the placement of a
+module moves it. The 8 classes compress 1.4 bytes per page less than 7 on the PC, but in zsmalloc on
+the phone they took the same memory, and the encoder needs more work for the extra class, 2% more
+compress cycles on the PC, 0.4 µs per write on the A55: not worth it.
+
+Not built: 0.6% is too little for a format change and a 1.4% slower read. The read is slower for sure,
+any gain in time per page written is within the noise, and the change would touch `FORMAT.md`, the
+reference decoder, the tests, both sets of tables and the visualisation pages, for 3 more instructions
+per sequence in the decoder and a class rule written around gcc. Should the token's alphabet change for
+another reason, the two classes cost little on top.
 
 ## Where the ratio of `zstd` comes from
 
