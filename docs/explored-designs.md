@@ -1571,10 +1571,10 @@ the 5 rounds on the A55, within 0.3 µs on the A76. Not built.
 **Offsets 2 and 8 as classes of their own: 0.6% to 0.9% smaller, the decoder 1% to 3% slower, not
 built.** Class 1 spends 4 raw bits on offsets of which 2 and 8 are 70% to 85%. With a class each,
 without raw bits, the token says the offset, and the other offsets below 16 go to the class of 8 raw
-bits, which they share with 16 to 255. 7 classes instead of 6, 3584 tokens instead of 3072, the escape still sends 12 bits.
-`tools/seqlz-bound/seqs.c` writes the sequences of every page, `offsets.py` prices layouts of the
-classes on them: the token with an 11-bit Huffman code and an escape, trained on the other three dumps,
-plus the raw bits. Bytes per page against today's layout:
+bits, which they share with 16 to 255. 7 classes instead of 6, 3584 tokens instead of 3072, the
+escape still sends 12 bits. `tools/seqlz-bound/seqs.c` writes the sequences of every page,
+`offsets.py` prices layouts of the classes on them: the token with an 11-bit Huffman code and an
+escape, trained on the other three dumps, plus the raw bits. Bytes per page against today's layout:
 
 | layout, model | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
 | --- | --- | --- | --- | --- |
