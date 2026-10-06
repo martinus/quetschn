@@ -987,9 +987,20 @@ The decoder is as fast with them. Kernel VM, `MODE=swap`, the backend's prefetch
 | the second phone dump | 6 October | 18 874 368 | 3.16 | 3.60 | 1.76 |
 | | new | 18 890 752 | 3.16 | 3.59 | 1.74 |
 
+**How much room is left: 0.7% on the phone.** Trained on the dump that is measured, 32 starts, which no
+real table can be:
+
+| | first desktop | second desktop | phone |
+| --- | --- | --- | --- |
+| the new tables | 999.8 | 1259.9 | 896.9 |
+| trained on the dump itself | 984.6 | 1228.2 | 890.9 |
+
+That bounds what any training of these tables gets: 1.5% and 2.5% on the desktop dumps, 0.7% on the
+phone. More than that needs a change of what the tables are, not of how they are trained.
+
 Not done from #57: splitting and merging tables, and training for zsmalloc's size classes instead of
 bits. With the training objective that weakly tied to other pages, a better optimum on the training
-pages is unlikely to be the lever.
+pages is unlikely to be the lever, and the bound above leaves little for it.
 
 ## The format written down: one set of tables, and stream sizes that hold
 
