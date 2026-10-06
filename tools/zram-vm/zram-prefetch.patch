@@ -11,7 +11,7 @@
  #include <linux/bio.h>
  #include <linux/bitops.h>
  #include <linux/blkdev.h>
-@@ -2099,6 +2102,13 @@
+@@ -2099,6 +2102,23 @@
  	return 0;
  }
  
@@ -21,17 +21,30 @@
 +/* EXPERIMENT: flush the compressed data first, as if it had not been read for a long time */
 +static bool zram_flush_src;
 +module_param(zram_flush_src, bool, 0644);
++/* the time the flushes took, to subtract it from a timed swap-in */
++static unsigned long zram_flush_ns;
++module_param(zram_flush_ns, ulong, 0444);
++/* EXPERIMENT: the time of zcomp_decompress() alone, summed, and how many */
++static bool zram_time_decomp;
++module_param(zram_time_decomp, bool, 0644);
++static unsigned long zram_decomp_ns, zram_decomp_n;
++module_param(zram_decomp_ns, ulong, 0444);
++module_param(zram_decomp_n, ulong, 0444);
++
 +
  static int read_compressed_page(struct zram *zram, struct page *page,
  				unsigned long index)
  {
-@@ -2116,6 +2126,23 @@
+@@ -2116,7 +2136,35 @@
  	src = zs_obj_read_begin(zram->mem_pool, handle, size,
  				zstrm->local_copy);
  	dst = kmap_local_page(page);
 +	if (READ_ONCE(zram_flush_src)) {
++		u64 t0 = ktime_get_ns();
++
 +		clflush_cache_range(src, size);
 +		mb();
++		zram_flush_ns += ktime_get_ns() - t0;
 +	}
 +	{
 +		/* EXPERIMENT: the destination for writing and the compressed data at once */
@@ -46,6 +59,16 @@
 +			for (p = (char *)src + L1_CACHE_BYTES; p < (char *)src + size; p += L1_CACHE_BYTES)
 +				asm("prefetcht0 %0" : : "m"(*p));
 +	}
- 	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
+-	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
++	if (READ_ONCE(zram_time_decomp)) {
++		u64 t0 = ktime_get_ns();
++
++		ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
++		zram_decomp_ns += ktime_get_ns() - t0;
++		zram_decomp_n++;
++	} else {
++		ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
++	}
  	kunmap_local(dst);
  	zs_obj_read_end(zram->mem_pool, handle, size, src);
+ 	zcomp_stream_put(zstrm);
