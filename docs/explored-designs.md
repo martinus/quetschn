@@ -1497,6 +1497,66 @@ little core, `seqlz-fast` up to 36. `tools/plot-devices.py`, docs/plots/devices.
 
 ![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
 
+## How tight the bits are: ANS would give 0.3% at most, the offsets have 2%, 16 literal tables 0.1% to 2%
+
+*`seqlz-fast-lit` is about 4% above `zstd` 3 in bytes. Is there room in how tightly it packs the bits,
+without a slower parse?* `tools/seqlz-bound/bound.c` compresses every page of a dump, counts the bits of
+each kind of field, and checks per page that they add up to the compressed size; `bound.py` puts next to
+each kind the bits of Huffman codes fitted to that same dump, without a length limit, and the entropy of
+the dump's own counts. Fitted codes minus the entropy is what a coder with fractional bits, ANS as in
+`zstd`'s FSE, could take off with the same model. `seqlz`'s codes minus the fitted ones is what the
+tables lose by being fixed, trained on other pages and limited to 11 and 10 bits. Bytes per page, of the
+pages zram keeps compressed:
+
+| | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 |
+| --- | --- | --- | --- | --- |
+| all | 911.5 | 1174.2 | 648.4 | 792.2 |
+| tokens | 200.2 | 252.7 | 144.7 | 164.5 |
+| of them the escaped ones | 29.9 | 60.2 | 16.5 | 27.0 |
+| coded literals | 264.4 | 493.1 | 145.4 | 215.0 |
+| raw literals | 284.1 | 227.5 | 254.3 | 296.8 |
+| offset bits | 138.0 | 175.6 | 86.7 | 95.6 |
+| length values, codes and extra bits | 18.3 | 17.0 | 12.4 | 15.0 |
+| headers and fill bits | 6.4 | 8.3 | 4.8 | 5.3 |
+| ANS could take off, tokens, length values and coded literals | 2.4 | 3.5 | 1.4 | 1.9 |
+| the fixed tables lose, the same | 14.4 | 75.7 | 4.6 | 6.4 |
+| the entropy of the offsets, by class | 118.1 | 156.4 | 70.5 | 80.5 |
+
+* **ANS: 0.2% to 0.3%.** Huffman codes fitted to a dump are 1.4 to 3.5 bytes per page above its
+  entropy. Not worth a coder whose decoder is a state machine on every symbol.
+* **The tables: little on three dumps, 76 bytes on desktop 2,** 22 in the tokens and 54 in the coded
+  literals, against tables fitted to desktop 2 itself, so an upper bound. Its literals fit the 8 tables
+  badly, which more literal tables fix, see below. Its tokens fit badly too: 30 escaped tokens per page,
+  16 bits each.
+* **The offsets: 15 to 20 bytes per page, 2%,** stored as plain bits where their entropy is less.
+  Class 1, the offsets 1 to 15 in 4 bits, carries about 2 bits: offset 2 is 39% to 48% of it and offset
+  8 30% to 45%. Classes 3 and 5 give 2 to 7 bytes each. Getting that needs a code for the offset, a
+  second lookup per sequence on the decoder's chain, or classes for the frequent offsets in the token,
+  which grows the token's alphabet; "Offset classes from a histogram" found two more classes worth 0.1
+  points at most. Not built.
+* **Raw literals:** one Huffman table fitted to all of them would take 12 to 17 bytes per page off,
+  6%, but per page they do not save 1/16 and 51 bytes, which is why they are raw.
+
+**16 literal tables instead of 8.** Byte 2 holds the table in 4 bits, the width of the stream sizes in
+bits 4 to 6, bit 7 stays zero. Trained on the same pages, with the same k-means, zsmalloc bytes per page
+of all pages:
+
+| literal tables | desktop 1 | desktop 2 | phone 10-03 | phone 10-04 | compress cycles, hot loop | decode cycles |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8, as now | 1002.8 | 1312.3 | 705.3 | 896.3 | 21 609 | 7350 |
+| 8, trained again | 997.1 | 1308.8 | 707.3 | 896.9 | | |
+| 16 | 994.1 | 1283.8 | 704.9 | 893.0 | 23 137 | 7343 |
+| 32 | 990.3 | 1279.5 | 699.1 | 889.0 | 26 453 | 7451 |
+
+16 tables store 8.7, 28.5, 0.4 and 3.3 bytes per page less than now, 3.0, 25.0, 2.4 and 3.9 less than 8
+tables trained the same way. The decoder is as fast, it still looks up one table per page, and needs 26
+KiB more for the tables, once, not per CPU. The encoder counts the literals in 16 tables, 2 adds per
+literal instead of 1: 7.1% more compress cycles on the PC, perf over the 2000 page sample of the first
+dump, CPU 2 at 4.5 GHz, median of 3. 32 tables save about 4 bytes more on every dump, for 22% more
+compress cycles, and take the last 2 free bits of byte 2. Not on the phone yet, where the write is most
+of the time per page written: 16 tables are worth it there if they cost less than about 0.3 to 0.5 µs
+per write on the A55, at its 6 to 12 bytes per µs.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
