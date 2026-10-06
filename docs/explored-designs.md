@@ -1747,7 +1747,7 @@ mutation changes a sequence instead of breaking the Huffman code. Two things mad
 useless: seqlz built with the fuzzer's coverage counters cost 3.6 times as much on one page and 6.6
 times on another, so the search climbed the wrong order, and buckets of 1024 instructions were too
 coarse to climb at all. Without the counters in seqlz, and with buckets of 16 instructions above the
-best known cost, the searches found pages 1.3% to 4.1% costlier than the made-up ones. Looking at what
+best known cost, the searches found pages 1.3% to 4.2% costlier than the made-up ones. Looking at what
 those pages are gave two kinds by hand that cost more than anything found:
 
 * **`records`**, the most for the compressor: records of 18 literals and 4 bytes that are the same in
