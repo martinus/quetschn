@@ -1628,6 +1628,69 @@ reference decoder, the tests, both sets of tables and the visualisation pages, f
 per sequence in the decoder and a class rule written around gcc. Should the token's alphabet change for
 another reason, the two classes cost little on top.
 
+## The A55 again: the write as on 4 October, the decoder's code prefetched for cold reads, not kept
+
+*With the ratio close to what this design can give, the time on the little core is the larger gap:
+per page written `seqlz-fast-lit` takes 57.1 µs on the Mi 9T's A55, `lz4` 43.9, 30% more.* The write
+is 36.4 against 27.5 µs of that, the cold read 60.8 against 48.0.
+
+**The write.** `quetschn-bench-interleaved` from `main`, NDK r30 (clang 21), on the A55 with the clock
+fixed at 1.8 GHz, the 20 000 pages of phone 10-04, `simpleperf stat` of 6 passes minus 1, median of 3:
+
+| codec | cycles per page | instructions |
+| --- | --- | --- |
+| `lz4` | 30 032 | 25 095 |
+| `seqlz-fast` | 42 298 | 37 870 |
+| `seqlz-fast-lit` | 47 776 | 44 189 |
+
+17 700 cycles apart are 9.8 µs, about the 8.9 µs between the writes in zram. `simpleperf record` by
+source line, the share of `seqlz-fast-lit`'s compression:
+
+| part | share |
+| --- | --- |
+| the positions without a match, with the hash | 36% |
+| `count()` | 19.5% |
+| writing the sequences | 18% |
+| `code_literals()` | 13% |
+| after a hit: the backward extension, the restart after the match | 9.6% |
+| clearing the hash table, `memset` of 8 KiB | 3.6% |
+
+The same picture as on 4 October ("The matcher's table with the bytes, its loop in assembly"), whose C
+variants of the loop over the positions all lost against the chain clang makes of it. A page has 643
+literals and 163 sequences, a run without a match is 4 positions long. `code_literals()` counts each
+literal in all 8 tables at once, a load of the byte, a load of its 8 costs and an add, on every page,
+also on the 3 of 4 that stay raw. clang added an add per byte for the address, because the index is
+32 bits: with a pointer instead, 380 instructions per page fewer, but the cycles the same, 48 056
+against 47 687, median of 5 alternating, the loop waits for its loads. Not kept. Nothing else new to
+try here in C.
+
+**The cold read.** In userspace, the same build and pages, `--cold` reads 2 MiB of other data and
+flushes the page and the output before each decode, mean over the pages of the median of 3 loops:
+
+| codec | cold | warm | cold - warm |
+| --- | --- | --- | --- |
+| `lz4` | 9.14 µs | 5.58 µs | 3.56 µs |
+| `seqlz-fast` | 13.64 µs | 7.27 µs | 6.37 µs |
+| `seqlz-fast-lit` | 15.92 µs | 8.32 µs | 7.60 µs |
+
+In zram the same difference is 36.7 µs for `lz4` and 47.3 µs for `seqlz-fast-lit`, 10.6 µs apart,
+where userspace has 4.0. "In the phone's own kernel" above put the gap on the tables and the code that
+come from DRAM, and the tables are prefetched since. The code is not: in the kernel module
+`seqlz_decode` is 2760 bytes, `decode_literals` 4036, 108 lines of 64 bytes next to the 192 of the
+tables. So the decoder's code prefetched like its tables, at the start of `seqlz_decode`. 3 codecs
+alternating per round, 6 rounds, mean of each round, paired against `main` in the same round:
+
+| variant | A55 cold | A55 warm | A76 cold |
+| --- | --- | --- | --- |
+| the first 3 KiB of `seqlz_decode` | -1.66 µs [-4.09, +0.51] | +0.09 to +0.37 µs | +0.40 to +0.78 µs |
+| and the 4 KiB of `decode_literals` | -0.94 µs [-3.30, +1.24] | +0.36 to +0.69 µs | +0.87 to +1.36 µs |
+| the first 3 KiB, on the A55 only, the modules loaded again | -0.83 µs [-3.20, +1.68] | +0.22 to +0.48 µs | the same |
+
+On the A55 the cold read moves by up to 4 µs between rounds; against that, about 1 µs less is not
+clear, while every warm read pays 0.2 to 0.5 µs for the prefetches. On the A76 they only cost. Not
+kept. The warm reads are 2.2 µs apart, so most of the 10.6 µs are misses that only a cold page has;
+the token table of 4 KiB in "In the phone's own kernel" did not show a clear difference either.
+
 ## Where the ratio of `zstd` comes from
 
 *The most useful result so far: the gap to `zstd -1` is how the sequences are coded, not the literals
