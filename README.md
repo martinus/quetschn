@@ -78,7 +78,7 @@ tools/plot-codecs.py --run "first dump=first.log" --run "second dump=second.log"
 `MODE=swap` measures zram as swap instead, the whole page fault of a swap-out and a swap-in; a fault on
 a same-filled page, which zram stores without the codec, is the kernel's part. `tools/swap-fault/`
 does the same on a running Linux as root, e.g. a rooted phone, with zram devices that are not in use.
-`tools/plot-swap-fault.py` draws both:
+`tools/plot-swap-fault.py` draws both, memory against time:
 
 ```sh
 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >vm.log
