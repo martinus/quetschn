@@ -19,6 +19,10 @@ the latency. The sample is written once, next to the corpus, as <corpus>-sample<
 Cold latency changes between processes by more than the confidence interval of one run says, e.g.
 with the physical pages the buffers get. So the latency runs RUNS times, and the table shows the
 median of the runs and the smallest and largest difference to the baseline.
+
+On x86-64 a codec's write and cold read times depend on the other codecs in the run (docs/
+explored-designs.md, "The harness on the PC"): compare times between codecs with tools/zram-vm/run.sh
+instead, and use this for sizes and for A/B runs of one codec.
 EOF2
     exit 2
 }

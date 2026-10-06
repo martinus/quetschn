@@ -1497,6 +1497,41 @@ little core, `seqlz-fast` up to 36. `tools/plot-devices.py`, docs/plots/devices.
 
 ![The codecs on the PC and the phone, in the kernel](plots/devices.svg)
 
+## The harness on the PC: a codec's times depend on the other codecs in the run, not found why
+
+*`quetschn-bench-interleaved` gave `seqlz-fast-lit` faster writes than `seqlz-fast`, which does less.*
+Ryzen 9 7950X, CPU 2 at a fixed 4.5 GHz, boost off, the 2000 page sample of the first dump, means in µs:
+
+| run | `lz4` write | `lz4` cold read |
+| --- | --- | --- |
+| alone | 2.64 | 1.64 |
+| 5 instances of `lz4` in one run | 2.56 to 2.59 | 1.08 to 1.10 |
+| with `lzo-rle` / `seqlz-fast` | 2.88 / 2.86 | 1.52 / 1.49 |
+| with `zstd`, either order | 3.27 to 3.30 | 1.51 to 1.54 |
+| with all five, 20 000 pages | 3.65 | 1.13 |
+
+Writes get slower when another codec runs between them, on every page, the more the larger the other
+one's code and data, `zstd` most; another instance of the same codec costs nothing. `seqlz-fast` wrote
+in 2.73 alone, 3.16 with `lz4`, 4.08 with `zstd` and 4.21 with all five, `seqlz-fast-lit` in 3.22
+alone and 3.39 with all five, where it always came right after `seqlz-fast` and its matcher. Cold
+reads are slowest alone and fastest with five codecs taking turns. Each of these changed nothing, so
+none is kept:
+
+* the compressions into one buffer of two pages, as zram's per-CPU buffer, instead of the slot the
+  cold decompressions flush;
+* the compressions codec by codec over the 16 pages of a block, instead of codec after codec on the
+  same page;
+* the page flushed from the cache before every compression, as a page that is swapped out is not in
+  it;
+* one compression untimed before each codec's 16, so that it does not start cold;
+* the output page flushed after each cold decompression instead of right before the next one.
+
+That a warm-up page does not help and the slower writes are spread over all pages points at the branch
+predictors rather than the caches, not measured. Until it is found, the harness is for sizes, and for
+times only within one codec, e.g. an A/B of two builds of the same codec; between codecs the kernel
+VM and zramphone in the phone's kernel gave orders that hold. The phone's harness tables above did not
+show such a reversal, but may have the same effect.
+
 ## How tight the bits are: ANS would give 0.3% at most, the offsets have 2%, 16 literal tables 0.1% to 2%
 
 *`seqlz-fast-lit` is about 4% above `zstd` 3 in bytes. Is there room in how tightly it packs the bits,
