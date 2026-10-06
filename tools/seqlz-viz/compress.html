@@ -493,7 +493,7 @@ function layout(bytes, coded) {
     }
     base = 8 * C.starts[8];
   } else {
-    mark(0, 16, K.HDR, 0, last);
+    mark(0, 16, K.HDR, 0, S.stepIdx.lits);
     seqs.forEach((q, i) => mark(16 + 8 * q.li, 8 * q.ll, K.LIT, i, S.seq0 + i));
     base = 8 * (2 + n);
   }
@@ -646,10 +646,27 @@ function drawHex() {
 
 /* the compressed page so far */
 const COLS = 32;
+// Where the bytes of a layout are drawn. While the matcher runs, the encoder writes into one buffer of
+// two pages at two places: the literals from byte 2, the bitstream from byte 2 + 4096 + 16, behind
+// room for a page of literals. When it is done it moves the bitstream in behind the literals and writes
+// the header. So until then the bitstream is drawn as a block of its own.
+const BITS_AT = 2 + PAGE + 16;
+function segs() {
+  const L = curLay(), n = S.P.n;
+  if (S.cur >= S.stepIdx.lits) return [{ from: 0, len: L.bytes.length, row: 0 }];
+  const r1 = Math.ceil((2 + n) / COLS);
+  return [{ from: 0, len: 2 + n, row: 0 }, { from: 2 + n, len: L.bytes.length - 2 - n, row: r1 + 1, label: r1, at: BITS_AT }];
+}
+function cellOf(b) {
+  for (const g of segs()) if (b >= g.from && b < g.from + g.len) { const k = b - g.from; return [k % COLS, g.row + Math.floor(k / COLS)]; }
+  return null;
+}
 function layoutComp() {
   const w = $("#compBox").clientWidth - 12;
   S.cc = Math.max(9, Math.floor(w / COLS));
-  const rows = Math.ceil(Math.max(S.raw.length, S.final.length) / COLS);
+  const n = S.P.n;
+  const split = Math.ceil((2 + n) / COLS) + 1 + Math.ceil((S.raw.length - 2 - n) / COLS);
+  const rows = Math.max(split, Math.ceil(S.final.length / COLS));
   S.compCtx = fitCanvas($("#compCv"), S.cc * COLS, S.cc * rows);
   S.compRows = rows;
 }
@@ -657,8 +674,22 @@ function drawComp() {
   const ctx = S.compCtx, c = S.cc, L = curLay(), cur = S.cur, col = S.col;
   ctx.clearRect(0, 0, c * COLS, c * S.compRows);
   const sw = (c - 2) / 8, nbytes = L.bytes.length;
+  const G = segs();
+  for (const g of G) {
+    if (g.label === undefined) continue;
+    const y = g.label * c + c / 2;
+    ctx.strokeStyle = col.line; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c * COLS, y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = `600 ${Math.max(9, Math.min(11, c - 1))}px ${getComputedStyle(document.body).fontFamily}`;
+    const t = ` the bitstream, written from byte ${fmt(g.at)} of the buffer `;
+    const tw = ctx.measureText(t).width;
+    ctx.fillStyle = col.panel2; ctx.fillRect(8, y - c / 2, tw, c);
+    ctx.fillStyle = col.ink3; ctx.textBaseline = "middle"; ctx.fillText(t, 8, y + 0.5);
+  }
   for (let b = 0; b < nbytes; b++) {
-    const x = (b % COLS) * c, y = Math.floor(b / COLS) * c;
+    const xy = cellOf(b);
+    if (!xy) continue;
+    const x = xy[0] * c, y = xy[1] * c;
     for (let i = 0; i < 8; i++) {
       const p = b * 8 + i, k = L.kind[p], st = L.step[p];
       if (st > cur) { ctx.fillStyle = rgba(col.ink3, 0.12); ctx.fillRect(x + 1 + i * sw, y + c - 3, Math.max(0.6, sw - 0.35), 2); continue; }
@@ -674,8 +705,8 @@ function drawComp() {
     let i0 = 8, i1 = -1;
     for (let i = 0; i < 8; i++) if (L.step[b * 8 + i] === cur && L.kind[b * 8 + i] !== K.PAD) { i0 = Math.min(i0, i); i1 = i; }
     if (i1 < 0) continue;
-    const x = (b % COLS) * c, y = Math.floor(b / COLS) * c;
-    ctx.strokeRect(x + 1 + i0 * sw - 0.5, y + 0.5, (i1 - i0 + 1) * sw + 1, c - 1);
+    const [cx, cy] = cellOf(b);
+    ctx.strokeRect(cx * c + 1 + i0 * sw - 0.5, cy * c + 0.5, (i1 - i0 + 1) * sw + 1, c - 1);
   }
   let written = 0;
   for (let b = 0; b < nbytes; b++) for (let i = 0; i < 8; i++) if (L.step[b * 8 + i] <= cur && L.kind[b * 8 + i] !== K.PAD) { written++; break; }
@@ -687,7 +718,7 @@ function scrollComp() {
   if (s.k === "seq") p = L.base + S.P.seqs[s.i].tp;
   if (s.k === "streams" || s.k === "lits") p = 0;
   if (p < 0) return;
-  const row = Math.floor((p >> 3) / COLS), box = $("#compBox"), y = row * S.cc;
+  const row = cellOf(p >> 3)[1], box = $("#compBox"), y = row * S.cc;
   if (y < box.scrollTop + 20 || y > box.scrollTop + box.clientHeight - 40) box.scrollTo({ top: Math.max(0, y - box.clientHeight / 3), behavior: S.playing && S.speed > 12 ? "auto" : "smooth" });
 }
 
@@ -797,11 +828,11 @@ function card() {
     const hb = S.coded ? P.coding.starts[0] : 2;
     h += op(kc(K.HDR), "H", S.coded
       ? `<p>The header, ${hb} bytes: <code>${Array.from(F.subarray(0, hb), hex2).join(" ")}</code>. ${fmt(n)} literals with the top bit set for coded literals, table ${P.coding.set}, ${P.coding.width}-bit stream sizes.</p>`
-      : `<p>The header, 2 bytes: <code>${hex2(F[0])} ${hex2(F[1])}</code>, the number of literals, ${fmt(n)}, lowest byte first. The encoder writes it last: it knows the number only at the end.</p>`);
+      : `<p>The header, 2 bytes: <code>${hex2(F[0])} ${hex2(F[1])}</code>, the number of literals, ${fmt(n)}, lowest byte first, written when the matcher was done: only then is the number known.</p>`);
     h += op(kc(K.LIT), "L", S.coded
       ? `<p>The literals in 8 streams, ${fmt(P.coding.starts[8] - P.coding.starts[0])} bytes instead of ${fmt(n)}.</p>`
       : `<p>The ${fmt(n)} literals as they are, right behind the header.</p>`);
-    h += op(kc(K.TOK), "B", `<p>The bitstream of the ${fmt(P.seqs.length)} sequences, ${fmt(P.nbits)} bits, ${fmt(Math.ceil(P.nbits / 8))} bytes, moved in right behind the literals. The last byte is filled up with zeros.</p>`);
+    h += op(kc(K.TOK), "B", `<p>The bitstream of the ${fmt(P.seqs.length)} sequences, ${fmt(P.nbits)} bits, ${fmt(Math.ceil(P.nbits / 8))} bytes, right behind the ${S.coded ? "streams" : "literals"}. The last byte is filled up with zeros.</p>`);
     h += op("var(--ok)", "✓", `<p>Ratio <b>${(4096 / sz).toFixed(2)}:1</b>, ${((100 * sz) / 4096).toFixed(1)}% of the page. ${sz < 3625 ? "zram keeps it compressed; from 3625 bytes on it would store the page as it is." : "zram stores this page as it is: it stores every page of 3625 bytes and more uncompressed."}</p>`);
     h += `</ul>`;
   }
@@ -845,7 +876,7 @@ function seqCard(i) {
   if (q.llv) h += op(kc(K.LLV), "L", lv(q.llv, "ll", 15));
   if (q.mlv) h += op(kc(K.MLV), "M", lv(q.mlv, "ml", 35));
   const lits = Array.from(S.orig.subarray(q.a, q.d));
-  h += op(kc(K.LIT), "→", ll ? `<p>The ${plural(ll, "literal")} go to the literal buffer, literals ${fmt(q.li)} to ${fmt(q.li + ll - 1)}: 16 bytes at a time, without a loop for the most.</p>${chipsOf(lits, kc(K.LIT))}` : `<p>No literals: this match starts right behind the one before.</p>`);
+  h += op(kc(K.LIT), "→", ll ? `<p>${ll === 1 ? "The literal goes" : `The ${fmt(ll)} literals go`} to the buffer behind the ones before, from byte ${fmt(2 + q.li)}, which is already ${ll === 1 ? "its" : "their"} place in the compressed page: 16 bytes at a time, without a loop for the most.</p>${chipsOf(lits, kc(K.LIT))}` : `<p>No literals: this match starts right behind the one before.</p>`);
   h += `</ul>`;
   // the cost against lz4's format
   const tb = q.tc.length + (escd ? 12 : 0), lvb = (q.llv ? q.llv.code.length + q.llv.xl : 0) + (q.mlv ? q.mlv.code.length + q.mlv.xl : 0);
@@ -856,15 +887,16 @@ function seqCard(i) {
   const seg = (v, k) => (v ? `<div style="width:${(100 * v) / max}%;background:${kc(k)}"></div>` : "");
   h += `<div class="cost"><span class="small"><b>seqlz</b></span><div class="cbar">${seg(tb, escd ? K.ESC : K.TOK)}${seg(q.rl, K.OFF)}${seg(lvb, K.LLV)}${seg(8 * ll, K.LIT)}</div><span class="mono small">${sq} bits</span>
     <span class="small muted">lz4 format</span><div class="cbar">${seg(8, K.TOK)}${seg(last ? 0 : 16, K.OFF)}${seg(l4len, K.LLV)}${seg(8 * ll, K.LIT)}</div><span class="mono small">${l4} bits</span></div>
-    <p class="small muted" style="margin:0">${tb + q.rl + lvb} bits for the sequence, all written into a 64-bit register and stored 8 bytes at a time, once per sequence.${ll ? " The literals still count 8 bits each; they may get shorter at the end." : ""}</p>`;
+    <p class="small muted" style="margin:0">${tb + q.rl + lvb} bits for the sequence, written into a 64-bit register and stored 8 bytes at a time, once per sequence, into the bitstream's own part of the buffer, from byte ${fmt(BITS_AT)}: how many literals come before it is known only at the end.${ll ? " The literals still count 8 bits each; they may get shorter at the end." : ""}</p>`;
   return h;
 }
 
 function litsCard() {
   const P = S.P, C = P.coding, n = P.n;
   let h = `<div class="eyebrow">The literals · ${plural(n, "byte")}</div>`;
+  const finish = op(kc(K.HDR), "↑", `<p>The matcher is done. The encoder moves the bitstream, ${plural(Math.ceil(P.nbits / 8), "byte")}, from byte ${fmt(BITS_AT)} in right behind the literals, to byte ${fmt(2 + n)}, and writes the header: ${fmt(n)} literals, <code>${hex2(S.raw[0])} ${hex2(S.raw[1])}</code>. That is the page with the literals as they are, ${fmt(S.raw.length)} bytes.</p>`);
   if (S.vk === "fast") {
-    h += `<div class="steptitle">seqlz-fast keeps them as they are</div><ul class="ops">`;
+    h += `<div class="steptitle">seqlz-fast keeps them as they are</div><ul class="ops">${finish}`;
     h += op(kc(K.LIT), "→", `<p>The ${fmt(n)} literals stay in front of the bitstream as they are, 1 byte each. Not counting them saves the time; seqlz-fast-lit would ${C.pays ? `save ${fmt(n + 2 - (3 + C.width + C.coded))} bytes on this page by coding them` : "not code them on this page either"}.</p>`);
     h += `</ul>`;
     return h;
@@ -872,7 +904,7 @@ function litsCard() {
   const totals = C.cost.map((c) => c.reduce((a, v) => a + v, 0));
   const bytes = C.cost.map((c) => c.reduce((a, v) => a + Math.ceil(v / 8), 0));
   const max = Math.max(...bytes, n);
-  h += `<div class="steptitle">${C.pays ? `Coded with table ${C.set}` : "They stay as they are"}</div><ul class="ops">`;
+  h += `<div class="steptitle">${C.pays ? `Coded with table ${C.set}` : "They stay as they are"}</div><ul class="ops">${finish}`;
   let bars = '<div class="cost" style="margin-top:8px">';
   bytes.forEach((cst, t) => {
     bars += `<span class="small${t === C.set ? "" : " muted"}">table ${t}</span><div class="cbar"><div style="width:${(100 * cst) / max}%;background:${t === C.set ? kc(K.LIT) : "var(--ink-3)"};opacity:${t === C.set ? 1 : 0.45}"></div></div><span class="small mono">${fmt(cst)} B</span>`;
@@ -1071,10 +1103,10 @@ function compHit(e) {
   const r = $("#compCv").getBoundingClientRect();
   const x = e.clientX - r.left, y = e.clientY - r.top;
   const col = Math.floor(x / S.cc), row = Math.floor(y / S.cc);
-  const L = curLay();
   if (col < 0 || col >= COLS || row < 0) return null;
-  const b = row * COLS + col;
-  if (b >= L.bytes.length) return null;
+  let b = -1;
+  for (const g of segs()) { const k = (row - g.row) * COLS + col; if (row >= g.row && k < g.len) b = g.from + k; }
+  if (b < 0) return null;
   const i = Math.max(0, Math.min(7, Math.floor((x - col * S.cc - 1) / ((S.cc - 2) / 8))));
   return { b, p: b * 8 + i };
 }
