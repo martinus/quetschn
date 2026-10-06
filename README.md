@@ -75,6 +75,17 @@ ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/second
 tools/plot-codecs.py --run "first dump=first.log" --run "second dump=second.log" --out codecs.png --out codecs.svg
 ```
 
+`MODE=swap` measures zram as swap instead, the whole page fault of a swap-out and a swap-in; a fault on
+a same-filled page, which zram stores without the codec, is the kernel's part. `tools/swap-fault/`
+does the same on a running Linux as root, e.g. a rooted phone, with zram devices that are not in use.
+`tools/plot-swap-fault.py` draws both:
+
+```sh
+MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >vm.log
+swap_fault corpus/first.pages 2 1 lz4 lzo zstd >cpu2.log    # pages, CPU, first zram index, codecs
+tools/plot-swap-fault.py --row "PC=vm.log" --row "Phone, little core=cpu2.log" --out swap-fault.svg
+```
+
 `quetschn-bench-spike-switch`, `-branchless`, `-zeroskip` and `-slots` run the decoder latency spike
 of `PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
 
