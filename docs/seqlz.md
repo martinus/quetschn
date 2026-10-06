@@ -24,6 +24,10 @@ The code is in [`explore/seqlz.c`](../explore/seqlz.c), [`explore/seqlz.h`](../e
   [What makes code slow on a CPU](#what-makes-code-slow-on-a-cpu), and [How seqlz stores a page](#how-seqlz-stores-a-page)
   up to and including [The literals](#the-literals-one-table-per-page-in-8-streams). The rest, and the parts
   folded away behind a click, are for readers who want to know why each detail is the way it is.
+* **Watch it.** [seqlz, bit by bit](seqlz-bit-by-bit.html) decodes three real pages one step at a
+  time, every bit coloured by what it means; [seqlz, compressed](seqlz-compressed.html) compresses
+  them, from the first position the matcher tries to the header. GitHub shows only their source:
+  download a file and open it in a browser.
 * **Two names, one format.** `seqlz-fast` stores the leftover bytes of a page as they are,
   `seqlz-fast-lit` also compresses them. Both write the same format, and one decoder reads both.
   Numbers are for `seqlz-fast-lit` unless they say otherwise.
@@ -474,13 +478,15 @@ per literal.
 
 </details>
 
-**The 1/16 rule.** The encoder codes the literals only if the 8 streams and 19 bytes more are smaller
-than 15/16 of the literals as they are, `coded + 19 < n − n / 16` in
+**The 1/16 rule.** The encoder codes the literals only if the 8 streams and 51 bytes more are smaller
+than 15/16 of the literals as they are, `coded + 51 < n − n / 16` in
 [`code_literals()`](../explore/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
 apart, so saving a few bytes mostly saves nothing, and coding the literals whenever they save
-anything gave less than 0.1 points more, for decoding time on every such page. The 19 bytes were the
-header when each stream size took 2 bytes. Counting the smaller header of today instead coded 10% more
-pages, 2 bytes smaller each, for 0.22 µs more per page written on the phone's little core.
+anything gave less than 0.1 points more, for decoding time on every such page. The 51 bytes are for
+the phone: a page with coded literals costs a fixed time to read, its literal table and the buffer the
+literals are decoded into, and on the phone's little core that is several µs. With 51 instead of 19
+bytes, pages are 7.9 bytes larger and the time per page written 2.7 µs shorter on the phone's little
+core, 1.1 µs on its big core; on the PC it is 11 bytes for 0.1 µs.
 `seqlz-fast` never codes literals.
 
 **8 streams, all with the same table.** The coded literals are dealt out like cards: literal 0 goes
@@ -661,7 +667,9 @@ it:
    code of its own, 11 bits, and a 12-bit offset. An escaped token, and a length value, load more
    before they read;
 2. looks up the next 11 bits in the token table, like the 3-bit table in
-   [Idea 2](#idea-2-frequent-things-get-short-codes). The entry has `ll`, `ml`, how many bits the
+   [Idea 2](#idea-2-frequent-things-get-short-codes). The bitstream is read highest bit first, so
+   these are the top 11 bits of the register, and the entries of a short code are next to each other
+   in the table: a page needs fewer of its cache lines. The entry has `ll`, `ml`, how many bits the
    sequence takes, how to cut the offset out of the bits after the token, and whether a length value
    follows. Unpacking the offset class at run time instead took 18 instructions, which matters on an
    in-order core;
@@ -744,10 +752,10 @@ things make the difference, each measured:
 >   zram dump of a phone.
 > * **arm64 on one phone.** The times here are from x86-64. On the small core of a Mi 9T phone, a
 >   Cortex-A55, in the phone's own kernel, on the pages of the first dump, a cold read takes 59 µs for
->   `seqlz-fast` and 65 µs for `seqlz-fast-lit` at the median, against 52 µs for `lz4`: 14% and 26% more.
->   On the big core it is 9.1 and 10.1 µs against 7.3. On the little core `seqlz-fast-lit` is the best
->   choice only up to 15 bytes per µs, `seqlz-fast` up to 36
->   ([explored-designs.md](explored-designs.md#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)).
+>   `seqlz-fast` and 61 µs for `seqlz-fast-lit` at the median, against 52 µs for `lz4`: 12% and 17% more.
+>   On the big core it is 9.3 and 9.4 µs against 7.2. On the little core `seqlz-fast-lit` is the best
+>   choice only up to 16 bytes per µs, `seqlz-fast` up to 36
+>   ([explored-designs.md](explored-designs.md#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster)).
 >   In a test that switches between 25 apps, with the same RAM given to zram, launches were not
 >   slower, and because `seqlz` stores pages smaller every app stayed in memory, where `lz4` lost some
 >   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
@@ -770,6 +778,7 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 | `ll`, `ml` and the offset class in one token | a symbol each | 22% fewer decode cycles, and smaller pages | |
 | the offset class in the token, plain offset bits after it | the offset's size Huffman coded on its own | 7% fewer decode cycles, 8168 instead of 8758 per page: one table lookup per sequence | 0.4 points |
 | token codes of at most 11 bits, a table of 2048 entries | 12 bits, 4096 entries | the slowest 1% of cold reads take 4350 instead of 5070 ns: the smaller table stays in L1, measured with entries of 2 bytes | none measured in size |
+| the bitstream read highest bit first | lowest bit first | a code's entries are one range of the token table, so a page needs 42 instead of 55 of its 128 cache lines, on every CPU without reversing bits | none, the same bytes |
 | rare tokens escaped | a code for every token | needed: 11 bits have room for 2048 codes, there are 3072 tokens | 16 bits for a rare token |
 | match lengths up to 34 in the token | up to 18 | a length value after 8.5% of the matches instead of 18.7%, and fewer mispredicted branches: 9180 instead of 9400 decode cycles | |
 | one repeat offset | three, as in `zstd` | 17% fewer decode cycles | 0.2 points: the other two were 11% of the matches |
@@ -805,13 +814,24 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 </details>
 
 <details>
+<summary><b>The decoder</b></summary>
+
+| choice | instead of | gain | price |
+| --- | --- | --- | --- |
+| the token table prefetched only on in-order arm64 cores | on every core | on a phone's Cortex-A76 cold reads 1.3 to 2.6 µs faster, at p99 about 5 µs; a Cortex-A55 needs the prefetch, 14.5 µs slower cold without any | the core's id read per page |
+
+</details>
+
+<details>
 <summary><b>Tried and not kept</b></summary>
 
 A token table chosen by the offset class before it (3 to 12 bytes per page for three times the
 tables), the literals coded inside the matcher's loop (more cycles than the pass after it), decoding
 the literals into the output page to save the work memory (slower cold reads), `lz4`'s format from a
 better compressor, other ways to compress memory pages and short strings (the word model of WKdm,
-BΔI, a byte shuffle, FSST and Tunstall codes for the literals), and recompressing idle pages. Why each
+BΔI, a byte shuffle, FSST and Tunstall codes for the literals), recompressing idle pages, and on the
+phone a token table of 10 bits (4.8 bytes per page for 2 µs of cold reads on the A55 only), literal
+tables of 9 bits, 4 literal streams, other hash sizes and fixed copies of 32 and 40 bytes. Why each
 of them failed is in [explored-designs.md](explored-designs.md).
 
 </details>

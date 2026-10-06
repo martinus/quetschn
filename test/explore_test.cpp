@@ -709,8 +709,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
                                             std::vector<unsigned char> const& literals,
                                             unsigned last_mlf = 0,
                                             unsigned last_cls = 0) {
-    // canonical Huffman codes, the first code of each length after the codes of all shorter lengths,
-    // written least significant bit first, so bit reversed
+    // canonical Huffman codes, the first code of each length after the codes of all shorter lengths
     auto codes = [](unsigned char const* len, unsigned n) {
         auto count = std::array<unsigned, 17>{};
         for (unsigned s = 0; s < n; ++s) {
@@ -725,12 +724,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         }
         auto out = std::vector<unsigned>(n);
         for (unsigned s = 0; s < n; ++s) {
-            auto c = next[len[s]]++;
-            auto r = 0U;
-            for (unsigned i = 0; i < len[s]; ++i) {
-                r |= ((c >> i) & 1U) << (len[s] - 1 - i);
-            }
-            out[s] = r;
+            out[s] = next[len[s]]++;
         }
         return out;
     };
@@ -738,9 +732,10 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
     auto const ll = codes(lengths.ll, SEQLZ_LEN_SYMBOLS);
     auto const ml = codes(lengths.ml, SEQLZ_LEN_SYMBOLS);
 
+    // the bitstream most significant bit first: of each code and number, and of each byte
     auto bits = std::vector<bool>();
     auto put = [&](unsigned v, unsigned n) {
-        for (unsigned i = 0; i < n; ++i) {
+        for (unsigned i = n; i-- > 0;) {
             bits.push_back(((v >> i) & 1U) != 0);
         }
     };
@@ -794,7 +789,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
     for (std::size_t i = 0; i < bits.size(); i += 8) {
         auto byte = 0U;
         for (std::size_t k = 0; k < 8 && i + k < bits.size(); ++k) {
-            byte |= (bits[i + k] ? 1U : 0U) << k;
+            byte |= (bits[i + k] ? 1U : 0U) << (7 - k);
         }
         out.push_back(static_cast<unsigned char>(byte));
     }
@@ -1265,13 +1260,13 @@ TEST_CASE("seqlz: the stream sizes take as many bits as the largest needs, 5 to 
         CHECK(largest < 1U << width);
         CHECK((width == SEQLZ_SIZE_BITS_MIN || largest >= 1U << (width - 1)));
         widths.insert(width);
-        // coded only where that saves 1/16 of the literals and 19 bytes, whatever the header takes
+        // coded only where that saves 1/16 of the literals and 51 bytes, whatever the header takes
         auto coded = 0U;
         for (unsigned st = 0; st < 8; ++st) {
             coded += stream_size(c, st);
         }
         auto const n_lit = static_cast<unsigned>(c[0] | (c[1] & 0x7f) << 8);
-        CHECK(coded + SEQLZ_LIT_CODED_MIN < n_lit - n_lit / 16);
+        CHECK(coded + 51 < n_lit - n_lit / 16);
         // a decoder takes any width from 5 to 12, and bits 6 and 7 of byte 2 must be 0
         for (unsigned w = width; w <= SEQLZ_SIZE_BITS_MAX; ++w) {
             auto const wider = with_size_width(c, w);
@@ -1495,7 +1490,8 @@ TEST_CASE("seqlz: the compressor codes the literals of every page where that pay
     auto e = std::vector<unsigned char>(2 * 4096);
     for (int round = 0; round < 20; ++round) {
         CAPTURE(round);
-        auto const skewed = bytes_as_coded_by(rng, 0);
+        // table 4 gives 00 2 bits: literals that save clearly more than the 1/16 and 51 bytes of the rule
+        auto const skewed = bytes_as_coded_by(rng, 4);
         // 512 records of 4 skewed literals and 4 bytes that are the same in every record, one sequence
         // each: a page that takes long to compress, which the budget of before kept raw
         auto many = std::vector<unsigned char>(4096);

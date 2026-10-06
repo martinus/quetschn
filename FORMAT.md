@@ -150,10 +150,13 @@ How the tables were trained is in [docs/explored-designs.md](docs/explored-desig
 ## The bitstream of the sequences
 
 `B` is all bytes from its start up to `len`, and `|B|` is their number. It is read one bit at a time,
-starting with bit 0, the least significant bit, of its first byte: bit `i` of `B` is bit `i mod 8` of
-byte `i div 8`. A decoder reads three kinds of things from it:
+starting with bit 7, the most significant bit, of its first byte: bit `i` of `B` is bit `7 - (i mod 8)`
+of byte `i div 8`, as in the literal streams. *Why:* a decoder looks up the next code by the top bits
+of its register, and in a table indexed by them each code's entries are one range, so a page needs
+fewer of the table's cache lines; read the other way round, the entries of a code are spread over the
+whole table. A decoder reads three kinds of things from it:
 
-- `read(n)`: the next `n` bits as a number, the first bit read is the least significant one. `read(0)`
+- `read(n)`: the next `n` bits as a number, the first bit read is the most significant one. `read(0)`
   is 0.
 - `symbol(table)`: the next bits, one by one, until they are a code of the table; the first bit read
   is the code's first bit. The result is the symbol of that code.
@@ -272,18 +275,18 @@ decoder may read past the end of a stream, as long as it checks this.
 
 ## Example
 
-The 9 bytes `02 00 61 62 47 96 7b fb 19` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
+The 9 bytes `02 00 61 62 e2 65 df db 98` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
 
 - `02 00`: `h = 2`, raw literals, `n = 2`; then the literals `61 62`, `a` and `b`.
-- `B` is `47 96 7b fb 19`, 40 bits, read least significant bit first:
+- `B` is `e2 65 df db 98`, 40 bits, read most significant bit first:
 
 | bits | read as | means |
 | --- | --- | --- |
 | `11100010011` | `symbol(TOK)` = 1010 | `ll = 2`, `mlf = 31`, class 1 |
-| `0100` | `read(4)` = 2 | `off = 2` |
+| `0010` | `read(4)` = 2 | `off = 2` |
 | | | `a b` appended |
 | `111011` | `symbol(ML)` = 23, `b = 11` | |
-| `11011011111` | `read(11)` = 2011 | `ml = 35 + 2^11 + 2011 = 4094`, `ab` repeated |
+| `11111011011` | `read(11)` = 2011 | `ml = 35 + 2^11 + 2011 = 4094`, `ab` repeated |
 | `10011000` | `symbol(TOK)` = 0 | `ll = 0`: the page is full, the end |
 
 ## What the compressor writes
@@ -297,8 +300,8 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
 - the escape only for a token without a code;
 - zero bits to fill the last byte of the bitstream and of each literal stream, and nothing after the
   bitstream;
-- coded literals only when `19 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
-  them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 19 is not the
+- coded literals only when `51 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
+  them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the
   size of the header; with it, a page has to save enough to be worth decoding its literals.
 
 The compressed page is at most `2 * PAGE` bytes, which is the buffer zram gives the compressor. zram

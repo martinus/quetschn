@@ -1,0 +1,1188 @@
+<title>seqlz Compressor at Work</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: the same bench as page.html, run the other way. The page as the matcher reads it on the left,
+   the compressor's step in the middle, the compressed page and the hash table filling up on the right. */
+:root {
+  --bg: #eef1f5;
+  --panel: #fbfcfd;
+  --panel-2: #f2f4f8;
+  --line: #d9dee7;
+  --ink: #18202e;
+  --ink-2: #4a5568;
+  --ink-3: #7b8597;
+  --accent: #2f6fe4;
+  --k-hdr: #5b6b82;
+  --k-set: #3a475b;
+  --k-size: #8d9ab0;
+  --k-lit: #d99a0b;
+  --k-tok: #2f6fe4;
+  --k-esc: #c2410c;
+  --k-off: #0f9e87;
+  --k-len: #d6409f;
+  --k-pad: #c4cad6;
+  --c-match: #4f86ea;
+  --c0: #0f9e87;
+  --c1: #9dbcf2;
+  --c2: #5a8be6;
+  --c3: #234fae;
+  --c4: #c6a2ef;
+  --c5: #7b4fd6;
+  --empty: #e3e7ee;
+  --glow: #ffffff;
+  --ok: #0f8a5f;
+  --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 4px 16px rgba(20, 30, 50, .06);
+  --f-display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d121c; --panel: #141b28; --panel-2: #19212f; --line: #263044; --ink: #e6ebf3; --ink-2: #aab4c6;
+    --ink-3: #74809a; --accent: #6a93ff; --k-hdr: #7d8ba3; --k-set: #a9b5c9; --k-size: #536079; --k-lit: #e8ae2e;
+    --k-tok: #6a93ff; --k-esc: #e5683a; --k-off: #26b79c; --k-len: #ec6fb5; --k-pad: #2b3447; --c-match: #5f8bf5;
+    --c0: #26b79c; --c1: #a9c3f7; --c2: #6a93ff; --c3: #3a62c9; --c4: #cfaef5; --c5: #9468e6; --empty: #1c2433;
+    --glow: #ffffff; --ok: #3fc58f; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d121c; --panel: #141b28; --panel-2: #19212f; --line: #263044; --ink: #e6ebf3; --ink-2: #aab4c6;
+  --ink-3: #74809a; --accent: #6a93ff; --k-hdr: #7d8ba3; --k-set: #a9b5c9; --k-size: #536079; --k-lit: #e8ae2e;
+  --k-tok: #6a93ff; --k-esc: #e5683a; --k-off: #26b79c; --k-len: #ec6fb5; --k-pad: #2b3447; --c-match: #5f8bf5;
+  --c0: #26b79c; --c1: #a9c3f7; --c2: #6a93ff; --c3: #3a62c9; --c4: #cfaef5; --c5: #9468e6; --empty: #1c2433;
+  --glow: #ffffff; --ok: #3fc58f; --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1680px; margin: 0 auto; padding-inline: 20px; padding-block: 20px 140px; display: grid; gap: 16px; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 { font-size: clamp(26px, 3.2vw, 40px); line-height: 1.05; }
+h2 { font-size: 17px; }
+h3 { font-size: 15px; }
+code, .mono { font-family: var(--f-mono); font-size: .92em; }
+.muted { color: var(--ink-2); }
+.small { font-size: 12.5px; }
+.tnum { font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* top */
+.top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 32px; align-items: end; }
+.top p { margin: 6px 0 0; max-width: 70ch; color: var(--ink-2); }
+.brand-bits { display: inline-flex; gap: 2px; vertical-align: middle; margin-left: 10px; }
+.brand-bits i { display: block; width: 5px; border-radius: 1px; background: var(--k-tok); }
+.brand-bits i:nth-child(3n+2) { background: var(--k-off); }
+.brand-bits i:nth-child(4n+3) { background: var(--k-lit); }
+.pickers { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; color: var(--ink-2); font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* summary */
+.summary { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); min-width: 0; }
+.sizes { display: grid; gap: 7px; }
+.sizes .row { display: grid; grid-template-columns: 118px minmax(0, 1fr) 64px; align-items: center; gap: 10px; }
+.sizes .bar { height: 14px; border-radius: 4px; background: var(--ink-3); opacity: .55; transition: width .5s cubic-bezier(.2, .8, .2, 1); }
+.sizes .row.me .bar { background: linear-gradient(90deg, var(--k-tok), var(--k-off)); opacity: 1; }
+.sizes .row.me .name { font-weight: 600; }
+.sizes .num { text-align: right; font-family: var(--f-mono); font-size: 12.5px; }
+.layoutbar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; gap: 2px; }
+.layoutbar div { min-width: 2px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.desc { margin: 0; color: var(--ink-2); }
+
+/* the bench */
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.panel-head .muted { font-size: 12px; }
+.mapbox { position: relative; overflow-y: auto; max-height: 560px; border-radius: 8px; background: var(--panel-2); padding: 6px; scrollbar-width: thin; }
+canvas { display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.hatch { background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .55) 0 1.5px, transparent 1.5px 4px); }
+
+/* the decoder card */
+.stepcard { display: grid; gap: 12px; }
+.eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+.steptitle { font-family: var(--f-display); font-size: 22px; font-weight: 700; line-height: 1.15; }
+.ops { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ops li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 10px; border-radius: 9px; background: var(--panel-2); animation: rise .35s cubic-bezier(.2, .8, .2, 1) both; }
+.ops li:nth-child(2) { animation-delay: .12s; }
+.ops li:nth-child(3) { animation-delay: .24s; }
+.ops li:nth-child(4) { animation-delay: .36s; }
+.ops li:nth-child(5) { animation-delay: .48s; }
+.ops li:nth-child(6) { animation-delay: .6s; }
+.ops li:nth-child(7) { animation-delay: .72s; }
+body.quick .ops li { animation: none; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.ops .dot { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; font-family: var(--f-mono); }
+.ops p { margin: 0; }
+.ops p + p { margin-top: 4px; }
+.k { display: inline-block; padding: 0 5px; border-radius: 4px; font-family: var(--f-mono); font-size: 12.5px; color: #fff; line-height: 1.6; }
+.bits { font-family: var(--f-mono); letter-spacing: .08em; }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.chip { font-family: var(--f-mono); font-size: 11.5px; padding: 1px 4px; border-radius: 4px; min-width: 22px; text-align: center; color: #fff; line-height: 1.5; }
+.chip small { opacity: .8; font-size: 10px; margin-left: 2px; }
+.chip.more { background: transparent; color: var(--ink-3); }
+.path { border-radius: 9px; padding: 10px 12px; border: 1px dashed var(--line); font-size: 13px; }
+.path b { font-family: var(--f-display); }
+.path.fast { border-color: color-mix(in srgb, var(--k-off) 60%, transparent); background: color-mix(in srgb, var(--k-off) 8%, transparent); }
+.path.slow { border-color: color-mix(in srgb, var(--k-esc) 55%, transparent); background: color-mix(in srgb, var(--k-esc) 7%, transparent); }
+.cost { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; font-size: 12.5px; }
+.cost .cbar { display: flex; height: 12px; gap: 1px; }
+.cost .cbar div { height: 100%; border-radius: 2px; transition: width .4s; }
+.entry { display: grid; grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); gap: 4px; margin-top: 6px; }
+.entry div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-size: 11px; color: var(--ink-3); }
+.entry b { display: block; font-family: var(--f-mono); color: var(--ink); font-size: 12.5px; font-weight: 600; }
+
+/* register and lanes */
+.reg { display: grid; gap: 6px; }
+.regrow { display: grid; grid-template-columns: repeat(32, minmax(0, 1fr)); gap: 2px; }
+.rb { height: 24px; border-radius: 3px; display: grid; place-items: center; font-family: var(--f-mono); font-size: 11px; font-weight: 600; color: #fff; position: relative; transition: background-color .3s, opacity .3s; }
+.rb.z { opacity: .55; }
+.rb.nl { background: transparent !important; color: var(--ink-3); border: 1px dashed var(--line); font-weight: 400; }
+.rb.dim { opacity: .3; }
+.rb.cur { box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .25); }
+.regcap { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-3); }
+.lanes { display: grid; gap: 4px; }
+.lane { display: grid; grid-template-columns: 58px minmax(0, 1fr) 54px 50px; gap: 8px; align-items: center; font-size: 12px; }
+.lane > .mono { white-space: nowrap; }
+.lane .win { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 2px; }
+.lane .win div { height: 20px; border-radius: 3px; display: grid; place-items: center; font-family: var(--f-mono); font-size: 11px; color: #fff; }
+.lane .win div.rest { background: transparent; border: 1px dashed var(--line); color: var(--ink-3); }
+.lane .prog { height: 4px; background: var(--empty); border-radius: 2px; overflow: hidden; grid-column: 2; margin-top: -2px; }
+.lane .prog i { display: block; height: 100%; background: var(--k-lit); transition: width .3s; }
+
+/* the decoded page */
+.pagewrap { position: relative; }
+.pagewrap svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.arc { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 600; stroke-dashoffset: 600; animation: draw .6s ease-out forwards; }
+body.quick .arc { animation-duration: .01s; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.box-src { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.box-dst { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.litbar { margin-top: 12px; }
+.hexpeek { margin-top: 12px; font-family: var(--f-mono); font-size: 11.5px; display: grid; gap: 2px; overflow-x: auto; }
+.hexrow { display: grid; grid-template-columns: 32px repeat(16, minmax(15px, 1fr)) 4px auto; gap: 1px; align-items: center; }
+.hexrow .asc { white-space: pre; color: var(--ink-2); font-size: 11px; }
+.hexrow .a { color: var(--ink-3); font-size: 10.5px; }
+.hexrow .h { text-align: center; border-radius: 3px; padding: 1px 0; color: #fff; }
+.hexrow .h.e { color: var(--ink-3); background: transparent; }
+.hexrow .h.now { outline: 2px solid var(--ink); outline-offset: -1px; }
+
+/* lower row */
+.lower { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.budget { display: grid; gap: 10px; }
+.bb { display: grid; grid-template-columns: 116px minmax(0, 1fr) 70px; gap: 10px; align-items: center; }
+.bb .track { position: relative; height: 22px; background: var(--panel-2); border-radius: 5px; overflow: hidden; }
+.bb .ghost, .bb .fill { position: absolute; inset: 0 auto 0 0; display: flex; gap: 1px; }
+.bb .ghost { opacity: .22; }
+.bb .fill div, .bb .ghost div { height: 100%; transition: width .35s cubic-bezier(.2, .8, .2, 1); }
+.bb .num { font-family: var(--f-mono); font-size: 12px; text-align: right; }
+.refline { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .7; }
+.bbtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.bbtable td, .bbtable th { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.bbtable th { font-weight: 600; color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.bbtable td:first-child, .bbtable th:first-child { text-align: left; }
+.fastlist { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.fastlist li { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.fastlist .big { font-family: var(--f-display); font-size: 22px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.fastlist p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.fastlist b { color: var(--ink); font-weight: 600; }
+.primer { display: grid; gap: 8px; font-size: 13px; }
+.primer p { margin: 0; color: var(--ink-2); }
+.primer b { color: var(--ink); }
+
+/* transport */
+.transport { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
+.transport .inner { max-width: 1680px; margin: 0 auto; display: grid; gap: 8px; }
+.tl { position: relative; height: 44px; cursor: pointer; touch-action: none; }
+.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; height: 34px; min-width: 38px; padding: 0 10px; cursor: pointer; display: inline-grid; place-items: center; font-weight: 600; }
+.btn:hover { border-color: var(--ink-3); }
+.btn.play { background: var(--ink); color: var(--panel); border-color: var(--ink); min-width: 92px; }
+.btn svg { width: 16px; height: 16px; fill: currentColor; }
+.ctrls .sep { flex: 1; }
+.ctrls label { font-size: 12px; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.ctrls select { font: inherit; border: 1px solid var(--line); border-radius: 7px; height: 30px; background: var(--panel); color: var(--ink); padding: 0 6px; }
+.stepno { font-family: var(--f-mono); font-size: 12.5px; color: var(--ink-2); min-width: 120px; text-align: right; }
+.jump { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.jump button { border: 0; background: transparent; color: var(--ink-2); padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.jump button:hover { background: var(--panel-2); color: var(--ink); }
+.jump i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+/* tooltip */
+#tip { position: fixed; z-index: 20; pointer-events: none; max-width: 340px; background: var(--ink); color: var(--panel); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 28px rgba(0, 0, 0, .25); opacity: 0; transform: translateY(4px); transition: opacity .12s, transform .12s; }
+#tip.on { opacity: 1; transform: none; }
+#tip b { font-family: var(--f-display); font-size: 13.5px; }
+#tip .tbits { font-family: var(--f-mono); letter-spacing: .06em; }
+#tip .tk { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+#tip hr { border: 0; border-top: 1px solid color-mix(in srgb, var(--panel) 25%, transparent); margin: 6px 0; }
+
+@media (max-width: 1280px) {
+  .bench { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "dec dec" "comp page"; }
+  .p-dec { grid-area: dec; } .p-comp { grid-area: comp; } .p-page { grid-area: page; }
+  .lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .lower .primer-card { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .top, .summary { grid-template-columns: minmax(0, 1fr); }
+  .pickers { justify-content: flex-start; }
+  .bench { grid-template-columns: minmax(0, 1fr); grid-template-areas: "dec" "page" "comp"; }
+  .lower { grid-template-columns: minmax(0, 1fr); }
+  .wrap { padding-inline: 16px; padding-block: 16px 170px; }
+  .transport { padding-inline: 16px; }
+  .stepno { min-width: 0; }
+  .sizes .row { grid-template-columns: 96px minmax(0, 1fr) 56px; }
+  .bb { grid-template-columns: 90px minmax(0, 1fr) 60px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* the compressor's additions */
+.cmp { display: grid; grid-template-columns: 92px repeat(8, minmax(0, 1fr)) 34px; gap: 3px; align-items: center; font-size: 12px; margin-top: 6px; }
+.cmp .lab { color: var(--ink-2); white-space: nowrap; }
+.cmp .cb { font-family: var(--f-mono); font-size: 11.5px; text-align: center; border-radius: 4px; padding: 1px 0; color: #fff; }
+.cmp .cb.hashed { box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .28); }
+.cmp .cb.off { background: transparent; color: var(--ink-3); border: 1px dashed var(--line); }
+.cmp .ok { font-weight: 700; text-align: center; }
+.slotinfo { display: grid; grid-template-columns: repeat(auto-fit, minmax(82px, 1fr)); gap: 4px; margin-top: 6px; }
+.slotinfo div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-size: 11px; color: var(--ink-3); }
+.slotinfo b { display: block; font-family: var(--f-mono); color: var(--ink); font-size: 12.5px; font-weight: 600; }
+.hashwrap { margin-top: 14px; }
+.decide { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; font-size: 13px; align-items: baseline; margin-top: 6px; }
+.decide .mono { text-align: right; }
+.decide .tot { border-top: 1px solid var(--line); padding-top: 4px; font-weight: 600; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>seqlz, compressed<span class="brand-bits" aria-hidden="true"><i style="height:22px"></i><i style="height:22px"></i><i style="height:9px"></i><i style="height:22px"></i><i style="height:9px"></i><i style="height:9px"></i><i style="height:22px"></i><i style="height:9px"></i></span></h1>
+      <p>The same real 4 KiB pages as <a href="seqlz-bit-by-bit.html">seqlz, bit by bit</a>, this time on the way in: how the matcher walks the page and finds its matches, how each sequence becomes bits, and how the literals get their table. Hover over anything for details, click a byte to jump to the step that handles it.</p>
+    </div>
+    <div class="pickers">
+      <div class="seg" id="pagePick" role="group" aria-label="Page"></div>
+      <div class="seg" id="varPick" role="group" aria-label="Codec">
+        <button id="v-lit" data-v="lit" aria-pressed="true">seqlz-fast-lit</button>
+        <button id="v-fast" data-v="fast" aria-pressed="false">seqlz-fast</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="summary">
+    <div class="card">
+      <div class="panel-head"><h2 id="pageTitle">Page</h2><span class="muted small" id="pageNote"></span></div>
+      <p class="desc" id="pageDesc"></p>
+      <div class="layoutbar" id="layoutBar"></div>
+      <div class="muted small" id="layoutNote"></div>
+    </div>
+    <div class="card">
+      <div class="panel-head"><h2>This page, compressed</h2><span class="muted small">bytes, 4096 uncompressed</span></div>
+      <div class="sizes" id="sizes"></div>
+    </div>
+  </section>
+
+  <main class="bench">
+    <section class="card p-page">
+      <div class="panel-head"><h2>The page, as the matcher reads it</h2><span class="muted tnum" id="pageFill"></span></div>
+      <div class="pagewrap" id="pageWrap"><canvas id="pageCv" aria-label="The page, 64 by 64 bytes"></canvas><svg id="pageSvg"></svg></div>
+      <div class="seg" id="colorPick" role="group" aria-label="Colour the page by" style="margin-top:10px">
+        <button data-m="origin" aria-pressed="true">Literal or match</button>
+        <button data-m="class" aria-pressed="false">Offset class</button>
+        <button data-m="value" aria-pressed="false">Byte value</button>
+      </div>
+      <div class="legend" id="pageLegend"></div>
+      <div class="hexpeek" id="hexPeek"></div>
+    </section>
+
+    <section class="card p-dec">
+      <div class="stepcard" id="stepCard" aria-live="polite"></div>
+    </section>
+
+    <section class="card p-comp">
+      <div class="panel-head"><h2>Compressed page</h2><span class="muted" id="compNote"></span></div>
+      <div class="mapbox" id="compBox"><canvas id="compCv" aria-label="The compressed page so far, every bit coloured by its field"></canvas></div>
+      <div class="legend" id="compLegend"></div>
+      <p class="muted small" style="margin:8px 0 0">One cell is one byte, its 8 bits in the order a decoder reads them; a tall bar is a 1. Bright bits are written, the current step's bits are outlined.</p>
+      <div class="hashwrap">
+        <div class="panel-head" style="margin-bottom:6px"><h3>The hash table, 4096 slots</h3><span class="muted small tnum" id="hashNote"></span></div>
+        <canvas id="hashCv" aria-label="The matcher's hash table, one cell per slot"></canvas>
+        <div class="legend" id="hashLegend"></div>
+      </div>
+    </section>
+  </main>
+
+  <section class="lower">
+    <div class="card">
+      <div class="panel-head"><h2>Where the bits go</h2><span class="muted small">so far, solid; whole page, faint</span></div>
+      <div class="budget" id="budget"></div>
+    </div>
+    <div class="card">
+      <div class="panel-head"><h2>Why it is fast</h2><span class="muted small">counted up to this step</span></div>
+      <ul class="fastlist" id="fastList"></ul>
+    </div>
+    <div class="card primer-card">
+      <div class="panel-head"><h2>The compressor in one minute</h2></div>
+      <div class="primer">
+        <p><b>One pass.</b> The matcher walks the page from the front. Each match it finds is turned into bits right away; the literals before it go to a buffer.</p>
+        <p><b>Two candidates per position.</b> The 4 bytes at the position are compared with the 4 bytes at the last offset, and with the 4 bytes at the position a hash of 5 bytes points to. No other search: that is what makes it about as fast as <code>lz4</code>.</p>
+        <p><b>Greedy.</b> The first match found is taken, grown backwards into the literals and forwards as far as the bytes are equal, and the matcher jumps behind it.</p>
+        <p><b>Literals last.</b> At the end the literals are counted in all 8 literal tables at once. Where the best table saves 1/16 of them and 51 bytes, they are coded in 8 streams; else they stay as they are.</p>
+        <p class="small">What the bytes mean is in <a href="seqlz-bit-by-bit.html">seqlz, bit by bit</a> and <a href="https://github.com/martinus/quetschn/blob/main/FORMAT.md" target="_blank" rel="noopener">FORMAT.md</a>; why it is this way in <a href="https://github.com/martinus/quetschn/blob/main/docs/seqlz.md" target="_blank" rel="noopener">docs/seqlz.md</a>.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="transport">
+  <div class="inner">
+    <canvas class="tl" id="tlCv" aria-label="Timeline of all steps, bar height is the positions the matcher tried"></canvas>
+    <div class="ctrls">
+      <button class="btn" id="bFirst" title="First step (Home)" aria-label="First step"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+      <button class="btn" id="bPrev" title="Back (←), 10 back with Shift" aria-label="Previous step"><svg viewBox="0 0 16 16"><path d="M11 2v12L3 8z"/></svg></button>
+      <button class="btn play" id="bPlay" title="Play or pause (Space)"><span id="playLbl">Play</span></button>
+      <button class="btn" id="bNext" title="Forward (→), 10 on with Shift" aria-label="Next step"><svg viewBox="0 0 16 16"><path d="M5 2v12l8-6z"/></svg></button>
+      <button class="btn" id="bLast" title="Last step (End)" aria-label="Last step"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2v12l8-6z"/></svg></button>
+      <label for="speed">Speed
+        <select id="speed">
+          <option value="1">1 step/s</option>
+          <option value="2" selected>2 steps/s</option>
+          <option value="5">5 steps/s</option>
+          <option value="12">12 steps/s</option>
+          <option value="30">30 steps/s</option>
+          <option value="90">90 steps/s</option>
+        </select>
+      </label>
+      <span class="jump" id="jumps"></span>
+      <span class="sep"></span>
+      <span class="stepno" id="stepNo"></span>
+    </div>
+  </div>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script id="trace-data" type="application/json">/*DATA*/</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("trace-data").textContent);
+const $ = (s) => document.querySelector(s);
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const PAGE = 4096, LIMIT = PAGE - 8, MIN_SAVE = 51;
+const OFF_BITS = [0, 4, 8, 12, 5, 9];
+const K = { HDR: 0, SET: 1, SIZE: 2, LIT: 3, TOK: 4, ESC: 5, OFF: 6, LLV: 7, MLV: 8, PAD: 9 };
+const KNAME = ["Number of literals", "Literal table", "Stream sizes", "Literals", "Token code", "Escape and its 12 bits", "Offset bits", "ll value", "ml value", "Unused bits"];
+const KVAR = ["--k-hdr", "--k-set", "--k-size", "--k-lit", "--k-tok", "--k-esc", "--k-off", "--k-len", "--k-len", "--k-pad"];
+const CLASS_TXT = ["the repeat offset", "4 plain bits", "8 plain bits", "12 plain bits", "5 bits × 8", "9 bits × 8"];
+const S = { pi: 0, vk: "lit", cur: 0, playing: false, mode: "origin", col: {} };
+
+const hex2 = (v) => v.toString(16).padStart(2, "0");
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const chq = (v) => (v >= 32 && v < 127 ? esc(String.fromCharCode(v)) : "");
+const fmt = (n) => n.toLocaleString("en-US");
+const plural = (n, w) => `${fmt(n)} ${w}${n === 1 ? "" : "s"}`;
+const kc = (k) => `var(${KVAR[k]})`;
+
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = (v) => cs.getPropertyValue(v).trim();
+  S.col = {
+    k: KVAR.map(g), ink: g("--ink"), ink3: g("--ink-3"), empty: g("--empty"), panel: g("--panel"), panel2: g("--panel-2"),
+    line: g("--line"), match: g("--c-match"), cls: [0, 1, 2, 3, 4, 5].map((i) => g("--c" + i)), glow: g("--glow"),
+    tok: g("--k-tok"), off: g("--k-off"), lit: g("--k-lit"),
+    dark: cs.colorScheme === "dark" || g("--bg").startsWith("#0"),
+  };
+}
+
+/* ---------- the model of one page and codec ---------- */
+function load() {
+  const P = D.pages[S.pi];
+  S.P = P;
+  S.orig = b64(P.page); S.raw = b64(P.raw); S.litc = b64(P.lit);
+  const sb = b64(P.slots);
+  S.slots = new Uint16Array(sb.length / 2);
+  for (let i = 0; i < S.slots.length; i++) S.slots[i] = sb[2 * i] | (sb[2 * i + 1] << 8);
+  const seqs = P.seqs, n = P.n, C = P.coding;
+  S.coded = S.vk === "lit" && C.pays;
+  S.final = S.coded ? S.litc : S.raw;
+  const steps = [{ k: "start" }];
+  seqs.forEach((q, i) => steps.push({ k: "seq", i }));
+  steps.push({ k: "lits" });
+  if (S.coded) steps.push({ k: "streams" });
+  steps.push({ k: "end" });
+  S.steps = steps; S.seq0 = 1;
+  S.stepIdx = {};
+  steps.forEach((s, i) => { if (!(s.k in S.stepIdx)) S.stepIdx[s.k] = i; });
+
+  // each page byte: the sequence that handles it, literal or match, its offset class, the source
+  S.oSeq = new Int32Array(PAGE); S.oKind = new Uint8Array(PAGE); S.oCls = new Uint8Array(PAGE); S.oSrc = new Int32Array(PAGE).fill(-1);
+  seqs.forEach((q, i) => {
+    for (let d = q.a; d < q.d; d++) { S.oSeq[d] = i; S.oKind[d] = 0; }
+    for (let j = 0; j < q.ml; j++) { const d = q.d + j; S.oSeq[d] = i; S.oKind[d] = 1; S.oCls[d] = q.cls; S.oSrc[d] = d - q.off; }
+  });
+
+  // the two layouts of the compressed page: the literals as they are, and coded
+  S.lay = { raw: layout(S.raw, false) };
+  if (S.coded) S.lay.coded = layout(S.litc, true);
+
+  // per step: page bytes done, literals and bits written, positions tried, the bit budget
+  const L = steps.length;
+  S.done = new Int32Array(L); S.probes = new Float32Array(L);
+  S.bud = []; S.lbud = []; S.cnt = [];
+  let b = { hdr: 0, lit: 0, tok: 0, off: 0, len: 0, pad: 0 }, lb = { tok: 0, lit: 0, off: 0, len: 0 };
+  let c = { probes: 0, compares: 0, matches: 0, skipped: 0, back: 0, rep: 0, litAdds: 0, written: 0 };
+  let done = 0;
+  steps.forEach((s, i) => {
+    if (s.k === "seq") {
+      const q = seqs[s.i], last = s.i === seqs.length - 1;
+      const pr = probesOf(q);
+      c.probes += pr; c.compares += 2 * pr;
+      if (!last) { c.matches++; c.skipped += q.ml - 1; c.back += q.hp - q.d; if (q.cls === 0) c.rep++; }
+      const tb = q.tc.length + (q.ep !== undefined ? 12 : 0);
+      const lv = (q.llv ? q.llv.code.length + q.llv.xl : 0) + (q.mlv ? q.mlv.code.length + q.mlv.xl : 0);
+      b.tok += tb; b.off += q.rl; b.len += lv; b.lit += 8 * q.ll;
+      lb.tok += 8; lb.lit += 8 * q.ll;
+      if (q.ll >= 15) lb.len += 8 * (1 + Math.floor((q.ll - 15) / 255));
+      if (!last) { lb.off += 16; if (q.ml - 4 >= 15) lb.len += 8 * (1 + Math.floor((q.ml - 19) / 255)); }
+      done = q.d + q.ml;
+      S.probes[i] = pr;
+    }
+    if (s.k === "lits") c.litAdds = n;
+    if (s.k === "streams") {
+      b.lit = 8 * (C.starts[8] - C.starts[0]);
+    }
+    if (s.k === "end") {
+      b.hdr = S.coded ? 8 * C.starts[0] : 16;
+      b.pad = 8 * S.final.length - (b.hdr + b.lit + b.tok + b.off + b.len);
+    }
+    S.done[i] = done;
+    S.bud.push({ ...b }); S.lbud.push({ ...lb }); S.cnt.push({ ...c });
+  });
+  S.cats = ["hdr", "lit", "tok", "off", "len", "pad"]; S.lcats = ["tok", "lit", "off", "len"];
+}
+
+// the positions the matcher tried for a sequence: from where it started up to the hit, or the end
+function probesOf(q) {
+  if (q.p0 === null || q.p0 === undefined) return 0;
+  return (q.hp === null || q.hp === undefined ? LIMIT : q.hp + 1) - q.p0;
+}
+
+// every bit of a compressed page: its field, its sequence, the step that writes it
+function layout(bytes, coded) {
+  const P = S.P, C = P.coding, n = P.n, nb = bytes.length * 8, seqs = P.seqs;
+  const kind = new Uint8Array(nb).fill(K.PAD), owner = new Int32Array(nb).fill(-1), step = new Int32Array(nb);
+  const last = S.steps.length - 1;
+  const mark = (p, len, k, o, st) => { for (let i = p; i < p + len && i < nb; i++) { kind[i] = k; owner[i] = o; step[i] = st; } };
+  mark(0, nb, K.PAD, -1, last);
+  let base;
+  if (coded) {
+    const st = S.stepIdx.streams;
+    mark(0, 16, K.HDR, 0, st); mark(16, 8, K.SET, 0, st);
+    for (let j = 0; j < 8; j++) mark(24 + C.width * j, C.width, K.SIZE, j, st);
+    const len = D.lit_len.slice(256 * C.set, 256 * C.set + 256), lits = S.raw.subarray(2, 2 + n);
+    for (let j = 0; j < 8; j++) {
+      let p = 8 * C.starts[j];
+      for (let k = j; k < n; k += 8) { mark(p, len[lits[k]], K.LIT, k, st); p += len[lits[k]]; }
+    }
+    base = 8 * C.starts[8];
+  } else {
+    mark(0, 16, K.HDR, 0, S.stepIdx.lits);
+    seqs.forEach((q, i) => mark(16 + 8 * q.li, 8 * q.ll, K.LIT, i, S.seq0 + i));
+    base = 8 * (2 + n);
+  }
+  seqs.forEach((q, i) => {
+    const st = S.seq0 + i;
+    if (q.ep !== undefined) { mark(base + q.tp, q.tc.length, K.ESC, i, st); mark(base + q.ep, 12, K.ESC, i, st); }
+    else mark(base + q.tp, q.tc.length, K.TOK, i, st);
+    mark(base + q.rp, q.rl, K.OFF, i, st);
+    if (q.llv) mark(base + q.llv.p, q.llv.code.length + q.llv.xl, K.LLV, i, st);
+    if (q.mlv) mark(base + q.mlv.p, q.mlv.code.length + q.mlv.xl, K.MLV, i, st);
+  });
+  return { bytes, kind, owner, step, base };
+}
+// the layout shown at this step: coded from the step that codes the literals on
+function curLay() { return S.coded && S.cur >= S.stepIdx.streams ? S.lay.coded : S.lay.raw; }
+
+// the hash table after this step, replayed: each position tried goes into its slot, and after a match
+// the position 2 before its end
+function hashAt(stepI) {
+  const tab = new Int32Array(4096).fill(-1), seqs = S.P.seqs;
+  const fresh = new Uint8Array(4096);
+  for (let i = 0; i < seqs.length && S.seq0 + i <= stepI; i++) {
+    const q = seqs[i], now = S.seq0 + i === stepI;
+    const end = q.hp === null || q.hp === undefined ? LIMIT : q.hp + 1;
+    if (q.p0 !== null && q.p0 !== undefined) for (let p = q.p0; p < end; p++) { tab[S.slots[p]] = p; if (now) fresh[S.slots[p]] = 1; }
+    if (q.ml && q.d + q.ml < LIMIT) { const p = q.d + q.ml - 2; tab[S.slots[p]] = p; if (now) fresh[S.slots[p]] = 2; }
+  }
+  return { tab, fresh };
+}
+
+/* ---------- drawing helpers ---------- */
+function fitCanvas(cv, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+function rgba(hex, a) {
+  const h = hex.replace("#", "");
+  const v = parseInt(h.length === 3 ? h.split("").map((x) => x + x).join("") : h, 16);
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${a})`;
+}
+function bitAt(L, pos) {
+  const byte = pos >> 3, idx = pos & 7;
+  const k = L.kind[pos], lsb = k === K.HDR || k === K.SET || k === K.SIZE;
+  return (L.bytes[byte] >> (lsb ? idx : 7 - idx)) & 1;
+}
+
+/* the page: 64 x 64 bytes */
+function layoutPage() {
+  // never wider than the screen, whatever the card measured before the layout settled
+  const w = Math.min($("#pageWrap").clientWidth, document.documentElement.clientWidth - 64);
+  S.pc = Math.max(3, Math.floor(w / 64));
+  S.pageCtx = fitCanvas($("#pageCv"), S.pc * 64, S.pc * 64);
+  const svg = $("#pageSvg");
+  svg.setAttribute("viewBox", `0 0 ${S.pc * 64} ${S.pc * 64}`);
+  svg.style.width = S.pc * 64 + "px"; svg.style.height = S.pc * 64 + "px";
+}
+function valueColor(d, a = 1) {
+  const v = S.orig[d], l = S.col.dark ? 18 + v / 255 * 60 : 94 - v / 255 * 60;
+  return `hsla(220 18% ${l}% / ${a})`;
+}
+function byteColor(d) {
+  const m = S.mode;
+  if (m === "value") return valueColor(d);
+  if (S.oKind[d] === 0) return S.col.k[K.LIT];
+  return m === "class" ? S.col.cls[S.oCls[d]] : S.col.match;
+}
+function drawPage(now) {
+  const ctx = S.pageCtx, c = S.pc, col = S.col;
+  const done = S.done[S.cur];
+  ctx.clearRect(0, 0, c * 64, c * 64);
+  const g = c > 5 ? 1 : 0.5;
+  const s = S.steps[S.cur], q = s.k === "seq" ? S.P.seqs[s.i] : null;
+  for (let d = 0; d < PAGE; d++) {
+    const x = (d & 63) * c, y = (d >> 6) * c;
+    ctx.fillStyle = d < done ? byteColor(d) : valueColor(d, S.col.dark ? 0.55 : 0.75);
+    ctx.fillRect(x + g / 2, y + g / 2, c - g, c - g);
+  }
+  // the positions tried in this step: a mark at the bottom of each cell
+  if (q) {
+    const end = q.hp === null || q.hp === undefined ? LIMIT : q.hp + 1;
+    if (q.p0 !== null && q.p0 !== undefined) {
+      ctx.fillStyle = col.ink;
+      for (let p = q.p0; p < end; p++) ctx.fillRect((p & 63) * c + 1, (p >> 6) * c + c - Math.max(1.5, c / 4), c - 2, Math.max(1.5, c / 4));
+    }
+  }
+  if (S.flash && now !== undefined) {
+    const t = (now - S.flash.t) / 650;
+    if (t < 1) {
+      ctx.fillStyle = rgba(col.glow.startsWith("#") ? col.glow : "#ffffff", 0.7 * (1 - t) * (1 - t));
+      for (let d = S.flash.a; d < S.flash.b; d++) ctx.fillRect((d & 63) * c, (d >> 6) * c, c, c);
+      requestAnimationFrame(drawPage);
+    } else S.flash = null;
+  }
+  $("#pageFill").textContent = `${fmt(done)} of 4096 bytes done`;
+}
+function runRects(a, b) {
+  const c = S.pc, r = [];
+  let d = a;
+  while (d < b) {
+    const row = d >> 6, e = Math.min(b, (row + 1) * 64);
+    r.push([(d & 63) * c, row * c, (e - d) * c, c]);
+    d = e;
+  }
+  return r;
+}
+function drawArc() {
+  const svg = $("#pageSvg"), s = S.steps[S.cur];
+  svg.innerHTML = "";
+  if (s.k !== "seq") return;
+  const q = S.P.seqs[s.i], c = S.pc;
+  const ns = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const a in attrs) e.setAttribute(a, attrs[a]); svg.appendChild(e); return e; };
+  if (q.d > q.a) runRects(q.a, q.d).forEach(([x, y, w, h]) => add("rect", { x: x + .5, y: y + .5, width: w - 1, height: h - 1, class: "box-dst", rx: 1.5, style: `stroke:${S.col.k[K.LIT]}` }));
+  if (!q.ml) return;
+  const d0 = q.d, s0 = d0 - q.off;
+  runRects(s0, Math.min(s0 + q.ml, d0)).forEach(([x, y, w, h]) => add("rect", { x: x + .5, y: y + .5, width: w - 1, height: h - 1, class: "box-src", rx: 1.5 }));
+  runRects(d0, d0 + q.ml).forEach(([x, y, w, h]) => add("rect", { x: x + .5, y: y + .5, width: w - 1, height: h - 1, class: "box-dst", rx: 1.5 }));
+  const cx = (d) => (d & 63) * c + c / 2, cy = (d) => (d >> 6) * c + c / 2;
+  const x1 = cx(s0), y1 = cy(s0), x2 = cx(d0), y2 = cy(d0);
+  const lift = Math.min(90, 14 + Math.hypot(x2 - x1, y2 - y1) * 0.35);
+  let my = Math.min(y1, y2) - lift;
+  if (my < 4) my = Math.max(y1, y2) + lift;
+  add("path", { d: `M${x1},${y1} Q${(x1 + x2) / 2},${my} ${x2},${y2}`, class: "arc" });
+  add("circle", { cx: x1, cy: y1, r: 3, fill: S.col.ink });
+}
+function drawHex() {
+  const s = S.steps[S.cur];
+  let focus = S.done[S.cur], hi0 = -1, hi1 = -1;
+  if (s.k === "seq") { const q = S.P.seqs[s.i]; focus = q.d; hi0 = q.d; hi1 = q.d + q.ml; }
+  const start = Math.max(0, Math.min(PAGE - 64, (focus & ~15) - 16));
+  let html = "";
+  for (let r = 0; r < 4; r++) {
+    const a = start + 16 * r;
+    let h = `<div class="hexrow"><span class="a">${a.toString(16).padStart(4, "0")}</span>`, t = "";
+    for (let j = 0; j < 16; j++) {
+      const d = a + j, now = d >= hi0 && d < hi1 ? " now" : "";
+      const bg = d < S.done[S.cur] ? byteColor(d) : valueColor(d, 0.9);
+      const fg = d < S.done[S.cur] && S.mode !== "value" ? "#fff" : "var(--ink)";
+      h += `<span class="h${now}" style="background:${bg};color:${fg}" data-d="${d}">${hex2(S.orig[d])}</span>`;
+      t += chq(S.orig[d]) || "·";
+    }
+    html += h + `<span></span><span class="asc">${t}</span></div>`;
+  }
+  $("#hexPeek").innerHTML = html;
+}
+
+/* the compressed page so far */
+const COLS = 32;
+// Where the bytes of a layout are drawn. While the matcher runs, the encoder writes into one buffer of
+// two pages at two places: the literals from byte 2, the bitstream from byte 2 + 4096 + 16, behind
+// room for a page of literals. When it is done it moves the bitstream in behind the literals and writes
+// the header. So until then the bitstream is drawn as a block of its own.
+const BITS_AT = 2 + PAGE + 16;
+function segs() {
+  const L = curLay(), n = S.P.n;
+  if (S.cur >= S.stepIdx.lits) return [{ from: 0, len: L.bytes.length, row: 0 }];
+  const r1 = Math.ceil((2 + n) / COLS);
+  return [{ from: 0, len: 2 + n, row: 0 }, { from: 2 + n, len: L.bytes.length - 2 - n, row: r1 + 1, label: r1, at: BITS_AT }];
+}
+function cellOf(b) {
+  for (const g of segs()) if (b >= g.from && b < g.from + g.len) { const k = b - g.from; return [k % COLS, g.row + Math.floor(k / COLS)]; }
+  return null;
+}
+function layoutComp() {
+  const w = $("#compBox").clientWidth - 12;
+  S.cc = Math.max(9, Math.floor(w / COLS));
+  const n = S.P.n;
+  const split = Math.ceil((2 + n) / COLS) + 1 + Math.ceil((S.raw.length - 2 - n) / COLS);
+  const rows = Math.max(split, Math.ceil(S.final.length / COLS));
+  S.compCtx = fitCanvas($("#compCv"), S.cc * COLS, S.cc * rows);
+  S.compRows = rows;
+}
+function drawComp() {
+  const ctx = S.compCtx, c = S.cc, L = curLay(), cur = S.cur, col = S.col;
+  ctx.clearRect(0, 0, c * COLS, c * S.compRows);
+  const sw = (c - 2) / 8, nbytes = L.bytes.length;
+  const G = segs();
+  for (const g of G) {
+    if (g.label === undefined) continue;
+    const y = g.label * c + c / 2;
+    ctx.strokeStyle = col.line; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c * COLS, y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = `600 ${Math.max(9, Math.min(11, c - 1))}px ${getComputedStyle(document.body).fontFamily}`;
+    const t = ` the bitstream, written from byte ${fmt(g.at)} of the buffer `;
+    const tw = ctx.measureText(t).width;
+    ctx.fillStyle = col.panel2; ctx.fillRect(8, y - c / 2, tw, c);
+    ctx.fillStyle = col.ink3; ctx.textBaseline = "middle"; ctx.fillText(t, 8, y + 0.5);
+  }
+  for (let b = 0; b < nbytes; b++) {
+    const xy = cellOf(b);
+    if (!xy) continue;
+    const x = xy[0] * c, y = xy[1] * c;
+    for (let i = 0; i < 8; i++) {
+      const p = b * 8 + i, k = L.kind[p], st = L.step[p];
+      if (st > cur) { ctx.fillStyle = rgba(col.ink3, 0.12); ctx.fillRect(x + 1 + i * sw, y + c - 3, Math.max(0.6, sw - 0.35), 2); continue; }
+      const on = bitAt(L, p);
+      const alt = L.owner[p] & 1 && k >= K.LIT && k !== K.PAD ? 0.72 : 1;
+      ctx.fillStyle = rgba(col.k[k], (st === cur ? 1 : 0.9) * alt);
+      const h = on ? c - 2 : Math.max(2, (c - 2) * 0.34);
+      ctx.fillRect(x + 1 + i * sw, y + c - 1 - h, Math.max(0.6, sw - 0.35), h);
+    }
+  }
+  ctx.strokeStyle = col.ink; ctx.lineWidth = 1.5;
+  for (let b = 0; b < nbytes; b++) {
+    let i0 = 8, i1 = -1;
+    for (let i = 0; i < 8; i++) if (L.step[b * 8 + i] === cur && L.kind[b * 8 + i] !== K.PAD) { i0 = Math.min(i0, i); i1 = i; }
+    if (i1 < 0) continue;
+    const [cx, cy] = cellOf(b);
+    ctx.strokeRect(cx * c + 1 + i0 * sw - 0.5, cy * c + 0.5, (i1 - i0 + 1) * sw + 1, c - 1);
+  }
+  let written = 0;
+  for (let b = 0; b < nbytes; b++) for (let i = 0; i < 8; i++) if (L.step[b * 8 + i] <= cur && L.kind[b * 8 + i] !== K.PAD) { written++; break; }
+  $("#compNote").textContent = `${fmt(cur === S.steps.length - 1 ? nbytes : written)} of ${fmt(nbytes)} bytes written`;
+}
+function scrollComp() {
+  const L = curLay(), s = S.steps[S.cur];
+  let p = -1;
+  if (s.k === "seq") p = L.base + S.P.seqs[s.i].tp;
+  if (s.k === "streams" || s.k === "lits") p = 0;
+  if (p < 0) return;
+  const row = cellOf(p >> 3)[1], box = $("#compBox"), y = row * S.cc;
+  if (y < box.scrollTop + 20 || y > box.scrollTop + box.clientHeight - 40) box.scrollTo({ top: Math.max(0, y - box.clientHeight / 3), behavior: S.playing && S.speed > 12 ? "auto" : "smooth" });
+}
+
+/* the hash table: 64 x 64 slots, each coloured by where in the page its position is */
+function layoutHash() {
+  const w = Math.min($(".hashwrap").clientWidth, document.documentElement.clientWidth - 64);
+  S.hc = Math.max(3, Math.floor(w / 64));
+  S.hashCtx = fitCanvas($("#hashCv"), S.hc * 64, S.hc * 64);
+}
+function drawHash() {
+  const ctx = S.hashCtx, c = S.hc, col = S.col, H = hashAt(S.cur);
+  S.hash = H;
+  ctx.clearRect(0, 0, c * 64, c * 64);
+  let used = 0, fresh = 0;
+  for (let i = 0; i < 4096; i++) {
+    const x = (i & 63) * c, y = (i >> 6) * c, p = H.tab[i];
+    if (p < 0) ctx.fillStyle = col.empty;
+    else { used++; ctx.fillStyle = `hsl(${215 - 175 * (p / PAGE)} ${col.dark ? 60 : 62}% ${col.dark ? 58 : 50}%)`; }
+    ctx.fillRect(x + 0.5, y + 0.5, c - 1, c - 1);
+    if (H.fresh[i]) fresh++;
+  }
+  ctx.strokeStyle = col.ink; ctx.lineWidth = 1.2;
+  for (let i = 0; i < 4096; i++) if (H.fresh[i]) ctx.strokeRect((i & 63) * c + 0.6, (i >> 6) * c + 0.6, c - 1.2, c - 1.2);
+  const s = S.steps[S.cur];
+  if (s.k === "seq") {
+    const q = S.P.seqs[s.i];
+    if (q.slot !== undefined) {
+      ctx.lineWidth = 2.5; ctx.strokeStyle = col.k[K.ESC];
+      ctx.strokeRect((q.slot & 63) * c - 1, (q.slot >> 6) * c - 1, c + 2, c + 2);
+    }
+  }
+  $("#hashNote").textContent = `${fmt(used)} filled, ${fmt(fresh)} written in this step`;
+}
+
+/* the timeline: one bar per step, its height the positions the matcher tried */
+function layoutTl() {
+  const cv = $("#tlCv"), w = cv.parentElement.clientWidth;
+  S.tlW = w; S.tlCtx = fitCanvas(cv, w, 44);
+}
+function drawTl() {
+  const ctx = S.tlCtx, w = S.tlW, L = S.steps.length, col = S.col;
+  ctx.clearRect(0, 0, w, 44);
+  let max = 1;
+  for (let i = 0; i < L; i++) max = Math.max(max, Math.sqrt(S.probes[i]));
+  const bw = w / L;
+  for (let i = 0; i < L; i++) {
+    const s = S.steps[i];
+    let kcol = col.k[K.HDR], h = 10;
+    if (s.k === "seq") { const q = S.P.seqs[s.i]; kcol = q.cls === 0 && q.ml ? col.cls[0] : col.k[K.TOK]; h = 6 + 30 * Math.sqrt(S.probes[i]) / max; }
+    if (s.k === "lits" || s.k === "streams") kcol = col.k[K.LIT];
+    ctx.fillStyle = rgba(kcol, i <= S.cur ? 0.95 : 0.3);
+    ctx.fillRect(i * bw, 40 - h, Math.max(bw - (bw > 3 ? 1 : 0), 0.7), h);
+  }
+  const x = (S.cur + 0.5) * bw;
+  ctx.fillStyle = col.ink;
+  ctx.fillRect(x - 1, 0, 2, 44);
+  ctx.beginPath(); ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 6); ctx.fill();
+}
+
+/* ---------- the step card ---------- */
+function chip(v, color) { return `<span class="chip" style="background:${color}">${hex2(v)}${chq(v) ? `<small>${chq(v)}</small>` : ""}</span>`; }
+function chipsOf(bytes, color, max = 24) {
+  let h = '<div class="chips">';
+  bytes.slice(0, max).forEach((v) => (h += chip(v, color)));
+  if (bytes.length > max) h += `<span class="chip more">+${fmt(bytes.length - max)} more</span>`;
+  return h + "</div>";
+}
+function bitsSpan(s, k) { return `<span class="k bits" style="background:${kc(k)}">${s}</span>`; }
+function op(color, label, body) { return `<li><span class="dot" style="background:${color}">${label}</span><div>${body}</div></li>`; }
+function bin(v, n) { return n ? v.toString(2).padStart(n, "0") : ""; }
+
+// a row of 8 page bytes from p, the first `hashed` of them marked, compared with the row at `cmp`
+function cmpRow(label, p, color, hashed, cmp) {
+  let h = `<span class="lab">${label}</span>`;
+  for (let j = 0; j < 8; j++) {
+    const d = p + j;
+    if (d < 0 || d >= PAGE) { h += `<span class="cb off">··</span>`; continue; }
+    const eq = cmp !== undefined && j < 4 && S.orig[d] === S.orig[cmp + j];
+    const bg = j < 4 || hashed > j ? color : "var(--ink-3)";
+    h += `<span class="cb${j < hashed ? " hashed" : ""}" style="background:${bg};opacity:${j < 4 || j < hashed ? 1 : 0.45}" data-d="${d}">${hex2(S.orig[d])}</span>`;
+  }
+  if (cmp === undefined) return h + "<span></span>";
+  let all = true;
+  for (let j = 0; j < 4; j++) all = all && S.orig[p + j] === S.orig[cmp + j];
+  return h + `<span class="ok" style="color:${all ? "var(--ok)" : "var(--k-esc)"}">${all ? "✓" : "✗"}</span>`;
+}
+
+function card() {
+  const s = S.steps[S.cur], P = S.P, n = P.n;
+  const eyebrow = (t) => `<div class="eyebrow">${t}</div>`;
+  let h = "";
+  if (s.k === "start") {
+    h += eyebrow("Before the first step");
+    h += `<div class="steptitle">4096 bytes to make small</div><ul class="ops">`;
+    h += op(kc(K.TOK), "1", `<p><b>The matcher</b> walks the page from byte 1 and finds ${plural(P.seqs.length - 1, "match")}. Each step below is one of them: the positions it tried, the match, and the bits the sequence becomes.</p>`);
+    h += op(kc(K.LIT), "2", `<p><b>The literals</b>, ${fmt(n)} bytes no match covers, go to a buffer on the way. At the end they are counted in the 8 literal tables, and coded where that pays.</p>`);
+    h += op(kc(K.HDR), "3", `<p><b>The header</b> comes last: the number of literals, and for coded literals the table and the sizes of their 8 streams.</p>`);
+    h += `</ul><p class="muted small" style="margin:0">Press <b>Play</b>, the arrow keys, or click a byte of the page or a bar of the timeline.</p>`;
+  }
+  if (s.k === "seq") h += seqCard(s.i);
+  if (s.k === "lits") h += litsCard();
+  if (s.k === "streams") h += streamsCard();
+  if (s.k === "end") {
+    const F = S.final, sz = F.length;
+    h += eyebrow("Done");
+    h += `<div class="steptitle">4096 bytes in ${fmt(sz)}</div><ul class="ops">`;
+    const hb = S.coded ? P.coding.starts[0] : 2;
+    h += op(kc(K.HDR), "H", S.coded
+      ? `<p>The header, ${hb} bytes: <code>${Array.from(F.subarray(0, hb), hex2).join(" ")}</code>. ${fmt(n)} literals with the top bit set for coded literals, table ${P.coding.set}, ${P.coding.width}-bit stream sizes.</p>`
+      : `<p>The header, 2 bytes: <code>${hex2(F[0])} ${hex2(F[1])}</code>, the number of literals, ${fmt(n)}, lowest byte first, written when the matcher was done: only then is the number known.</p>`);
+    h += op(kc(K.LIT), "L", S.coded
+      ? `<p>The literals in 8 streams, ${fmt(P.coding.starts[8] - P.coding.starts[0])} bytes instead of ${fmt(n)}.</p>`
+      : `<p>The ${fmt(n)} literals as they are, right behind the header.</p>`);
+    h += op(kc(K.TOK), "B", `<p>The bitstream of the ${fmt(P.seqs.length)} sequences, ${fmt(P.nbits)} bits, ${fmt(Math.ceil(P.nbits / 8))} bytes, right behind the ${S.coded ? "streams" : "literals"}. The last byte is filled up with zeros.</p>`);
+    h += op("var(--ok)", "✓", `<p>Ratio <b>${(4096 / sz).toFixed(2)}:1</b>, ${((100 * sz) / 4096).toFixed(1)}% of the page. ${sz < 3625 ? "zram keeps it compressed; from 3625 bytes on it would store the page as it is." : "zram stores this page as it is: it stores every page of 3625 bytes and more uncompressed."}</p>`);
+    h += `</ul>`;
+  }
+  $("#stepCard").innerHTML = h;
+}
+
+function seqCard(i) {
+  const P = S.P, q = P.seqs[i], last = i === P.seqs.length - 1;
+  const ll = q.ll, t = q.t, cls = q.cls, escd = q.ep !== undefined;
+  let h = `<div class="eyebrow">Sequence ${fmt(i + 1)} of ${fmt(P.seqs.length)} · page byte ${fmt(q.a)}</div>`;
+  h += `<div class="steptitle">${last ? `${plural(ll, "literal")} to the end of the page` : `${plural(ll, "literal")}, then ${fmt(q.ml)} bytes from ${fmt(q.off)} back`}</div><ul class="ops">`;
+  const pr = probesOf(q);
+  // the search
+  if (last) {
+    h += op(kc(K.TOK), "S", q.p0 === null || q.p0 === undefined
+      ? `<p>The last match ended ${PAGE - q.a} bytes before the end of the page, too close to try another position: the matcher needs 8 bytes to read at each.</p>`
+      : `<p><b>No match</b> in the ${plural(pr, "position")} from byte ${fmt(q.p0)} to ${fmt(LIMIT - 1)}. The last 8 bytes are not tried, the matcher reads 8 bytes at each position. What is left, ${plural(ll, "byte")}, are literals.</p>`);
+  } else {
+    const rp = q.hp - q.prev;
+    h += op(kc(K.TOK), "S", `<p><b>${plural(pr, "position")} tried</b>, byte ${fmt(q.p0)} to ${fmt(q.hp)}${pr > 1 ? `: ${fmt(pr - 1)} ${pr === 2 ? "miss" : "misses"} before the hit` : ""}. At each the matcher loads 8 bytes, hashes the low 5 into one of 4096 slots, and compares the 4 bytes here with 4 at two places, the last offset back and the position in the slot, one branch for both:</p>
+      <div class="cmp">${cmpRow(`here, ${fmt(q.hp)}`, q.hp, kc(K.TOK), 5)}${cmpRow(`${fmt(q.prev)} back, ${fmt(rp)}`, rp, "var(--c0)", 0, q.hp)}${cmpRow(`slot ${q.slot}, ${fmt(q.cand)}`, q.cand, "var(--c-match)", 0, q.hp)}</div>
+      <p class="small muted" style="margin-top:6px">The 5 underlined bytes give slot <b>${q.slot}</b>, which held position <b>${fmt(q.cand)}</b>${q.cand === 0 ? ", or nothing yet: the table is cleared to 0 for each page" : ""}. The last offset is ${fmt(q.prev)}${i === 0 ? ", 1 at the start" : ""}.</p>`);
+    const hitTxt = q.hit === "both" ? `Both match. The last offset is taken: it costs no offset bits.` : q.hit === "rep" ? `The bytes at the last offset match: the same offset as the match before, which costs no offset bits.` : `The bytes at slot ${q.slot}'s position match: a match ${fmt(q.hp - q.cand)} bytes back.`;
+    const back = q.hp - q.d;
+    h += op("var(--c-match)", "M", `<p>${hitTxt}</p>${back ? `<p>The ${plural(back, "byte")} before are equal too: the match grows backwards to byte ${fmt(q.d)}, and ${back === 1 ? "that byte is" : "those bytes are"} no literal after all.</p>` : ""}
+      <p>Forwards, <code>count()</code> compares 16 bytes at once with two 8-byte XORs, then 8 at a time: ${q.ml - 4 === 1 ? "1 more byte is" : `${fmt(q.ml - 4)} more bytes are`} equal after the first 4${q.d + q.ml === PAGE ? ", up to the end of the page" : ""}, <b>${fmt(q.ml)}</b> in all. The matcher jumps behind them: the ${fmt(q.ml - 1)} positions inside the match are not tried.</p>`);
+    h += op("var(--k-esc)", "#", `<p>Each position tried went into its slot, position ${fmt(q.hp)} into slot ${q.slot}. ${q.d + q.ml < LIMIT ? `After the match, position ${fmt(q.d + q.ml - 2)}, 2 before its end, goes into its slot too: so a later match can start where this one ends.` : ""}</p>`);
+  }
+  // the token
+  let why;
+  if (last) why = `The last sequence has no match: ml − 4 is 0 and the class 0, as the format wants.`;
+  else if (cls === 0) why = `The offset ${fmt(q.off)} is the last one again: <b>class 0</b>, no offset bits.`;
+  else if (cls >= 4) why = `The offset ${fmt(q.off)} is a multiple of 8 from 16 on: <b>class ${cls}</b>, ${OFF_BITS[cls]} bits for ${fmt(q.off)} / 8 = ${fmt(q.off / 8)}.`;
+  else why = `The offset ${fmt(q.off)} is ${cls === 1 ? "below 16" : cls === 2 ? "below 256" : "256 or more"}: <b>class ${cls}</b>, ${OFF_BITS[cls]} plain bits.`;
+  const mlf = last ? 0 : Math.min(q.ml - 4, 31);
+  h += op(kc(K.TOK), "T", `<p>${why}</p><p>Token ${Math.min(ll, 15)} + 16 × ${mlf} + 512 × ${cls} = <b>${t}</b>${ll >= 15 ? ", ll capped at 15" : ""}${!last && q.ml - 4 >= 31 ? ", ml − 4 capped at 31" : ""}.</p>${escd
+    ? `<p>Token ${t} has no code of its own, it is rare: the escape's code ${bitsSpan(q.tc, K.ESC)} and the token in 12 plain bits ${bitsSpan(bin(t, 12), K.ESC)}.</p>`
+    : `<p>Its code in the token table: ${bitsSpan(q.tc, K.TOK)}, ${plural(q.tc.length, "bit")}.</p>`}`);
+  if (q.rl) h += op(kc(K.OFF), "O", `<p>The offset bits, highest first: ${bitsSpan(bin(q.raw, q.rl), K.OFF)} = ${fmt(q.raw)}${cls >= 4 ? `, times 8 is ${fmt(q.off)}` : ""}.</p>`);
+  const lv = (v, which, base) => `<p><b>${which} value</b> ${fmt(v.v)}, for ${which} = ${base} + ${fmt(v.v)}: ${v.sym < 16 ? `symbol ${v.sym}` : `symbol ${v.sym}, the range from 2<sup>${v.xl}</sup>, and ${v.xl} plain bits`} ${bitsSpan(v.code, which === "ll" ? K.LLV : K.MLV)}${v.xl ? ` ${bitsSpan(bin(v.x, v.xl), which === "ll" ? K.LLV : K.MLV)}` : ""}.</p>`;
+  if (q.llv) h += op(kc(K.LLV), "L", lv(q.llv, "ll", 15));
+  if (q.mlv) h += op(kc(K.MLV), "M", lv(q.mlv, "ml", 35));
+  const lits = Array.from(S.orig.subarray(q.a, q.d));
+  h += op(kc(K.LIT), "→", ll ? `<p>${ll === 1 ? "The literal goes" : `The ${fmt(ll)} literals go`} to the buffer behind the ones before, from byte ${fmt(2 + q.li)}, which is already ${ll === 1 ? "its" : "their"} place in the compressed page: 16 bytes at a time, without a loop for the most.</p>${chipsOf(lits, kc(K.LIT))}` : `<p>No literals: this match starts right behind the one before.</p>`);
+  h += `</ul>`;
+  // the cost against lz4's format
+  const tb = q.tc.length + (escd ? 12 : 0), lvb = (q.llv ? q.llv.code.length + q.llv.xl : 0) + (q.mlv ? q.mlv.code.length + q.mlv.xl : 0);
+  const sq = tb + q.rl + lvb + 8 * ll;
+  const l4len = (ll >= 15 ? 8 * (1 + Math.floor((ll - 15) / 255)) : 0) + (!last && q.ml - 4 >= 15 ? 8 * (1 + Math.floor((q.ml - 19) / 255)) : 0);
+  const l4 = 8 + 8 * ll + (last ? 0 : 16) + l4len;
+  const max = Math.max(sq, l4);
+  const seg = (v, k) => (v ? `<div style="width:${(100 * v) / max}%;background:${kc(k)}"></div>` : "");
+  h += `<div class="cost"><span class="small"><b>seqlz</b></span><div class="cbar">${seg(tb, escd ? K.ESC : K.TOK)}${seg(q.rl, K.OFF)}${seg(lvb, K.LLV)}${seg(8 * ll, K.LIT)}</div><span class="mono small">${sq} bits</span>
+    <span class="small muted">lz4 format</span><div class="cbar">${seg(8, K.TOK)}${seg(last ? 0 : 16, K.OFF)}${seg(l4len, K.LLV)}${seg(8 * ll, K.LIT)}</div><span class="mono small">${l4} bits</span></div>
+    <p class="small muted" style="margin:0">${tb + q.rl + lvb} bits for the sequence, written into a 64-bit register and stored 8 bytes at a time, once per sequence, into the bitstream's own part of the buffer, from byte ${fmt(BITS_AT)}: how many literals come before it is known only at the end.${ll ? " The literals still count 8 bits each; they may get shorter at the end." : ""}</p>`;
+  return h;
+}
+
+function litsCard() {
+  const P = S.P, C = P.coding, n = P.n;
+  let h = `<div class="eyebrow">The literals · ${plural(n, "byte")}</div>`;
+  const finish = op(kc(K.HDR), "↑", `<p>The matcher is done. The encoder moves the bitstream, ${plural(Math.ceil(P.nbits / 8), "byte")}, from byte ${fmt(BITS_AT)} in right behind the literals, to byte ${fmt(2 + n)}, and writes the header: ${fmt(n)} literals, <code>${hex2(S.raw[0])} ${hex2(S.raw[1])}</code>. That is the page with the literals as they are, ${fmt(S.raw.length)} bytes.</p>`);
+  if (S.vk === "fast") {
+    h += `<div class="steptitle">seqlz-fast keeps them as they are</div><ul class="ops">${finish}`;
+    h += op(kc(K.LIT), "→", `<p>The ${fmt(n)} literals stay in front of the bitstream as they are, 1 byte each. Not counting them saves the time; seqlz-fast-lit would ${C.pays ? `save ${fmt(n + 2 - (3 + C.width + C.coded))} bytes on this page by coding them` : "not code them on this page either"}.</p>`);
+    h += `</ul>`;
+    return h;
+  }
+  const totals = C.cost.map((c) => c.reduce((a, v) => a + v, 0));
+  const bytes = C.cost.map((c) => c.reduce((a, v) => a + Math.ceil(v / 8), 0));
+  const max = Math.max(...bytes, n);
+  h += `<div class="steptitle">${C.pays ? `Coded with table ${C.set}` : "They stay as they are"}</div><ul class="ops">${finish}`;
+  let bars = '<div class="cost" style="margin-top:8px">';
+  bytes.forEach((cst, t) => {
+    bars += `<span class="small${t === C.set ? "" : " muted"}">table ${t}</span><div class="cbar"><div style="width:${(100 * cst) / max}%;background:${t === C.set ? kc(K.LIT) : "var(--ink-3)"};opacity:${t === C.set ? 1 : 0.45}"></div></div><span class="small mono">${fmt(cst)} B</span>`;
+  });
+  bars += `<span class="small muted">as they are</span><div class="cbar"><div style="width:${(100 * n) / max}%;background:var(--ink-3);opacity:.3"></div></div><span class="small mono">${fmt(n)} B</span></div>`;
+  h += op(kc(K.LIT), "Σ", `<p>Each byte has a 64-bit entry with its code length in all 8 tables, 8 bits each. One add per literal sums them for all tables at once, per stream: ${fmt(n)} adds for ${fmt(8 * n)} lengths. Every 25 literals of a stream the sums are spread to 16 bits, before an 8-bit lane could overflow.</p>${bars}<p class="small muted" style="margin-top:6px">Table ${C.set} gives the fewest bits, ${fmt(totals[C.set])}. In bytes, each of the 8 streams filled up to a whole byte.</p>`);
+  const hdr = 3 + C.width;
+  h += op(C.pays ? "var(--ok)" : "var(--k-esc)", C.pays ? "✓" : "✗", `<p>Coding pays only where it saves 1/16 of the literals and ${MIN_SAVE} bytes: decoding coded literals costs time on every read.</p>
+    <div class="decide"><span>the coded streams</span><span class="mono">${fmt(C.coded)} B</span><span>+ ${MIN_SAVE}</span><span class="mono">${fmt(C.coded + MIN_SAVE)} B</span><span>${fmt(n)} − ${fmt(n)} / 16</span><span class="mono">${fmt(C.limit)} B</span>
+    <span class="tot">${C.pays ? "smaller: coded" : "not smaller: as they are"}</span><span class="mono tot">${C.pays ? `${fmt(n - C.coded - hdr + 2)} B saved` : ""}</span></div>${C.pays ? `<p class="small muted" style="margin-top:6px">The header grows from 2 to ${hdr} bytes for the table and the stream sizes; that is in the bytes saved.</p>` : ""}`);
+  h += `</ul>`;
+  return h;
+}
+
+function streamsCard() {
+  const P = S.P, C = P.coding, n = P.n, w = C.width;
+  let h = `<div class="eyebrow">The literals · coded into 8 streams</div>`;
+  h += `<div class="steptitle">${fmt(n)} literals in ${fmt(C.coded)} bytes</div><ul class="ops">`;
+  h += op(kc(K.LIT), "÷8", `<p>Literal <i>k</i> goes to stream <i>k</i> mod 8, so that a decoder has 8 chains of work side by side. 4 streams at a time, each code shifted into a 64-bit register, 4 literals per stream between two stores.</p>`);
+  const len = D.lit_len.slice(256 * C.set, 256 * C.set + 256), lits = S.raw.subarray(2, 2 + n);
+  let rows = "";
+  for (let k = 0; k < Math.min(8, n); k++) rows += `${chip(lits[k], kc(K.LIT))}<small class="mono" style="margin-right:8px"> → ${len[lits[k]]} bits</small>`;
+  h += op(kc(K.LIT), "→", `<p>The first literals and the length of their codes in table ${C.set}:</p><div class="chips" style="align-items:center">${rows}</div>`);
+  const mx = Math.max(...C.sizes);
+  let bars = '<div class="cost" style="margin-top:8px">';
+  C.sizes.forEach((z, j) => { bars += `<span class="small">stream ${j}</span><div class="cbar"><div style="width:${(100 * z) / mx}%;background:${kc(K.LIT)};opacity:${j & 1 ? 0.72 : 1}"></div></div><span class="small mono">${z} B</span>`; });
+  bars += "</div>";
+  h += op(kc(K.SIZE), String(w), `<p>The largest stream has ${mx} bytes, so each size takes ${w} bits, the fewest that hold it and at least 5: ${plural(w, "byte")} for all 8, lowest bit first.</p>${bars}`);
+  h += op(kc(K.SET), "H", `<p>The header is ${3 + w} bytes: the number of literals with the top bit set, a byte with table ${C.set} and ${w} − 5 in it, the sizes. The literals and the bitstream are moved to the end of the buffer first, the streams written from the front, and the bitstream moved in behind them.</p>`);
+  h += `</ul>`;
+  return h;
+}
+
+/* ---------- the lower panels ---------- */
+const CAT_K = { hdr: K.HDR, lit: K.LIT, tok: K.TOK, off: K.OFF, len: K.LLV, pad: K.PAD };
+function drawBudget() {
+  const b = S.bud[S.cur], lb = S.lbud[S.cur], B = S.bud[S.steps.length - 1], LB = S.lbud[S.steps.length - 1];
+  const tot = (o) => Object.values(o).reduce((a, v) => a + v, 0);
+  const max = Math.max(tot(LB), tot(B), 8 * S.P.lz4) * 1.02;
+  const bar = (cur, full, cats) => {
+    const seg = (o) => cats.map((c) => `<div style="width:${(100 * o[c]) / max}%;background:${kc(CAT_K[c])}"></div>`).join("");
+    return `<div class="track"><div class="ghost">${seg(full)}</div><div class="fill">${seg(cur)}</div></div>`;
+  };
+  let h = `<div class="bb"><span class="small"><b>seqlz</b></span>${bar(b, B, S.cats)}<span class="num">${fmt(Math.ceil(tot(b) / 8))} B</span></div>`;
+  h += `<div class="bb"><span class="small">the same sequences in lz4's format</span>${bar(lb, LB, S.lcats)}<span class="num">${fmt(Math.ceil(tot(lb) / 8))} B</span></div>`;
+  h += `<table class="bbtable"><thead><tr><th>bytes</th><th>seqlz</th><th>lz4 format</th><th>saved</th></tr></thead><tbody>`;
+  const row = (name, k, a, c) => `<tr><td><span class="tk" style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${kc(k)}"></span>${name}</td><td>${fmt(Math.round(a / 8))}</td><td>${c === null ? "–" : fmt(Math.round(c / 8))}</td><td>${c === null ? "–" : fmt(Math.round((c - a) / 8))}</td></tr>`;
+  h += row("Tokens", K.TOK, b.tok, lb.tok) + row("Offsets", K.OFF, b.off, lb.off) + row("Length values", K.LLV, b.len, lb.len) + row("Literals", K.LIT, b.lit, lb.lit) + row("Header", K.HDR, b.hdr, 0) + row("Unused bits", K.PAD, b.pad, null);
+  h += `</tbody></table><p class="muted small" style="margin:0">The real <code>lz4</code> finds other matches and takes ${fmt(S.P.lz4)} bytes for this page, <code>zstd</code> at level 3 ${fmt(S.P.zstd)}.</p>`;
+  $("#budget").innerHTML = h;
+}
+function drawFast() {
+  const c = S.cnt[S.cur], n = S.P.n;
+  const items = [
+    [fmt(c.probes), `<b>positions tried</b>, each one hash and two compares of 4 bytes, ${fmt(c.compares)} in all, with one branch for both. The next position's 8 bytes and slot are loaded one position ahead, so an in-order core does not wait for them.`],
+    [fmt(c.skipped), `<b>positions skipped</b> inside the ${fmt(c.matches)} ${c.matches === 1 ? "match" : "matches"} found: the matcher jumps behind each match, the bytes in it are never hashed.`],
+    [fmt(c.rep), `<b>matches at the last offset</b>, found without the hash table and stored without offset bits.`],
+    [fmt(c.back), `<b>bytes grown backwards</b> into the literals: a match found late still starts where it really starts.`],
+    [S.vk === "lit" ? fmt(c.litAdds) : "0", S.vk === "lit" ? `<b>adds to count the literals</b> in all 8 tables at once, one per literal.` : `<b>adds for the literals</b>: seqlz-fast does not count them.`],
+    ["0", `<b>tables built for this page</b>: the token, length and literal tables are fixed. Only the hash table is cleared, 8 KiB.`],
+  ];
+  $("#fastList").innerHTML = items.map(([a, b]) => `<li><span class="big">${a}</span><p>${b}</p></li>`).join("");
+}
+
+/* ---------- the top ---------- */
+function drawTop() {
+  const P = S.P;
+  $("#pageTitle").textContent = P.title;
+  $("#pageDesc").textContent = P.desc;
+  $("#pageNote").textContent = P.coding.pays ? "" : "both codecs write the same bytes for this page";
+  const F = S.final, sz = F.length, C = P.coding;
+  const parts = S.coded
+    ? [["header", C.starts[0], K.HDR], ["8 literal streams", C.starts[8] - C.starts[0], K.LIT], ["sequences", sz - C.starts[8], K.TOK]]
+    : [["header", 2, K.HDR], ["literals", P.n, K.LIT], ["sequences", sz - 2 - P.n, K.TOK]];
+  $("#layoutBar").innerHTML = parts.map(([nm, b, k]) => `<div style="flex:${b};background:${kc(k)}" title="${nm}: ${b} bytes">${b > sz / 12 ? `${nm} · ${fmt(b)} B` : ""}</div>`).join("");
+  $("#layoutNote").textContent = parts.map(([nm, b]) => `${nm}: ${fmt(b)} bytes`).join(" · ");
+  const rows = [["lz4", P.lz4], ["zstd 3", P.zstd], ["seqlz-fast", S.raw.length], ["seqlz-fast-lit", S.litc.length]];
+  const me = S.vk === "lit" ? "seqlz-fast-lit" : "seqlz-fast";
+  $("#sizes").innerHTML = rows.map(([nm, v]) => `<div class="row${nm === me ? " me" : ""}"><span class="name">${nm}</span><div class="bar" style="width:${(100 * v) / 4096}%"></div><span class="num">${fmt(v)}</span></div>`).join("");
+  const used = new Set();
+  [S.lay.raw, S.lay.coded].forEach((L) => L && L.kind.forEach((k) => used.add(k)));
+  $("#compLegend").innerHTML = KNAME.map((nm, k) => (used.has(k) && k !== K.MLV ? `<span><i style="background:${kc(k)}"></i>${nm}</span>` : "")).join("");
+  $("#hashLegend").innerHTML = `<span><i style="background:hsl(215 62% 50%)"></i>a position near the start of the page</span><span><i style="background:hsl(40 62% 50%)"></i>near the end</span><span><i style="background:var(--empty)"></i>empty</span><span><i style="border:1.5px solid var(--ink)"></i>written in this step</span><span><i style="border:2px solid var(--k-esc)"></i>the slot of the hit</span>`;
+  document.querySelectorAll("#pagePick button").forEach((b, i) => b.setAttribute("aria-pressed", i === S.pi));
+  document.querySelectorAll("#varPick button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === S.vk));
+  const J = [["Matches", "seq", K.TOK], ["Literals", "lits", K.LIT], ["End", "end", K.PAD]];
+  $("#jumps").innerHTML = J.map(([nm, k, kk]) => `<button data-j="${k}"><i style="background:${kc(kk)}"></i>${nm}</button>`).join("");
+}
+function drawPageLegend() {
+  const m = S.mode, col = S.col;
+  let h = "";
+  if (m === "origin") h = `<span><i style="background:${kc(K.LIT)}"></i>a literal</span><span><i style="background:var(--c-match)"></i>in a match</span><span><i style="background:var(--ink-3);opacity:.5"></i>not reached yet</span><span><i style="background:var(--ink)"></i>underline: a position tried</span>`;
+  if (m === "class") h = [["literal", "var(--k-lit)"], ["0 repeat", "var(--c0)"], ["1 · 4 bits", "var(--c1)"], ["2 · 8 bits", "var(--c2)"], ["3 · 12 bits", "var(--c3)"], ["4 · 5 bits ×8", "var(--c4)"], ["5 · 9 bits ×8", "var(--c5)"]].map(([a, b]) => `<span><i style="background:${b}"></i>${a}</span>`).join("");
+  if (m === "value") h = `<span>${col.dark ? "darker" : "lighter"} is a smaller byte value</span>`;
+  $("#pageLegend").innerHTML = h;
+  document.querySelectorAll("#colorPick button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.m === m));
+}
+
+/* ---------- moving between steps ---------- */
+function go(i) {
+  i = Math.max(0, Math.min(S.steps.length - 1, i));
+  const prev = S.cur;
+  S.cur = i;
+  const a = i > 0 ? S.done[i - 1] : 0, b = S.done[i];
+  S.flash = i === prev + 1 && b > a ? { t: performance.now(), a, b } : null;
+  document.body.classList.toggle("quick", S.playing && S.speed > 3);
+  drawPage(performance.now()); drawArc(); drawHex(); drawComp(); drawHash(); drawTl();
+  card(); drawBudget(); drawFast();
+  scrollComp();
+  $("#stepNo").textContent = `step ${fmt(i + 1)} of ${fmt(S.steps.length)}`;
+}
+function setPage(pi, vk) {
+  stop();
+  S.pi = pi; S.vk = vk;
+  load(); readColors(); drawTop(); layoutAll(); drawPageLegend();
+  go(0);
+}
+function layoutAll() { readColors(); layoutPage(); layoutComp(); layoutHash(); layoutTl(); }
+
+let timer = null, lastT = 0, acc = 0;
+function tick(t) {
+  if (!S.playing) return;
+  acc += (t - lastT) / 1000 * S.speed;
+  lastT = t;
+  if (acc >= 1) {
+    const k = Math.floor(acc);
+    acc -= k;
+    if (S.cur + k >= S.steps.length - 1) { go(S.steps.length - 1); stop(); return; }
+    go(S.cur + k);
+  }
+  timer = requestAnimationFrame(tick);
+}
+function play() {
+  if (S.cur >= S.steps.length - 1) go(0);
+  S.playing = true; $("#playLbl").textContent = "Pause";
+  lastT = performance.now(); acc = 1;
+  timer = requestAnimationFrame(tick);
+}
+function stop() {
+  S.playing = false; $("#playLbl").textContent = "Play";
+  if (timer) cancelAnimationFrame(timer);
+  document.body.classList.remove("quick");
+}
+
+/* ---------- hover and clicks ---------- */
+const tip = $("#tip");
+function showTip(e, html) {
+  tip.innerHTML = html;
+  tip.classList.add("on");
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = e.clientY - h - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tip.classList.remove("on"); }
+const sw = (k) => `<span class="tk" style="background:${kc(k)}"></span>`;
+
+function describeByte(d) {
+  const v = S.orig[d], i = S.oSeq[d], q = S.P.seqs[i];
+  let h = `<b>Page byte ${fmt(d)}</b> · <span class="tbits">0x${hex2(v)}</span>${chq(v) ? ` · '${chq(v)}'` : ""}`;
+  if (d < LIMIT) h += `<br>its 5 bytes hash to slot ${S.slots[d]}`;
+  if (S.oKind[d] === 0) h += `<hr>${sw(K.LIT)}A literal of sequence ${fmt(i + 1)}, literal ${fmt(q.li + d - q.a)}`;
+  else h += `<hr><span class="tk" style="background:var(--c-match)"></span>In the match of sequence ${fmt(i + 1)}: ${fmt(q.ml)} bytes from ${fmt(q.off)} back, class ${q.cls}<br>the same as byte ${fmt(S.oSrc[d])}`;
+  const end = q.hp === null || q.hp === undefined ? LIMIT : q.hp + 1;
+  if (q.p0 !== null && q.p0 !== undefined && d >= q.p0 && d < end) h += `<br>tried as a position${d === q.hp ? ", the hit" : ""}`;
+  if (d >= S.done[S.cur]) h += `<br><span style="opacity:.75">not reached yet</span>`;
+  return h + `<hr><span style="opacity:.75">Click to go to sequence ${fmt(i + 1)}.</span>`;
+}
+function pageHit(e) {
+  const r = $("#pageCv").getBoundingClientRect();
+  const c = Math.floor((e.clientX - r.left) / S.pc), rr = Math.floor((e.clientY - r.top) / S.pc);
+  if (c < 0 || c > 63 || rr < 0 || rr > 63) return -1;
+  return rr * 64 + c;
+}
+$("#pageCv").addEventListener("mousemove", (e) => { const d = pageHit(e); if (d < 0) return hideTip(); showTip(e, describeByte(d)); });
+$("#pageCv").addEventListener("mouseleave", hideTip);
+$("#pageCv").addEventListener("click", (e) => { const d = pageHit(e); if (d >= 0) { stop(); go(S.seq0 + S.oSeq[d]); } });
+$("#hexPeek").addEventListener("mousemove", (e) => { const t = e.target.closest("[data-d]"); if (!t) return hideTip(); showTip(e, describeByte(+t.dataset.d)); });
+$("#hexPeek").addEventListener("mouseleave", hideTip);
+$("#stepCard").addEventListener("mousemove", (e) => { const t = e.target.closest("[data-d]"); if (!t) return hideTip(); showTip(e, describeByte(+t.dataset.d)); });
+$("#stepCard").addEventListener("mouseleave", hideTip);
+
+function describeBit(L, p) {
+  const k = L.kind[p], o = L.owner[p], C = S.P.coding, P = S.P;
+  if (k === K.HDR) return `${sw(k)}Header: the number of literals${S.coded ? " and the flag for coded literals" : ""}`;
+  if (k === K.SET) return `${sw(k)}Header: literal table ${C.set}, stream sizes of ${C.width} bits`;
+  if (k === K.SIZE) return `${sw(k)}Header: the size of stream ${o}, ${C.sizes[o]} bytes`;
+  if (k === K.LIT) return L === S.lay.raw ? `${sw(k)}Literals of sequence ${fmt(o + 1)}, as they are` : `${sw(k)}Literal ${fmt(o)} in stream ${o % 8}, ${D.lit_len[256 * C.set + S.raw[2 + o]]} bits for 0x${hex2(S.raw[2 + o])}`;
+  if (k === K.PAD) return `${sw(k)}Unused: filling up a stream's or the bitstream's last byte`;
+  const q = P.seqs[o];
+  const name = { [K.TOK]: `token code, token ${q.t}`, [K.ESC]: `escape, then token ${q.t} in 12 bits`, [K.OFF]: `${q.rl} offset bits, class ${q.cls}, offset ${fmt(q.off)}`, [K.LLV]: `ll value, ll ${fmt(q.ll)}`, [K.MLV]: `ml value, ml ${fmt(q.ml)}` }[k];
+  return `${sw(k)}Sequence ${fmt(o + 1)}: ${name}`;
+}
+function compHit(e) {
+  const r = $("#compCv").getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const col = Math.floor(x / S.cc), row = Math.floor(y / S.cc);
+  if (col < 0 || col >= COLS || row < 0) return null;
+  let b = -1;
+  for (const g of segs()) { const k = (row - g.row) * COLS + col; if (row >= g.row && k < g.len) b = g.from + k; }
+  if (b < 0) return null;
+  const i = Math.max(0, Math.min(7, Math.floor((x - col * S.cc - 1) / ((S.cc - 2) / 8))));
+  return { b, p: b * 8 + i };
+}
+$("#compCv").addEventListener("mousemove", (e) => {
+  const hh = compHit(e);
+  if (!hh) return hideTip();
+  const L = curLay(), { b, p } = hh;
+  if (L.step[p] > S.cur) return showTip(e, `<b>Byte ${fmt(b)}</b><br>not written yet<hr>${describeBit(L, p)}<br><span style="opacity:.75">Click to go to the step that writes it.</span>`);
+  const seen = new Set(), lines = [];
+  for (let j = 0; j < 8; j++) { const key = L.kind[b * 8 + j] + ":" + L.owner[b * 8 + j]; if (!seen.has(key)) { seen.add(key); lines.push(describeBit(L, b * 8 + j)); } }
+  showTip(e, `<b>Byte ${fmt(b)}</b> · <span class="tbits">0x${hex2(L.bytes[b])}</span><hr>${lines.join("<br>")}<hr><span style="opacity:.75">Click to go to the step that writes bit ${p & 7}.</span>`);
+});
+$("#compCv").addEventListener("mouseleave", hideTip);
+$("#compCv").addEventListener("click", (e) => { const hh = compHit(e); if (hh) { stop(); go(curLay().step[hh.p]); } });
+
+$("#hashCv").addEventListener("mousemove", (e) => {
+  const r = $("#hashCv").getBoundingClientRect();
+  const c = Math.floor((e.clientX - r.left) / S.hc), rr = Math.floor((e.clientY - r.top) / S.hc);
+  if (c < 0 || c > 63 || rr < 0 || rr > 63) return hideTip();
+  const sl = rr * 64 + c, p = S.hash.tab[sl];
+  showTip(e, `<b>Slot ${fmt(sl)}</b><br>${p < 0 ? "empty: a lookup here reads position 0" : `position ${fmt(p)}, its first 5 bytes <span class="tbits">${Array.from(S.orig.subarray(p, p + 5), hex2).join(" ")}</span>`}${S.hash.fresh[sl] ? "<br>written in this step" : ""}`);
+});
+$("#hashCv").addEventListener("mouseleave", hideTip);
+
+function tlStep(e) {
+  const r = $("#tlCv").getBoundingClientRect();
+  return Math.floor(((e.clientX - r.left) / r.width) * S.steps.length);
+}
+function stepName(i) {
+  const s = S.steps[i];
+  if (s.k === "seq") { const q = S.P.seqs[s.i]; return `Sequence ${fmt(s.i + 1)}: ${plural(probesOf(q), "position")} tried${q.ml ? `, a match of ${fmt(q.ml)}` : ""}`; }
+  return { start: "Start", lits: "The literals: which table, and does it pay", streams: "The literals coded into 8 streams", end: "Done" }[s.k];
+}
+let dragging = false;
+$("#tlCv").addEventListener("pointerdown", (e) => { dragging = true; $("#tlCv").setPointerCapture(e.pointerId); stop(); go(tlStep(e)); });
+$("#tlCv").addEventListener("pointermove", (e) => {
+  const i = Math.max(0, Math.min(S.steps.length - 1, tlStep(e)));
+  if (dragging) go(i);
+  showTip(e, `<b>Step ${fmt(i + 1)}</b> · ${stepName(i)}`);
+});
+$("#tlCv").addEventListener("pointerup", () => (dragging = false));
+$("#tlCv").addEventListener("pointerleave", hideTip);
+
+$("#bPlay").addEventListener("click", () => (S.playing ? stop() : play()));
+$("#bPrev").addEventListener("click", () => { stop(); go(S.cur - 1); });
+$("#bNext").addEventListener("click", () => { stop(); go(S.cur + 1); });
+$("#bFirst").addEventListener("click", () => { stop(); go(0); });
+$("#bLast").addEventListener("click", () => { stop(); go(S.steps.length - 1); });
+$("#speed").addEventListener("change", (e) => { S.speed = +e.target.value; });
+S.speed = +$("#speed").value;
+$("#jumps").addEventListener("click", (e) => { const b = e.target.closest("[data-j]"); if (b) { stop(); go(S.stepIdx[b.dataset.j]); } });
+$("#colorPick").addEventListener("click", (e) => { const b = e.target.closest("[data-m]"); if (!b) return; S.mode = b.dataset.m; drawPageLegend(); drawPage(); drawHex(); });
+$("#varPick").addEventListener("click", (e) => { const b = e.target.closest("[data-v]"); if (b && b.dataset.v !== S.vk) { const c = S.cur; setPage(S.pi, b.dataset.v); go(Math.min(c, S.steps.length - 1)); } });
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("select, input, textarea")) return;
+  const step = e.shiftKey ? 10 : 1;
+  if (e.key === "ArrowRight") { stop(); go(S.cur + step); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { stop(); go(S.cur - step); e.preventDefault(); }
+  else if (e.key === " ") { S.playing ? stop() : play(); e.preventDefault(); }
+  else if (e.key === "Home") { stop(); go(0); e.preventDefault(); }
+  else if (e.key === "End") { stop(); go(S.steps.length - 1); e.preventDefault(); }
+});
+
+$("#pagePick").innerHTML = D.pages.map((p, i) => `<button data-p="${i}" aria-pressed="${i === 0}">${p.title}</button>`).join("");
+$("#pagePick").addEventListener("click", (e) => { const b = e.target.closest("[data-p]"); if (b) setPage(+b.dataset.p, S.vk); });
+
+let rz = null;
+new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => { layoutAll(); go(S.cur); }, 80); }).observe(document.querySelector(".bench"));
+const redrawTheme = () => { readColors(); drawTop(); drawPageLegend(); go(S.cur); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawTheme);
+new MutationObserver(redrawTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+// a link can name the page, the codec and the step: #text, #heap-fast, #relro-s120
+const m = /^#?(heap|text|relro)?-?(fast|lit)?-?(?:s(\d+))?$/.exec(location.hash);
+const hp = m && m[1] ? D.pages.findIndex((p) => p.key === m[1]) : 1;
+setPage(Math.max(0, hp), m && m[2] ? m[2] : "lit");
+// open on a match, so the first view shows the matcher at work
+go(m && m[3] ? +m[3] - 1 : S.seq0 + 6);
+</script>

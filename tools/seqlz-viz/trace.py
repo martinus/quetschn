@@ -3,8 +3,8 @@
 """trace.py <dir>: the trace of seqlz's decoder for page.html, from the pages in dir and their
 compressed forms <page>.fast and <page>.lit (compress.c), to <dir>/trace.json. Every field with its bit
 position, decoded with tools/seqlz_ref.py's tables, and the C decoder's register refills and fast path
-emulated. A position is byte * 8 + the bit's index in reading order: lowest bit first in the sequences'
-bitstream, highest bit first in a literal stream. Needs the Python packages lz4 and zstandard for the
+emulated. A position is byte * 8 + the bit's index in reading order, highest bit first in the
+sequences' bitstream and in a literal stream. Needs the Python packages lz4 and zstandard for the
 sizes of the same pages in those two."""
 
 import base64
@@ -35,18 +35,21 @@ LIT_LEN = ref.numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256]
 class Reader:
     """the bits of data from byte start on, 0 past its end; pos is where the next read starts"""
 
-    def __init__(self, data, start, msb):
-        self.data, self.pos, self.msb = data, 8 * start, msb
+    def __init__(self, data, start):
+        self.data, self.pos = data, 8 * start
 
     def bit(self):
         i = self.pos
         self.pos += 1
         if i >= 8 * len(self.data):
             return 0
-        return (self.data[i // 8] >> (7 - i % 8 if self.msb else i % 8)) & 1
+        return (self.data[i // 8] >> (7 - i % 8)) & 1
 
     def read(self, n):
-        return sum(self.bit() << k for k in range(n))
+        v = 0
+        for _ in range(n):
+            v = v << 1 | self.bit()
+        return v
 
     def symbol(self, codes):
         code, length, s = 0, 0, ""
@@ -72,7 +75,7 @@ def trace(page_bytes, comp, name):
         out["sizes"], out["starts"] = sizes, starts
         lit_rec = [None] * n
         for j in range(8):
-            r = Reader(comp, starts[j], True)
+            r = Reader(comp, starts[j])
             for k in range(j, n, 8):
                 p0 = r.pos
                 v, bits = r.symbol(lit_codes[comp[2] & 7])
@@ -90,7 +93,7 @@ def trace(page_bytes, comp, name):
         lit_limit = len(comp) - 2 - 16
     out["bs"] = bs
 
-    r = Reader(comp, bs, False)
+    r = Reader(comp, bs)
     end = len(comp) - bs
     # the C decoder's bit reader: p bytes loaded, count bits in the register; a refill when fewer than
     # 23 are left for the next token and offset, and always before the escape's 12 bits and a length value
