@@ -133,10 +133,11 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_HEADER(w) (3U + (w))
 #define SEQLZ_SIZE_BITS_MIN 5U
 #define SEQLZ_SIZE_BITS_MAX 12U
-/* The encoder codes literals only where that saves 1/16 of them and 19 bytes, the header when each stream
- * size took 2 bytes. Counting the smaller header coded 10% more pages, 2 bytes smaller each on phone
- * pages, for 0.22 us more per page written on the A55. */
-#define SEQLZ_LIT_CODED_MIN 19U
+/* The encoder codes literals only where that saves 1/16 of them and 51 bytes. A page with coded literals
+ * costs a fixed time to read, its literal table and the buffer they are decoded into: on phone pages 51
+ * instead of 19 bytes made a page 7.9 bytes larger and the time per page written 2.7 us shorter on the
+ * A55, 1.1 us on the A76; on the PC 11 bytes for 0.1 us. */
+#define SEQLZ_LIT_CODED_MIN 51U
 /* where the decoder decodes coded literals: 16 bytes behind them for the literal copies, which read 16
  * bytes at a time */
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 16U)
