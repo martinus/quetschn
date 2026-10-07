@@ -671,7 +671,10 @@ it:
 
 1. loads the next bytes into the register if fewer than 23 bits are left: enough for a token with a
    code of its own, 11 bits, and a 12-bit offset. An escaped token, and a length value, load more
-   before they read;
+   before they read. On a core that runs instructions out of order, a sequence without a length value
+   instead loads every second time without asking, because whether the bits run short is a branch the
+   CPU guesses wrong on a page it has not seen
+   ([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept));
 2. looks up the next 11 bits in the token table, like the 3-bit table in
    [Idea 2](#idea-2-frequent-things-get-short-codes). The bitstream is read highest bit first, so
    these are the top 11 bits of the register, and the entries of a short code are next to each other

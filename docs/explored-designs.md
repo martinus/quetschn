@@ -47,6 +47,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 - [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
 - [Which branches: three in the sequence loop are 58% of the 130 misses of a page seen once](#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)
+- [The refill without its branch, every second fast sequence: 63 ns less per swap-in on x86-64 and the A76, kept](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -541,9 +542,9 @@ branch records; a branch that stalls may be counted a bit more often than it run
 What could take them out, none built yet:
 
 * **The refill without a branch.** Whether the 64-bit buffer has 23 bits left depends on the code
-  lengths of the sequences before, which a predictor learns only for a page it has seen. The fast path
-  could refill every sequence without the check, a load, a shift and an or, if its condition also
-  checks that 8 bytes of input are left. That is a compare more in a branch that is predicted well.
+  lengths of the sequences before, which a predictor learns only for a page it has seen. Built: every
+  second fast sequence refills without the check, on out-of-order cores, see
+  [The refill without its branch](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept).
 * **The fast path's condition** mispredicts when a length value follows, after 8.5% of the matches and
   the literal runs of 15 bytes and more. Fewer of them needs other tables or a larger token, a format
   change; or the length values in the fast path too.
@@ -559,6 +560,90 @@ What could take them out, none built yet:
 ```sh
 tools/seqlz-branches/run.sh <build dir with QUETSCHN_KERNEL_TREE> <pages file>
 ```
+
+## The refill without its branch, every second fast sequence: 63 ns less per swap-in on x86-64 and the A76, kept
+
+*The largest of the branches of "Which branches": `NEXT_TOKEN()` refills the bit buffer only when
+fewer than 23 bits are left, which depends on the codes before. Now a fast sequence on an out-of-order
+core refills every second time without asking. In a swap-in the decoder takes 63 ns less on x86-64, the
+A76 decodes a page seen once 75 ns faster, and the in-order A55 keeps the loop it had.* Code:
+`seqlz_decode()` and `decode_page()` in `src/seqlz.c`.
+
+Every refill without a check puts a load in front of the next token's lookup: its address depends on
+the bits the sequence used, the lookup on what it loads. Two ways, both behind the fast path's
+condition, which now also needs 8 bytes of input:
+
+* **A, every fast sequence.** Measured with `tools/seqlz-branches/run.sh`, x86-64 as there, cycles per
+  decode, two runs each:
+
+  | | branch misses | cycles, page seen once | cycles, right after the same page |
+  | --- | ---: | ---: | ---: |
+  | before | 129.8, 129.9 | 6961, 7082 | 4836, 4698 |
+  | A | 102.3, 102.1 | 7033, 6992 | 5236, 5323 |
+
+  The refill's branch is gone, 28 misses less, and its loads take what they save, and 500 cycles more
+  on a page the predictor knows. Not kept.
+* **B, every second fast sequence.** A refill leaves at least 56 bits, two fast sequences take at most
+  2 * (11 + 14), and after a sequence of the slow path it always refills. A branch that alternates is
+  one any predictor gets right:
+
+  | | branch misses | cycles, page seen once | cycles, right after the same page |
+  | --- | ---: | ---: | ---: |
+  | before | 130.1, 130.0 | 6982, 6943 | 4868, 4646 |
+  | B | 101.2, 101.6 | 6732, 6668 | 4809, 4890 |
+
+**In the kernel.** VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, the backend's prefetch,
+20 000 pages of the first desktop dump, CPU 2 at 4.5 GHz, boost off, the two kernels booted in turns,
+3 boots each, means in ns:
+
+| kernel | `lz4` `zcomp_decompress()` | `seqlz-fast-lit` `zcomp_decompress()` | its whole swap-in |
+| --- | ---: | ---: | ---: |
+| gcc 16.2.1, before | 1414 to 1426 | 2010, 2010, 2011 | 4122 to 4127 |
+| gcc 16.2.1, B | 1414 to 1426 | 1935, 1940, 1941 | 4045 to 4059 |
+| clang 22.1.8, before | 1372 to 1383 | 2020, 2030, 2040 | 4133 to 4140 |
+| clang 22.1.8, B | 1373 to 1385 | 1976, 1980, 1983 | 4077 to 4091 |
+
+With clang `run.sh` also showed B 300 to 600 cycles slower on a page the predictor knows, which is no
+swap-in.
+
+**On the phone B loses on the little core.** `decode_once.c` for arm64, `seqlz.c` with the kernel's flags
+for arm64, on the Mi 9T with the 20 000-page sample of its second dump, cpu2 at 1804.8 MHz and cpu7 at
+2208 MHz, ns per decode, 4 or 8 runs each:
+
+| | page seen once | right after the same page |
+| --- | ---: | ---: |
+| A55, before | 11 378 to 11 563 | 6626 to 6726 |
+| A55, B | 11 367 to 11 785 | 6864 to 6970 |
+| A76, before | 3309 to 3340 | 2488 to 2494 |
+| A76, B | 3241 to 3272 | 2483 to 2491 |
+
+The in-order A55 waits for every load, and its mispredictions cost less. So the refill depends on the
+core, as the token table's prefetch already does: `in_order_core()` by the core's id in arm64 kernels,
+out of order everywhere else. A switch at run time inside the loop cost the A55 200 to 250 ns on its own, the
+compare more in the fast path's condition and the alternation on every sequence. Kept is a loop per
+kind of core: `decode_page()` is inlined twice with `in_order` a constant, and the in-order copy for
+arm64 is the loop of before, the same 1000 instructions in the NDK's build. Two copies are about 3.7 KB
+more code in an arm64 kernel, from the instructions of that build, and each core runs one of them. Elsewhere `in_order_core()` is a constant and there is one
+copy. Measured with the kept code, the A55 through `-DSEQLZ_IN_ORDER=1`, which picks the in-order loop
+in userspace:
+
+| | page seen once | right after the same page |
+| --- | ---: | ---: |
+| A55, before | 11 447 to 11 626 | 6647 to 6716 |
+| A55, kept | 11 491 to 11 569, one run 10 304 | 6638 to 6737 |
+| A76, before | 3311 to 3331 | 2481 to 2495 |
+| A76, kept | 3240 to 3255 | 2476 to 2489 |
+| x86-64 kernel, gcc, `zcomp_decompress()` before | 1995, 2001, 2008 | |
+| x86-64 kernel, gcc, `zcomp_decompress()` kept | 1936, 1938, 1942 | |
+
+The whole swap-in in that gcc kernel 4111 to 4130 before and 4050 to 4064 ns with it, `lz4` 1423 to 1431
+in both, swap-out the same. The one A55 run at 10 304 ns has the same code as the others, not found why.
+Not measured: the phone's own kernel, where a big and a little core run the same kernel.
+
+Checked: the tests with both loops, `SEQLZ_IN_ORDER` 0 and 1, with ASan and UBSan, 16 KiB pages, the
+spec decoder, the same bytes on the endian test, 60 s of fuzzing per target with each loop. Three
+mutations fail the tests under the sanitizers: the alternation not reset after the slow path, no
+refill at all, and the fast path without its input bound.
 
 ## The first runs with dictionaries, Phases 0 to 2
 
