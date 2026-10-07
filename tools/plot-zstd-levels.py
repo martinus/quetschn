@@ -33,6 +33,8 @@ plot_codecs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plot_codecs)
 
 ZSTD = plot_codecs.STYLE["zstd"][0]
+# memory in % of the page: where the labels of levels close to another one go, in a row
+LABEL_ROW = 14.0
 OTHERS = {"lz4": "lz4", "lzo-rle": "lzo-rle", "seqlz": "seqlz-fast", "seqlz-lit": "seqlz-fast-lit"}
 
 
@@ -54,6 +56,23 @@ def mean_rows(score, logs, r):
         for name, v in score_rows(score, log, r).items():
             sums.setdefault(name, []).append(v)
     return {n: tuple(sum(x) / len(vs) for x in zip(*vs)) for n, vs in sums.items()}
+
+
+def spread(xs, gap, lo, hi):
+    """Positions for labels of points at xs: in the same order, at least gap apart, within [lo, hi], each as
+    close to its point as that allows."""
+    order = sorted(range(len(xs)), key=lambda k: xs[k])
+    pos = [xs[k] for k in order]
+    for k in range(1, len(pos)):
+        pos[k] = max(pos[k], pos[k - 1] + gap)
+    pos[-1] = min(pos[-1], hi)
+    for k in range(len(pos) - 2, -1, -1):
+        pos[k] = min(pos[k], pos[k + 1] - gap)
+    shift = max(0.0, lo - pos[0])
+    out = [0.0] * len(xs)
+    for k, i in enumerate(order):
+        out[i] = pos[k] + shift
+    return out
 
 
 def level(name):
@@ -99,10 +118,28 @@ def main():
             # corner
             limit = None if j == 1 else args.max_us
             shown = [n for n in zstd if limit is None or pts[n][0] <= limit]
+            right = limit or max(t for t, _ in pts.values()) * 1.08
+            right = right if limit else math.ceil(right)
             ax.plot([pts[n][0] for n in shown], [pts[n][1] for n in shown], color=ZSTD, lw=1.6, marker="D", ms=6,
                     mec="white", mew=0.6, zorder=3, label="zstd, by level")
-            for k, n in enumerate(shown):
-                ax.annotate(str(level(n)), pts[n], textcoords="offset points", xytext=(5, 4 if k % 2 else -11),
+            # the levels that stand alone get their label next to them; the ones close to another one get
+            # theirs in a row in the empty part below, apart, with a thin line to the point
+            def crowded(n):
+                return any(abs(pts[n][0] - pts[m][0]) / right < 0.06 and abs(pts[n][1] - pts[m][1]) < 3.0
+                           for m in shown if m != n)
+
+            low = [n for n in shown if crowded(n)]
+            for n in shown:
+                if n not in low:
+                    ax.annotate(str(level(n)), pts[n], textcoords="offset points", xytext=(6, 4), fontsize=10,
+                                color=ZSTD)
+            xs = spread([pts[n][0] for n in low], right * 0.055, right * 0.03, right * 0.97)
+            for n, x in zip(low, xs):
+                ax.annotate(str(level(n)), pts[n], xytext=(x, LABEL_ROW), textcoords="data", ha="center", va="top",
+                            fontsize=10, color=ZSTD,
+                            arrowprops=dict(arrowstyle="-", color=ZSTD, lw=0.6, alpha=0.6, shrinkA=1, shrinkB=4))
+            if low:
+                ax.annotate("zstd level", ((min(xs) + max(xs)) / 2, LABEL_ROW - 3.2), ha="center", va="top",
                             fontsize=8.5, color=ZSTD)
             beyond = [n for n in zstd if n not in shown]
             if beyond:
@@ -125,8 +162,7 @@ def main():
                 h = [p for p in plot_codecs.hull([(t, m, n) for n, (t, m) in pts.items()]) if p[0] <= limit]
                 ax.plot([p[0] for p in h], [p[1] for p in h], color="#aaaaaa", lw=1.2, ls="--", zorder=1,
                         label="best for some exchange rate")
-            right = limit or max(t for t, _ in pts.values()) * 1.08
-            ax.set_xlim(0, right if limit else math.ceil(right))
+            ax.set_xlim(0, right)
             ax.set_ylim(0, ymax)
             ax.set_yticks(range(0, ymax + 1, 5))
             ax.set_yticklabels([f"{v}%" for v in range(0, ymax + 1, 5)])
