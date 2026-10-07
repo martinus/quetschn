@@ -48,6 +48,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
 - [Which branches: three in the sequence loop are 58% of the 130 misses of a page seen once](#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)
 - [The refill without its branch, every second fast sequence: 63 ns less per swap-in on x86-64 and the A76, kept](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)
+- [The fast path's condition: its 22 misses per page are the length values, four ways around them slower, not kept](#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -547,7 +548,8 @@ What could take them out, none built yet:
   [The refill without its branch](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept).
 * **The fast path's condition** mispredicts when a length value follows, after 8.5% of the matches and
   the literal runs of 15 bytes and more. Fewer of them needs other tables or a larger token, a format
-  change; or the length values in the fast path too.
+  change; or the length values in the fast path too. Tried, four ways, none faster, see
+  [The fast path's condition](#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept).
 * **The offset below 8** goes to its own copy. One copy for every offset, without a branch, would have to
   build the repeated 8 bytes also when the offset is 8 or more.
 * **A match longer than 16 bytes**, line 963. Fixed copies of 32 or 40 bytes instead were slower
@@ -4183,6 +4185,62 @@ Tests: a page with the same skewed literals once in a long run with a few matche
 records of 4 literals and 4 bytes that repeat, one sequence each, 14 * 512 + 2048 over the budget:
 the first is coded, the second not, and `seqlz_encode_coded()` without a budget codes the second.
 Mutation, caught: a weight of 1 instead of 14 per sequence.
+## The fast path's condition: its 22 misses per page are the length values, four ways around them slower, not kept
+
+*The second largest branch of "Which branches": the fast path's condition, 22.7 misses per page seen
+once. It misses once for each sequence with a length value, and that is data. What can go are the
+misses of the slow path after it, about 35 per page. Every variant that took some of them out cost
+more than they did.* Measured with `tools/seqlz-branches/run.sh` and a changed `src/seqlz.c`; the
+variants are not in the repository.
+
+Of the 207 sequences of a page, 178.5 take the fast path. The other 28.2: 7.5 with a literal length
+value, 13.9 with a match length value, 0.5 with both, and 6.3 near the end of the page, of the
+literals or of the input. The 22 with a value are the 22.7 misses of the condition. The token says
+whether a value follows, and the branch predictor cannot know the token of a page it has not seen.
+After the miss the slow path mispredicts again: `copy_match()`'s loop 15.6 per page, `copy_literals()`'s
+5.7, `nl == SEQLZ_LL_CAP` 4.2, the loop of an offset below 8 4.2 and some more. The lengths behind the
+values: 70% of the long literal runs are at most 32 bytes and 93% at most 64; 54% of the long matches
+are at most 64 bytes and 88% at most 128.
+
+x86-64 as in "Which branches": `seqlz.c` with the kernel's flags, gcc 16.2.1, the 19 577 pages of the
+first desktop dump, CPU 2 of the Ryzen 9 7950X at 4.5 GHz, boost off. Per decode:
+
+| | branch misses, page seen once | TSC ticks, page seen once | TSC ticks, right after the same page |
+| --- | ---: | ---: | ---: |
+| before, 5 runs | 101.1 to 101.5 | 6696 to 6892 | 4904 to 4948 |
+| A, a path of its own for a value far from the ends | 84.0 | 7015 | 5592 |
+| A with only the values without a branch | 100.7 | 7115 | 5387 |
+| B, the slow path with the values without a branch | 106.0 | 7220 | 5459 |
+| C, the slow path with 64 literal bytes without a loop, 3 runs | 97.6 to 97.8 | 6656 to 6675 | 4949 to 5200 |
+| C with 64 match bytes | 97.7 | 6718 | 5012 |
+| C with 128 match bytes | 93.5 | 6786 | 5237 |
+| C with 64 literal and 128 match bytes | 93.5 | 6862 | 5310 |
+| D, a count of the fast sequences before the ends, 2 runs | 106.3, 106.3 | 6946, 6992 | 5097, 5105 |
+
+* **A, a path of its own for the sequences with a value**, behind the fast one: both values decoded
+  without a branch, used or not by a mask, then 64 literal bytes and 128 match bytes without a loop
+  when they fit. 17 misses less, but gcc then kept `br.p` and `br.count` on the stack in the fast
+  path, a load and a store in the chain of every sequence. Without the fixed copies it is as slow.
+* **B, the values without a branch in the slow path** as it is. Both values are read for every slow
+  sequence, two table lookups between its token and the next one. With the branch the core runs ahead
+  instead. And 5 misses more, not found why.
+* **C, the copies without a loop**, the values decoded as before. Up to 8 misses less, and the copies
+  cost as much: 128 bytes for a match of 40 are three times the stores, and with an offset of 8 to 16
+  each load waits for the store before it. With 64 literal bytes about 45 ticks, 10 ns, less on a page
+  seen once and up to 250 more on a page seen before, which is within what moves between runs.
+* **D, a count instead of the compares with the ends.** The fast path compares `d`, `lit` and the
+  input with their bounds, 3 compares and 3 branches per sequence. A fast sequence moves `d` by at most 48 bytes,
+  `lit` by 14 and the input by 7, so a count of the fast sequences that fit can replace the compares,
+  computed again after each slow sequence and each escape. The count runs out long before the ends,
+  because these steps are the largest, not the usual ones, and each time it runs out the branch
+  mispredicts. The compares mispredict only at the end of the page.
+
+Fewer sequences with a value would need a wider token, a format change, not tried: a fifth bit for
+the literal length doubles the token's 1536 symbols, and codes of at most 11 bits have room for 2048
+([seqlz, third decoder round](#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow),
+4 / 5 bits for ll / ml are kept from there). Not measured: any of the variants on the phone or in
+the kernel VM, since none was faster in userspace on x86-64.
+
 ## Recompression, measured, not pursued
 
 *`seqlz-opt` is removed. The project focuses on `seqlz-fast-lit` (#42).* With zram's recompression the

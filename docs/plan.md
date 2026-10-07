@@ -864,8 +864,10 @@ Next, in this order:
    that it gets right after a decode of the same page, which every benchmark before hid by decoding a
    page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). The refill without its branch on
    out-of-order cores took 63 ns off a swap-in on x86-64
-   ([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)). Next: the fast path's condition and the
-   offset below 8 ([explored-designs.md](explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)), the other choices between
+   ([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)). The fast path's condition
+   misses once per length value, and four ways to cut the misses after it were slower
+   ([explored-designs.md](explored-designs.md#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)).
+   Next: the offset below 8 ([explored-designs.md](explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)), the other choices between
    a branch and more work again with `MODE=swap`, and the score with the times of `MODE=swap`.
 3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
