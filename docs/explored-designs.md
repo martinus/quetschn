@@ -94,6 +94,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [zram: prefetch the compressed data before decompression](#zram-prefetch-the-compressed-data-before-decompression)
 - [A kernel built with clang dropped the decoder's prefetches: fixed, p99 back at gcc's](#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)
+- [The kernel's prefetch() on x86-64, fixed in the kernel: a patch gives clang its prefetches back](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -4042,6 +4043,51 @@ Tried for the 21 ns: clang keeps the table prefetches of `seqlz_decode_scratch` 
 samples were its largest extra cost; with a count known at compile time it unrolls all 96. Cold mean
 3121 and 3285 ns against 3074 and 3263 ns with the loops: no gain, not kept.
 
+## The kernel's prefetch() on x86-64, fixed in the kernel: a patch gives clang its prefetches back
+
+*"A kernel built with clang dropped the decoder's prefetches" put `prefetcht0` into the codec as inline
+assembly, because the kernel's `prefetch()` is nothing in a clang-built x86-64 kernel. A patch for
+`arch/x86` makes `prefetch()` a `prefetcht0` on x86-64. With it the codec can use the kernel's
+`prefetch()` and swaps in as fast as with its own instruction; without it, 120 to 180 ns slower per
+swap-in and 740 to 810 ns at p99.* The patch is commit `d746b5e94690` on the branch `x86-prefetcht0` of the Linux tree,
+not sent.
+
+x86-64 does not define `ARCH_HAS_PREFETCH`, only 32-bit does, so `<linux/prefetch.h>` makes
+`prefetch(x)` `__builtin_prefetch(x)`, and that macro hides the inline function of
+`arch/x86/include/asm/processor.h`. With `-mno-sse` gcc 16.2.1 still emits `prefetcht0`, clang 22.1.8
+emits nothing. The patch defines `ARCH_HAS_PREFETCH` for both and gives x86-64 a `prefetch()` of
+`prefetcht0` in inline assembly. Not the alternative of 32-bit, which patches in `prefetchnta` on every
+CPU with SSE and would change gcc's code.
+
+`prefetcht0` in `vmlinux`, x86-64 defconfig with zram, the codec on the kernel's `prefetch()`:
+
+| | without the patch | with it |
+| --- | ---: | ---: |
+| clang 22.1.8 | 10 | 89 |
+| gcc 16.2.1 | 845 | 845 |
+
+The 10 are inline assembly elsewhere; the codec's own instruction adds 33. 716 of gcc's 845 are in
+`lib/zstd`, which calls `__builtin_prefetch` through its own macros and has none in clang builds, with
+the patch or without.
+
+**In the VM.** `tools/zram-vm/run.sh`'s kernel at `986c24e0fe44`, built with clang 22.1.8, `MODE=swap`,
+the backend's prefetch, 20 000 pages of the first desktop dump, CPU 2 at 4.5 GHz, boost off, the three
+kernels booted in turns, 3 boots each, ns:
+
+| kernel | `seqlz-fast-lit` `zcomp_decompress()` | its swap-in, mean | its swap-in, p99 | `lz4` swap-in, mean |
+| --- | ---: | ---: | ---: | ---: |
+| the codec's own `prefetcht0`, as now | 1972 to 1983 | 3768 to 3771 | 5843 to 5868 | 3153 to 3172 |
+| the codec on `prefetch()` | 2086 to 2155 | 3887 to 3950 | 6609 to 6653 | 3158 to 3190 |
+| the codec on `prefetch()`, the patch | 1978 to 1988 | 3761 to 3775 | 5777 to 5833 | 3170 to 3181 |
+
+The swap-outs are the same in all three, 7523 to 7557 ns for `seqlz-fast-lit`, 6435 to 6525 for `lz4`.
+`lz4` itself does not prefetch, and the fault around it did not get faster either, so as far as this
+shows none of the kernel's `prefetch()` calls is on the path of a swap-in.
+
+So the codec's inline assembly stays until the patch is in the kernel; with it, `PAGE_LZ_PREFETCH` can be
+`prefetch()` in kernel builds. Not measured: `zstd` with prefetches in a clang build, and anything else
+in the kernel that the patch gives its prefetches back.
+
 ## seqlz-fast-lit faster at the same memory: five tries, none kept
 
 Where the time goes, in loops over 2000 pages of the second dump: compressing 26 900 cycles per page,
@@ -5467,8 +5513,8 @@ one multiply).
   #31: both measured, neither built.
 * **The last 21 ns of `seqlz_decode` with clang**, see "A kernel built with clang". The hot
   loop in userspace is as fast with both compilers, it only shows in the VM.
-* **`prefetch()` in x86-64 kernels built with clang**: dropped everywhere, 811 `prefetcht0` in the gcc
-  `vmlinux` against 141. For the kernel, not for this repository.
+* **`prefetch()` in x86-64 kernels built with clang**: dropped everywhere. A patch for the kernel is
+  written and measured, not sent, see [The kernel's prefetch() on x86-64](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back).
 * **arm64.** Every latency above is x86-64 only. The phone's little core may order these designs
   differently; `bytelz` and `seqlz-fast` stay for it. Also nothing with 16 KiB pages is measured in a
   kernel: x86-64 has none, the phones do.
