@@ -85,6 +85,11 @@ tools/plot-swap-fault.py --row "PC=swap.log" --row "Phone, little core=cpu2.log"
 tools/plot-codecs.py --run "first dump=reads.log" --out codecs.svg
 ```
 
+Two options are for finding where a fault's time goes: `KARGS=zram.zram_warm=1` to `4` warms seqlz's
+tables, its code or the destination page right before the timed decompression, and
+`KARGS=quetschn.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, see
+[explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012).
+
 > [!TIP]
 > A single boot can be off: `zstd` came out 18% slower in one boot with nothing changed. Compare
 > codecs within one boot, and repeat a boot before you trust a difference of a few percent.

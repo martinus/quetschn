@@ -1,5 +1,5 @@
---- a/drivers/block/zram/zram_drv.c	2026-09-24 04:12:08.073651891 +0200
-+++ b/drivers/block/zram/zram_drv.c	2026-09-24 04:12:08.086306659 +0200
+--- a/drivers/block/zram/zram_drv.c	2026-10-07 08:57:40.233648582 +0200
++++ b/drivers/block/zram/zram_drv.c	2026-10-07 08:57:40.235616238 +0200
 @@ -15,7 +15,10 @@
  #define pr_fmt(fmt) "zram: " fmt
  
@@ -11,7 +11,7 @@
  #include <linux/bio.h>
  #include <linux/bitops.h>
  #include <linux/blkdev.h>
-@@ -2099,6 +2102,23 @@
+@@ -2099,6 +2102,32 @@
  	return 0;
  }
  
@@ -30,15 +30,25 @@
 +static unsigned long zram_decomp_ns, zram_decomp_n;
 +module_param(zram_decomp_ns, ulong, 0444);
 +module_param(zram_decomp_n, ulong, 0444);
++/*
++ * EXPERIMENT: warm the backend right before the decompression, outside zram_decomp_ns, to see what of
++ * a fault's decompression is cold caches: 1 its tables and scratch read, 2 a small page decoded, which
++ * warms its code too, only for backends that set zram_warm_fn, today seqlz's (backend_seqlz.c). 3 the
++ * destination page written, for every backend. 4 both 3 and 2.
++ */
++int zram_warm;
++module_param(zram_warm, int, 0644);
++void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what);
 +
 +
  static int read_compressed_page(struct zram *zram, struct page *page,
  				unsigned long index)
  {
-@@ -2116,7 +2136,35 @@
+@@ -2116,7 +2145,41 @@
  	src = zs_obj_read_begin(zram->mem_pool, handle, size,
  				zstrm->local_copy);
  	dst = kmap_local_page(page);
+-	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
 +	if (READ_ONCE(zram_flush_src)) {
 +		u64 t0 = ktime_get_ns();
 +
@@ -59,7 +69,12 @@
 +			for (p = (char *)src + L1_CACHE_BYTES; p < (char *)src + size; p += L1_CACHE_BYTES)
 +				asm("prefetcht0 %0" : : "m"(*p));
 +	}
--	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
++	/* 3: the destination page written first, for every backend, so that it is in the cache; 4: 3 and 2 */
++	if (READ_ONCE(zram_warm) >= 3)
++		memset(dst, 0, PAGE_SIZE);
++	if (READ_ONCE(zram_warm) != 3 && READ_ONCE(zram_warm) && zram_warm_fn &&
++	    !strncmp(zram->comps[prio]->ops->name, "seqlz", 5))
++		zram_warm_fn(zram->comps[prio]->params, &zstrm->ctx, READ_ONCE(zram_warm) == 4 ? 2 : READ_ONCE(zram_warm));
 +	if (READ_ONCE(zram_time_decomp)) {
 +		u64 t0 = ktime_get_ns();
 +

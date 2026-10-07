@@ -44,6 +44,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [The designs by the score](#the-designs-by-the-score)
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
+- [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -371,12 +372,69 @@ itself is slower in a fault. Likely, not measured: the fault path touches page t
 the rmap and the LRU between two decompressions, which pushes `seqlz`'s tables out of the caches;
 `lz4` has none. The fault is closer to a real swap-in, so its numbers are the ones to use. If they
 hold, `seqlz-fast-lit` costs `r * 0.51` µs, 0.17 µs at `r = 0.34`, per page written more against
-`lz4` than the score has now, which has it 0.08 µs slower; not recomputed yet. Tables that stay in the caches, or a prefetch of all
-of them on x86, might get some of it back.
+`lz4` than the score has now, which has it 0.08 µs slower; not recomputed yet. Tables that stay in the
+caches, or a prefetch of all of them on x86, might get some of it back. They do not, see
+[The decoder in a fault](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012):
+the gap to the read benchmark is 0.28 µs, and warm tables give back at most 25 ns of it.
 
 Without the prefetch in the module, on the same phone pages, `seqlz-fast-lit` swapped in 1 µs slower
 on the A55 warm and 0.2 µs slower on the A76 cold, as "The phone's module did not prefetch the
 compressed data" found for zram's reads.
+
+## The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12
+
+*Is `seqlz`'s decoder slower in a page fault because its tables leave the caches between two faults, as
+"The whole page fault" guessed? Measured: the decoder is slower in a fault, by less than thought, and
+cold caches are less than half of it. Nothing in the codec changed.* Code: `zram.zram_warm` in
+`tools/zram-vm/zram-prefetch.patch` and `backend_seqlz.c`, `quetschn.decomp=1` in `tools/zram-vm/init.c`.
+
+The 0.4 µs of "The whole page fault" compared two different things: `zcomp_decompress()` alone in the
+fault against the whole `pread()` of the read benchmark. The read benchmark now times
+`zcomp_decompress()` alone too, with `quetschn.decomp=1` on the kernel command line. Its closest
+condition to a fault is "flushed, other page first": the compressed data flushed, and before it the
+same codec decoded another page, so there is no training on the page itself. Kernel VM of
+`tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, CPU 2 of a Ryzen 9 7950X at 4.5 GHz, boost off,
+20 000 pages of the first desktop dump, `lz4` and `seqlz-lit` in every boot, the backend's prefetch,
+means over the pages in ns:
+
+| `zcomp_decompress()` alone | `lz4` | `seqlz-fast-lit` | gap |
+| --- | ---: | ---: | ---: |
+| read benchmark, flushed, other page first (2 boots) | 1364, 1349 | 1658, 1667 | 306 |
+| swap-in fault, flushed (5 boots) | 1411 to 1428 | 2001 to 2015 | 590 |
+
+So the fault adds 0.35 µs to `seqlz-fast-lit`'s decoder and 0.06 µs to `lz4`'s, and the gap between
+them grows by 0.28 µs. In the read benchmark the whole `pread()` shows 0.26 to 0.28 µs of the 0.31.
+
+**Warm caches, outside the timed call.** `zram.zram_warm=N` runs something right before the timed
+`zcomp_decompress()` of a swap-in: 1 reads every cache line of `seqlz`'s tables (43 280 bytes) and of its
+literal scratch, 2 decodes a made-up page of about 100 sequences and coded literals, which warms the
+decoder's code, the tables it uses and the branch predictors, on another page. 3 writes the destination
+page, for every codec, 4 does 3 and 2. `MODE=swap`, the same setup, ns:
+
+| `zram_warm` | boots | `lz4` | `seqlz-fast-lit` | gap |
+| --- | ---: | ---: | ---: | ---: |
+| 0, nothing | 5 | 1411 to 1428 | 2001 to 2015 | 590 |
+| 1, tables and scratch read | 2 | 1406, 1412 | 1982, 2001 | 583 |
+| 2, a page decoded before | 2 | 1421, 1425 | 1954, 1955 | 532 |
+| 3, the destination written | 2 | 1384, 1422 | 1938, 1942 | 537 |
+| 4, both 3 and 2 | 2 | 1403, 1408 | 1875, 1882 | 473 |
+
+* **The tables are not it.** Read before the decode, they make it 6 to 25 ns faster. The prefetch of
+  all of them, which x86 builds already do, leaves little to gain.
+* **Everything warm gives back 0.12 µs of the 0.28.** The decoder's code and branch predictors are
+  about 50 ns, the destination page about 65 ns, which a fault takes new from the allocator, where the
+  read benchmark decodes into the same buffer every time. `lz4` gains up to 30 ns from the same.
+* **0.17 µs are not found.** Not measured yet: `perf kvm` of `seqlz_decode()` in a fault against the read
+  benchmark, which would say whether it is cache misses, TLB misses or something else.
+
+The fault's times, not the read benchmark's, are what a swap-in waits for, and the score is not
+recomputed with them yet, see "The whole page fault". Warming the caches in the kernel is no fix: the
+warm-up costs more than it saves, with mode 2 the whole swap-in took 2.0 µs longer.
+
+```sh
+KARGS="zram.zram_prefetch=8 zram.zram_warm=2" MODE=swap ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
+KARGS="quetschn.decomp=1" ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
+```
 
 ## The first runs with dictionaries, Phases 0 to 2
 
