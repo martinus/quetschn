@@ -2,9 +2,26 @@
 
 Fast compression for memory pages, built for Linux zram.
 
-See [PLAN.md](PLAN.md) for the goal, the evidence behind it, and the plan.
-[docs/seqlz.md](docs/seqlz.md) describes the codec so far: the format, the encoder and decoder, and why
-each choice was made.
+The codec is `seqlz-fast-lit`: LZ sequences from a greedy matcher, Huffman coded with static tables,
+one of 8 literal tables per page. It needs about as little memory as `zstd` and swaps in close to
+`lz4`. On a Xiaomi Mi 9T, in its own kernel, with 20 000 pages from the phone's zram, the whole page
+fault per page:
+
+| | bytes per page | swap-in warm, A76 / A55 | swap-out, A76 / A55 |
+| --- | --- | --- | --- |
+| `lz4` | 1300 | 5.3 / 16.2 µs | 10.3 / 31.2 µs |
+| `lzo` | 1216 | 6.4 / 17.4 µs | 11.2 / 33.9 µs |
+| `zstd` 3 | 898 | 16.9 / 47.5 µs | 34.7 / 133 µs |
+| `seqlz-fast-lit` | 935 | 6.0 / 17.9 µs | 12.4 / 38.8 µs |
+
+The same on the PC and on the phone, memory against time:
+[docs/plots/swap-fault-2026-10-07.svg](docs/plots/swap-fault-2026-10-07.svg).
+
+- [PLAN.md](PLAN.md): the goal, the evidence behind it, the plan, and where the project stands (§9).
+- [docs/seqlz.md](docs/seqlz.md): the codec, and why each choice was made.
+- [FORMAT.md](FORMAT.md): the compressed bytes, fixed for 4 KiB pages.
+- [docs/explored-designs.md](docs/explored-designs.md): every design that was measured, kept or not,
+  with the numbers.
 
 ## Build and test
 
@@ -15,16 +32,16 @@ cmake --build build
 ```
 
 `-DQUETSCHN_SANITIZE=ON` builds with ASan and UBSan. Formatting is checked with clang-format 21.
+`-DQUETSCHN_PAGE_BITS=14` builds seqlz for 16 KiB pages, whose format is not fixed yet.
 
 ## Checking seqlz
 
-[FORMAT.md](FORMAT.md) describes the compressed bytes. Two decoders are written from it alone, slow on
-purpose, and checked against `seqlz_decode()`: `tools/seqlz_ref.py`, and `tools/seqlz_ref.c`, which
-the tests and the fuzzers use.
+Two decoders are written from FORMAT.md alone, slow on purpose, and checked against `seqlz_decode()`:
+`tools/seqlz_ref.py`, and `tools/seqlz_ref.c`, which the tests and the fuzzers use.
 
 The fuzz targets in `fuzz/` take any input: the decoder alone, the roundtrip, and the decoder against
-`tools/seqlz_ref.c`. CI runs each for a minute with libFuzzer, ASan and UBSan. A change to the codec
-gets a longer run with AFL++ before it is merged: 1 billion inputs without a crash, the gate of
+`tools/seqlz_ref.c`. CI runs each for a minute with libFuzzer, ASan and UBSan. A change to the format
+or the codec gets a longer run before it is merged: 1 billion inputs without a crash, the gate of
 PLAN.md's Phase 4.
 
 ```sh
@@ -32,93 +49,38 @@ fuzz/smoke.sh 60 build-fuzz                 # the CI run, needs clang
 AFL=$HOME/AFLplusplus fuzz/afl.sh out 30    # 30 AFL++ instances in the background, a third per target
 ```
 
-Two tools measure what the codec does with the bits and with the time:
-
-- `tools/seqlz-bound/`: per kind of field the bits a dump's pages take, next to their entropy, and
-  what other layouts of the offset classes would take.
+- `tools/seqlz-bound/`: per kind of field the bits a dump's pages take, next to their entropy.
 - `tools/seqlz-worst/`: `quetschn-seqlz-worst` counts the instructions of every page of a corpus and
-  writes made-up pages that are slow; `cost_fuzz.c` searches for slower ones. The numbers are in
-  [docs/explored-designs.md](docs/explored-designs.md).
+  writes made-up pages that are slow; `cost_fuzz.c` searches for slower ones, also for `lz4`, `lzo-rle`
+  and `zstd`. The slowest pages found are in `tools/seqlz-worst/pages/`.
+- `quetschn-seqlz-train` trains the tables; `explore/seqlz_default_tables.c` says on which pages.
 
-## Benchmarking the kernel's codecs
+## Measuring in the kernel
 
-The harness builds zram's `lz4`, `lzo`, `lzo-rle` and `zstd` from a Linux source tree, with the
-kernel's compiler flags. The kernel sources are compiled in place and not copied into this repository.
+The numbers that count come from a kernel. `tools/zram-vm/run.sh` builds a kernel from a Linux tree
+with seqlz as a zram backend, boots it in a VM pinned to CPU 2, and measures zram's reads and writes.
+With `MODE=swap` it measures the whole page fault of a swap-out and a swap-in instead; a fault on a
+same-filled page, which zram stores without the codec, is the kernel's part. `KARGS` adds to the
+kernel command line, `zram.zram_prefetch=8` gives seqlz its backend's prefetch:
 
 ```sh
-cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
-cmake --build build
-./build/quetschn-bench-lz4 --corpus corpus/desktop --cpu 2 --out lz4.tsv
-./build/quetschn-bench-zstd --corpus corpus/desktop --cpu 2 --level -1
+ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
+KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit \
+    tools/zram-vm/run.sh <linux tree> corpus/first >swap.log
 ```
 
-`--level` is zram's `algorithm_params` level: the acceleration for `lz4`, the level for `zstd`. Without
-it each codec uses zram's default.
-
-With a dictionary, trained on other programs than the ones it is measured on:
-
-```sh
-./build/quetschn-split-corpus --corpus corpus/desktop --train corpus/train --test corpus/test
-zstd --train corpus/train.pages -B4096 --maxdict=64KB -o corpus/dict
-./build/quetschn-bench-lz4 --corpus corpus/test --dict corpus/dict
-```
-
-`--out` writes one line per page. `quetschn-compare` pairs two such files from the same corpus:
+`tools/swap-fault/swap_fault.c` does the swap measurement on a running Linux as root, e.g. a rooted
+phone, with zram devices that are not in use. `tools/plot-swap-fault.py` draws both, memory against
+time, `tools/plot-codecs.py` the reads and writes of the VM:
 
 ```sh
-./build/quetschn-bench-lzo-rle --corpus corpus/test --cpu 2 --out lzo-rle.tsv
-./build/quetschn-bench-zstd --corpus corpus/test --cpu 2 --level -1 --out zstd-1.tsv
-./build/quetschn-compare --baseline lzo-rle.tsv --candidate zstd-1.tsv
-```
-
-It prints how much Σ zsmalloc cost the candidate saves, how many pages get cheaper or more expensive,
-and the difference of the latency percentiles. Every number has a 95% confidence interval from a
-bootstrap that resamples pages, the same pages for both runs.
-
-`quetschn-score` puts memory against time per page, the score of `PLAN.md` §1.1: bytes per page
-against `compress + r * cold decompress`, the means, and which codecs have the lowest `bytes + lambda
-* time` for some lambda. It reads the output of `quetschn-bench-*` with timing, or of
-`tools/zram-vm/run.sh`, where recompression counts too. `r` is the reads per write,
-`quetschn-swap-bursts` measures it on a running machine, and how large the bursts of swap-ins are:
-
-```sh
-./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-fast-lit --corpus corpus/test --cpu 2 >run.txt
-./build/quetschn-score --reads-per-write 0.34 run.txt
-./build/quetschn-swap-bursts --seconds 3600
-```
-
-`tools/plot-codecs.py` draws the chart of the codecs from the kernel VM: per dump memory against the
-latency of cold reads, warm reads and writes, and against the score, with the codecs that have the
-lowest score for some lambda. A device `a+b`, e.g. `seqlz-lit+zstd`, is written with `a` and then
-recompressed by zram with `b`. One boot of `tools/zram-vm/run.sh` per row; it needs matplotlib and the
-Noto Sans font:
-
-```sh
-ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >first.log
-ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/second >second.log
-tools/plot-codecs.py --run "first dump=first.log" --run "second dump=second.log" --out codecs.png --out codecs.svg
-```
-
-`MODE=swap` measures zram as swap instead, the whole page fault of a swap-out and a swap-in; a fault on
-a same-filled page, which zram stores without the codec, is the kernel's part. `tools/swap-fault/`
-does the same on a running Linux as root, e.g. a rooted phone, with zram devices that are not in use.
-`tools/plot-swap-fault.py` draws both, memory against time:
-
-```sh
-MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >vm.log
 swap_fault corpus/first.pages 2 1 lz4 lzo zstd >cpu2.log    # pages, CPU, first zram index, codecs
-tools/plot-swap-fault.py --row "PC=vm.log" --row "Phone, little core=cpu2.log" --out swap-fault.svg
+tools/plot-swap-fault.py --row "PC=swap.log" --row "Phone, little core=cpu2.log" --out swap-fault.svg
+tools/plot-codecs.py --run "first dump=reads.log" --out codecs.svg
 ```
 
-`quetschn-bench-spike-switch`, `-branchless`, `-zeroskip` and `-slots` run the decoder latency spike
-of `PLAN.md` Phase 2b, `spike/wk64.h` describes its format.
-
-For trying out designs, `tools/quick-bench.sh` is the fast benchmark: exact zsmalloc cost on the whole
-corpus without timing, and latency on a fixed sample of 20 000 pages in 5 separate processes, all
-compared with the first codec. `docs/explored-designs.md` says why, and when to run the full one.
-
-Fix the clock of the CPU the benchmarks run on first, cold latencies depend on it. On an AMD CPU with
-`amd-pstate`, for CPU 2 at 4.5 GHz:
+Fix the clock of the CPU first, the times depend on it. On an AMD CPU with `amd-pstate`, for CPU 2 at
+4.5 GHz:
 
 ```sh
 echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
@@ -127,36 +89,50 @@ echo 4500000 | sudo tee /sys/devices/system/cpu/cpu2/cpufreq/scaling_max_freq
 echo 4500000 | sudo tee /sys/devices/system/cpu/cpu2/cpufreq/scaling_min_freq
 ```
 
-```sh
-tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd:-1,spike-slots
-```
+## Measuring in userspace
 
-`quetschn-lz-analysis --corpus <base>` estimates what `lz4hc`'s matches would cost with entropy coded
-sequences and literals, and computes exactly what byte oriented formats would cost; `--codec seqlz`
-takes the matches of `seqlz-fast`'s matcher instead, see `docs/explored-designs.md`. `quetschn-seqlz-train` trains the tables of the
-seqlz prototype; `explore/seqlz_default_tables.c` says how the compiled-in ones were made.
-
-For `perf`, `quetschn-bench-interleaved --codecs <codec> --corpus <base> --decode-loop <n>` compresses
-every page once and then only decodes, n times, and prints warm decode percentiles per page; with
-`--cold`, 2 MiB of other data are read and the page is flushed before each decode; with `--compress`
-it times the compression instead, every page one after the other, so each comes from memory. The difference of
-two runs with different n, e.g. with `perf stat -e cycles,instructions,branch-misses`, is the decoder
-alone. `perf record -j any,u -e branch-misses` shows the mispredicted branches on Zen 4. `--out <file.tsv>`
-writes the median time and compressed length of each page, to see which pages make the tail.
-
-Latency comparisons between separate runs suffer from drift, e.g. of the CPU frequency.
-`quetschn-bench-interleaved` has all codecs in one binary and runs each of them once per repetition on
-the same page, in rotating order. `--out` is a directory then:
+The harness builds zram's `lz4`, `lzo`, `lzo-rle` and `zstd` from a Linux source tree with the
+kernel's compiler flags, and seqlz with `lz4`'s. The kernel sources are compiled in place and not
+copied into this repository. The `quetschn-bench-*` binaries contain GPL-2.0-only kernel code, so they
+are GPL-2.0 works, for measuring, not for distribution.
 
 ```sh
-./build/quetschn-bench-interleaved --codecs lz4,spike-slots --corpus corpus/test --cpu 2 --out results
-./build/quetschn-compare --baseline results/lz4.tsv --candidate results/spike-slots.tsv
+cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
+cmake --build build
+./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-fast-lit --corpus corpus/test --cpu 2 --out results
+./build/quetschn-compare --baseline results/lz4.tsv --candidate results/seqlz-fast-lit.tsv
 ```
 
-The `quetschn-bench-*` binaries contain GPL-2.0-only kernel code, so they are GPL-2.0 works; they are
-for measuring, not for distribution.
+`quetschn-bench-interleaved` runs all codecs in one binary, in turns on the same page, so that drift
+of the clock hits all alike; between codecs the kernel VM is still the better judge. `--no-timing`
+gives only the sizes. `quetschn-compare` pairs two runs page by page: the saving and the difference of
+every latency percentile, with 95% confidence intervals from a bootstrap over the pages.
+`tools/quick-bench.sh` is the fast benchmark for trying out a change: exact sizes on the whole corpus,
+times on a sample of 20 000 pages.
 
-## Benchmarking on an Android phone
+```sh
+tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-fast-lit
+```
+
+`quetschn-score` puts memory against time per page, the score of PLAN.md §1.1, from the output of
+`quetschn-bench-*` or of `tools/zram-vm/run.sh`. `r`, the reads per write, comes from
+`quetschn-swap-bursts` on a running machine:
+
+```sh
+./build/quetschn-score --reads-per-write 0.34 run.txt
+./build/quetschn-swap-bursts --seconds 3600
+```
+
+`--level` is zram's `algorithm_params` level, `--dict` a dictionary as zram takes one;
+`tools/bench-dict.sh` trains one on one dump and measures every codec with and without it on another.
+`quetschn-lz-analysis` prices the matches of `lz4hc` or of seqlz's matcher with other encodings.
+
+For `perf`, `--decode-loop <n>` compresses every page once and then only decodes, n times; with
+`--cold` the compressed page is flushed and 2 MiB of other data read before each decode, with
+`--compress` it times the compression instead. The difference of two runs with different n, e.g. with
+`perf stat -e cycles,instructions,branch-misses`, is the decoder alone.
+
+## Measuring on an Android phone
 
 For arm64 timings on a rooted Android phone, build with the Android NDK and run the binaries over
 `adb`. The kernel tree is the same; its codecs get the flags of an arm64 kernel build:
@@ -171,8 +147,8 @@ adb push build-android/quetschn-bench-interleaved corpus/test.pages corpus/test.
 ```
 
 On arm64 the harness counts cycles with `perf_event_open`, which needs root, or
-`setprop security.perf_harden 0` on Android. The header line `timer` shows the step of the clock.
-Fix the clock of the cluster first, e.g. for cpu2 of a Snapdragon 730 at 1804.8 MHz, as root:
+`setprop security.perf_harden 0`. Fix the clock of the cluster first, e.g. for cpu2 of a Snapdragon 730
+at 1804.8 MHz, as root:
 
 ```sh
 cd /sys/devices/system/cpu/cpu2/cpufreq
@@ -181,9 +157,9 @@ echo 1804800 > scaling_max_freq
 echo 1804800 > scaling_min_freq
 ```
 
-To compare two builds, configure both with `-DQUETSCHN_ALIGN_FUNCTIONS=ON`. With the kernel's alignment a
-change in one function moves the ones behind it, and on the phone's little core that alone moved reads
-by 130 ns.
+To compare two builds, configure both with `-DQUETSCHN_ALIGN_FUNCTIONS=ON`: with the kernel's alignment
+a change in one function moves the ones behind it, and on the phone's little core that alone moved
+reads by 130 ns. `tools/phone-apps/` is the app launch test.
 
 The pages are as private on the phone as anywhere else: delete them from `/data/local/tmp` afterwards.
 
@@ -208,28 +184,20 @@ sudo dd if=/dev/zram0 bs=1M iflag=direct status=progress |
 ./build/quetschn-import-raw --in ~/quetschn-corpus/zram0.raw --out ~/quetschn-corpus/zram0
 ```
 
-The dump has no process names, every page gets the name of the dump file. So a dump cannot be split
-by process name; take a second dump some days later instead, train on one and measure on the other.
-`tools/bench-dict.sh` does all of it: it trains a dictionary on the first dump without the pages
-that are also in the second, then runs every codec with and without the dictionary on the second
-dump and compares them with `quetschn-compare`:
-
-```sh
-CPU=2 tools/bench-dict.sh build ~/quetschn-corpus/zram0-mon ~/quetschn-corpus/zram0-thu \
-    ~/quetschn-corpus/dict-mon-thu
-```
+The dump has no process names, so take a second dump some days later, train on one and measure on the
+other.
 
 ## Licensing
 
-quetschn is dual licensed under **`MIT OR GPL-2.0-only`**. You may use it under
-either license, at your option.
+quetschn is dual licensed under **`MIT OR GPL-2.0-only`**. You may use it under either license, at
+your option.
 
 - [LICENSE-MIT](LICENSE-MIT)
 - [LICENSE-GPL-2.0](LICENSE-GPL-2.0)
 
-The GPL-2.0-only option exists so the codec can be merged into the Linux kernel,
-which requires GPL-2.0 compatibility. The MIT option exists so userspace and
-non-GPL projects can use it too. This is the same approach zstd takes.
+The GPL-2.0-only option exists so the codec can be merged into the Linux kernel, which requires
+GPL-2.0 compatibility. The MIT option exists so userspace and non-GPL projects can use it too. This is
+the same approach zstd takes.
 
 Every source file carries an SPDX identifier:
 
@@ -237,6 +205,6 @@ Every source file carries an SPDX identifier:
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 ```
 
-Contributions are accepted under the same dual license. Sign off your commits
-with `git commit -s` to certify the [Developer Certificate of
-Origin](https://developercertificate.org/), as the Linux kernel requires.
+Contributions are accepted under the same dual license. Sign off your commits with `git commit -s` to
+certify the [Developer Certificate of Origin](https://developercertificate.org/), as the Linux kernel
+requires.

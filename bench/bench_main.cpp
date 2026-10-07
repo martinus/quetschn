@@ -44,19 +44,8 @@ auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_lzo,
     &quetschn_codec_lzo_rle,
     &quetschn_codec_zstd,
-    &quetschn_codec_spike_switch,
-    &quetschn_codec_spike_branchless,
-    &quetschn_codec_spike_zeroskip,
-    &quetschn_codec_spike_slots,
-    &quetschn_codec_shuffle_lz4,
-    &quetschn_codec_bdelta,
-    &quetschn_codec_zstd_nolit,
     &quetschn_codec_seqlz_fast,
     &quetschn_codec_seqlz_fast_lit,
-    &quetschn_codec_bytelz,
-#    ifdef QUETSCHN_HAVE_MEMLZ
-    &quetschn_codec_memlz,
-#    endif
 });
 auto const* const program = "quetschn-bench-interleaved";
 #else

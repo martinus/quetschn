@@ -3,9 +3,12 @@
 A compression codec for memory pages, aimed at the Linux kernel's zram module. 4 KiB pages first,
 16 KiB pages as a parameter from day one (§3.5).
 
-Status: no code yet. This document is the plan, the evidence behind it, and the decision gates.
+This document is the plan, the evidence behind it, and the decision gates. Where the project stands
+is in §9: the codec, `seqlz-fast-lit`, its format and its fuzzing are done, the kernel port is next,
+and the question to the zram maintainers is drafted.
 
-Last verified against mainline `v7.3-rc1-324-g986c24e0fe44` (`986c24e0fe44`) on 2026-09-22.
+Last verified against mainline `v7.3-rc1-324-g986c24e0fe44` (`986c24e0fe44`) on 2026-09-22; zram's
+multi-page compression and backend interface checked again on 2026-10-07 (§3.4, §3.5).
 
 ---
 
@@ -76,6 +79,13 @@ per us on both dumps. Who runs `lz4` or `lzo-rle` instead of `zstd` says that la
 for them. Recompression is not pursued: with `zstd` it pays only where the CPU time of an idle machine
 counts for less, and makes each read of a recompressed page 2.3 us slower; `seqlz-opt` is removed
 (docs/explored-designs.md, "Recompression, measured, not pursued").
+
+The time in the score is the codec's alone, which is what the codecs differ in. A task waits for the
+whole page fault: on the PC 1.9 µs of it are the kernel's for every codec, and `lz4`'s decompression is
+1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 of 4.1. So a codec 40% slower than `lz4`
+makes a swap-in about 20% slower (docs/explored-designs.md, "The whole page fault"). In the fault
+`seqlz-fast-lit` decodes about 0.4 µs slower than zram's read benchmark, `O_DIRECT`, says, which the
+hull above does not count yet.
 
 Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
 samples `pswpin` every 10 ms and groups the swap-ins into bursts; 9 minutes on the development machine
@@ -272,6 +282,11 @@ Adding a backend is a contained diff:
 `struct zcomp_params` carries `dict` / `dict_sz` / `level`, so **dictionary support is available and
 should be designed in from the start** (see C4).
 
+This may change: in March 2026 Sergey Senozhatsky wrote that the zcomp API is to be deleted "sometime
+this year" in favour of the acomp crypto API ([RFC v2 "zram: Allow zcomps to manage streams"](https://ratatoskr.run/lkml/2026/03/3448168/t)).
+At `986c24e0fe44` the zcomp backends are still there. With acomp, a new codec comes as a crypto
+algorithm in `crypto/` plus the codec in `lib/`, and Herbert Xu's subsystem reviews it too (R11).
+
 ### 3.5 Page size is not always 4 KiB
 
 Android supports 16 KiB page kernels on arm64, and since November 2025 Google Play requires apps that
@@ -296,8 +311,12 @@ Which means that:
   history. The quetschn advantage may shrink on 16 KiB pages. That has to be measured, not assumed.
 
 The same argument applies to multi-page compression in zram, e.g. compressing whole large folios
-(mTHP) as one unit. It has been proposed on the lists. At `986c24e0fe44`, `git log --grep=folio` on
-`drivers/block/zram/` and `mm/zsmalloc.c` shows nothing of that kind merged. It is tracked as R9.
+(mTHP) as one unit. Tangquan Zheng (OPPO) proposed it in March 2024, "mTHP-friendly compression in
+zsmalloc and zram based on multi-pages". At `986c24e0fe44` nothing of that kind is merged in
+`drivers/block/zram/` or `mm/zsmalloc.c`; what is merged is the swap-in of large folios from zram, page
+by page, and in 2026 no newer version of the series was on the lists. Neighbouring swap slots compressed
+as 16 KiB blocks give `zstd` 3 13% to 22% less memory than `seqlz-fast-lit` on 4 KiB pages
+(docs/explored-designs.md, "The ideas of #29 and #31"). It is tracked as R9.
 
 ---
 
@@ -500,6 +519,8 @@ clear "no" redirects the project to the R2 fallback before any codec work.
 
 ### Phase 2b — Decoder latency spike (2 weeks)
 
+*Done. Its code was removed on 7 October 2026; the results stay below and in docs/explored-designs.md.*
+
 The Phase 2 gate tests ratio headroom. It does not test C2, and C2 is the less likely of the two:
 kernel `lz4` decode of a 4 KiB page is mostly `memcpy` of literals and matches, which is hard to beat.
 
@@ -679,26 +700,27 @@ hand-tuned to one corpus.
 
 The plan had the codec in `src/` and the kernel files in `kernel/`. The codec grew up in `explore/`
 next to the designs it beat, and stays there until the kernel port of Phase 5 splits it into a
-`lib/` part and a zram backend:
+`lib/` part and a zram backend. The designs it beat were removed on 7 October 2026, their results stay
+in docs/explored-designs.md and their code in git:
 
 ```
 explore/seqlz.c, seqlz.h    the codec: encoder, decoder, tables, freestanding C
-explore/page_lz.h           the matcher seqlz shares with bytelz
+explore/page_lz.h           seqlz's matcher and the copies of its decoder
 explore/seqlz_*tables*      the trained tables, part of the format
 explore/zram_seqlz.c        seqlz as a zram backend calls it, for the harness
-explore/ (the rest)         the other designs of Phase 3, see docs/explored-designs.md
 FORMAT.md                   byte-exact format specification
 tools/seqlz_ref.py, .c      reference decoders written from FORMAT.md alone
 tools/collect/              corpus collectors and page statistics (C++)
 tools/seqlz-bound/          bits per field and their entropy, layouts of the offset classes
 tools/seqlz-worst/          the worst case: instruction counts, slow pages, a search for slower ones
 tools/seqlz-viz/            the two pages that show seqlz step by step (docs/seqlz-*.html)
-tools/zram-vm/              the kernel VM: a backend for zram and a script that boots and measures
+tools/zram-vm/              the kernel VM: a backend for zram and a script that boots and measures,
+                            zram's reads and writes or, MODE=swap, the whole page fault
+tools/swap-fault/           the whole page fault on a running Linux, e.g. the phone
 tools/phone-apps/           the app launch test on the phone
 bench/                      harness: per-page timing loop, zsmalloc cost model, training
 bench/kernel_codecs/        zram's calls into lib/lz4, lib/lzo and zstd, built in userspace
 cmake/kernel_codecs.cmake   builds them from QUETSCHN_KERNEL_TREE with kernel flags; sources never copied
-spike/                      the decoder latency spike of Phase 2b
 test/                       doctest unit tests
 fuzz/                       AFL++ / libFuzzer targets, the CI smoke run and the long runs
 docs/                       seqlz.md, explored-designs.md, plots, the two step-by-step pages
@@ -725,127 +747,56 @@ docs/                       seqlz.md, explored-designs.md, plots, the two step-b
 | --- | --- | --- | --- |
 | R1 | **No arm64 hardware.** Phones are the users; lzo-rle was merged on arm64-first data. | Confirmed constraint | An old rooted phone (big and little core) is used from Phase 2 on. Phase 6 adds a current phone with 16 KiB pages and is a hard gate. Do not submit without it. |
 | R2 | **Insufficient headroom over lz4+dict.** Nobody has measured this. The whole project rests on an unverified assumption. | No measurement of `lz4`+dict on page data known to this plan | Phase 2 gate answers it before any codec work. Fallback: publish the benchmark, then pursue a *targeted improvement to lz4 or lzo-rle for page-sized inputs* — that is exactly what lzo-rle was, and it is a much easier merge. |
-| R3 | **Maintainers do not want another backend.** Each one is permanent maintenance cost. | zBeWalgo reached v7 and died | Ask right after Phase 2, together with the benchmark posting, before any codec work. A "no" discovered early redirects to R2's fallback. |
-| R4 | **Desktop-tuned codec loses on Android data.** Different heap layout, different allocator. | ART and bionic lay out the heap differently from glibc desktop processes; not measured yet | Cuttlefish pages in the Phase 1 corpus, so the difference is measured before Phase 3. Keep Phase 3 designs parameterised, not hand-tuned. Obtain real phone pages before freezing the format. |
+| R3 | **Maintainers do not want another backend.** Each one is permanent maintenance cost. | zBeWalgo reached v7 and died | Ask before the kernel port. The question to Sergey Senozhatsky and Minchan Kim is drafted (7 October 2026), with the phone's numbers; it is not sent yet. A "no" redirects to R2's fallback. |
+| R4 | **Desktop-tuned codec loses on Android data.** Different heap layout, different allocator. | Two zram dumps of the Mi 9T (Android 11): `seqlz-fast-lit` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. Open: a current Android, and 16 KiB pages. |
 | R5 | **zram backend API churn.** 2024 rewrite, 2025 preemption series, 2026 param and naming changes. | `git log drivers/block/zram/` | Codec core has zero kernel-API dependency; all churn is absorbed by `backend_quetschn.c`. Rebase against mainline in CI. |
 | R6 | **Fuzz-safety or a sleeping-in-atomic bug burns maintainer goodwill.** | Biggers's objection; Minchan's panic | Phase 4 and the Phase 5 KASAN/`DEBUG_ATOMIC_SLEEP` gate exist for this. Continuous fuzzing with ClusterFuzzLite before submission; OSS-Fuzz if it accepts the project. |
 | R7 | **Timeline.** 3–8 h/week against an 18–24 month path. | lzo-rle: 4 months, v5, paid work, existing codec | Each phase publishes independently. Phase 2 alone is a worthwhile public contribution. |
 | R8 | **Employer rules on open-source side projects**, particularly kernel contributions with a `MAINTAINERS` entry. | Checked 2026-09-23: side projects are fine | Resolved. |
-| R9 | **The input size changes under the codec.** 16 KiB page kernels on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5; multi-page compression proposed on the lists, not merged at `986c24e0fe44` | `PAGE_SIZE` is a parameter of format, cost model and harness from Phase 0. Every table from Phase 2 on has a 16 KiB column. Watch the zram and mm lists for multi-page compression, and rerun the Phase 2 gate if it gets merged. |
-| R10 | **No p99 decode win over `lz4`.** C2 rests on the branch-misprediction argument of §3.2, which is unmeasured. | Kernel `lz4` decode is mostly `memcpy` | Phase 2b spike measures it in 2 weeks, before Phase 3. If it fails, fall back to the R2 route. |
+| R9 | **The input size changes under the codec.** 16 KiB page kernels on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5; multi-page compression proposed in 2024, not merged at `986c24e0fe44`, no newer version in 2026; `zstd` 3 on 16 KiB blocks needs 13% to 22% less than `seqlz-fast-lit` on 4 KiB pages | `PAGE_SIZE` is a parameter of format, cost model and harness. Watch the zram and mm lists for multi-page compression; if a version comes back, measure `seqlz-fast-lit` against `zstd` on whole folios, in time per page too, before more work on the codec. |
+| R10 | **No p99 decode win over `lz4`.** C2 rests on the branch-misprediction argument of §3.2. | Measured: `seqlz-fast-lit` decodes slower than `lz4`, 18% to 25% per swap-in, for 28% less memory | C2 is not met. The score of §1.1 replaced the bars as the target; the merge argument is memory at a small cost in time, not a faster read. |
+| R11 | **zram's backend interface goes away.** The zcomp API is to be replaced by the acomp crypto API. | Sergey Senozhatsky, March 2026 (§3.4); not done at `986c24e0fe44` | The codec has no kernel-API dependency. Ask in the question of R3 which form the maintainers want, and port to whichever exists then. |
 
 ---
 
 ## 9. Where the project stands, and the next actions
 
-As of 6 October 2026:
+As of 7 October 2026:
 
 - **Phases 0 to 3: done.** The harness, the collectors, zram dumps of the desktop and of the Mi 9T,
   and the design: `seqlz-fast-lit` (docs/seqlz.md), with every alternative that was measured in
   docs/explored-designs.md.
-- **Phase 4: mostly done.** `FORMAT.md`, fixed for 4 KiB pages. Two reference decoders written from it.
-  Fuzzing of the decoder, the roundtrip, and the decoder against the reference decoder in C, which
-  found no difference in 1.7 billion inputs. ASan and UBSan in CI, big-endian on s390x in CI. The worst
-  case measured: the slowest pages found cost 1.3 times the p99 of real pages, as for `lz4`. Open: MSan,
-  continuous fuzzing (ClusterFuzzLite), and the tests with 16 KiB pages in CI.
+- **Phase 4: mostly done.** `FORMAT.md`, fixed for 4 KiB pages; its tables were trained again on 7
+  October, on swapped pages too. Two reference decoders written from it. Fuzzing of the decoder, the
+  roundtrip, and the decoder against the reference decoder in C: 1.7 billion inputs with AFL++ on the
+  tables of 6 October, 1.5 billion with libFuzzer on the new ones, no difference. ASan and UBSan in CI,
+  big-endian on s390x in CI. The worst case measured: against its own p99, `seqlz-fast-lit`'s slowest
+  pages cost 1.14 times for compress and 1.59 for decode, the least of it, `lz4`, `lzo-rle` and `zstd`.
+  Open: MSan, continuous fuzzing (ClusterFuzzLite), the tests with 16 KiB pages in CI, and an AFL++ run
+  on the new tables, AFL++ is not installed any more.
 - **Phase 5: started.** The kernel VM of `tools/zram-vm/` runs seqlz as a zram backend and measures
-  `mm_stat`. Open: the split into `lib/` and a backend, swap thrash under KASAN and lockdep, the zram
+  `mm_stat`, reads and writes, and with `MODE=swap` the whole page fault, `zcomp_decompress()` timed
+  alone. Open: the split into `lib/` and a backend, swap thrash under KASAN and lockdep, the zram
   selftests.
-- **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages: done. Open: 16 KiB pages and a current phone.
-  The 16 KiB tables are trained on pages made of four 4 KiB pages, and with 16 KiB pages
-  `seqlz-fast-lit` needs twice `lz4`'s work memory per CPU, above C5.
+- **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages, its own pages, in its own kernel as zram and
+  as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on pages made of
+  four 4 KiB pages, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory per CPU,
+  above C5.
+- **Phase 7: the question to the maintainers is drafted** (R3, R11), not sent.
 
 Next, in this order:
 
-1. A corpus from the Android emulator, Android 17 with 16 KiB pages and with 4 KiB pages: train and
+1. Send the question to Sergey Senozhatsky and Minchan Kim: a new algorithm at all, and as a zram
+   backend or an acomp algorithm (§3.4). The answer decides the form of Phase 5.
+2. The decoder in a real fault: it is about 0.4 µs slower there than in zram's read benchmark,
+   probably because its tables leave the caches between two faults. Measure that, then keep them in.
+3. A corpus from the Android emulator, Android 17 with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
    Android.
-2. The work memory with 16 KiB pages, within C5 or a reason why not.
-3. Phase 5: `lib/` and the backend, swap thrash under KASAN and lockdep, the selftests.
-4. MSan and continuous fuzzing.
+4. The work memory with 16 KiB pages, within C5 or a reason why not.
+5. Phase 5: `lib/` and the backend in the form the maintainers want, swap thrash under KASAN and
+   lockdep, the selftests.
+6. MSan, continuous fuzzing, and AFL++ again for the gate of Phase 4.
 
-### The first actions, Phases 0 to 2
-
-1. ~~Get the old phone and root it (§4).~~ Done: a Xiaomi Mi 9T.
-2. ~~Check the employer rules (R8).~~ Done.
-3. Finish Phase 0: the kernel-flag build job, which needs the codec stub. Licenses, `README.md`,
-   CMake, doctest and CI are done.
-4. The zsmalloc cost model is done: `bench/zsmalloc_cost.cpp`, with `PAGE_SIZE` as a
-   parameter. The first zram dump confirms `huge_class_size`: the harness stores exactly as many
-   pages uncompressed as zram (Phase 1). Still open is a check of the other classes against
-   `/sys/kernel/debug/zsmalloc/<pool>/classes`, which Fedora's kernel does not have.
-5. Both collectors are done: `quetschn-collect-resident`, and `quetschn-import-raw` for a `dd` of the
-   zram device. Next in Phase 1: a second zram dump some days later, to train a dictionary on
-   swapped pages and measure it on other swapped pages (§5.3), then the scripted VM workloads.
-6. The harness runs `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags, with
-   and without dictionary: `quetschn-bench-<codec> [--level n] [--dict file]`, one binary per codec.
-   `quetschn-split-corpus` splits a corpus by process name, so a dictionary is trained on programs it
-   is not measured on (§5.3). `quetschn-compare` pairs two runs page by page, with bootstrap
-   confidence intervals for the saving and for every latency percentile difference. The arm64
-   flags come from an arm64 `defconfig` build, and arm64 counts cycles with the PMU; first phone
-   numbers are in `docs/explored-designs.md`.
-
-   First run with dictionaries, only to shake out the harness. 61 043 resident pages of the
-   development machine (the biased collector 1), split by process name: 72 names to train a 64 KiB
-   dictionary with `zstd --train -B4096 --maxdict=64KB` (Honor's settings), 32 other names with 8937
-   measured pages to test on. Ryzen 9 7950X pinned to one core, `powersave` governor so the frequency
-   was not fixed, median of 5 runs per page, TSC resolution about 10 ns:
-
-   | codec | Σ zsmalloc cost | per CPU | per device | decompress cold p50 / p99 |
-   | --- | --- | --- | --- | --- |
-   | `lz4` | 38.2% | 16 440 B | 0 | 1840 / 2940 ns |
-   | `lz4` + dict | 36.6% | 16 472 B | 16 416 B | 1740 / 3010 ns |
-   | `lzo-rle` | 36.0% | 16 384 B | 0 | 1820 / 3480 ns |
-   | `lzo` | 35.2% | 16 384 B | 0 | 2240 / 3800 ns |
-   | `zstd -1` | 30.2% | 169 728 B | 75 112 B | 3490 / 5120 ns |
-   | `zstd -1` + dict | 29.5% | 153 344 B | 58 728 B | 3150 / 4820 ns |
-   | `zstd 3` (zram default) | 27.6% | 186 112 B | 91 496 B | 4260 / 6570 ns |
-   | `zstd 3` + dict | 27.3% | 186 112 B | 435 560 B | 4890 / 7820 ns |
-
-   The dictionary saves `lz4` 4% here, not enough to beat `lzo-rle`. The Phase 2 gate proxy:
-   `zstd -1` needs 16% less memory than `lzo-rle`, the better of `lz4` + dict and `lzo-rle`, above the
-   12% bar. Still not the gate: wrong page population, one run, unfixed frequency.
-
-   Two side findings. `backend_zstd.c` creates a cdict and a ddict also without a dictionary, which
-   costs 73 to 89 KiB per zram device for nothing. And the `zstd --train ... --split=4096` in the
-   f0f6f7871430 commit message is not an option zstd 1.5.7 accepts; `-B4096` cuts the samples into
-   pages.
-
-   The same codecs on the pages zram really holds, the first zram dump (Phase 1): 455 239 pages
-   measured, 5684 same-filled skipped. Same machine and setup, median of 3 runs per page. The
-   dictionary is the one from above, trained on resident pages. Memory per CPU and per device are the
-   same as in the table above:
-
-   | codec | Σ zsmalloc cost | stored uncompressed | compress p99 | decompress cold p50 / p99 |
-   | --- | --- | --- | --- | --- |
-   | `lz4` | 34.5% | 10 523 | 3540 ns | 1660 / 2930 ns |
-   | `lz4` + dict | 33.7% | 11 783 | 3910 ns | 1670 / 3060 ns |
-   | `lzo-rle` | 32.4% | 11 852 | 3770 ns | 1660 / 3040 ns |
-   | `lzo` | 31.9% | 11 831 | 3770 ns | 2020 / 6270 ns |
-   | `zstd -1` | 26.9% | 9638 | 8680 ns | 3290 / 4730 ns |
-   | `zstd -1` + dict | 26.8% | 9846 | 9930 ns | 3020 / 5560 ns |
-   | `zstd 3` (zram default) | 23.6% | 7491 | 15 700 ns | 3990 / 7080 ns |
-   | `zstd 3` + dict | 24.2% | 7499 | 18 530 ns | 3860 / 7210 ns |
-
-   The gate proxy holds up on swapped pages: `zstd -1` needs 16.9% less Σ zsmalloc cost than
-   `lzo-rle`, which is again better than `lz4` + dict. A dictionary trained on resident pages saves
-   `lz4` only 2.3% on swapped pages, and makes `zstd 3` worse. Still not the gate: one machine,
-   one dump, no confidence intervals, and the dictionary was trained on a different page population.
-
-   `lz4` + dict stores 1292 pages uncompressed that `lz4` alone does not, and 75 the other way. The
-   harness is right about that, upstream LZ4 1.10.0 gives the same sizes. The dictionary gains 2.72% Σ
-   zsmalloc cost on the pages it helps and loses 0.35% on the others, mostly on pages that already
-   compress to 2.5 to 3.5 KiB, 0.107% alone for the pages pushed over the cliff. The extreme case is
-   weird: a page of `ff`×16 `00`×16 repeated compresses to 49 bytes without a dictionary and to 1543
-   bytes with one, and a dictionary of the 8 bytes `00 00 00 00 00 00 00 04` is enough. A match into
-   the dictionary at the start shifts the greedy parse, and from then on the "test next position"
-   shortcut of `LZ4_compress_generic` only finds matches of 5 to 11 bytes with offsets 2 and 21 to 27,
-   512 of them, and never gets back to the search that would find the 4019-byte match at offset 32.
-   Without a dictionary the same chain happens too, but it breaks after 72 bytes. Rotating the page
-   shows that it is the dictionary: without one, all 32 rotations compress to 36 to 49 bytes, with the
-   8-byte dictionary 8 of 32 rotations go to about 1540 bytes. On the zram dump only 107 pages got
-   more than twice as large, 0.01%, so it does not change the table. Reported upstream as
-   [lz4/lz4#1805](https://github.com/lz4/lz4/issues/1805).
-
-Step 6 is the cheapest check that could disprove the project's central assumption. Reach it before
-writing a single line of codec.
+The first steps, Phases 0 to 2, are done; what they measured, the first runs with dictionaries and the
+`lz4` dictionary issue, is in docs/explored-designs.md, "The first runs with dictionaries".

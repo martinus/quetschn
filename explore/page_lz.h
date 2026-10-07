@@ -3,8 +3,8 @@
 #define QUETSCHN_EXPLORE_PAGE_LZ_H
 
 /*
- * What the LZ formats of explore/ share: seqlz_find's matcher, and the literal and match copies of the
- * decoder. Everything static inline, so each codec gets its own copy, inlined into its loop.
+ * seqlz's matcher, seqlz_find, and the literal and match copies of its decoder. Everything static
+ * inline, so that it is inlined into the loops of seqlz.c.
  */
 
 typedef unsigned long long u64;
