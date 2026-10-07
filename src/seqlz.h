@@ -91,7 +91,8 @@ static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_
 /* The raw bits of an offset class, one nibble per class: 0, 4, 8, the page's bits, 5, the page's bits - 3
  * (docs/format.md, Offsets); 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB. From a packed constant: the
  * multiply by (class == 3) made gcc branch on the class for 16 KiB pages. */
-#define SEQLZ_RAW_BITS(cls) (((0x50840U | QUETSCHN_PAGE_BITS << 12 | (QUETSCHN_PAGE_BITS - 3U) << 20) >> (4U * (cls))) & 15U)
+#define SEQLZ_RAW_NIBBLES (0x50840U | QUETSCHN_PAGE_BITS << 12 | (QUETSCHN_PAGE_BITS - 3U) << 20)
+#define SEQLZ_RAW_BITS(cls) ((SEQLZ_RAW_NIBBLES >> (4U * (cls))) & 15U)
 /* classes 4 and 5 send the offset divided by 8 */
 #define SEQLZ_OFF_SHIFT(cls) (((cls) >> 2) * 3U)
 

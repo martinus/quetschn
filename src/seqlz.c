@@ -913,9 +913,9 @@ static __always_inline int decode_page(
         return -EINVAL;
     /* the decoder's tables, so that their misses overlap when they are cold */
     if (prefetch_tokens(in_order))
-        prefetch_lines(t->token.decode, sizeof(t->token.decode[0]) << SEQLZ_TOKEN_BITS);
-    prefetch_lines(t->ll.decode, sizeof(t->ll.decode[0]) << SEQLZ_MAX_BITS);
-    prefetch_lines(t->ml.decode, sizeof(t->ml.decode[0]) << SEQLZ_MAX_BITS);
+        prefetch_lines(t->token.decode, sizeof(t->token.decode));
+    prefetch_lines(t->ll.decode, sizeof(t->ll.decode));
+    prefetch_lines(t->ml.decode, sizeof(t->ml.decode));
     n_lit = load16(s);
     if (n_lit & SEQLZ_LIT_CODED) {
         const u8* q;
