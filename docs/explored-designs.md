@@ -640,7 +640,8 @@ subtracted:
 | cycles | 6970 | 4911 |
 
 2059 cycles, 0.46 µs, for 118 misses, as in the kernel VM. Where the mispredicted branches of a page
-seen once are, from the branch records of AMD's LBR (`perf record -j any`), by source line, two runs:
+seen once are, from the branch records of AMD's LBR (`perf record -j any`), by source line of
+commit `99bac5e`, two runs:
 
 | where | the branch | share | per decode |
 | --- | --- | ---: | ---: |

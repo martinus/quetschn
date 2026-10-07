@@ -1,0 +1,3 @@
+# Commits that only reformat, for git blame --ignore-revs-file, which GitHub reads too
+# src/: the kernel's formatting (#108)
+5c2e81aa1d59862d3831793208cd5bb5fecf851c
