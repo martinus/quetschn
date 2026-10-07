@@ -41,16 +41,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: gcc-debug-sanitize, os: ubuntu-latest, cxx: g++, build_type: Debug, sanitize: 'ON'}
-          - {name: clang-release, os: ubuntu-latest, cxx: clang++, build_type: Release, sanitize: 'OFF'}
+          - {name: gcc-debug-sanitize, os: ubuntu-latest, cxx: g++, build_type: Debug, sanitize: 'ON', page_bits: 12}
+          - {name: clang-release, os: ubuntu-latest, cxx: clang++, build_type: Release, sanitize: 'OFF', page_bits: 12}
           # arm64 like the phones: the codecs there, and the harness's cycle counter, which uses the PMU only on arm64.
-          - {name: gcc-release-arm64, os: ubuntu-24.04-arm, cxx: g++, build_type: Release, sanitize: 'OFF'}
+          - {name: gcc-release-arm64, os: ubuntu-24.04-arm, cxx: g++, build_type: Release, sanitize: 'OFF', page_bits: 12}
+          # seqlz for 16 KiB pages. Without the kernel codecs: zram's calls into them are built for 4 KiB pages.
+          - {name: gcc-16k-sanitize, os: ubuntu-latest, cxx: g++, build_type: Release, sanitize: 'ON', page_bits: 14}
     name: test (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
       # Only the files the kernel codecs need, from the commit docs/plan.md was verified against. About 3s.
       - name: fetch kernel lz4, lzo and zstd sources
+        if: matrix.page_bits == 12
         run: |
           git init -q kernel && cd kernel
           git remote add origin https://github.com/torvalds/linux.git
@@ -59,7 +62,8 @@ jobs:
           git checkout -q FETCH_HEAD
       - run: >
           cmake -S . -B build -G Ninja
-          -DQUETSCHN_KERNEL_TREE=${{ github.workspace }}/kernel
+          -DQUETSCHN_KERNEL_TREE=${{ matrix.page_bits == 12 && format('{0}/kernel', github.workspace) || '' }}
+          -DQUETSCHN_PAGE_BITS=${{ matrix.page_bits }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DQUETSCHN_WERROR=ON

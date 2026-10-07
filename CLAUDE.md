@@ -60,14 +60,15 @@ point at another worktree's `_deps`. To skip the network, reuse doctest:
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
 cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 115 cases, ctest 2/2 with kernel tree
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 95 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 gcc -O2 -Isrc -o le test/seqlz_endian.c src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
 python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decoder, checks table hashes
 ```
 
-- CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, fuzz 60 s per
-  target, `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
+- CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, gcc 16 KiB
+  release+sanitize (no kernel tree), fuzz 60 s per target, `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
   (`tools/seqlz-ref/check.sh`, `tools/check-links.py`); `ci-ok` is the one required check (branch
   protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
   its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.

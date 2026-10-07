@@ -2,7 +2,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(quetschn LANGUAGES C CXX)
 
-# The page size of seqlz: 12 for 4 KiB, 14 for 16 KiB. The tests assume 4 KiB.
+# The page size of seqlz: 12 for 4 KiB, 14 for 16 KiB. The tests of the kernel codecs need 4 KiB, the
+# others run with both.
 set(QUETSCHN_PAGE_BITS 12 CACHE STRING "log2 of the page size of seqlz")
 if(NOT QUETSCHN_PAGE_BITS EQUAL 12)
     add_compile_definitions(QUETSCHN_PAGE_BITS=${QUETSCHN_PAGE_BITS})
