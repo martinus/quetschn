@@ -4,7 +4,7 @@
  * the ones for 4 KiB pages in seqlz_lit_sets_4k.inc, on the pages of seqlz_default_tables_16k.inc, with
  *   quetschn-seqlz-train --corpus emu-a17-16k-a-train --lit-sets
  */
-const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
+const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
     {2, 5,  6,  7,  7, 8,  8,  8,  7, 8,  8,  8,  8, 8,  8,  8,  6, 8,  8,  9,  8, 8,  8,  9,  7, 9,  9,  9,  8, 9,  9,  9,
      6, 9,  8,  9,  8, 9,  9,  9,  7, 9,  9,  9,  8, 9,  8,  9,  7, 9,  9,  9,  8, 9,  9,  9,  7, 9,  9,  9,  9, 9,  9,  9,
      6, 8,  9,  9,  8, 9,  9,  9,  8, 9,  9,  9,  8, 9,  9,  9,  6, 9,  9,  9,  8, 9,  9,  10, 8, 9,  9,  9,  9, 9,  9,  8,

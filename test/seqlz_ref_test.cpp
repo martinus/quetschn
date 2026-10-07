@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
+// seqlz.h is C, written for the kernel
+extern "C" {
 #include "seqlz.h"
+}
 #include "seqlz_ref.h"
 
 #include <doctest/doctest.h>

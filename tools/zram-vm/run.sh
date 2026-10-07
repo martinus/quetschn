@@ -27,7 +27,7 @@ patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
 # seqlz as zram backends, seqlz (raw literals) and seqlz-lit, with lz4's -O3
 z="$work/src/drivers/block/zram"
 cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/seqlz.c" "$here/../../src/seqlz.h" \
-    "$here/../../src/page_lz.h" "$here/../../src/seqlz_default_tables.c" \
+    "$here/../../src/page_lz.h" "$here/../../src/seqlz_compat.h" "$here/../../src/seqlz_default_tables.c" \
     "$here/../../src/seqlz_default_tables_4k.inc" "$here/../../src/seqlz_lit_sets.c" \
     "$here/../../src/seqlz_lit_sets_4k.inc" "$z/"
 sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\tNULL|' "$z/zcomp.c"

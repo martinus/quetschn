@@ -14,7 +14,10 @@
 #include "kernel_codecs/zram_codec.h"
 #include "lz_analysis.h"
 #include "page_stats.h"
+// seqlz.h is C, written for the kernel
+extern "C" {
 #include "seqlz.h"
+}
 #include "zsmalloc_cost.h"
 
 #include <array>

@@ -32,7 +32,8 @@ judged by how much closer it gets, not by whether it arrives.
 ```text
 src/                 the codec, freestanding C11 (kernel rules): seqlz.c/.h, page_lz.h (matcher),
                      seqlz_default_tables*.{c,inc} + seqlz_lit_sets*.{c,inc} (trained tables = part of the
-                     format), zram_seqlz.c (zram call shape, for the harness)
+                     format), zram_seqlz.c (zram call shape, for the harness), seqlz_compat.h (the
+                     kernel's names, u8, get_unaligned_le64(), ..., outside the kernel too)
 bench/               C++20 harness, zsmalloc cost model, table training (seqlz_train_main.cpp),
                      kernel_codecs/ (zram's lz4/lzo/zstd glue, built from a kernel tree)
 test/                doctest, one binary quetschn_test; test/seqlz_endian.c is CI's same-bytes check

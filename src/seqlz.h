@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-only */
-#ifndef QUETSCHN_EXPLORE_SEQLZ_H
-#define QUETSCHN_EXPLORE_SEQLZ_H
+#ifndef _LINUX_SEQLZ_H
+#define _LINUX_SEQLZ_H
+
+#include "seqlz_compat.h"
 
 /*
  * seqlz: an LZ format for memory pages whose sequences are Huffman coded with static tables. The why
@@ -32,10 +34,6 @@
  *   sequences' bitstream (the rest). Literal k is in stream k % 8, most significant bit first, with
  *   canonical codes of at most SEQLZ_LIT_BITS bits.
  */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifndef QUETSCHN_PAGE_BITS
 #    define QUETSCHN_PAGE_BITS 12 /* see page_lz.h */
@@ -72,9 +70,9 @@ extern "C" {
 /* The code lengths of the three tables, 0 for a symbol that never occurs. This is what training
  * produces; the ones compiled in, seqlz_default_own, are part of the format. */
 struct seqlz_lengths {
-    unsigned char token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
-    unsigned char ll[SEQLZ_LEN_SYMBOLS];
-    unsigned char ml[SEQLZ_LEN_SYMBOLS];
+    u8 token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape, see SEQLZ_ESCAPE */
+    u8 ll[SEQLZ_LEN_SYMBOLS];
+    u8 ml[SEQLZ_LEN_SYMBOLS];
 };
 
 /* symbol and extra bits of a length, see above */
@@ -110,20 +108,20 @@ static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last, 
 
 /* A sequence as the matcher found it. */
 struct seqlz_sequence {
-    unsigned short literals;
-    unsigned short match; /* 0 for the last sequence */
-    unsigned short offset;
+    u16 literals;
+    u16 match; /* 0 for the last sequence */
+    u16 offset;
 };
 
 /* Encoder and decoder state for one set of tables. Opaque, seqlz_tables_size() bytes. */
 struct seqlz_tables;
 
-__SIZE_TYPE__ seqlz_tables_size(void);
+size_t seqlz_tables_size(void);
 
-/* 1 if every symbol has a code, which the encoder needs; complete prefix codes can leave symbols out. */
-int seqlz_all_symbols(const struct seqlz_tables* t);
+/* true if every symbol has a code, which the encoder needs; complete prefix codes can leave symbols out. */
+bool seqlz_all_symbols(const struct seqlz_tables* t);
 
-/* Builds encode codes and decode tables from code lengths. -1 if the lengths are not a valid prefix
+/* Builds encode codes and decode tables from code lengths. -EINVAL if the lengths are not a valid prefix
  * code: longer than SEQLZ_MAX_BITS, over-subscribed, or no symbol at all. */
 int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* lengths);
 
@@ -137,7 +135,7 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
  * bytes smaller and were no faster on the phone ("Six choices made on the PC, measured on the phone",
  * 3). */
 #define SEQLZ_LIT_STREAMS 8U
-extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
+extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS) /* literals per stream and refill: a refill leaves 56 bits */
 /* The header of a page with coded literals: the 2 bytes of every page, a byte with the literal table in
  * bits 0 to 2, w - SEQLZ_SIZE_BITS_MIN in bits 3 to 5 and bits 6 and 7 zero, then the 8 stream sizes of
@@ -168,21 +166,21 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 unsigned int seqlz_encode(const struct seqlz_tables* t,
                           const struct seqlz_sequence* seq,
                           unsigned int n,
-                          const unsigned char* literals,
+                          const u8* literals,
                           unsigned int n_literals,
                           void* dst,
                           unsigned int dst_cap,
-                          int coded);
+                          bool coded);
 
-/* 0 on success, -1 if src is not a valid page for these tables. Never reads outside
+/* 0 on success, -EINVAL if src is not a valid page for these tables. Never reads outside
  * [src, src + src_len) and never writes outside [dst, dst + SEQLZ_PAGE) and the scratch. scratch has
- * SEQLZ_SCRATCH bytes; without one (0), pages with coded literals are not valid. */
+ * SEQLZ_SCRATCH bytes; without one (NULL), pages with coded literals are not valid. */
 int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch);
 
 /* the token of a sequence, see above */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigned int cls) {
-    unsigned int a = ll < SEQLZ_LL_CAP ? ll : SEQLZ_LL_CAP;
-    unsigned int b = ml == 0 ? 0 : ml - 4 < SEQLZ_ML_CAP ? ml - 4 : SEQLZ_ML_CAP;
+    unsigned int a = min(ll, SEQLZ_LL_CAP);
+    unsigned int b = ml ? min(ml - 4, SEQLZ_ML_CAP) : 0;
 
     return a + (b << SEQLZ_LL_BITS) + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
 }
@@ -196,7 +194,7 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigne
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
 struct seqlz_state {
-    unsigned short table[1U << SEQLZ_HASH_BITS];
+    u16 table[1U << SEQLZ_HASH_BITS];
 };
 
 /* The sequences of a page as the matcher finds them, the last one without a match. Returns their
@@ -207,13 +205,9 @@ unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_se
  * at least two pages, as zram's buffer is, which is always enough (see the encoder in seqlz.c). Returns
  * the length, or 0 if dst_cap is smaller or the tables lack a code for some symbol. */
 unsigned int seqlz_compress(
-    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap, int coded);
+    const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap, bool coded);
 
 /* the tables compiled in, see src/seqlz_default_tables.c for the pages they are trained on */
 extern const struct seqlz_lengths seqlz_default_own;
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

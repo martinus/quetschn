@@ -38,9 +38,9 @@
 /* COST_BUCKETS functions of their own, each one edge the fuzzer sees */
 static volatile unsigned int sink;
 typedef void (*mark_fn)(void);
-#define MARK(n)                                            \
-    static __attribute__((noinline)) void mark_##n(void) { \
-        sink = n;                                          \
+#define MARK(n)                                                \
+    static __attribute__((__noinline__)) void mark_##n(void) { \
+        sink = n;                                              \
     }
 #define MARK4(n) MARK(n##0) MARK(n##1) MARK(n##2) MARK(n##3)
 #define MARK16(n) MARK4(n##0) MARK4(n##1) MARK4(n##2) MARK4(n##3)
