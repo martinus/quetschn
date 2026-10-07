@@ -127,3 +127,26 @@ TEST_CASE("import_raw: a dump that is all holes gives an empty corpus") {
     CHECK(r.pages_written == 0);
     CHECK(quetschn::load_corpus(dir.path() / "c").size() == 0);
 }
+
+TEST_CASE("import_raw: a dump of 16 KiB pages, a page with data only in its last 4 KiB kept") {
+    constexpr std::size_t big = 16384;
+    auto dir = temp_dir();
+    auto const path = dir.path() / "zram0-16k.raw";
+    auto const fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    REQUIRE(fd >= 0);
+    REQUIRE(::ftruncate(fd, 16 * big) == 0);
+    auto a = std::vector<std::byte>(big, std::byte{7});
+    auto b = std::vector<std::byte>(big);
+    b[big - 1] = std::byte{9};
+    REQUIRE(::pwrite(fd, a.data(), big, static_cast<off_t>(2 * big)) == static_cast<ssize_t>(big));
+    REQUIRE(::pwrite(fd, b.data(), big, static_cast<off_t>(9 * big)) == static_cast<ssize_t>(big));
+    ::close(fd);
+    auto const r = quetschn::import_raw(path, dir.path() / "c", "x", big);
+    CHECK(r.pages_written == 2);
+    auto const c = quetschn::load_corpus(dir.path() / "c");
+    CHECK(c.page_size == big);
+    REQUIRE(c.size() == 2);
+    CHECK(std::memcmp(c.page(0).data(), a.data(), big) == 0);
+    CHECK(std::memcmp(c.page(1).data(), b.data(), big) == 0);
+    CHECK(addresses(dir.path() / "c") == std::vector<std::uintptr_t>{2 * big, 9 * big});
+}
