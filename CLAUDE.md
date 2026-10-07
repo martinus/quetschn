@@ -35,7 +35,7 @@ src/                 the codec, freestanding C11 (kernel rules): seqlz.c/.h, pag
                      format), zram_seqlz.c (zram call shape, for the harness)
 bench/               C++20 harness, zsmalloc cost model, table training (seqlz_train_main.cpp),
                      kernel_codecs/ (zram's lz4/lzo/zstd glue, built from a kernel tree)
-test/                doctest, one binary quetschn_test; test/seqlz_endian.c is CI's big-endian check
+test/                doctest, one binary quetschn_test; test/seqlz_endian.c is CI's same-bytes check
 fuzz/                libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs)
 tools/               see tools/README.md; seqlz-ref/ = reference decoders written from docs/format.md
                      alone (never copy from src/ into them), zram-vm/ = kernel VM, swap-fault/,
@@ -67,8 +67,13 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
 ```
 
 - CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, fuzz 60 s per
-  target, s390x big-endian under qemu; `ci-ok` is the one required check. The test job greps doctest's
-  assertion line, so a binary that runs zero tests fails.
+  target, `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
+  (`tools/seqlz-ref/check.sh`, `tools/check-links.py`); `ci-ok` is the one required check (branch
+  protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
+  its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.
+- Run locally before pushing a docs or table change: `tools/seqlz-ref/check.sh` (hashes in
+  docs/format.md vs `src/` tables, 22 pages decoded by the spec decoder, ~1.5 s) and
+  `tools/check-links.py`.
 - Tool usage: read `usage()` in the source, or run with `--help`. Exception: `quetschn-swap-bursts`
   ignores `--help` and starts sampling `/proc/vmstat`; never run it to see usage.
 - Do not build, test or fuzz while a benchmark is timing (`pgrep -af 'quetschn|qemu|run.sh'` first).
@@ -98,10 +103,9 @@ Commands: `docs/measuring.md`. Rules that matter:
   §5.1, §5.2, §5.3, Phase 1, Phase 4). Never renumber plan sections.
 - Anchors are used across files (e.g. `plan.md#11-the-score-memory-against-time-not-bars`,
   `format.md#status`, `format.md#example`, many `explored-designs.md#...` heading slugs). Renaming a
-  heading breaks links. After editing Markdown, check every relative link and `#anchor` with a small
-  script (GitHub slug: lowercase, drop chars other than word chars, `-` and space, spaces to `-`).
+  heading breaks links. After editing Markdown, run `tools/check-links.py` (CI runs it too).
 - `tools/seqlz-ref/seqlz_ref.py` parses `docs/format.md` rows of the form ``| `TOK_4k` | `<sha256>` |``.
-  Keep that table format exactly.
+  Keep that table format exactly. Retrained tables need new hashes there, or `check.sh` fails in CI.
 - `tools/seqlz-viz/build.sh` feeds `docs/format.md` as text into one demo page; the committed
   `docs/seqlz-*.html` are generated, rebuild them with build.sh rather than editing by hand (paths
   inside them were last changed by `sed`).
