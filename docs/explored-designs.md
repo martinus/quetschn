@@ -987,6 +987,13 @@ The decoder is as fast with them. Kernel VM, `MODE=swap`, the backend's prefetch
 | the second phone dump | 6 October | 18 874 368 | 3.16 | 3.60 | 1.76 |
 | | new | 18 890 752 | 3.16 | 3.59 | 1.74 |
 
+The whole page fault with the new tables, measured as in "The whole page fault" above: the kernel VM on
+both desktop dumps, and the Mi 9T on the phone's pages with a module of the new tables. `seqlz-fast-lit`
+stores 28.5% and 26.8% less than `lz4` on the desktop dumps and 28% less on the phone, and swaps in 18%
+and 24% slower on the PC, 13% warm and 25% cold on the A76, 11% warm and 17% cold on the A55:
+
+![The whole page fault with the tables of 7 October](plots/swap-fault-2026-10-07.svg)
+
 **How much room is left: 0.7% on the phone.** Trained on the dump that is measured, 32 starts, which no
 real table can be:
 
