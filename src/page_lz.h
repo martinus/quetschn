@@ -236,6 +236,12 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 }
 
 /*
+ * The copies of a fixed 8 or 16 bytes are __builtin_memcpy(), as lib/lz4's
+ * LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang does not inline the kernel's
+ * memcpy() in the Mi 9T's 4.14, and every copy was a call.
+ */
+
+/*
  * The literals of a sequence, nl bytes from lit to d; the caller has checked
  * that they fit in both. 16 bytes at a time while there are 16 bytes of room
  * behind, in the page and in the input; may write and read past nl, which is
@@ -255,20 +261,20 @@ static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
 	    (unsigned int)(s_end - lit) >= 16U) {
 		u64 a, b;
 
-		memcpy(&a, lit, 8);
-		memcpy(&b, lit + 8, 8);
-		memcpy(d, &a, 8);
-		memcpy(d + 8, &b, 8);
+		__builtin_memcpy(&a, lit, 8);
+		__builtin_memcpy(&b, lit + 8, 8);
+		__builtin_memcpy(d, &a, 8);
+		__builtin_memcpy(d + 8, &b, 8);
 		k = 16;
 	}
 	while (k < nl && (unsigned int)(d_end - d) >= k + 16U &&
 	       (unsigned int)(s_end - lit) >= k + 16U) {
 		u64 a, b;
 
-		memcpy(&a, lit + k, 8);
-		memcpy(&b, lit + k + 8, 8);
-		memcpy(d + k, &a, 8);
-		memcpy(d + k + 8, &b, 8);
+		__builtin_memcpy(&a, lit + k, 8);
+		__builtin_memcpy(&b, lit + k + 8, 8);
+		__builtin_memcpy(d + k, &a, 8);
+		__builtin_memcpy(d + k + 8, &b, 8);
 		k += 16;
 	}
 	for (; k < nl; k++)
@@ -339,18 +345,18 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 		 */
 		u64 a, b;
 
-		memcpy(&a, d - off, 8);
-		memcpy(d, &a, 8);
-		memcpy(&b, d + 8 - off, 8);
-		memcpy(d + 8, &b, 8);
+		__builtin_memcpy(&a, d - off, 8);
+		__builtin_memcpy(d, &a, 8);
+		__builtin_memcpy(&b, d + 8 - off, 8);
+		__builtin_memcpy(d + 8, &b, 8);
 		k = 16;
 	}
 	if (back != 0) {
 		while (k < len && (unsigned int)(d_end - d) >= k + 8U) {
 			u64 w;
 
-			memcpy(&w, d + k - back, 8);
-			memcpy(d + k, &w, 8);
+			__builtin_memcpy(&w, d + k - back, 8);
+			__builtin_memcpy(d + k, &w, 8);
 			k += step;
 		}
 	}

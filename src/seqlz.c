@@ -431,11 +431,11 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 	 * has room behind them
 	 */
 	if ((unsigned int)(e->src_end - in) >= 16U) {
-		memcpy(e->lit, in, 16);
+		__builtin_memcpy(e->lit, in, 16);
 		k = 16;
 	}
 	for (; k < ll && (unsigned int)(e->src_end - in) >= k + 16U; k += 16)
-		memcpy(e->lit + k, in + k, 16);
+		__builtin_memcpy(e->lit + k, in + k, 16);
 	for (; k < ll; k++)
 		e->lit[k] = in[k];
 	e->lit += ll;
@@ -1028,7 +1028,7 @@ static noinline __aligned(64) const u8 *decode_literals(
 		 */
 		u8 h[SEQLZ_SIZE_BITS_MAX + 4U] = { 0 };
 
-		memcpy(h, s + SEQLZ_LIT_HEADER(0), width);
+		__builtin_memcpy(h, s + SEQLZ_LIT_HEADER(0), width);
 		for (k = 0; k < SEQLZ_LIT_STREAMS; k++) {
 			sz[k] = (get_unaligned_le32(h + k * width / 8U) >>
 				 (k * width % 8U)) &
@@ -1309,10 +1309,10 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 			 * path below, where every page ends, because lit >
 			 * lit_end. 3 instructions less per sequence.
 			 */
-			memcpy(&a, lit, 8);
-			memcpy(&b, lit + 8, 8);
-			memcpy(d, &a, 8);
-			memcpy(d + 8, &b, 8);
+			__builtin_memcpy(&a, lit, 8);
+			__builtin_memcpy(&b, lit + 8, 8);
+			__builtin_memcpy(d, &a, 8);
+			__builtin_memcpy(d + 8, &b, 8);
 			d += nl;
 			lit += nl;
 			last = off;
@@ -1327,18 +1327,18 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 				 */
 				const u8 *m = d - off;
 
-				memcpy(&a, m, 8);
-				memcpy(d, &a, 8);
-				memcpy(&b, m + 8, 8);
-				memcpy(d + 8, &b, 8);
+				__builtin_memcpy(&a, m, 8);
+				__builtin_memcpy(d, &a, 8);
+				__builtin_memcpy(&b, m + 8, 8);
+				__builtin_memcpy(d + 8, &b, 8);
 				if (len > 16U) {
-					memcpy(&a, m + 16, 8);
-					memcpy(d + 16, &a, 8);
-					memcpy(&b, m + 24, 8);
-					memcpy(d + 24, &b, 8);
+					__builtin_memcpy(&a, m + 16, 8);
+					__builtin_memcpy(d + 16, &a, 8);
+					__builtin_memcpy(&b, m + 24, 8);
+					__builtin_memcpy(d + 24, &b, 8);
 					if (len > 32U) {
-						memcpy(&a, m + 32, 8);
-						memcpy(d + 32, &a, 8);
+						__builtin_memcpy(&a, m + 32, 8);
+						__builtin_memcpy(d + 32, &a, 8);
 					}
 				}
 			} else {
