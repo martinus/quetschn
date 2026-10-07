@@ -74,12 +74,15 @@ std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
             }
         }
         break;
-    case 5: // bytes of skewed frequencies and few repeats: literals that code well
+    case 5: { // letters in their frequencies in English and few repeats: literals that any tables trained
+              // on real pages code well, not only the ones of a particular training
+        static char const letters[] = "eeeeeeeeeeeettttttttaaaaaaaoooooooiiiiiiinnnnnnnsssssshhhhhhrrrrrrdddd"
+                                      "llllcccuuummmwwffggyyppbbvk";
         for (auto& b : p) {
-            b = static_cast<unsigned char>(
-                32U + static_cast<unsigned>(std::min(std::countr_zero(rng() | 1ULL << 40), 30)) * 3U + rng() % 3);
+            b = static_cast<unsigned char>(letters[rng() % (sizeof letters - 1)]);
         }
         break;
+    }
     default: // mostly zeros, as in many swapped pages
         for (int i = 0; i < 40; ++i) {
             p[rng() % p.size()] = static_cast<unsigned char>(rng());
@@ -182,14 +185,14 @@ std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int literal
 #if QUETSCHN_PAGE_BITS == 12
 TEST_CASE("seqlz_ref: the example of FORMAT.md is ab 2048 times") {
     auto const r = make_ref();
-    auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0xe2, 0x65, 0xdf, 0xdb, 0x98};
+    auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb, 0x8a};
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);
     REQUIRE(seqlz_ref_decode(r.get(), c.data(), c.size(), out.data()) == 0);
     for (std::size_t k = 0; k < out.size(); ++k) {
         REQUIRE(out[k] == (k % 2 ? 'b' : 'a'));
     }
     // without the last token's last bit the page cannot end
-    auto const shorter = std::array<unsigned char, 8>{0x02, 0x00, 0x61, 0x62, 0xe2, 0x65, 0xdf, 0xdb};
+    auto const shorter = std::array<unsigned char, 8>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb};
     CHECK(seqlz_ref_decode(r.get(), shorter.data(), shorter.size(), out.data()) == -1);
 }
 #endif

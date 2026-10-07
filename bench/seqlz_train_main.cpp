@@ -136,12 +136,21 @@ std::vector<unsigned char> token_lengths(std::vector<double> const& counts) {
     return best;
 }
 
+// how lit_sets() searches: the starts, each a different seed, and the rounds at most. k-means stops
+// where no page moves, after 9 to 17 rounds on the training corpora; which start wins moves the
+// result on other pages by up to 5%, so it takes many (docs/explored-designs.md)
+struct lit_search {
+    unsigned seeds = 32;
+    unsigned first_seed = 1;
+    unsigned rounds = 60;
+};
+
 // SEQLZ_LIT_SETS literal tables for pages with coded literals, one chosen per page: k-means over the
 // pages' literal histograms. Each page goes to the table that codes its literals in the fewest bits,
 // each table is the code of its pages' literals. A page whose literals no table codes in 1/16 fewer
 // bytes, as seqlz_encode_coded() wants, stays raw and counts for no table: otherwise the pages with
 // the flattest literals got tables that never paid. The most used table first.
-std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 256>> const& pages) {
+std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 256>> const& pages, lit_search const& opt) {
     auto const k_sets = std::size_t{SEQLZ_LIT_SETS};
     if (pages.size() < k_sets) {
         throw std::runtime_error("too few pages with literals for the literal tables");
@@ -166,7 +175,7 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
         return b;
     };
     // start: pages drawn by their number of literals, each smoothed with a tenth of the mean histogram;
-    // 4 starts with fixed seeds, the one with the fewest bits on these pages wins
+    // the start with the fewest bits on these pages wins
     auto weights = std::vector<double>();
     auto mean = std::array<double, 256>{};
     for (auto const& h : pages) {
@@ -180,7 +189,7 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
     auto sets = std::vector<std::vector<unsigned char>>();
     auto assign = std::vector<std::size_t>(pages.size());
     auto best_total = 0.0;
-    for (std::uint64_t seed = 1; seed <= 4; ++seed) {
+    for (std::uint64_t seed = opt.first_seed; seed < opt.first_seed + opt.seeds; ++seed) {
         auto rng = std::mt19937_64(seed);
         auto draw = std::discrete_distribution<std::size_t>(weights.begin(), weights.end());
         auto s_sets = std::vector<std::vector<unsigned char>>();
@@ -193,7 +202,8 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
         }
         auto s_assign = std::vector<std::size_t>(pages.size());
         auto total = 0.0;
-        for (int round = 0; round < 15; ++round) {
+        for (unsigned round = 0; round < opt.rounds; ++round) {
+            auto const before = s_assign;
             auto sums = std::vector<std::array<double, 256>>(k_sets, std::array<double, 256>{});
             auto used = std::vector<std::size_t>(k_sets);
             total = 0.0;
@@ -246,7 +256,16 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
                 }
                 s_sets[k] = code(h);
             }
+            if (round > 0 && s_assign == before) {
+                std::fprintf(stderr,
+                             "seed %llu: no page moved after round %u, %.0f bits\n",
+                             static_cast<unsigned long long>(seed),
+                             round,
+                             total);
+                break;
+            }
         }
+        std::fprintf(stderr, "seed %llu: %.0f bits\n", static_cast<unsigned long long>(seed), total);
         if (sets.empty() || total < best_total) {
             sets = s_sets;
             assign = s_assign;
@@ -273,12 +292,13 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train --corpus <base> [--lit-sets]\n"
+                 "usage: quetschn-seqlz-train --corpus <base> [--lit-sets [--seeds n] [--first-seed n] [--rounds n]]\n"
                  "\n"
                  "Counts seqlz's symbols over the matches of its own matcher on every page. Prints the code\n"
                  "lengths as a C initializer.\n"
                  "--lit-sets prints the literal tables of explore/seqlz_lit_sets.c instead, from the pages with\n"
-                 "more than 64 literals.\n");
+                 "more than 64 literals: k-means from --seeds starts (32), seeds --first-seed (1) on, each at\n"
+                 "most --rounds rounds (60).\n");
 }
 
 } // namespace
@@ -286,6 +306,7 @@ void usage() {
 int main(int argc, char** argv) {
     auto base = std::string();
     auto want_lit_sets = false;
+    auto search = lit_search{};
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
@@ -293,6 +314,12 @@ int main(int argc, char** argv) {
             base = argv[++i];
         } else if (arg == "--lit-sets") {
             want_lit_sets = true;
+        } else if (arg == "--seeds" && has_value) {
+            search.seeds = std::max(1U, static_cast<unsigned>(std::stoul(argv[++i])));
+        } else if (arg == "--first-seed" && has_value) {
+            search.first_seed = static_cast<unsigned>(std::stoul(argv[++i]));
+        } else if (arg == "--rounds" && has_value) {
+            search.rounds = static_cast<unsigned>(std::stoul(argv[++i]));
         } else {
             usage();
             return 2;
@@ -359,7 +386,7 @@ int main(int argc, char** argv) {
         }
 
         if (want_lit_sets) {
-            auto const sets = lit_sets(page_lits);
+            auto const sets = lit_sets(page_lits, search);
             std::printf("/* %u tables of at most %u bits, trained on the %zu pages with more than 64 literals of %zu "
                         "pages of %s, seqlz */\n{\n",
                         SEQLZ_LIT_SETS,

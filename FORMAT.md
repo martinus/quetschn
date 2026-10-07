@@ -15,15 +15,18 @@ checked against `seqlz_decode()`, see [How this file was checked](#how-this-file
 
 ## Status
 
-The format for 4 KiB pages is fixed since 6 October 2026: a page that decodes now decodes the same way
+The format for 4 KiB pages is fixed since 7 October 2026: a page that decodes now decodes the same way
 in every later seqlz, and a change to anything in this file, the tables included, is a new format with
-a new name in zram, see [No version in the page](#no-version-in-the-page).
+a new name in zram, see [No version in the page](#no-version-in-the-page). The tables of 6 October were
+trained again before anyone used them, on swapped pages too
+([docs/explored-designs.md](docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 
 The format for 16 KiB pages is not fixed yet. Its tables were trained on 2052 pages made of four
 adjacent resident 4 KiB pages each, and measured on the same pages; there was no real 16 KiB page yet. A
 corpus from a system with 16 KiB pages may still change them. And with 16 KiB pages `seqlz-fast-lit`
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
-([docs/seqlz.md](docs/seqlz.md#what-is-not-known-yet)).
+([docs/seqlz.md](docs/seqlz.md#what-is-not-known-yet)). The literal tables are the same as for 4 KiB
+pages; those of 7 October make the 16 KiB pages 1.0% larger than those of 6 October did.
 
 ## The idea
 
@@ -149,15 +152,15 @@ so that a decoder can check that it has the right ones; `tools/seqlz_ref.py` che
 
 | table | SHA-256 |
 | --- | --- |
-| `TOK_4k` | `6d4fa91ee2e24196043146a2955e1214e2ce2e981385716c95519ec2fbce2909` |
-| `LL_4k` | `43dcf4540e61456a6c085a877b0a681ae71d09cfd89fc1ef2763c18c06d30f58` |
-| `ML_4k` | `c14ec602093ba8d570e30c5f98300f7046726a73e64a3fcdda0ba038a0c397fc` |
+| `TOK_4k` | `8348c354f914ba1510728521a7ee3d1469e998ec8ff71dcdd35140e6c9d6e997` |
+| `LL_4k` | `f019bfe73f61b5452473b27764ae587244bb5e31ddfca19c4a20288f2cce84d5` |
+| `ML_4k` | `25e6a220de355e0508ac0478b9ba4df4511bb4477600f2741e7feed9206b375b` |
 | `TOK_16k` | `c0456a5a34f29618709e4cd6efba0e6db0926cc4c4948f4ae8df8b2b44f07613` |
 | `LL_16k` | `e0dde5e597bce7ad74677227800d41de02c1a3b167786564dbf7cf8296ecc4cc` |
 | `ML_16k` | `e487aeb101066058f2794a507d4c7bc48962dedcbfcfda92e4e621a196cc8bcc` |
-| `LIT` | `8fac7c712644c8d48f19141f8982306489e0d740bdf60e56a4d9351a7e66cc3b` |
+| `LIT` | `efa140477f179ce5a9c5cc27b462fe5da459839b2ff71e0ee94fef939d63f4c2` |
 
-How the tables were trained is in [docs/explored-designs.md](docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
+How the tables were trained is in [docs/explored-designs.md](docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
 
 ## The bitstream of the sequences
 
@@ -287,19 +290,19 @@ decoder may read past the end of a stream, as long as it checks this.
 
 ## Example
 
-The 9 bytes `02 00 61 62 e2 65 df db 98` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
+The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
 
 - `02 00`: `h = 2`, raw literals, `n = 2`; then the literals `61 62`, `a` and `b`.
-- `B` is `e2 65 df db 98`, 40 bits, read most significant bit first:
+- `B` is `dc 65 ef db 8a`, 40 bits, read most significant bit first:
 
 | bits | read as | means |
 | --- | --- | --- |
-| `11100010011` | `symbol(TOK)` = 1010 | `ll = 2`, `mlf = 31`, class 1 |
+| `11011100011` | `symbol(TOK)` = 1010 | `ll = 2`, `mlf = 31`, class 1 |
 | `0010` | `read(4)` = 2 | `off = 2` |
 | | | `a b` appended |
-| `111011` | `symbol(ML)` = 23, `b = 11` | |
+| `111101` | `symbol(ML)` = 23, `b = 11` | |
 | `11111011011` | `read(11)` = 2011 | `ml = 35 + 2^11 + 2011 = 4094`, `ab` repeated |
-| `10011000` | `symbol(TOK)` = 0 | `ll = 0`: the page is full, the end |
+| `10001010` | `symbol(TOK)` = 0 | `ll = 0`: the page is full, the end |
 
 ## What the compressor writes
 

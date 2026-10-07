@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * The code lengths seqlz compiles in, part of the format (FORMAT.md). For 4 KiB pages they are in
- * seqlz_default_tables_4k.inc, from bench/seqlz_train_main.cpp on 138268 pages: the resident pages of
- * the development machine and the first zram dump of the Mi 9T (phone-mi9t-2026-10-03), not on the
- * dumps the benchmarks measure, so that the tables have not seen the pages they are measured on.
- * Tables trained on one phone's pages saved at most 1% on another dump of that phone and cost about 1%
- * on the desktop (docs/explored-designs.md). Generated with
- *   quetschn-seqlz-train --corpus train-resident-phone1003
+ * seqlz_default_tables_4k.inc, from bench/seqlz_train_main.cpp on 524912 pages: the resident pages of
+ * the development machine, 60132 pages of its zram dump of 28 September, and 5 times the first zram
+ * dump of the Mi 9T (phone-mi9t-2026-10-03), so that the phone does not lose what the swapped desktop
+ * pages gain. None of them is in the dumps the benchmarks measure, so that the tables have not seen
+ * the pages they are measured on (docs/explored-designs.md, "The tables trained again"). Generated with
+ *   quetschn-seqlz-train --corpus train-rz-phone5
  */
 #include "seqlz.h"
 

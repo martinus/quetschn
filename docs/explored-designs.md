@@ -924,6 +924,84 @@ swap was at 276 MiB then and `lmkd`'s log shows `swap_free_percentage` at 10% to
 runs ended at 298 to 404 MiB. So a few dozen MiB decide if `lmkd` kills a whole burst of apps, and
 5 runs are not enough to tell 6% of RAM apart in this test.
 
+## The tables trained again: 4% less on one desktop dump, the phone the same
+
+*Can the static tables be trained better (#57)?* Nobody uses the format of 6 October yet, so new tables
+cost nothing but a new set of hashes in FORMAT.md. The tables were trained with k-means over the pages'
+literal histograms, 4 starts of 15 rounds, on the desktop's resident pages and the first phone dump,
+142 320 pages. `seqlz-fast-lit`'s zsmalloc bytes per page without the same-filled pages, from
+`quetschn-bench-interleaved --no-timing`.
+
+**Which start k-means takes moves the second desktop dump by 5%.** The same training with one start each,
+seeds 1 to 6, the 20 000-page samples of the first and second desktop dump and of the second phone
+dump:
+
+| training | first desktop | second desktop | phone |
+| --- | --- | --- | --- |
+| the tables of 6 October | 1002.4 | 1308.1 | 898.7 |
+| six single starts | 996.6 to 1006.0 | 1304.4 to 1367.2 | 897.4 to 900.2 |
+| 32 starts, the best on the training pages | 998.2 | 1289.3 | 898.3 |
+| 64 starts | 998.9 | 1307.4 | 897.9 |
+| 32 k-means++ starts | 999.3 | 1307.2 | 897.8 |
+
+k-means stops after 9 to 17 rounds, so 15 were about enough. The start with the fewest bits on the
+training pages is not the one with the fewest on other pages: 32 starts helped the second desktop by
+luck, 64 did not, k-means++ neither. A better optimum on the training pages is not what is missing. The
+same training as on 6 October does not give the same tables either, 996.6, 1304.4 and 899.1: the
+matcher changed since.
+
+**The pages trained on are what matters.** The third desktop zram dump, of 28 September, is in none of
+the measurements of this file. 60 132 pages drawn from it, as many as there are resident pages, with the
+first phone dump; the full dumps from here on, 461 000, 312 000 and 267 000 pages:
+
+| trained on | first desktop | second desktop | phone |
+| --- | --- | --- | --- |
+| resident pages, first phone dump (6 October) | 1002.8 | 1312.3 | 896.3 |
+| resident and swapped desktop pages, first phone dump | 995.9 | 1242.0 | 900.1 |
+| the same, the phone dump twice | 996.4 | 1246.2 | 898.3 |
+| the same, the phone dump 3 times | 996.9 | 1247.9 | 897.7 |
+| the same, the phone dump 5 times | 999.8 | 1259.9 | 896.9 |
+| the token tables of 6 October's pages, the literal tables of the phone dump 3 times | 998.1 | 1256.2 | 897.3 |
+| the other way around | 997.6 | 1286.2 | 896.3 |
+
+Swapped desktop pages make the second desktop dump 5% smaller, more from the literal tables than from the
+token tables, and the phone 0.4% larger. Each copy more of the phone dump gives some of the desktop's
+gain back for the phone; with 5 the phone is within 0.07% of 6 October and the desktop dumps 0.3% and
+4.0% smaller. The phone does not get smaller from any of these; its tables are as good as this
+training gets.
+
+**Kept: the phone dump 5 times.** One corpus, `train-rz-phone5`, 524 912 pages: the resident pages,
+60 132 swapped pages of the desktop, 5 times the first phone dump; `quetschn-seqlz-train` takes 32
+starts and up to 60 rounds by default now, k-means++ is not kept. The desktop's gain comes from pages of
+the same desktop, so on another machine it may be smaller. With 16 KiB pages, which use the same literal
+tables, the resident pages are 1.0% larger, 3922.4 instead of 3882.7 bytes per page; the 16 KiB format
+is not fixed and gets its own tables with a real 16 KiB corpus.
+
+The decoder is as fast with them. Kernel VM, `MODE=swap`, the backend's prefetch, `lz4` and
+`seqlz-lit` in each boot, a boot with the tables of 6 October and one with the new ones, means in µs:
+
+| 20 000 pages of | tables | zsmalloc `mem_used` | `lz4` swap-in, flushed | `seqlz-fast-lit` swap-in, flushed | its `zcomp_decompress()` |
+| --- | --- | --- | --- | --- | --- |
+| the first desktop dump | 6 October | 21 106 688 | 3.23 | 3.83 | 2.04 |
+| | new | 20 750 336 | 3.28 | 3.85 | 2.02 |
+| the second phone dump | 6 October | 18 874 368 | 3.16 | 3.60 | 1.76 |
+| | new | 18 890 752 | 3.16 | 3.59 | 1.74 |
+
+**How much room is left: 0.7% on the phone.** Trained on the dump that is measured, 32 starts, which no
+real table can be:
+
+| | first desktop | second desktop | phone |
+| --- | --- | --- | --- |
+| the new tables | 999.8 | 1259.9 | 896.9 |
+| trained on the dump itself | 984.6 | 1228.2 | 890.9 |
+
+That bounds what any training of these tables gets: 1.5% and 2.5% on the desktop dumps, 0.7% on the
+phone. More than that needs a change of what the tables are, not of how they are trained.
+
+Not done from #57: splitting and merging tables, and training for zsmalloc's size classes instead of
+bits. With the training objective that weakly tied to other pages, a better optimum on the training
+pages is unlikely to be the lever, and the bound above leaves little for it.
+
 ## The format written down: one set of tables, and stream sizes that hold
 
 *FORMAT.md describes the format; writing it showed two things the code had decided, not the format.*
