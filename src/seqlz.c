@@ -565,33 +565,15 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
  * stream's entries are also summed: the low byte of the sum is the length of
  * their codes, at most 4 * 10 bits between two flushes, which fits.
  */
-#define ENC_LIT(acc, sum, b)                           \
-	do {                                           \
-		u32 e_ = enc[b];                       \
-		(acc) = (acc) << (e_ & 63U) | e_ >> 8; \
-		(sum) += e_;                           \
-	} while (0)
+static __always_inline u64 lit_put(u64 acc, unsigned int *sum, const u32 *enc,
+				   u8 b)
+{
+	u32 e = enc[b];
 
-/*
- * Writes the whole bytes of a stream's accumulator and moves p on by them, as
- * enc_flush() does for the sequences. cnt is the bits left from before the last
- * flush, the low byte of sum the bits added since. 8 bytes at once while the
- * stream has room for them; it ends at end, where the next stream starts. The
- * bytes are swapped once, before the branch: put_unaligned_be64() in both
- * branches gave code_literals() other code on arm64.
- */
-#define ENC_FLUSH(p, end, acc, cnt, sum)                                 \
-	do {                                                             \
-		unsigned int n_ = (cnt) + ((sum) & 255U);                \
-		u64 w_ = __builtin_bswap64((acc) << ((64U - n_) & 63U)); \
-		if ((end) - (p) >= 8)                                    \
-			put_unaligned_le64(w_, (p));                     \
-		else                                                     \
-			store_tail((p), w_, (n_ + 7U) >> 3);             \
-		(p) += n_ >> 3;                                          \
-		(cnt) = n_ & 7U;                                         \
-		(sum) = 0;                                               \
-	} while (0)
+	acc = acc << (e & 63U) | e >> 8;
+	*sum += e;
+	return acc;
+}
 
 /*
  * the first n bytes of w as put_unaligned_le64() would write them, n < 8: at
@@ -605,6 +587,30 @@ static void store_tail(u8 *p, u64 w, unsigned int n)
 	put_unaligned_le64(w, b);
 	for (k = 0; k < n; k++)
 		p[k] = b[k];
+}
+
+/*
+ * Writes the whole bytes of a stream's accumulator and returns p moved on by
+ * them, as enc_flush() does for the sequences. cnt is the bits left from before
+ * the last flush, the low byte of sum the bits added since. 8 bytes at once
+ * while the stream has room for them; it ends at end, where the next stream
+ * starts. The bytes are swapped once, before the branch: put_unaligned_be64()
+ * in both branches gave code_literals() other code on arm64.
+ */
+static __always_inline u8 *lit_flush(u8 *p, const u8 *end, u64 acc,
+				     unsigned int *cnt, unsigned int *sum)
+{
+	unsigned int n = *cnt + (*sum & 255U);
+	u64 w = __builtin_bswap64(acc << ((64U - n) & 63U));
+
+	if (end - p >= 8)
+		put_unaligned_le64(w, p);
+	else
+		store_tail(p, w, (n + 7U) >> 3);
+	p += n >> 3;
+	*cnt = n & 7U;
+	*sum = 0;
+	return p;
 }
 
 /* the bits of stream j in literal table k, from its lane in even or odd */
@@ -741,15 +747,19 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 			 */
 			for (k = half; k + 28U < n_literals; k += 32) {
 				for (j = 0; j < 32U; j += SEQLZ_LIT_STREAMS) {
-					ENC_LIT(a0, s0, literals[k + j]);
-					ENC_LIT(a1, s1, literals[k + j + 1]);
-					ENC_LIT(a2, s2, literals[k + j + 2]);
-					ENC_LIT(a3, s3, literals[k + j + 3]);
+					a0 = lit_put(a0, &s0, enc,
+						     literals[k + j]);
+					a1 = lit_put(a1, &s1, enc,
+						     literals[k + j + 1]);
+					a2 = lit_put(a2, &s2, enc,
+						     literals[k + j + 2]);
+					a3 = lit_put(a3, &s3, enc,
+						     literals[k + j + 3]);
 				}
-				ENC_FLUSH(p0, e0, a0, c0, s0);
-				ENC_FLUSH(p1, e1, a1, c1, s1);
-				ENC_FLUSH(p2, e2, a2, c2, s2);
-				ENC_FLUSH(p3, e3, a3, c3, s3);
+				p0 = lit_flush(p0, e0, a0, &c0, &s0);
+				p1 = lit_flush(p1, e1, a1, &c1, &s1);
+				p2 = lit_flush(p2, e2, a2, &c2, &s2);
+				p3 = lit_flush(p3, e3, a3, &c3, &s3);
 			}
 			/*
 			 * the rest, at most 4 literals per stream; the other
@@ -759,26 +769,26 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 				switch (k % SEQLZ_LIT_STREAMS) {
 				case 0:
 				case 4:
-					ENC_LIT(a0, s0, literals[k]);
+					a0 = lit_put(a0, &s0, enc, literals[k]);
 					break;
 				case 1:
 				case 5:
-					ENC_LIT(a1, s1, literals[k]);
+					a1 = lit_put(a1, &s1, enc, literals[k]);
 					break;
 				case 2:
 				case 6:
-					ENC_LIT(a2, s2, literals[k]);
+					a2 = lit_put(a2, &s2, enc, literals[k]);
 					break;
 				default:
-					ENC_LIT(a3, s3, literals[k]);
+					a3 = lit_put(a3, &s3, enc, literals[k]);
 				}
 				if ((k & 3U) == 3U)
 					k += 4;
 			}
-			ENC_FLUSH(p0, e0, a0, c0, s0);
-			ENC_FLUSH(p1, e1, a1, c1, s1);
-			ENC_FLUSH(p2, e2, a2, c2, s2);
-			ENC_FLUSH(p3, e3, a3, c3, s3);
+			p0 = lit_flush(p0, e0, a0, &c0, &s0);
+			p1 = lit_flush(p1, e1, a1, &c1, &s1);
+			p2 = lit_flush(p2, e2, a2, &c2, &s2);
+			p3 = lit_flush(p3, e3, a3, &c3, &s3);
 		}
 	}
 	store16(d, SEQLZ_LIT_CODED | n_literals);
@@ -994,38 +1004,36 @@ static noinline __cold u64 lit_load_tail(const u8 *ip, const u8 *end)
 }
 
 /*
- * Loads the next 8 bytes of a stream. Past the stream's end they belong to the
- * next stream or the sequences: a stream that used them fails the check of its
- * size at the end of decode_literals().
+ * Loads the next 8 bytes of a stream, returns its new bits and moves ip on.
+ * Past the stream's end the bytes belong to the next stream or the sequences: a
+ * stream that used them fails the check of its size at the end of
+ * decode_literals().
  */
-#define LIT_REFILL(ip, bits)                                              \
-	do {                                                              \
-		unsigned int used_ = (unsigned int)__builtin_ctzll(bits); \
-		(ip) += used_ >> 3;                                       \
-		(bits) = ((end - (ip) >= 8 ? get_unaligned_be64(ip) :     \
-					     lit_load_tail((ip), end)) |  \
-			  1U)                                             \
-			 << (used_ & 7U);                                 \
-	} while (0)
+static __always_inline u64 lit_refill(const u8 **ip, u64 bits, const u8 *end)
+{
+	unsigned int used = (unsigned int)__builtin_ctzll(bits);
+	const u8 *p = *ip + (used >> 3);
 
-/* the next literal; the entry: code length in bits 0 to 5, symbol above */
-#define LIT_DECODE(out, bits)                                           \
-	do {                                                            \
-		unsigned int e_ = lt[(bits) >> (64U - SEQLZ_LIT_BITS)]; \
-		(out) = (u8)(e_ >> 8);                                  \
-		(bits) <<= e_ & 63U;                                    \
-	} while (0)
+	*ip = p;
+	return ((end - p >= 8 ? get_unaligned_be64(p) : lit_load_tail(p, end)) |
+		1U)
+	       << (used & 7U);
+}
 
 /*
- * the same, but the stream only moves on where mask is 63; where it is 0 the
- * symbol is decoded and not taken
+ * Decodes the next literal of a stream into out and returns the stream's new
+ * bits. The table entry has the code's length in bits 0 to 5 and the byte from
+ * bit 8 on. The stream moves on by the code's length where mask is 63; where it
+ * is 0 the literal is decoded but not taken, see the end of decode_literals().
  */
-#define LIT_DECODE_MASKED(out, bits, mask)                              \
-	do {                                                            \
-		unsigned int e_ = lt[(bits) >> (64U - SEQLZ_LIT_BITS)]; \
-		(out) = (u8)(e_ >> 8);                                  \
-		(bits) <<= e_ & (mask);                                 \
-	} while (0)
+static __always_inline u64 lit_decode(u8 *out, u64 bits, const u16 *lt,
+				      unsigned int mask)
+{
+	unsigned int e = lt[bits >> (64U - SEQLZ_LIT_BITS)];
+
+	*out = (u8)(e >> 8);
+	return bits << (e & mask);
+}
 
 /*
  * Decodes the coded literals of a page into out, the scratch, see
@@ -1091,14 +1099,14 @@ static noinline __aligned(64) const u8 *decode_literals(
 		const u8 *i0 = ip[0], *i1 = ip[1], *i2 = ip[2], *i3 = ip[3],
 			 *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
 
-		LIT_REFILL(i0, b0);
-		LIT_REFILL(i1, b1);
-		LIT_REFILL(i2, b2);
-		LIT_REFILL(i3, b3);
-		LIT_REFILL(i4, b4);
-		LIT_REFILL(i5, b5);
-		LIT_REFILL(i6, b6);
-		LIT_REFILL(i7, b7);
+		b0 = lit_refill(&i0, b0, end);
+		b1 = lit_refill(&i1, b1, end);
+		b2 = lit_refill(&i2, b2, end);
+		b3 = lit_refill(&i3, b3, end);
+		b4 = lit_refill(&i4, b4, end);
+		b5 = lit_refill(&i5, b5, end);
+		b6 = lit_refill(&i6, b6, end);
+		b7 = lit_refill(&i7, b7, end);
 		ip[0] = i0;
 		ip[1] = i1;
 		ip[2] = i2;
@@ -1108,14 +1116,22 @@ static noinline __aligned(64) const u8 *decode_literals(
 		ip[6] = i6;
 		ip[7] = i7;
 		for (j = 0; j < SEQLZ_LIT_ROUNDS; j++) {
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j], b0);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 1], b1);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 2], b2);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 3], b3);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 4], b4);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 5], b5);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 6], b6);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 7], b7);
+			b0 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j], b0, lt,
+					63U);
+			b1 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 1], b1,
+					lt, 63U);
+			b2 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 2], b2,
+					lt, 63U);
+			b3 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 3], b3,
+					lt, 63U);
+			b4 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 4], b4,
+					lt, 63U);
+			b5 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 5], b5,
+					lt, 63U);
+			b6 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 6], b6,
+					lt, 63U);
+			b7 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 7], b7,
+					lt, 63U);
 		}
 	}
 	{
@@ -1137,33 +1153,41 @@ static noinline __aligned(64) const u8 *decode_literals(
 			 *i4 = ip[4], *i5 = ip[5], *i6 = ip[6], *i7 = ip[7];
 		unsigned int j;
 
-		LIT_REFILL(i0, b0);
-		LIT_REFILL(i1, b1);
-		LIT_REFILL(i2, b2);
-		LIT_REFILL(i3, b3);
-		LIT_REFILL(i4, b4);
-		LIT_REFILL(i5, b5);
-		LIT_REFILL(i6, b6);
-		LIT_REFILL(i7, b7);
+		b0 = lit_refill(&i0, b0, end);
+		b1 = lit_refill(&i1, b1, end);
+		b2 = lit_refill(&i2, b2, end);
+		b3 = lit_refill(&i3, b3, end);
+		b4 = lit_refill(&i4, b4, end);
+		b5 = lit_refill(&i5, b5, end);
+		b6 = lit_refill(&i6, b6, end);
+		b7 = lit_refill(&i7, b7, end);
 		for (j = 0; j < steps; j++) {
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j], b0);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 1], b1);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 2], b2);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 3], b3);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 4], b4);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 5], b5);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 6], b6);
-			LIT_DECODE(out[k + SEQLZ_LIT_STREAMS * j + 7], b7);
+			b0 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j], b0, lt,
+					63U);
+			b1 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 1], b1,
+					lt, 63U);
+			b2 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 2], b2,
+					lt, 63U);
+			b3 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 3], b3,
+					lt, 63U);
+			b4 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 4], b4,
+					lt, 63U);
+			b5 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 5], b5,
+					lt, 63U);
+			b6 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 6], b6,
+					lt, 63U);
+			b7 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 7], b7,
+					lt, 63U);
 		}
 		k += SEQLZ_LIT_STREAMS * steps;
-		LIT_DECODE_MASKED(out[k], b0, (0U - (r > 0U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 1], b1, (0U - (r > 1U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 2], b2, (0U - (r > 2U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 3], b3, (0U - (r > 3U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 4], b4, (0U - (r > 4U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 5], b5, (0U - (r > 5U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 6], b6, (0U - (r > 6U)) & 63U);
-		LIT_DECODE_MASKED(out[k + 7], b7, (0U - (r > 7U)) & 63U);
+		b0 = lit_decode(&out[k], b0, lt, (0U - (r > 0U)) & 63U);
+		b1 = lit_decode(&out[k + 1], b1, lt, (0U - (r > 1U)) & 63U);
+		b2 = lit_decode(&out[k + 2], b2, lt, (0U - (r > 2U)) & 63U);
+		b3 = lit_decode(&out[k + 3], b3, lt, (0U - (r > 3U)) & 63U);
+		b4 = lit_decode(&out[k + 4], b4, lt, (0U - (r > 4U)) & 63U);
+		b5 = lit_decode(&out[k + 5], b5, lt, (0U - (r > 5U)) & 63U);
+		b6 = lit_decode(&out[k + 6], b6, lt, (0U - (r > 6U)) & 63U);
+		b7 = lit_decode(&out[k + 7], b7, lt, (0U - (r > 7U)) & 63U);
 		ip[0] = i0;
 		ip[1] = i1;
 		ip[2] = i2;
@@ -1187,6 +1211,21 @@ static noinline __aligned(64) const u8 *decode_literals(
 				return NULL;
 	}
 	return q + total;
+}
+
+/*
+ * The next token's entry. A refill only when token and offset might not fit,
+ * 11 + 12 bits: then the token's lookup does not wait for the refill's load,
+ * and a refill leaves 56 bits for two or three sequences. The escape and the
+ * length values refill before they read. The token's entry knows the offset's
+ * class, so the offset's bits are known without a second lookup.
+ */
+static __always_inline u32 next_token(struct bit_reader *br,
+				      const struct token_table *t)
+{
+	if (br->count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
+		refill(br);
+	return t->decode[br->bits >> (64U - SEQLZ_TOKEN_BITS)];
 }
 
 /*
@@ -1254,22 +1293,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 	/* 0 if the input is shorter than 8 bytes: no refill without a check */
 	in_fast = src_len >= 8U ? (unsigned long)s_end - 8U : 0;
 
-	/*
-	 * The next token's entry. A refill only when token and offset might
-	 * not fit, 11 + 12 bits: then the token's lookup does not wait for the
-	 * refill's load, and a refill leaves 56 bits for two or three
-	 * sequences. The escape and the length values refill before they read.
-	 * The token's entry knows the offset's class, so the offset's bits are
-	 * known without a second lookup.
-	 */
-#define NEXT_TOKEN()                                                         \
-	do {                                                                 \
-		if (br.count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS)) \
-			refill(&br);                                         \
-		tok = t->token.decode[br.bits >> (64U - SEQLZ_TOKEN_BITS)];  \
-	} while (0)
-
-	NEXT_TOKEN();
+	tok = next_token(&br, &t->token);
 	for (;;) {
 		unsigned int nl, len, off;
 		u32 e;
@@ -1335,7 +1359,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 			 * stall every second sequence.
 			 */
 			if (in_order) {
-				NEXT_TOKEN();
+				tok = next_token(&br, &t->token);
 			} else {
 				if (!skip) {
 					u64 v = get_unaligned_be64(br.p);
@@ -1461,10 +1485,9 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 			return -EINVAL;
 		copy_match(d, d_end, off, len);
 		d += len;
-		NEXT_TOKEN();
+		tok = next_token(&br, &t->token);
 		skip = 0;
 	}
-#undef NEXT_TOKEN
 	if (d != d_end || lit != lit_end || br.count < 0)
 		return -EINVAL;
 	return 0;
