@@ -105,8 +105,9 @@ decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 µ
 40% slower than `lz4` makes a swap-in about 20% slower
 ([explored-designs.md, "The whole page fault"](explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)).
 In the fault the gap between the two decoders is 0.28 µs larger than in zram's read benchmark with
-`O_DIRECT`, which the hull above does not count yet. Cold tables are not the reason, warm caches give
-back 0.12 µs of it ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
+`O_DIRECT`, which the hull above does not count yet. The read benchmark decodes every page several
+times, which trains the branch predictor on it: in a fault `seqlz-fast-lit` mispredicts about 110
+branches per page more, and cold caches add 0.12 µs ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 
 Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
 samples `pswpin` every 10 ms and groups the swap-ins into bursts. 9 minutes on the development machine
@@ -859,10 +860,11 @@ Next, in this order:
 
 1. Send the question to Sergey Senozhatsky and Minchan Kim: a new algorithm at all, and as a zram
    backend or as an acomp algorithm (§3.4). The answer decides the form of Phase 5.
-2. The decoder in a real fault. Its gap to `lz4` is 0.28 µs larger there than in zram's read
-   benchmark, and warm caches explain 0.12 µs of it, the tables only 25 ns
-   ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)). Next: `perf kvm` of `seqlz_decode()` in a fault against the
-   read benchmark, for the other 0.17 µs.
+2. Fewer data-dependent branches in the decoder. In a fault it mispredicts about 110 branches per page
+   that it gets right after a decode of the same page, about 0.5 µs of a swap-in, which every benchmark
+   before hid by decoding a page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). First find
+   which branches, with `perf record -e branch-misses` on decodes of distinct pages. And the score
+   again with the times of `MODE=swap`, which are what a swap-in waits for.
 3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
    Android.

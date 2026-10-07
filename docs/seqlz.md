@@ -719,6 +719,12 @@ independent: 7609 cycles against 4992, with the page in the cache. In the kernel
 still, 2.70 against 2.53 µs, because the system call and getting the cold page from memory cost the
 same for every codec.
 
+> [!WARNING]
+> These numbers decode every page more than once, in a loop or in zram's read benchmark, and that
+> trains the CPU's branch predictor on the page. In a real swap-in `seqlz-fast-lit` mispredicts about
+> 110 branches per page more, and `zcomp_decompress()` takes 2.0 µs against 1.4 µs for `lz4`
+> ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
+
 | what | why it matters |
 | --- | --- |
 | **one table lookup per sequence** | the offset class is in the token, not a second symbol; the chain from one sequence to the next is lookup, shift, lookup |

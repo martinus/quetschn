@@ -14,7 +14,8 @@ extern int zram_prefetch;
 #include "seqlz.h"
 
 /* zram-prefetch.patch, after backend_seqlz.h for the zcomp types */
-extern void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what);
+extern void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
+			    unsigned int size);
 
 /* the hash table, and the scratch for seqlz-fast-lit's literals */
 struct sz_ctx {
@@ -25,13 +26,16 @@ struct sz_ctx {
 /*
  * EXPERIMENT, zram.zram_warm of zram-prefetch.patch: before a decompression, 1 reads every cache line
  * of the tables and of the scratch, 2 decodes a page with coded literals and matches, which warms
- * the decoder's code too, and its branch predictors on another page. For one CPU only: the VM of run.sh
- * has one.
+ * the decoder's code too, and its branch predictors on another page, 5 decodes the compressed page of
+ * the decompression before, a real one, and keeps a copy of this one for the next, 7 decodes this very
+ * page once before, as the read benchmark does when one page is read several times in a row. For one CPU
+ * only: the VM of run.sh has one.
  */
-static unsigned char warm_src[2 * SEQLZ_PAGE], warm_dst[SEQLZ_PAGE];
-static unsigned int warm_len;
+static unsigned char warm_src[2 * SEQLZ_PAGE], warm_dst[SEQLZ_PAGE], warm_prev[2 * SEQLZ_PAGE];
+static unsigned int warm_len, warm_prev_len;
 
-static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what)
+static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
+		    unsigned int size)
 {
 	struct sz_ctx *c = ctx->context;
 
@@ -46,6 +50,13 @@ static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what
 		(void)sum;
 	} else if (what == 2 && warm_len) {
 		seqlz_decode(params->drv_data, warm_src, warm_len, warm_dst, c->scratch);
+	} else if (what == 5 && size <= sizeof(warm_prev)) {
+		if (warm_prev_len)
+			seqlz_decode(params->drv_data, warm_prev, warm_prev_len, warm_dst, c->scratch);
+		memcpy(warm_prev, src, size);
+		warm_prev_len = size;
+	} else if (what == 7) {
+		seqlz_decode(params->drv_data, src, size, warm_dst, c->scratch);
 	}
 }
 

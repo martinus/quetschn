@@ -66,6 +66,36 @@ static unsigned long read_ulong(const char* path) {
     return strtoul(v, NULL, 10);
 }
 
+/* zram.zram_pmu=1 of zram-prefetch.patch: the guest's counters summed over the timed zcomp_decompress() */
+#define PMU_N 6
+static const char* const pmu_names[PMU_N] = {
+    "cycles", "instructions", "branch-misses", "L1-dcache-load-misses", "L1-icache-load-misses", "dTLB-load-misses"};
+
+static void read_pmu(unsigned long v[PMU_N]) {
+    char s[512] = {0};
+    int fd = open("/sys/module/zram/parameters/zram_pmu_counts", O_RDONLY);
+    char* p = s;
+    if (fd >= 0) {
+        read(fd, s, sizeof s - 1);
+        close(fd);
+    }
+    for (int k = 0; k < PMU_N; k++) {
+        v[k] = strtoul(p, &p, 10);
+        if (*p == ',')
+            p++;
+    }
+}
+
+/* per decompression; nothing if zram_pmu is off */
+static void print_pmu(const char* algo, const char* what, const unsigned long* sum, unsigned long n) {
+    if (!n || !sum[0])
+        return;
+    printf("RESULT %-9s %s, per zcomp_decompress() of %lu:", algo, what, n);
+    for (int k = 0; k < PMU_N; k++)
+        printf(" %s %.1f", pmu_names[k], (double)sum[k] / (double)n);
+    printf("\n");
+}
+
 static void print_stats(const char* algo, const char* what, long long* med, size_t n) {
     long long m = mean(med, n);
     qsort(med, n, sizeof med[0], cmp);
@@ -180,6 +210,7 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
 
     /* per algorithm and run, the swap-in of pass 2: same-filled, the others, zcomp_decompress() alone */
     long long split[MAX_ALGOS][REPS][3];
+    unsigned long pmu[MAX_ALGOS][PMU_N] = {{0}}, pmu_n[MAX_ALGOS] = {0}, p0[PMU_N], p1[PMU_N];
     long long* x3 = malloc(sizeof(long long) * n);
     for (int r = 0; r < REPS; r++) {
         for (int k = 0; k < n_algos; k++) {
@@ -228,6 +259,7 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
                 put("/sys/module/zram/parameters/zram_time_decomp", c == 2 ? "1" : "0");
                 unsigned long d0 = read_ulong("/sys/module/zram/parameters/zram_decomp_ns");
                 unsigned long dn0 = read_ulong("/sys/module/zram/parameters/zram_decomp_n");
+                read_pmu(p0);
                 char st0[256] = {0}, st1[256] = {0};
                 int fd = open(stat, O_RDONLY);
                 read(fd, st0, sizeof st0 - 1);
@@ -247,6 +279,10 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
                 put("/sys/module/zram/parameters/zram_time_decomp", "0");
                 if (c == 2) {
                     unsigned long dn = read_ulong("/sys/module/zram/parameters/zram_decomp_n") - dn0;
+                    read_pmu(p1);
+                    for (int k = 0; k < PMU_N; k++)
+                        pmu[a][k] += p1[k] - p0[k];
+                    pmu_n[a] += dn;
                     long long sc = 0, ss = 0;
                     for (size_t k = 0; k < n_codec; k++)
                         sc += tc[codec[k]];
@@ -314,6 +350,7 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
                sp[1][REPS / 2],
                sp[2][REPS / 2],
                REPS);
+        print_pmu(algos[a], "swap-in, flushed", pmu[a], pmu_n[a]);
     }
     /* per page the medians, for plots: index, same-filled, then per algorithm swap-out, swap-in warm, flushed */
     for (size_t i = 0; i < n; i++) {
@@ -336,7 +373,7 @@ int main(void) {
     static const int modes[3] = {0, 2, 8};
     static const char* const conds[4] = {"warm", "compressed data flushed", "both flushed", "flushed, other page first"};
     char cmdline[4096] = {0}, algos[MAX_ALGOS][32];
-    int n_algos = 0, fds[MAX_ALGOS], swap, decomp;
+    int n_algos = 0, fds[MAX_ALGOS], swap, decomp, only;
 
     mount("devtmpfs", "/dev", "devtmpfs", 0, 0);
     mount("sysfs", "/sys", "sysfs", 0, 0);
@@ -348,6 +385,9 @@ int main(void) {
         swap = strstr(cmdline, "quetschn.mode=swap") != NULL;
         /* quetschn.decomp=1: also zcomp_decompress() alone in the timed reads, as the swap mode has it */
         decomp = strstr(cmdline, "quetschn.decomp=1") != NULL;
+        /* quetschn.cond=N: only condition N of the reads, e.g. 3, the one closest to a fault */
+        char* cs = strstr(cmdline, "quetschn.cond=");
+        only = cs ? atoi(cs + strlen("quetschn.cond=")) : -1;
         char* a = strstr(cmdline, "quetschn.algos=");
         if (a) {
             a += strlen("quetschn.algos=");
@@ -460,7 +500,10 @@ int main(void) {
     size_t per = (size_t)n_algos * 3;
     long long* t = malloc(sizeof(long long) * n * REPS * per);
     for (int c = 0; c < 4; c++) {
+        if (only >= 0 && c != only)
+            continue;
         unsigned long dsum[3 * MAX_ALGOS] = {0}, dcount[3 * MAX_ALGOS] = {0};
+        unsigned long psum[3 * MAX_ALGOS][PMU_N] = {{0}}, q0[PMU_N], q1[PMU_N];
         for (int r = 0; r < REPS; r++) {
             for (size_t i = 0; i < n; i++) {
                 for (size_t k = 0; k < per; k++) {
@@ -480,6 +523,7 @@ int main(void) {
                         put("/sys/module/zram/parameters/zram_time_decomp", "1");
                         d0 = read_ulong("/sys/module/zram/parameters/zram_decomp_ns");
                         dn0 = read_ulong("/sys/module/zram/parameters/zram_decomp_n");
+                        read_pmu(q0);
                     }
                     long long t0 = now();
                     pread(fds[a], buf, 4096, (off_t)(i * 4096));
@@ -488,6 +532,9 @@ int main(void) {
                         put("/sys/module/zram/parameters/zram_time_decomp", "0");
                         dsum[which] += read_ulong("/sys/module/zram/parameters/zram_decomp_ns") - d0;
                         dcount[which] += read_ulong("/sys/module/zram/parameters/zram_decomp_n") - dn0;
+                        read_pmu(q1);
+                        for (int k = 0; k < PMU_N; k++)
+                            psum[which][k] += q1[k] - q0[k];
                     }
                 }
             }
@@ -518,6 +565,11 @@ int main(void) {
                        modes[which / (size_t)n_algos],
                        dcount[which],
                        dcount[which] ? dsum[which] / dcount[which] : 0);
+            if (decomp) {
+                char what[64];
+                snprintf(what, sizeof what, "%s, prefetch %d", conds[c], modes[which / (size_t)n_algos]);
+                print_pmu(algos[which % (size_t)n_algos], what, psum[which], dcount[which]);
+            }
         }
     }
     fflush(stdout);

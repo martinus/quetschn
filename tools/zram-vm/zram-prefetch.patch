@@ -1,17 +1,18 @@
---- a/drivers/block/zram/zram_drv.c	2026-10-07 08:57:40.233648582 +0200
-+++ b/drivers/block/zram/zram_drv.c	2026-10-07 08:57:40.235616238 +0200
-@@ -15,7 +15,10 @@
+--- a/drivers/block/zram/zram_drv.c	2026-10-07 09:21:31.449655384 +0200
++++ b/drivers/block/zram/zram_drv.c	2026-10-07 09:21:31.452453330 +0200
+@@ -15,7 +15,11 @@
  #define pr_fmt(fmt) "zram: " fmt
  
  #include <linux/module.h>
 +#include <linux/prefetch.h>
++#include <linux/perf_event.h>
 +#include <asm/cacheflush.h>
  #include <linux/kernel.h>
 +
  #include <linux/bio.h>
  #include <linux/bitops.h>
  #include <linux/blkdev.h>
-@@ -2099,6 +2102,32 @@
+@@ -2099,6 +2103,88 @@
  	return 0;
  }
  
@@ -34,21 +35,86 @@
 + * EXPERIMENT: warm the backend right before the decompression, outside zram_decomp_ns, to see what of
 + * a fault's decompression is cold caches: 1 its tables and scratch read, 2 a small page decoded, which
 + * warms its code too, only for backends that set zram_warm_fn, today seqlz's (backend_seqlz.c). 3 the
-+ * destination page written, for every backend. 4 both 3 and 2.
++ * destination page written, for every backend. 4 both 3 and 2. 5 the page of the decompression before
++ * decoded again, a real page as in the read benchmark's "other page first". 6 both 3 and 5. 7 this
++ * very page decoded once before.
 + */
 +int zram_warm;
 +module_param(zram_warm, int, 0644);
-+void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what);
++void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
++		     unsigned int size);
++/*
++ * EXPERIMENT: the guest's hardware counters around the timed zcomp_decompress(), summed like
++ * zram_decomp_ns: cycles, instructions, branch misses, L1 data and instruction cache read misses, data
++ * TLB read misses, in the kernel only. zram.zram_pmu=1 on the kernel command line creates them at boot
++ * on CPU 0, the one CPU of run.sh's VM. Reading them costs a constant number of instructions per call.
++ */
++#define ZRAM_PMU_N 6
++static bool zram_pmu;
++module_param(zram_pmu, bool, 0444);
++static unsigned long zram_pmu_counts[ZRAM_PMU_N];
++static int zram_pmu_n = ZRAM_PMU_N;
++module_param_array(zram_pmu_counts, ulong, &zram_pmu_n, 0444);
++static struct perf_event *zram_pmu_ev[ZRAM_PMU_N];
++
++static void zram_pmu_create(void)
++{
++	static const u64 cache_miss = PERF_COUNT_HW_CACHE_OP_READ << 8 | PERF_COUNT_HW_CACHE_RESULT_MISS << 16;
++	static const struct { u32 type; u64 config; } evs[ZRAM_PMU_N] = {
++		{ PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES },
++		{ PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS },
++		{ PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES },
++		{ PERF_TYPE_HW_CACHE, PERF_COUNT_HW_CACHE_L1D | cache_miss },
++		{ PERF_TYPE_HW_CACHE, PERF_COUNT_HW_CACHE_L1I | cache_miss },
++		{ PERF_TYPE_HW_CACHE, PERF_COUNT_HW_CACHE_DTLB | cache_miss },
++	};
++	int k;
++
++	for (k = 0; k < ZRAM_PMU_N; k++) {
++		struct perf_event_attr attr = {
++			.type = evs[k].type,
++			.size = sizeof(attr),
++			.config = evs[k].config,
++			.pinned = 1,
++			.exclude_user = 1,
++			.exclude_hv = 1,
++		};
++		struct perf_event *ev = perf_event_create_kernel_counter(&attr, 0, NULL, NULL, NULL);
++
++		if (IS_ERR(ev))
++			pr_err("zram_pmu: event %d: %ld\n", k, PTR_ERR(ev));
++		else
++			zram_pmu_ev[k] = ev;
++	}
++}
++
++static void zram_pmu_read(u64 *v)
++{
++	int k;
++
++	for (k = 0; k < ZRAM_PMU_N; k++)
++		if (!zram_pmu_ev[k] || perf_event_read_local(zram_pmu_ev[k], &v[k], NULL, NULL))
++			v[k] = 0;
++}
 +
 +
  static int read_compressed_page(struct zram *zram, struct page *page,
  				unsigned long index)
  {
-@@ -2116,7 +2145,41 @@
+@@ -2116,7 +2202,52 @@
  	src = zs_obj_read_begin(zram->mem_pool, handle, size,
  				zstrm->local_copy);
  	dst = kmap_local_page(page);
 -	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
++	{
++		/* zram_warm, before the flush: mode 5 reads the compressed data, which stays flushed */
++		int w = READ_ONCE(zram_warm);
++
++		if (w == 3 || w == 4 || w == 6)
++			memset(dst, 0, PAGE_SIZE);
++		if (w && w != 3 && zram_warm_fn && !strncmp(zram->comps[prio]->ops->name, "seqlz", 5))
++			zram_warm_fn(zram->comps[prio]->params, &zstrm->ctx, w == 4 ? 2 : w == 6 ? 5 : w, src, size);
++	}
 +	if (READ_ONCE(zram_flush_src)) {
 +		u64 t0 = ktime_get_ns();
 +
@@ -69,16 +135,18 @@
 +			for (p = (char *)src + L1_CACHE_BYTES; p < (char *)src + size; p += L1_CACHE_BYTES)
 +				asm("prefetcht0 %0" : : "m"(*p));
 +	}
-+	/* 3: the destination page written first, for every backend, so that it is in the cache; 4: 3 and 2 */
-+	if (READ_ONCE(zram_warm) >= 3)
-+		memset(dst, 0, PAGE_SIZE);
-+	if (READ_ONCE(zram_warm) != 3 && READ_ONCE(zram_warm) && zram_warm_fn &&
-+	    !strncmp(zram->comps[prio]->ops->name, "seqlz", 5))
-+		zram_warm_fn(zram->comps[prio]->params, &zstrm->ctx, READ_ONCE(zram_warm) == 4 ? 2 : READ_ONCE(zram_warm));
 +	if (READ_ONCE(zram_time_decomp)) {
-+		u64 t0 = ktime_get_ns();
++		u64 t0 = ktime_get_ns(), c0[ZRAM_PMU_N], c1[ZRAM_PMU_N];
++		int k;
 +
++		if (zram_pmu)
++			zram_pmu_read(c0);
 +		ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
++		if (zram_pmu) {
++			zram_pmu_read(c1);
++			for (k = 0; k < ZRAM_PMU_N; k++)
++				zram_pmu_counts[k] += c1[k] - c0[k];
++		}
 +		zram_decomp_ns += ktime_get_ns() - t0;
 +		zram_decomp_n++;
 +	} else {
@@ -87,3 +155,13 @@
  	kunmap_local(dst);
  	zs_obj_read_end(zram->mem_pool, handle, size, src);
  	zcomp_stream_put(zstrm);
+@@ -3268,6 +3399,9 @@
+ 	struct zram_table_entry zram_te;
+ 	int ret;
+ 
++	if (zram_pmu)
++		zram_pmu_create();
++
+ 	BUILD_BUG_ON(__NR_ZRAM_PAGEFLAGS > sizeof(zram_te.attr.flags) * 8);
+ 
+ 	ret = cpuhp_setup_state_multi(CPUHP_ZCOMP_PREPARE, "block/zram:prepare",
