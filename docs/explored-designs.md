@@ -95,6 +95,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [zram: prefetch the compressed data before decompression](#zram-prefetch-the-compressed-data-before-decompression)
 - [A kernel built with clang dropped the decoder's prefetches: fixed, p99 back at gcc's](#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)
 - [The kernel's prefetch() on x86-64, fixed in the kernel: a patch gives clang its prefetches back](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)
+- [The macros of seqlz.c as inline functions: the same time in the VM, on the phone no more than where a module lands, kept](#the-macros-of-seqlzc-as-inline-functions-the-same-time-in-the-vm-on-the-phone-no-more-than-where-a-module-lands-kept)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -4088,6 +4089,68 @@ shows none of the kernel's `prefetch()` calls is on the path of a swap-in.
 So the codec's inline assembly stays until the patch is in the kernel; with it, `PAGE_LZ_PREFETCH` can be
 `prefetch()` in kernel builds. Not measured: `zstd` with prefetches in a clang build, and anything else
 in the kernel that the patch gives its prefetches back.
+
+## The macros of seqlz.c as inline functions: the same time in the VM, on the phone no more than where a module lands, kept
+
+*#108 asks for the macros of `seqlz.c` as `__always_inline` functions, as the kernel's coding style
+wants them: `ENC_LIT`, `ENC_FLUSH`, `LIT_REFILL`, `LIT_DECODE`, `LIT_DECODE_MASKED` and `NEXT_TOKEN`
+used the caller's local variables. They keep 8 literal streams in registers, so the issue wanted a
+measurement on the phone first. In the kernel VM the time is the same with gcc and clang. On the Mi 9T
+the module with the functions wrote `seqlz-fast-lit` 0.5 to 0.9 µs slower on the A76, but so did a
+module that has exactly `main`'s code for the literals: it is where a module lands, not the functions.*
+Kept.
+
+The functions return the stream's new bits and take a pointer only where a macro changed a second
+variable, e.g. `lit_flush()` returns the stream's new position and takes the bit count and the sum by
+pointer. `LIT_DECODE` and `LIT_DECODE_MASKED` are one function with the mask as argument. The
+compressed bytes are the same. The machine code is not: each of the four functions for the literals
+alone changed the code gcc writes for `code_literals()` or `decode_literals()`, `lit_decode()` even
+changed `code_literals()`, which does not call it. Only `next_token()` gives the same code in a kernel build
+with gcc 16.2.1, clang 22.1.8 and the NDK's clang 21 for arm64; with the phone's NDK r21e (clang 9) it
+gives `seqlz_decode()` other registers, at the same number of instructions.
+
+Kernel VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, the backend's prefetch, 20 000 pages
+of the first desktop dump, CPU 2 at 4.5 GHz, boost off, `main` and the functions booted in turns, 3 boots
+each, µs per page written:
+
+| kernel | codec | `main` | functions |
+| --- | --- | --- | --- |
+| gcc 16.2.1 | `seqlz-fast-lit` | 8.70, 8.73, 8.77 | 8.77, 8.77, 8.74 |
+| gcc 16.2.1 | `seqlz-fast` | 8.42, 8.43, 8.18 | 8.20, 8.19, 8.16 |
+| clang 22.1.8 | `seqlz-fast-lit` | 8.73, 8.76, 8.76 | 8.72, 8.72, 8.74 |
+| clang 22.1.8 | `seqlz-fast` | 8.19, 8.16, 8.21 | 8.17, 8.17, 8.18 |
+
+Two boots of `main` wrote `seqlz-fast` 0.24 µs slower than all the others, which is what a boot can do.
+
+On the Mi 9T, `zramphone` with the 20 000-page sample of the second phone dump, cpu2 (A55) at 1804.8 MHz
+and cpu7 (A76) at 2208 MHz, 3 rounds with the order rotated, each version its own module built with
+NDK r21e and every function aligned to 64 bytes. To see what a module's place alone does, every run has
+`main` twice, as `ma` and under another name as `mc`, and the module measured was loaded between them.
+µs per page written, the means of 3 rounds:
+
+| run | core | codec | `ma` | `mc`, the same as `ma` | measured |
+| --- | --- | --- | ---: | ---: | ---: |
+| the functions | A76 | `seqlz-fast-lit` | 14.12 | 14.40 | 15.05 |
+| the functions | A76 | `seqlz-fast` | 14.38 | 13.94 | 13.17 |
+| the functions | A55 | `seqlz-fast-lit` | 53.15 | 53.70 | 53.97 |
+| the functions | A55 | `seqlz-fast` | 49.78 | 50.17 | 48.56 |
+| only `next_token()` | A76 | `seqlz-fast-lit` | 13.83 | 14.39 | 14.96 |
+| only `next_token()` | A76 | `seqlz-fast` | 13.94 | 13.91 | 13.28 |
+| only `next_token()` | A55 | `seqlz-fast-lit` | 53.25 | 53.83 | 54.24 |
+| only `next_token()` | A55 | `seqlz-fast` | 49.91 | 49.80 | 48.91 |
+
+The module with the functions looked 0.6 to 0.9 µs slower for `seqlz-fast-lit` on the A76, more than `ma`
+and `mc` differ. Then the same with only `next_token()` a function: its literal coder and decoder and its
+whole compressor are `main`'s code, instruction for instruction, and still it wrote `seqlz-fast-lit` 0.5
+to 0.9 µs slower than `ma` and `mc`, 11.81 against 10.93 and 11.30. Both measured modules also made
+`seqlz-fast` 0.6 to 1.2 µs faster on the A76. That is the module's place, the second module loaded, not
+its code: within one module the literal pages pay and the raw ones gain. On the A55 every difference is
+within the 2 µs its rounds move. A first run without `mc` gave 14.55 against 14.09 for
+`seqlz-fast-lit` on the A76, and 13.15 against 13.29 for `seqlz-fast`.
+
+So the functions cost nothing that these runs can show. The order of the modules was not swapped; a run
+with the functions loaded first would show the place directly. With the functions, checkpatch has no
+`MACRO_ARG_REUSE` left in `tools/kernel-port/`.
 
 ## seqlz-fast-lit faster at the same memory: five tries, none kept
 
