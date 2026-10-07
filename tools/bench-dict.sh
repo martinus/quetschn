@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 #
 # Trains a dictionary on one corpus and measures all zram codecs on another, with and without it.
-# Meant for two zram dumps taken days apart, see README.md. PLAN.md §5.3 for why the dictionary must
+# Meant for two zram dumps taken days apart, see docs/measuring.md. docs/plan.md §5.3 for why the dictionary must
 # not see the pages it is measured on.
 
 set -euo pipefail

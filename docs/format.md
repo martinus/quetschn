@@ -2,30 +2,35 @@
 
 seqlz compresses one memory page into one compressed page. This file describes the bytes, so that a
 decoder can be written from it alone, and it says which compressed pages are valid. It describes the
-format as `explore/seqlz.c` writes and reads it. Sentences marked *Why:* explain a choice and are
+format as `src/seqlz.c` writes and reads it. Sentences marked *Why:* explain a choice and are
 not part of the format; the measurements behind them are in
-[docs/explored-designs.md](docs/explored-designs.md). How seqlz works, for a reader new to
-compression, is in [docs/seqlz.md](docs/seqlz.md).
+[explored-designs.md](explored-designs.md). How seqlz works, for a reader new to compression, is
+in [seqlz.md](seqlz.md).
 
 `seqlz-fast` and `seqlz-fast-lit` are the same format: `seqlz-fast` always stores the literals as they
 are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both.
 
-`tools/seqlz_ref.py` and `tools/seqlz_ref.c` are decoders written from this file, slow on purpose, and
-checked against `seqlz_decode()`, see [How this file was checked](#how-this-file-was-checked).
+`tools/seqlz-ref/seqlz_ref.py` and `tools/seqlz-ref/seqlz_ref.c` are decoders written from this
+file, slow on purpose, and checked against `seqlz_decode()`, see
+[How this file was checked](#how-this-file-was-checked).
 
 ## Status
 
-The format for 4 KiB pages is fixed since 7 October 2026: a page that decodes now decodes the same way
-in every later seqlz, and a change to anything in this file, the tables included, is a new format with
-a new name in zram, see [No version in the page](#no-version-in-the-page). The tables of 6 October were
-trained again before anyone used them, on swapped pages too
-([docs/explored-designs.md](docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
+> [!IMPORTANT]
+> The format for 4 KiB pages is the one of 7th October 2026, and nobody uses it yet. Until seqlz has
+> users it may still change, the tables included, and such a change updates this file: its rules, the
+> hashes of the tables, the example and this section. From then on a page that decodes decodes the
+> same way in every later seqlz, and any change to this file is a new format with a new name in zram,
+> see [No version in the page](#no-version-in-the-page).
+
+The tables of 6th October were trained again before anyone used them, on swapped pages too
+([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 
 The format for 16 KiB pages is not fixed yet. Its tables were trained on 2052 pages made of four
 adjacent resident 4 KiB pages each, and measured on the same pages; there was no real 16 KiB page yet. A
 corpus from a system with 16 KiB pages may still change them. And with 16 KiB pages `seqlz-fast-lit`
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
-([docs/seqlz.md](docs/seqlz.md#what-is-not-known-yet)). The literal tables are the same as for 4 KiB
+([seqlz.md](seqlz.md#what-is-not-known-yet)). The literal tables are the same as for 4 KiB
 pages; those of 7 October make the 16 KiB pages 1.0% larger than those of 6 October did.
 
 ## The idea
@@ -139,16 +144,16 @@ byte per symbol, symbol 0 first:
 
 | table | symbols | longest code | 4 KiB pages | 16 KiB pages |
 | --- | --- | --- | --- | --- |
-| tokens and escape, `TOK` | 3073 | 11 bits | `explore/seqlz_default_tables_4k.inc`, `.token` | `explore/seqlz_default_tables_16k.inc`, `.token` |
+| tokens and escape, `TOK` | 3073 | 11 bits | `src/seqlz_default_tables_4k.inc`, `.token` | `src/seqlz_default_tables_16k.inc`, `.token` |
 | literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | the same, `.ll` | the same, `.ll` |
 | match length values, `ML` | `LEN_SYMBOLS` | 8 bits | the same, `.ml` | the same, `.ml` |
-| literal tables 0 to 7 | 256 each | 10 bits | `explore/seqlz_lit_sets.c`, `seqlz_lit_sets[0]` to `[7]` | the same |
+| literal tables 0 to 7 | 256 each | 10 bits | `src/seqlz_lit_sets.c`, `seqlz_lit_sets[0]` to `[7]` | the same |
 
 `LL` and `ML` are not the literal tables: they code the lengths `ll` and `ml` of a sequence when they
 are too large for a token. The literal tables code the literals themselves.
 
 The SHA-256 of each table's lengths, as bytes in symbol order (the literal tables one after the other),
-so that a decoder can check that it has the right ones; `tools/seqlz_ref.py` checks them:
+so that a decoder can check that it has the right ones; `tools/seqlz-ref/seqlz_ref.py` checks them:
 
 | table | SHA-256 |
 | --- | --- |
@@ -160,7 +165,7 @@ so that a decoder can check that it has the right ones; `tools/seqlz_ref.py` che
 | `ML_16k` | `e487aeb101066058f2794a507d4c7bc48962dedcbfcfda92e4e621a196cc8bcc` |
 | `LIT` | `efa140477f179ce5a9c5cc27b462fe5da459839b2ff71e0ee94fef939d63f4c2` |
 
-How the tables were trained is in [docs/explored-designs.md](docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
+How the tables were trained is in [explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
 
 ## The bitstream of the sequences
 
@@ -187,9 +192,11 @@ same as checking at every read.
 A length value is a number from 0 up to `2^(P+1) - 1`. Small values are a symbol of their own, larger
 ones a symbol for a range of values plus bits that say which one in the range:
 
-    s = symbol(table)
-    if s < 16:  value = s
-    else:       b = s - 12;  value = 2^b + read(b)
+```text
+s = symbol(table)
+if s < 16:  value = s
+else:       b = s - 12;  value = 2^b + read(b)
+```
 
 The symbols 16 to `12 + P` stand for the ranges `[2^b, 2^(b+1))` with `b = s - 12`, i.e. 16 to 31, 32 to
 63, and so on, and `read(b)` says how far into the range the value is. E.g. 100 is in `[64, 128)`, so
@@ -200,9 +207,11 @@ The symbols 16 to `12 + P` stand for the ranges `[2^b, 2^(b+1))` with `b = s - 1
 Each sequence starts with a **token**, one symbol of `TOK` that holds three numbers at once, so that
 the most frequent combinations take few bits:
 
-    ll  = token & 15         the literal length, 0 to 15; 15 means 15 or more
-    mlf = (token >> 4) & 31  the match length minus 4, 0 to 31; 31 means 31 or more
-    c   = token >> 9         the class of the offset, 0 to 5
+```text
+ll  = token & 15         the literal length, 0 to 15; 15 means 15 or more
+mlf = (token >> 4) & 31  the match length minus 4, 0 to 31; 31 means 31 or more
+c   = token >> 9         the class of the offset, 0 to 5
+```
 
 That is 16 * 32 * 6 = 3072 tokens. A match is at least 4 bytes, so the token stores `ml - 4`. *Why:*
 one code for the three numbers lets frequent combinations share a short code, and shorter matches
@@ -212,12 +221,15 @@ Symbol 3072 of `TOK` is the **escape**: it is followed by the token's number in 
 be sent escaped, also one that has a code of its own; it means the same. *Why:* there are only 2048
 codes of 11 bits, fewer than the 3072 tokens, and most tokens are rare, so only the frequent ones have
 a code.
+
 Reading a token:
 
-    t = symbol(TOK)
-    if t == 3072:
-        t = read(12)
-        if t >= 3072: the page is invalid
+```text
+t = symbol(TOK)
+if t == 3072:
+    t = read(12)
+    if t >= 3072: the page is invalid
+```
 
 ### Offsets
 
@@ -244,23 +256,25 @@ makes the page invalid.
 [Coded literals](#coded-literals)), `used` is the number of them already copied, `out` is the page
 being written, `last` is 1.
 
-    loop:
-        token: ll, mlf, c
-        x = read(offset bits of class c)
-        off = (c == 0) ? last : x as the offset of class c
-        if ll == 15: ll = 15 + value(LL)
-        if ll > n - used or ll > PAGE - |out|: invalid
-        append lits[used] to lits[used + ll - 1] to out; used = used + ll
-        if |out| == PAGE:                           the last sequence
-            if mlf != 0 or c != 0: invalid
-            stop
-        ml = mlf + 4
-        if mlf == 31: ml = 35 + value(ML)
-        last = off
-        if off == 0 or off > |out| or ml > PAGE - |out|: invalid
-        ml times: append the byte off places before the end of out
+```text
+loop:
+    token: ll, mlf, c
+    x = read(offset bits of class c)
+    off = (c == 0) ? last : x as the offset of class c
+    if ll == 15: ll = 15 + value(LL)
+    if ll > n - used or ll > PAGE - |out|: invalid
+    append lits[used] to lits[used + ll - 1] to out; used = used + ll
+    if |out| == PAGE:                           the last sequence
+        if mlf != 0 or c != 0: invalid
+        stop
+    ml = mlf + 4
+    if mlf == 31: ml = 35 + value(ML)
+    last = off
+    if off == 0 or off > |out| or ml > PAGE - |out|: invalid
+    ml times: append the byte off places before the end of out
 
-    at the stop: used == n and at most 8 * |B| bits of B used, else invalid
+at the stop: used == n and at most 8 * |B| bits of B used, else invalid
+```
 
 The match is copied one byte at a time, each byte after the one before is written, so it can repeat
 bytes it writes itself: with `off = 1` and `ml = 10` it repeats the last byte 10 times. A block copy
@@ -309,7 +323,7 @@ The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times, wi
 Not part of the format: any page that decodes is fine, and one page can be written in many ways, as
 with lz4 or zstd. For reference, `seqlz_compress()` writes:
 
-- the matches of a greedy matcher (`explore/page_lz.h`); each offset with class 0 when it is the last
+- the matches of a greedy matcher (`src/page_lz.h`); each offset with class 0 when it is the last
   one, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of classes 1 to 3 that holds
   it;
 - the escape only for a token without a code;
@@ -329,11 +343,11 @@ byte 2 with its top bits set are invalid now and free for such a format.
 
 ## How this file was checked
 
-`tools/seqlz_ref.py` decodes bit by bit, from this file alone, and agreed with `seqlz_decode()` on
+`tools/seqlz-ref/seqlz_ref.py` decodes bit by bit, from this file alone, and agreed with `seqlz_decode()` on
 every input it was given, valid and damaged pages of both page sizes; the numbers are in
-[docs/explored-designs.md](docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
+[explored-designs.md](explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
 
-`tools/seqlz_ref.c` is the same in C, also from this file alone, fast enough to be fuzzed:
+`tools/seqlz-ref/seqlz_ref.c` is the same in C, also from this file alone, fast enough to be fuzzed:
 `fuzz/seqlz_diff_fuzz.c` gives any input to both decoders and fails when they disagree, whether a page
 is valid or what it decodes to. `fuzz/smoke.sh` runs it for a minute in CI, `fuzz/afl.sh` for longer:
 on 6 October, 10 AFL++ instances for 2 hours, 1.7 billion inputs, found no difference.

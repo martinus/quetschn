@@ -1,24 +1,130 @@
 # Explored designs
 
-Every design idea that was measured, with the result, and why it was kept or dropped. The goal is
-`PLAN.md` §1: `lz4`-class decompression latency at `zstd -1`-class memory, measured as Σ zsmalloc
-cost (§3.1) and cold-cache p99 per page (§5.2), and since the score of `PLAN.md` §1.1 as memory against
-the mean time per page, see [The designs by the score](#the-designs-by-the-score). Add an entry for
-everything that gets measured, also and especially for what did not work.
+Every design that was measured for quetschn, with the numbers, and whether it was kept and why. Read
+it before you try something new, so that nothing is measured twice, and add an entry for everything
+you measure, also and especially for what did not work.
 
-Short version so far: the gap between `lz4` and `zstd -1` is mostly how the sequences are coded, see
-[Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from). A format built on that,
-[seqlz](#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables), needs less memory than
-`zstd -1`, 25.2% against 26.9%, and decodes faster than it, but is still 1.4 µs slower than `lz4` at
-cold p99. Two decoders beat `lz4` on cold p99, but only with formats that need 55.7% and 70.5% of the
-uncompressed size, against 34.5% for `lz4`. The ratio has to come from repeats across the whole page;
-local tricks on 8 or 64 bytes do not get there. On a phone that swaps 25 apps with the same RAM for zram,
-no app had to start again with `seqlz-fast` in 3 runs, 54 launches did with `lz4`, see
-[Apps on the phone](#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4).
+A design is judged by the score of [plan.md §1.1](plan.md#11-the-score-memory-against-time-not-bars):
+zsmalloc memory per stored page against the mean time per page written, see
+[The designs by the score](#the-designs-by-the-score). The older entries were judged by the bars C1 to
+C3 of [plan.md §1](plan.md#1-goal-and-success-criteria) instead: Σ zsmalloc cost (§3.1) and cold p99
+per page (§5.2).
+
+> [!TIP]
+> **The short version.** The gap between `lz4` and `zstd -1` is mostly how the sequences are coded,
+> not the literals and not better matches, see [Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from).
+> The codec built on that, [`seqlz-fast-lit`](#seqlz-fast-lit-one-of-8-literal-tables-per-page), has
+> the lowest score for any exchange rate from 24 to about 150 bytes per µs in the kernel VM. With the
+> tables of 7th October it stores 28.5% and 26.8% less than `lz4` on two desktop dumps and 28% less on
+> the phone, and swaps in 18% and 24% slower on the PC, 13% warm and 25% cold on the phone's big core,
+> 11% and 17% on the little one ([The tables trained again](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
+> On a phone that switches between 25 apps with the same RAM for zram, no app had to start again with
+> `seqlz-fast` in 3 runs, and 54 launches did with `lz4`
+> ([Apps on the phone](#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
+> Two decoders beat `lz4` at cold p99, but only with formats that need 55.7% and 70.5% of the page,
+> against 34.5% for `lz4`: local tricks on 8 or 64 bytes do not get the ratio, it has to come from
+> repeats across the whole page.
+
+Each entry has the numbers of the day it was measured. Later changes to the codec make some of them
+stale, which the entries do not repeat every time. Code that was removed is named by its old path,
+e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the commit of 7th October
+2026 that removed it: `git show 57fb8fb^:explore/bytelz.c`.
+
+## Index
+
+**How to measure, and the baselines**
+
+- [How the numbers are measured](#how-the-numbers-are-measured)
+- [The harness on the PC: a codec's times depend on the other codecs in the run, not found why](#the-harness-on-the-pc-a-codecs-times-depend-on-the-other-codecs-in-the-run-not-found-why)
+- [The first runs with dictionaries, Phases 0 to 2](#the-first-runs-with-dictionaries-phases-0-to-2)
+- [Baselines](#baselines)
+- [`lz4` with a dictionary](#lz4-with-a-dictionary)
+
+**The score, and the whole page fault**
+
+- [The designs by the score](#the-designs-by-the-score)
+- [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
+- [Recompression, measured, not pursued](#recompression-measured-not-pursued)
+
+**Where the bytes are**
+
+- [Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from)
+- [How tight the bits are: ANS would give 0.3% at most, the offsets have 2%, 16 literal tables 0.1% to 2%](#how-tight-the-bits-are-ans-would-give-03-at-most-the-offsets-have-2-16-literal-tables-01-to-2)
+- [Ratio from the parse and the tables on phone pages, measured offline, not built](#ratio-from-the-parse-and-the-tables-on-phone-pages-measured-offline-not-built)
+- [The ideas of #29 and #31, measured](#the-ideas-of-29-and-31-measured)
+
+**seqlz: the format**
+
+- [seqlz: `lz4`'s matches, Huffman coded sequences with static tables](#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables)
+- [seqlz-fast-lit: one of 8 literal tables per page](#seqlz-fast-lit-one-of-8-literal-tables-per-page)
+- [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
+- [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
+- [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
+- [Length values in 5 plain bits instead of their tables: 3 bytes per page more, not kept](#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)
+- [The sequences' bitstream most significant bit first: the token table's codes in one range on every CPU, kept](#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)
+- [Offset classes from a histogram: today's are close, two more give 0.1 points at most](#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)
+- [A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built](#a-literal-table-per-half-or-quarter-of-the-literals-002-to-005-points-not-built)
+- [The token's table by the offset before it: 3 and 12 bytes per page, not kept](#the-tokens-table-by-the-offset-before-it-3-and-12-bytes-per-page-not-kept)
+- [Per page: its own literal table and one of 4 token tables, measured, not kept](#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)
+- [Pages without matches but with literals that code well: coded now](#pages-without-matches-but-with-literals-that-code-well-coded-now)
+- [Coded literals only where they save 51 bytes: 2.7 µs per page written less on the A55, kept](#coded-literals-only-where-they-save-51-bytes-27-µs-per-page-written-less-on-the-a55-kept)
+- [seqlz-fast-lit by the score: no budget, offsets in steps of 8](#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)
+- [seqlz-fast-lit within C3: a budget for coding the literals](#seqlz-fast-lit-within-c3-a-budget-for-coding-the-literals)
+- [seqlz simplified: the same bytes, 800 lines less, compressing 4% faster](#seqlz-simplified-the-same-bytes-800-lines-less-compressing-4-faster)
+
+**seqlz: the matcher**
+
+- [The matcher without its step: writes 1% to 3% faster, kept](#the-matcher-without-its-step-writes-1-to-3-faster-kept)
+- [The matcher without its step against the other codecs: 0.02 to 0.05 us per page less](#the-matcher-without-its-step-against-the-other-codecs-002-to-005-us-per-page-less)
+- [The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept](#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)
+- [The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, not kept](#the-matchers-table-with-the-bytes-its-loop-in-assembly-on-arm64-9-fewer-compress-cycles-on-the-a55-not-kept)
+- [Memory for speed on the phone: no trade worth it, not kept](#memory-for-speed-on-the-phone-no-trade-worth-it-not-kept)
+- [seqlz-fast-lit faster at the same memory: five tries, none kept](#seqlz-fast-lit-faster-at-the-same-memory-five-tries-none-kept)
+
+**seqlz: the decoder, in the kernel**
+
+- [zram: prefetch the compressed data before decompression](#zram-prefetch-the-compressed-data-before-decompression)
+- [A kernel built with clang dropped the decoder's prefetches: fixed, p99 back at gcc's](#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)
+- [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
+- [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
+- [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
+- [The numbers again, with the format as it is now: reads 0.3 µs faster than on 29th September](#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)
+- [The numbers again, with the bit order and the token table's prefetch: cold reads on the A76 3 µs faster](#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster)
+
+**On the phone**
+
+- [arm64: on a phone, `seqlz-fast-lit` is 1.7 to 1.9 times `lz4` at cold p99](#arm64-on-a-phone-seqlz-fast-lit-is-17-to-19-times-lz4-at-cold-p99)
+- [seqlz-fast on the phone: time goes per sequence, and code layout moves reads by 130 ns](#seqlz-fast-on-the-phone-time-goes-per-sequence-and-code-layout-moves-reads-by-130-ns)
+- [A second phone dump, after 12 hours of use: seqlz-fast reads faster than lzo-rle at p99](#a-second-phone-dump-after-12-hours-of-use-seqlz-fast-reads-faster-than-lzo-rle-at-p99)
+- [In the phone's own kernel: cold reads on the little core cost seqlz-fast 9 µs more than lz4](#in-the-phones-own-kernel-cold-reads-on-the-little-core-cost-seqlz-fast-9-µs-more-than-lz4)
+- [Apps on the phone: with the same RAM, no cold launch in 6 runs of seqlz, 54 in 3 runs of lz4](#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)
+- [Six choices made on the PC, measured on the phone: the token table and the prefetches matter, the rest does not](#six-choices-made-on-the-pc-measured-on-the-phone-the-token-table-and-the-prefetches-matter-the-rest-does-not)
+- [The A55 again: the write as on 4 October, the decoder's code prefetched for cold reads, not kept](#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept)
+
+**16 KiB pages**
+
+- [16 KiB pages](#16-kib-pages)
+- [16 KiB pages, tuned: C5 does not hold, the literals in the page would fix it, not kept](#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept)
+
+**Other designs, not kept**
+
+- [bytelz: `seqlz-fast`'s matcher, a byte oriented format](#bytelz-seqlz-fasts-matcher-a-byte-oriented-format)
+- [seqlz-opt: a parser that knows seqlz's costs, zstd's memory at lz4's read speed](#seqlz-opt-a-parser-that-knows-seqlzs-costs-zstds-memory-at-lz4s-read-speed)
+- [seqlz-opt with a literal table per page: less memory than `zstd`, slower reads, not kept](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept)
+- [lz4's format from a compressor for pages, measured, not kept](#lz4s-format-from-a-compressor-for-pages-measured-not-kept)
+- [Word model: WKdm-style 64-bit words](#word-model-wkdm-style-64-bit-words)
+- [The word model with a path for runs: not even `lz4`'s memory, not built](#the-word-model-with-a-path-for-runs-not-even-lz4s-memory-not-built)
+- [Byte shuffle + `lz4`](#byte-shuffle--lz4)
+- [Base + delta per 64-byte block (BDI)](#base--delta-per-64-byte-block-bdi)
+- [memlz](#memlz)
+
+**Open**
+
+- [Not evaluated yet](#not-evaluated-yet)
 
 ## How the numbers are measured
 
-All numbers here are from the first zram dump of the development machine (`PLAN.md` Phase 1): 460 923
+All numbers here are from the first zram dump of the development machine (`plan.md` Phase 1): 460 923
 pages swapped out by a Fedora desktop, 5684 of them same-filled and skipped, 455 239 measured. Ryzen 9
 7950X, one core pinned, `powersave` governor, so the frequency is not fixed. Every codec is built with
 the kernel's compiler flags (`cmake/kernel_codecs.cmake`), the candidates with `lz4`'s `-O3`.
@@ -30,7 +136,7 @@ Two benchmarks, and a few rules that came from getting it wrong first:
   comes from a fixed random sample of 20 000 pages (`quetschn-sample-corpus`), interleaved, in 5
   separate processes.
 * **Full:** `quetschn-bench-interleaved` on the whole corpus, 89s for six codecs. Only to confirm a
-  result that goes into this file or `PLAN.md`. The fast one agreed with it within 2% to 4% for five
+  result that goes into this file or `plan.md`. The fast one agreed with it within 2% to 4% for five
   of six codecs; for `spike-slots` the fast one said 1800 ns cold p99, the full one 2000 ns. So a
   difference below about 300 ns needs the full run.
 * **Interleaved, always.** Separate runs drifted by 6%, as much as the effects measured.
@@ -61,7 +167,7 @@ Two benchmarks, and a few rules that came from getting it wrong first:
     latency in 5 processes and shows the median and the smallest and largest difference.
 
   Every benchmark prints the frequency range and boost state, a table needs min equal to max and
-  boost off. The commands for that are in `README.md`.
+  boost off. The commands for that are in [`measuring.md`](measuring.md#fix-the-clock-first).
 
 The latencies in the sections on the word model, byte shuffle and base + delta were measured before
 these three fixes, with boost on and one process. Their differences to `lz4` can be off by a few
@@ -69,7 +175,7 @@ hundred ns; the Σ zsmalloc cost is exact in every section.
 
 ## The designs by the score
 
-`PLAN.md` §1.1 replaces the bars C1 to C3 as the target with a score: zsmalloc bytes per page against
+`plan.md` §1.1 replaces the bars C1 to C3 as the target with a score: zsmalloc bytes per page against
 the time per page written, `write + r * read + b * recompression`, means over the pages, with `r =
 0.34` reads per write from the development machine and `b` the weight of recompression. The designs on
 the lower left convex hull of (time, bytes) have the lowest `bytes + lambda * time` for some lambda;
@@ -173,7 +279,7 @@ which can be zram. The talk's argument for it is a measurement of Kairui Song, p
 
 Decompression would be less than 10% of a swap-in. The times so far in this file are zram alone:
 `tools/zram-vm/run.sh` reads `/dev/zram0` with `O_DIRECT`, zramphone the same on the phone. What the
-kernel adds is the same for every codec, so the score of `PLAN.md` §1.1 does not change from it, the
+kernel adds is the same for every codec, so the score of `plan.md` §1.1 does not change from it, the
 differences of the times and the exchange rates stay. What changes is how a codec reads against
 another: 1.5 times `lz4` in the codec is less for the task that waits for the page.
 
@@ -360,7 +466,7 @@ The target is the gap between the first two rows and the third: `zstd -1` needs 
 ## arm64: on a phone, `seqlz-fast-lit` is 1.7 to 1.9 times `lz4` at cold p99
 
 *The gap to `lz4` is larger on arm64 than on x86-64, largest on the in-order little core.* The old phone
-of `PLAN.md` §4: Xiaomi Mi 9T, Snapdragon 730, MIUI 12.1.1 with its Linux 4.14 kernel, rooted. Little
+of `plan.md` §4: Xiaomi Mi 9T, Snapdragon 730, MIUI 12.1.1 with its Linux 4.14 kernel, rooted. Little
 core cpu2 (Kryo 470 Silver, Cortex-A55 based) fixed at 1804.8 MHz, big core cpu7 (Kryo 470 Gold,
 Cortex-A76 based) fixed at 2208 MHz, both with the `performance` governor and min equal to max. A busy loop
 counted 1.70 to 1.80 GHz on cpu2 and 2.18 to 2.21 GHz on cpu7 in 40 samples of each. Built with the Android NDK r30 (clang 21),
@@ -540,7 +646,7 @@ bit multiply, 2.3% fewer cycles for 1.9% more memory.
 
 ## Memory for speed on the phone: no trade worth it, not kept
 
-*Three changes to the matcher that cost memory, measured by the score of `PLAN.md` §1.1 on the Mi 9T.*
+*Three changes to the matcher that cost memory, measured by the score of `plan.md` §1.1 on the Mi 9T.*
 After PR #61 and #62 the matcher and the decoder had no cheap instructions left on the little core, so
 the next question was what memory buys. Each variant was a compile time switch in `match_page()`:
 
@@ -997,7 +1103,7 @@ runs ended at 298 to 404 MiB. So a few dozen MiB decide if `lmkd` kills a whole 
 ## The tables trained again: 4% less on one desktop dump, the phone the same
 
 *Can the static tables be trained better (#57)?* Nobody uses the format of 6 October yet, so new tables
-cost nothing but a new set of hashes in FORMAT.md. The tables were trained with k-means over the pages'
+cost nothing but a new set of hashes in format.md. The tables were trained with k-means over the pages'
 literal histograms, 4 starts of 15 rounds, on the desktop's resident pages and the first phone dump,
 142 320 pages. `seqlz-fast-lit`'s zsmalloc bytes per page without the same-filled pages, from
 `quetschn-bench-interleaved --no-timing`.
@@ -1081,7 +1187,7 @@ pages is unlikely to be the lever, and the bound above leaves little for it.
 
 ## The format written down: one set of tables, and stream sizes that hold
 
-*FORMAT.md describes the format; writing it showed two things the code had decided, not the format.*
+*format.md describes the format; writing it showed two things the code had decided, not the format.*
 
 **Tables per device are not worth it.** zram's dictionary parameter could carry other token and length
 tables, so the question was if a phone should get tables of its own. Tables trained on one zram dump
@@ -1132,13 +1238,13 @@ On the little core the three are within their spread, so the 1.1% above was abou
 cost; on the big core the kept one is as fast as before. The decoder's scratch is 32 bytes smaller,
 `SEQLZ_PAGE + 16`: what is decoded behind the last literal now is at most 7 bytes.
 
-**FORMAT.md, checked with a second decoder.** `tools/seqlz_ref.py` decodes bit by bit from FORMAT.md
+**format.md, checked with a second decoder.** `tools/seqlz-ref/seqlz_ref.py` decodes bit by bit from format.md
 alone. On 13 279 inputs, the inputs AFL++ kept for the decode target, the pages of the roundtrip target
 compressed with raw and with coded literals, and those pages with one literal stream one byte
 shorter, it agreed with `seqlz_decode()` on every one: 5216 valid with the same page, the rest invalid
 in both. With the old rule of the stream sizes, 50 bits more, the reference accepted all 5704
 shortened pages, so the comparison sees a difference when there is one. A second reader then wrote
-its own encoder from FORMAT.md and found no page on which the two decoders differ, on edge cases and
+its own encoder from format.md and found no page on which the two decoders differ, on edge cases and
 600 damaged pages of both page sizes; the four places where two careful decoders could have differed
 are each a rule now. The 16 KiB tables are still trained on desktop pages only, 16 KiB pages made of 4
 adjacent 4 KiB pages: there is no zram dump with 16 KiB pages yet.
@@ -1204,7 +1310,7 @@ binaries than in `main`'s, although its code did not change. With `QUETSCHN_ALIG
 codec function aligned to 64 bytes, `lz4` took 2111, 2111 and 2108 ns per write in the three binaries,
 and the difference was gone; all numbers above are from those builds.
 
-`tools/seqlz_ref.py` agreed with `seqlz_decode()` on 12 690 inputs, 9803 valid with the same page, the
+`tools/seqlz-ref/seqlz_ref.py` agreed with `seqlz_decode()` on 12 690 inputs, 9803 valid with the same page, the
 pages of the roundtrip target and damaged copies with bytes replaced, cut short, another width and a
 header bit flipped, and on 3200 inputs with 16 KiB pages.
 
@@ -1558,7 +1664,7 @@ the copies behind them cost more than the branches they save. As they are.
 
 ### 7. The phone's module did not prefetch the compressed data: 2.3 µs faster warm reads on the A55
 
-zram's backend for `seqlz` on the PC, `explore/zram_seqlz.c`, prefetches the compressed data from its
+zram's backend for `seqlz` on the PC, `src/zram_seqlz.c`, prefetches the compressed data from its
 second line on and the page it decodes into, before `seqlz_decode()`, as "zram: prefetch the compressed
 data before decompression" proposes for every codec. The phone's module for its 4.14 kernel,
 `~/opt/mi9t-kernel/quetschn-mod/quetschn_crypto_glue.c`, did neither, so every phone number above is
@@ -1710,7 +1816,7 @@ reversed index are 0.2 µs slower than without, most significant bit first 0.1.
 So the order of the bits gives the layout that holds without `rbit`, on every CPU and with one
 decoder, at no cost on the PC. Kept, with the token table prefetched only on in-order cores, decided by
 `read_cpuid_id()` in arm64 kernels, and the token table at 11 bits: with this, 10 bits gave the A76
-nothing and the A55 2 to 2.6 µs of cold reads for 4.8 bytes per page. FORMAT.md, `tools/seqlz_ref.py`,
+nothing and the A55 2 to 2.6 µs of cold reads for 4.8 bytes per page. format.md, `tools/seqlz-ref/seqlz_ref.py`,
 the tests and the bit by bit page read most significant bit first now; `seqlz_ref.py` agreed with
 `seqlz_decode()` on 1800 pages from two dumps, 1040 valid and the others with a flipped bit or cut
 short.
@@ -1929,7 +2035,7 @@ the phone they took the same memory, and the encoder needs more work for the ext
 compress cycles on the PC, 0.4 µs per write on the A55: not worth it.
 
 Not built: 0.6% is too little for a format change and a 1.4% slower read. The read is slower for sure,
-any gain in time per page written is within the noise, and the change would touch `FORMAT.md`, the
+any gain in time per page written is within the noise, and the change would touch `format.md`, the
 reference decoder, the tests, both sets of tables and the visualisation pages, for 3 more instructions
 per sequence in the decoder and a class rule written around gcc. Should the token's alphabet change for
 another reason, the two classes cost little on top.
@@ -1999,7 +2105,7 @@ the token table of 4 KiB in "In the phone's own kernel" did not show a clear dif
 
 ## The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`
 
-*How slow can a page be? PLAN.md's Phase 4 wants the bound stated and measured.* The work is bounded by
+*How slow can a page be? plan.md's Phase 4 wants the bound stated and measured.* The work is bounded by
 construction: the matcher moves forward at every position, with or without a match, and extends a
 match at most to the start of the literals before it and to the end of the page; the decoder stops
 after at most `PAGE / 4 + 1` sequences, and each copies at most what is left of the page. What the
@@ -2202,7 +2308,7 @@ brackets the smallest and largest difference to `lz4` at cold p99:
 | `zstd 1` | 3640 / 6600 ns | +3850 [+3770, +4010] | 5480 ns | 8.3 / 14.9 µs |
 
 * `lz4hc` decodes faster than `lz4`: the same decoder, and fewer, longer sequences. But it
-  compresses 10 to 23 times slower, `PLAN.md` C3 allows 1.2 times `lz4`.
+  compresses 10 to 23 times slower, `plan.md` C3 allows 1.2 times `lz4`.
 * Huffman coded literals, `zstd 1` over `zstd -1`, cost another 2000 ns at cold p99 for 3 points of
   Σ zsmalloc cost.
 
@@ -2214,7 +2320,7 @@ sequences and is slow; what in its decoder costs the time is not measured yet.
 ## seqlz: `lz4`'s matches, Huffman coded sequences with static tables
 
 *Kept, the most promising format so far: less memory than `zstd -1` and faster to decode than it. Still
-1.4 µs slower than `lz4` at cold p99.* Code: `explore/seqlz.{h,c}`, `explore/zram_seqlz.c`,
+1.4 µs slower than `lz4` at cold p99.* Code: `src/seqlz.{h,c}`, `src/zram_seqlz.c`,
 `bench/seqlz_train_main.cpp`.
 
 The estimate above, built. The matches come from the kernel's `lz4` (`seqlz`) or `lz4hc` level 3
@@ -2323,8 +2429,8 @@ Next for the decoder: find out why the harness and the decode loop disagree on c
 
 ### The compressor: seqlz-fast
 
-*Kept, but still 1.3 to 1.5 times as slow as `lz4`; `PLAN.md` C3 allows 1.2.* Code: `seqlz_find` and
-`seqlz_compress` in `explore/seqlz.c`, codec `seqlz-fast`.
+*Kept, but still 1.3 to 1.5 times as slow as `lz4`; `plan.md` C3 allows 1.2.* Code: `seqlz_find` and
+`seqlz_compress` in `src/seqlz.c`, codec `seqlz-fast`.
 
 Until here the prototype took `lz4`'s or `lz4hc`'s output apart and coded it again. `seqlz-fast` has
 its own matcher, greedy like `lz4`'s fast mode: at every position the last offset and one candidate
@@ -2574,9 +2680,9 @@ and its run in the README leave both out.
 
 *Earlier: close to `lz4` warm, but 1.33 times as slow at cold p99 in both directions.* Code:
 `explore/bytelz.c`, format in `explore/bytelz.h`, codec `bytelz`. The matcher and the literal and match
-copies are shared with `seqlz` in `explore/page_lz.h`.
+copies are shared with `seqlz` in `src/page_lz.h`.
 
-The question: `PLAN.md`'s goal is `lz4`'s speed in both directions at `zstd`'s ratio. `seqlz` has the
+The question: `plan.md`'s goal is `lz4`'s speed in both directions at `zstd`'s ratio. `seqlz` has the
 ratio, but its Huffman codes cost in both directions. The third compressor round costed byte oriented
 formats on `seqlz-fast`'s matches, and the best one gets 29.4%: a token byte with 3 bits of literal
 length, 3 bits of match length and 2 bits for the offset (the last one, the one before, 1 byte, 2
@@ -3280,7 +3386,7 @@ against 2.98 and 3.12, 7.69 against 7.71 and 8.51 against 8.49 us per page writt
 literals in the page were reverted, see "16 KiB pages, tuned".
 ## The matcher without its step: writes 1% to 3% faster, kept
 
-*In `explore/page_lz.h`, `match_page()`, for `seqlz` and `bytelz`.* The matcher now tries every
+*In `src/page_lz.h`, `match_page()`, for `seqlz` and `bytelz`.* The matcher now tries every
 position. Before, like `lz4`'s acceleration, the step to the next position grew with the literals
 since the last match, `1 + (pos - anchor) >> 6`, so incompressible pages went by fast. Without it
 the pages that compress are 5% faster to write, and in the kernel VM `seqlz-fast-lit` writes 0.21
@@ -3519,7 +3625,7 @@ warning, gcc still emits `prefetcht0`. That is not only ours: the whole gcc `vml
 in inline assembly, so Android phones should not have this; x86-64 kernels built with clang have it,
 e.g. ChromeOS.
 
-`PAGE_LZ_PREFETCH` in `explore/page_lz.h` is `prefetcht0` in inline assembly on x86-64 without SSE,
+`PAGE_LZ_PREFETCH` in `src/page_lz.h` is `prefetcht0` in inline assembly on x86-64 without SSE,
 and `__builtin_prefetch` everywhere else. The decoder, the backends and `zram-prefetch.patch` use it,
 and the `kernel_seqlz_prefetch` test fails when the kernel-flags build of `seqlz.c` has no
 `prefetcht0`. With it, ns, gcc / clang, one boot each:
@@ -3575,7 +3681,7 @@ measured yet).
 *Built in #43, cut down in #44 (closed without merging), reverted in #45.* Both ways make the writes too
 slow for what they save: with both ideas 43% slower for 2.6% and 6.6% less memory, with the own table and
 a check only 13% and 15% slower, but for 0.3% on the first dump and 4.6% on the second, and a machine
-cannot tell in advance which kind of pages it has. The score of `PLAN.md` §1.1 has both on its hull for
+cannot tell in advance which kind of pages it has. The score of `plan.md` §1.1 has both on its hull for
 some exchange rate; writes also stall programs in direct reclaim, which the score does not see, and
 weighted that way neither pays. `seqlz-fast-lit` stays with one of 8 fixed literal tables per page and
 one token table.
@@ -3616,7 +3722,7 @@ format and gives the decoder a second bit reader; not tried.
 **Before #44**, in #43, `seqlz-fast-lit` gave a page its own literal table where that saves 16 bytes, and coded its tokens with
 the one of 4 token tables that codes them in the fewest bits. Both were rejected before for the old
 bars: the own table for its cold read p99 (#37), the token tables because the encoder has to know all
-tokens first, which cost the p99 of the writes. By the score of `PLAN.md` §1.1 both pay. In the kernel
+tokens first, which cost the p99 of the writes. By the score of `plan.md` §1.1 both pay. In the kernel
 the page gets 2.6% and 6.6% smaller, 26.7 and 87.4 bytes, for 3.0 and 3.4 us more per page written;
 on the first dump that is less memory than `zstd` 3.
 
@@ -3670,7 +3776,7 @@ token table 0.
 
 ## seqlz-fast-lit by the score: no budget, offsets in steps of 8
 
-By the score of `PLAN.md` §1.1, `seqlz-fast-lit` now codes the literals of every page where that pays,
+By the score of `plan.md` §1.1, `seqlz-fast-lit` now codes the literals of every page where that pays,
 and has two more offset classes for offsets that are multiples of 8. In the kernel that is 4.1% and
 4.8% less memory than before, 44.6 and 66.8 bytes per page, for 0.19 and 0.41 us more per page
 written, 235 and 163 bytes per us. `zstd` 3 is still 3.1 and 17.2 bytes per us further. Four ideas
@@ -3814,7 +3920,7 @@ Mutation, caught: a weight of 1 instead of 14 per sequence.
 
 *`seqlz-opt` is removed. The project focuses on `seqlz-fast-lit` (#42).* With zram's recompression the
 pages are written with `seqlz-fast-lit`, and idle pages are compressed again with a second algorithm
-later. By the score of `PLAN.md` §1.1 recompression with `seqlz-opt` takes 237 us per page for 59 and
+later. By the score of `plan.md` §1.1 recompression with `seqlz-opt` takes 237 us per page for 59 and
 106 bytes: 0.3 and 0.4 bytes per us, where the step from `seqlz-fast-lit` to `zstd` 3 for every write
 is 3 and 17. At 237 us it would have to save 700 to 4000 bytes per page to compete, more than the
 page. A better ratio does not fix that, only a much cheaper recompression.
@@ -4073,7 +4179,7 @@ other, they save within 1 point of tables trained on the pages they are priced o
 bits trained on the first dump save 12.9% on the second, trained on the second 13.3%, trained on the
 resident pages 12.5%.
 
-**Built:** 8 tables of at most 10 bits (`explore/seqlz_lit_sets.c`, from `quetschn-seqlz-train
+**Built:** 8 tables of at most 10 bits (`src/seqlz_lit_sets.c`, from `quetschn-seqlz-train
 --corpus resident --codec seqlz --lit-sets`), the table number in one byte of the coded page's
 header. The trainer runs k-means from 4 starts and keeps the one that saves the most on the training
 pages. Two things in it matter, each found with a table that no page chose:
@@ -4085,7 +4191,7 @@ pages. Two things in it matter, each found with a table that no page chose:
 Share of `seqlz-fast`'s output saved, on the resident pages, the first and the second dump: plain
 k-means 6.91%, 8.68%, 10.10%, one table unused; with raw pages left out 6.87%, 8.41%, 9.98%, still
 one unused; with both 6.97%, 8.48%, 11.29%. The last one saves the most on the training pages and is
-in `explore/seqlz_lit_sets.c`. The start matters too: the prototype of the trainer found a set with
+in `src/seqlz_lit_sets.c`. The start matters too: the prototype of the trainer found a set with
 6.914 bits per literal on the resident pages against 6.889 for plain k-means, and 6.566 against 6.676
 on the second dump, 610 KB of the 81.9 MB in the kernel. Training on the pages that are measured flatters: tables
 trained on the resident pages save 8.49% and 11.03% of `seqlz-fast`'s output on the two dumps, with
@@ -4293,7 +4399,7 @@ without building.
 
 *`seqlz-fast` keeps its lead over `lzo-rle` with 16 KiB pages, `bytelz` falls below C1's 8%.* The page
 size of `explore/` is now `QUETSCHN_PAGE_BITS` (12 or 14, CMake), with its own tables for 16 KiB
-(`explore/seqlz_default_tables_16k.inc`): class 3 of seqlz's offsets has as many raw bits as the page,
+(`src/seqlz_default_tables_16k.inc`): class 3 of seqlz's offsets has as many raw bits as the page,
 the length values one bucket more, the escape at most 6 bits so that 31 bits per 4 bytes still fit into
 two pages, the hash table 16 KiB like `lz4`'s. There is no zram dump of 16 KiB pages: the corpus is
 2088 groups of four adjacent resident pages of the same mapping, 16 KiB aligned
@@ -4403,7 +4509,7 @@ behind it. Mutations, each caught: the fast path with 16 bytes of room to the li
 page).
 ## Word model: WKdm-style 64-bit words
 
-*Kept as a direction for the decoder, not as a format.* Code: `spike/`, `PLAN.md` Phase 2b.
+*Kept as a direction for the decoder, not as a format.* Code: `spike/`, `plan.md` Phase 2b.
 
 Every 64-bit word gets a 2-bit tag: zero, exact match or high-32-bits match against a 16-entry table
 of recent words, or literal. Four decoders of the same format:
@@ -4419,7 +4525,7 @@ of recent words, or literal. Four decoders of the same format:
 
 What was learned:
 
-* Branchless is slower everywhere. Data-independent control flow is not the win `PLAN.md` §3.2
+* Branchless is slower everywhere. Data-independent control flow is not the win `plan.md` §3.2
   hoped for.
 * The win is a short dependency chain per word. The first decoders stored every word at
   `slot_of(w)`, a hash of the decoded word, so the store address waited for the table load.
@@ -4432,7 +4538,7 @@ What was learned:
 
 ## The word model with a path for runs: not even `lz4`'s memory, not built
 
-*Priced with a bound, not built.* `PLAN.md` Phase 3, candidate 3: the word model of the spike, plus
+*Priced with a bound, not built.* `plan.md` Phase 3, candidate 3: the word model of the spike, plus
 a path for runs and long repeats, where the word model loses to `lz4`. A bound that no real format
 of this kind can beat: every match of at least L bytes that `seqlz`'s matcher finds costs 3 bytes,
 and every 8-byte word not wholly inside such a match costs what the model of `spike/wk64.h` pays for
@@ -4558,7 +4664,7 @@ which gets there with a format that spends fewer bytes on short matches.
 ## `lz4` with a dictionary
 
 *A baseline, not a candidate. Kept in the comparison because zram supports it.* Details in
-`PLAN.md` §9, next action 6.
+[The first runs with dictionaries](#the-first-runs-with-dictionaries-phases-0-to-2).
 
 * Trained on resident pages, measured on swapped pages: 2.4% less Σ zsmalloc cost than `lz4`, still
   worse than `lzo-rle`. For `zstd 3` the same dictionary costs 2.7% more.
