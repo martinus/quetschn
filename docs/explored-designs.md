@@ -46,6 +46,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
 - [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 - [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
+- [Which branches: three in the sequence loop are 58% of the 130 misses of a page seen once](#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -491,12 +492,72 @@ With `zram.zram_pmu=1`, per `zcomp_decompress()` of 58 098, one boot each:
 * **Where the decoder can still get faster.** About 200 branch misses per page in a fault, counted with
   the counters' exits in between, 110 of them in branches that a predictor gets right only after it saw
   the page. A decoder with fewer branches that depend on the data would gain up to about 0.5 µs per
-  swap-in. Which branches they are is not measured yet; a
-  userspace run that decodes every page once, under `perf record -e branch-misses`, would show it.
+  swap-in. Which branches they are: [Which branches](#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once).
 
 ```sh
 KARGS="zram.zram_prefetch=8 zram.zram_warm=7" MODE=swap ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
 KARGS="zram.zram_prefetch=8 zram.zram_pmu=1" MODE=swap ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
+```
+
+## Which branches: three in the sequence loop are 58% of the 130 misses of a page seen once
+
+*Where are the 110 mispredictions of "The decoder in a fault, found"? In userspace, the same effect
+shows when every page is decoded once: 130 branch misses per page, and 12 when the page was decoded
+right before. Three branches of the sequence loop are 58% of them, the refill of the bit buffer the
+largest. Nothing changed yet.* Code: `tools/seqlz-branches/`.
+
+`decode_once.c` compresses every page as `seqlz-fast-lit` and then decodes each page once, in order, or
+twice in a row; `run.sh` builds `seqlz.c` with the kernel's flags of `cmake/kernel_codecs.cmake` and
+`-g`, which leaves the code the same instruction for instruction. The 20 000-page sample of the first
+desktop dump without the same-filled pages and the ones zram stores as they are, 19 577 pages, CPU 2 of
+the Ryzen 9 7950X at 4.5 GHz, boost off, gcc 16.2.1. Per decode, from `perf stat`, the compression
+subtracted:
+
+| | seen once | right after the same page |
+| --- | ---: | ---: |
+| branch misses | 130.0 | 11.6 |
+| branches | 2859 | 2857 |
+| instructions | 23 479 | 23 464 |
+| cycles | 6970 | 4911 |
+
+2059 cycles, 0.46 µs, for 118 misses, as in the kernel VM. Where the mispredicted branches of a page
+seen once are, from the branch records of AMD's LBR (`perf record -j any`), by source line, two runs:
+
+| where | the branch | share | per decode |
+| --- | --- | ---: | ---: |
+| `seqlz.c:940` | `NEXT_TOKEN()`: are fewer than 23 bits left, refill? | 24% to 25% | 32 |
+| `seqlz.c:934` | the fast path: no length value follows, and far from the ends | 18% to 19% | 24 |
+| `seqlz.c:954` | the match's offset at least 8, or the overlapping copy | 15% to 17% | 20 to 22 |
+| `page_lz.h:285` | `copy_match()`'s loop, on the slow path, for long matches | 12% to 13% | 16 |
+| `seqlz.c:909` | an escaped token | 7% | 9 |
+| `seqlz.c:963` | a match longer than 16 bytes | 5% | 7 |
+| `page_lz.h:222` | `copy_literals()`'s loop, for long literal runs | 5% | 6 |
+| `seqlz.c:1002` | a literal length value | 4% | 5 |
+| `page_lz.h:265` | the loop of an offset below 8 | 3% to 4% | 4 |
+
+The literal streams of `decode_literals()` mispredict at most 2 per page. A share is of the sampled
+branch records; a branch that stalls may be counted a bit more often than it runs.
+
+What could take them out, none built yet:
+
+* **The refill without a branch.** Whether the 64-bit buffer has 23 bits left depends on the code
+  lengths of the sequences before, which a predictor learns only for a page it has seen. The fast path
+  could refill every sequence without the check, a load, a shift and an or, if its condition also
+  checks that 8 bytes of input are left. That is a compare more in a branch that is predicted well.
+* **The fast path's condition** mispredicts when a length value follows, after 8.5% of the matches and
+  the literal runs of 15 bytes and more. Fewer of them needs other tables or a larger token, a format
+  change; or the length values in the fast path too.
+* **The offset below 8** goes to its own copy. One copy for every offset, without a branch, would have to
+  build the repeated 8 bytes also when the offset is 8 or more.
+* **A match longer than 16 bytes**, line 963. Fixed copies of 32 or 40 bytes instead were slower
+  ("Six choices made on the PC", 6), but measured with a hot loop and the read benchmark, where the
+  predictor knew the page. In a fault the branch costs more. That holds for every choice so far between
+  a branch and more work: each should be measured again with `MODE=swap`.
+* **The loops of long copies**, `copy_match()` and `copy_literals()`, run a number of times that depends
+  on the length. No idea yet.
+
+```sh
+tools/seqlz-branches/run.sh <build dir with QUETSCHN_KERNEL_TREE> <pages file>
 ```
 
 ## The first runs with dictionaries, Phases 0 to 2
