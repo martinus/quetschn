@@ -25,6 +25,15 @@ constexpr unsigned page_size = SEQLZ_PAGE;
 // zram's huge_class_size, from which on a page is stored as it is (docs/plan.md §3.1 and §3.5)
 constexpr unsigned zram_huge = page_bits == 12 ? 3625U : 14553U;
 
+// The u16 at the start of a compressed page: SEQLZ_LIT_CODED if its literals are coded, and their number.
+bool lits_coded(std::vector<unsigned char> const& c) {
+    return (c[1] & SEQLZ_LIT_CODED >> 8) != 0;
+}
+
+unsigned lits_count(std::vector<unsigned char> const& c) {
+    return (c[0] | static_cast<unsigned>(c[1]) << 8) & ~SEQLZ_LIT_CODED;
+}
+
 struct seqlz_page {
     std::vector<unsigned char> bytes;
     std::vector<seqlz_sequence> sequences;
@@ -206,7 +215,7 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     auto t = default_tables();
     auto l = seqlz_default_own;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.ll[0] = 10; // longer than SEQLZ_MAX_BITS
+    l.ll[0] = SEQLZ_MAX_BITS + 1;
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     l = seqlz_default_own;
     l.ml[0] = 1; // together with the others more codes than fit: over-subscribed
@@ -216,23 +225,25 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     l = seqlz_default_own;
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
-    // A complete code: the tokens with 11 bits, then the first ones 10 bits, then 9, until they fill
-    // the 11-bit table exactly.
+    // A complete code: the tokens with SEQLZ_TOKEN_BITS (n) bits, then the first ones n - 1 bits, then
+    // n - 2, until they fill the table of 2^n entries exactly.
+    constexpr auto n = static_cast<unsigned char>(SEQLZ_TOKEN_BITS);
+    constexpr auto entries = 1U << n;
     l = seqlz_default_own;
     auto complete = [&] {
-        // tokens 3 to 2047 and the escape with 11 bits, the others without a code: they take the escape
+        // tokens 3 to 2^n - 1 and the escape with n bits, the others without a code: they take the escape
         std::memset(l.token, 0, sizeof(l.token));
-        std::memset(l.token + 3, 11, 2045);
-        l.token[SEQLZ_ESCAPE] = 11;
-        auto units = 2046U; // the tokens and the escape
-        for (unsigned bits = 10; units < 2048; --bits) {
-            for (unsigned i = 3; i < sizeof(l.token) && units < 2048; ++i) {
-                units += 1U << (10 - bits);
+        std::memset(l.token + 3, n, entries - 3);
+        l.token[SEQLZ_ESCAPE] = n;
+        auto units = entries - 2; // the tokens and the escape, one entry each
+        for (unsigned bits = n - 1U; units < entries; --bits) {
+            for (unsigned i = 3; i < sizeof(l.token) && units < entries; ++i) {
+                units += 1U << (n - 1U - bits); // one bit shorter, twice the entries
                 l.token[i] = static_cast<unsigned char>(bits);
             }
         }
     };
-    auto with_bits = [&](unsigned char bits, unsigned nth) {
+    auto with_bits = [&](unsigned bits, unsigned nth) {
         auto* p = std::find(l.token, l.token + sizeof(l.token), bits);
         for (unsigned k = 0; k < nth; ++k) {
             p = std::find(p + 1, l.token + sizeof(l.token), bits);
@@ -242,19 +253,19 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     };
     complete();
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.token[with_bits(10, 0)] = 11;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1); // a gap of one 11-bit code
+    l.token[with_bits(n - 1U, 0)] = n;
+    CHECK(seqlz_tables_init(t.get(), &l) == -1); // a gap of one n-bit code
     complete();
-    l.token[with_bits(11, 0)] = 12;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1); // longer than 11 bits
-    // A complete code, and then one of 12 bits more: the Kraft sum over 11 bits is still complete,
-    // only the length check stops the 12-bit code.
+    l.token[with_bits(n, 0)] = n + 1U;
+    CHECK(seqlz_tables_init(t.get(), &l) == -1); // longer than n bits
+    // A complete code, and then one of n + 1 bits more: the Kraft sum over n bits is still complete,
+    // only the length check stops the code of n + 1 bits.
     complete();
-    auto const a = with_bits(10, 0), b = with_bits(10, 1);
+    auto const a = with_bits(n - 1U, 0), b = with_bits(n - 1U, 1);
     l.token[a] = 0;
-    l.token[b] = 9;
+    l.token[b] = n - 2U;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
-    l.token[a] = 12;
+    l.token[a] = n + 1U;
     CHECK(seqlz_tables_init(t.get(), &l) == -1);
     // a gap: every bit pattern must start a code, the decoder does not check
     l = seqlz_default_own;
@@ -369,9 +380,8 @@ TEST_CASE("seqlz: the compressor writes what seqlz_encode writes for seqlz_find'
 }
 
 TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
-    // Random bytes, and bytes 1 to 1 + len again at 62, with other bytes around both copies. Within the
-    // first 64 bytes, where the matcher looks at every position. It hashes 5 bytes, so a repeat of 4 is
-    // not found.
+    // Random bytes, and bytes 1 to 1 + len again at 62, with other bytes around both copies. The matcher
+    // looks at every position of the page. It hashes 5 bytes, so a repeat of 4 is not found.
     auto state = std::make_unique<seqlz_state>();
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
     auto rng = std::mt19937_64(67);
@@ -751,7 +761,7 @@ TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and ar
                                       1);
         REQUIRE(len > 0);
         c.resize(len);
-        auto const coded = (c[1] & 0x80) != 0 && len > 1;
+        auto const coded = lits_coded(c) && len > 1;
         coded_pages += coded ? 1 : 0;
         REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == p.bytes);
@@ -839,7 +849,7 @@ TEST_CASE("seqlz: coded literals use the literal table with the fewest bits for 
             }
         }
         auto const c = encode_coded(t.get(), p);
-        if ((c[1] & 0x80) == 0) {
+        if (!lits_coded(c)) {
             continue;
         }
         auto best = 0U;
@@ -935,7 +945,7 @@ TEST_CASE("seqlz: the stream sizes take as many bits as the largest needs, 5 to 
         auto c = std::vector<unsigned char>(2 * page_size);
         c.resize(seqlz_compress(t.get(), state.get(), page.data(), c.data(), 2 * page_size, 1));
         REQUIRE(c.size() > 0);
-        if ((c[1] & 0x80) == 0) {
+        if (!lits_coded(c)) {
             continue;
         }
         auto largest = 0U;
@@ -952,7 +962,7 @@ TEST_CASE("seqlz: the stream sizes take as many bits as the largest needs, 5 to 
         for (unsigned st = 0; st < 8; ++st) {
             coded += stream_size(c, st);
         }
-        auto const n_lit = static_cast<unsigned>(c[0] | (c[1] & 0x7f) << 8);
+        auto const n_lit = lits_count(c);
         CHECK(coded + 51 < n_lit - n_lit / 16);
         // a decoder takes any width from 5 to 12, and bits 6 and 7 of byte 2 must be 0
         for (unsigned w = width; w <= SEQLZ_SIZE_BITS_MAX; ++w) {
@@ -984,7 +994,7 @@ TEST_CASE("seqlz: a literal stream without its last byte is rejected") {
         auto const p =
             page_with_literals_from(rng, round % 4, bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS));
         auto const c = encode_coded(t.get(), p);
-        if ((c[1] & 0x80) == 0) {
+        if (!lits_coded(c)) {
             continue;
         }
         REQUIRE(seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), scratch.data()) == 0);
@@ -1016,12 +1026,12 @@ TEST_CASE("seqlz: coded literals are 8 streams of canonical codes, most signific
         auto const p =
             page_with_literals_from(rng, round % 4, bytes_as_coded_by(rng, static_cast<unsigned>(round) % SEQLZ_LIT_SETS));
         auto const c = encode_coded(t.get(), p);
-        if ((c[1] & 0x80) == 0) {
+        if (!lits_coded(c)) {
             continue;
         }
         ++checked;
         // header: u16 0x8000 | literal bytes, u8 the table | width << 3, 8 stream sizes of width bits
-        auto const n_lit = static_cast<unsigned>(c[0] | (c[1] & 0x7f) << 8);
+        auto const n_lit = lits_count(c);
         REQUIRE(n_lit == p.literals.size());
         auto const codes = canonical_codes(seqlz_lit_sets[c[2] & 7U]);
         auto pos = lit_header(c);
@@ -1093,7 +1103,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
                 auto const n_lit = static_cast<unsigned>(rng() % (page_size + 1));
                 auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER(width));
                 c[0] = static_cast<unsigned char>(n_lit);
-                c[1] = static_cast<unsigned char>(0x80 | n_lit >> 8);
+                c[1] = static_cast<unsigned char>((SEQLZ_LIT_CODED | n_lit) >> 8);
                 c[2] = rng() % 4 == 0 ? b2 : static_cast<unsigned char>(b2 & 0x3fU);
                 for (unsigned k = 0; k < 8; ++k) {
                     auto const size = static_cast<unsigned>(rng() % (rest / 8 + 2));
@@ -1162,7 +1172,7 @@ TEST_CASE("seqlz: the compressor with coded literals, pages come back") {
         auto c = std::vector<unsigned char>(2 * page_size);
         auto const len = seqlz_compress(t.get(), st.get(), bytes.data(), c.data(), 2 * page_size, 1);
         REQUIRE(len > 0);
-        coded_pages += (c[1] & 0x80) != 0 ? 1 : 0;
+        coded_pages += lits_coded(c) ? 1 : 0;
         REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == bytes);
     }
@@ -1190,7 +1200,7 @@ TEST_CASE("seqlz: the compressor codes the literals of every page where that pay
         }
         auto const n_many = seqlz_compress(t.get(), st.get(), many.data(), c.data(), 2 * page_size, 1);
         REQUIRE(n_many > 0);
-        CHECK((c[1] & 0x80) != 0);
+        CHECK(lits_coded(c));
         // the same bytes as seqlz_encode() with coded literals writes for the matcher's sequences
         auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         auto const n = seqlz_find(st.get(), many.data(), seq.data());
@@ -1224,7 +1234,7 @@ TEST_CASE("seqlz: a page without matches but with literals that code well gets t
         auto const bytes = bytes_as_coded_by(rng, 0);
         auto const len = seqlz_compress(t.get(), st.get(), bytes.data(), c.data(), 2 * page_size, 1);
         REQUIRE(len > 0);
-        CHECK((c[1] & 0x80) != 0);
+        CHECK(lits_coded(c));
         CHECK(len < zram_huge); // not stored raw by zram
         REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == bytes);
@@ -1235,7 +1245,7 @@ TEST_CASE("seqlz: a page without matches but with literals that code well gets t
         }
         auto const rlen = seqlz_compress(t.get(), st.get(), random.data(), c.data(), 2 * page_size, 1);
         REQUIRE(rlen > 0);
-        CHECK((c[1] & 0x80) == 0);
+        CHECK(!lits_coded(c));
         REQUIRE(seqlz_decode(t.get(), c.data(), rlen, out.data(), nullptr) == 0);
         CHECK(out == random);
     }
