@@ -12,10 +12,13 @@ namespace quetschn {
 // one codec of quetschn-bench-*.
 struct codec_cost {
     std::string name;
-    double pages = 0.0;          // VM: orig_data_size / 4096, same-filled pages included; bench: measured
+    double pages = 0.0;          // VM: orig_data_size / 4096, same-filled pages included, without the ones
+                                 // MODE=swap adds; bench: measured
     double bytes_per_page = 0.0; // VM: mem_used_total / pages, after recompression; bench: zsmalloc cost
-    double write_ns = 0.0;       // mean; VM: "write, other page before"; bench: compress
-    double read_ns = 0.0;        // mean; VM: "flushed, other page first", prefetch 8; bench: decompress cold
+    double write_ns = 0.0;       // mean; VM: "write, other page before" or MODE=swap "swap-out, one call per
+                                 // page"; bench: compress
+    double read_ns = 0.0;        // mean; VM: "flushed, other page first", prefetch 8, or MODE=swap "swap-in,
+                                 // flushed"; bench: decompress cold
     double recompress_ns = 0.0;  // VM, per page, 0 without a secondary algorithm
 };
 

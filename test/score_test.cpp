@@ -36,6 +36,22 @@ char const* const vm_log =
     "RESULT a+b     flushed, other page first  prefetch 8: p50 3259 p90 4840 p99 6020 mean 3400 ns\n"
     "some other line of the kernel\n";
 
+// the lines of one device of MODE=swap, as run.sh prints them; zram adds the swap header to the pages
+char const* const swap_log =
+    "\x1b[?7l\x1b[2JRESULT swap: 22000 pages, 2262 of them same-filled (2000 added)\n"
+    "RESULT lz4             mm_stat 90116096 27239813 29007872        0 29007872     2262        0      472      472\n"
+    "RESULT lz4       run 0 per page, flushed: 0 of 22000 pages still resident, 22000 reads, flush 221 ns per page\n"
+    "RESULT lz4       swap-out, one call for all pages: median of 3 runs 5346 ns per page\n"
+    "RESULT lz4       swap-out, one call per page        n  19738: p50 6600 p90 8620 p99 10470 mean 6436 ns\n"
+    "RESULT lz4       swap-out, same-filled              n   2262: p50 2480 p90 2631 p99 2850 mean 2485 ns\n"
+    "RESULT lz4       swap-in, warm                      n  19738: p50 3151 p90 3789 p99 5110 mean 3152 ns\n"
+    "RESULT lz4       swap-in, warm, same-filled         n   2262: p50 1770 p90 1870 p99 3380 mean 1819 ns\n"
+    "RESULT lz4       swap-in, flushed                   n  19738: p50 3240 p90 3919 p99 5229 mean 3239 ns\n"
+    "RESULT lz4       swap-in, flushed, same-filled      n   2262: p50 1760 p90 1870 p99 3370 mean 1803 ns\n"
+    "RESULT lz4       swap-in, flushed, decompress timed: same-filled 1960, others 3511, of it zcomp_decompress() "
+    "1423 ns, means, median of 3 runs\n"
+    "RESULT PAGE 0 0 6000 3000 3100\n";
+
 codec_cost point(char const* name, double us, double bytes) {
     auto c = codec_cost{};
     c.name = name;
@@ -83,6 +99,23 @@ TEST_CASE("score: a log from before the means is rejected, not scored with 0") {
     CHECK_THROWS_AS((void)read_vm_results(no_write, ""), std::runtime_error);
     auto no_read = std::istringstream(mm + write + " mean 6000 ns\n" + read + " ns\n");
     CHECK_THROWS_AS((void)read_vm_results(no_read, ""), std::runtime_error);
+}
+
+TEST_CASE("score: MODE=swap, the corpus's pages without the same-filled ones the mode adds") {
+    auto in = std::istringstream(swap_log);
+    auto const c = read_vm_results(in, "");
+    REQUIRE(c.size() == 1);
+    CHECK(c[0].name == "lz4");
+    // 22001 pages stored, the swap header among them, 2000 of them added
+    CHECK(c[0].pages == 20001.0);
+    CHECK(c[0].bytes_per_page == doctest::Approx(29007872.0 / 20001.0));
+    // 19738 compressed pages and 262 same-filled ones of the corpus
+    CHECK(c[0].write_ns == doctest::Approx((19738.0 * 6436.0 + 262.0 * 2485.0) / 20000.0));
+    CHECK(c[0].read_ns == doctest::Approx((19738.0 * 3239.0 + 262.0 * 1803.0) / 20000.0));
+    auto const log = std::string(swap_log);
+    auto const line = log.find("RESULT lz4       swap-in, flushed, same-filled");
+    auto incomplete = std::istringstream(log.substr(0, line) + log.substr(log.find('\n', line) + 1));
+    CHECK_THROWS_AS((void)read_vm_results(incomplete, ""), std::runtime_error);
 }
 
 TEST_CASE("score: the codecs of a quetschn-bench run, with a level where there is one") {

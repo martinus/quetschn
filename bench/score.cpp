@@ -40,10 +40,16 @@ std::vector<double> mm_stat(std::string const& rest) {
 } // namespace
 
 std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& prefix) {
+    // MODE=swap: the means of the pages zram compressed and of the same-filled ones, and their n
+    struct part {
+        double mean = -1.0, n = 0.0;
+    };
     struct seen {
         codec_cost c;
         bool mm = false, write = false, read = false;
+        part out, out_same, in, in_same;
     };
+    auto added = 0.0; // same-filled pages that MODE=swap adds to the corpus
     auto devices = std::vector<seen>();
     auto device = [&](std::string const& name) -> seen& {
         for (auto& d : devices) {
@@ -68,7 +74,26 @@ std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& pre
         auto rest = std::string();
         std::getline(words, rest);
         auto const what = rest.substr(std::min(rest.find_first_not_of(' '), rest.size()));
+        if (name == "swap:") {
+            // "RESULT swap: 22000 pages, 2262 of them same-filled (2000 added)"
+            auto const open = what.find('(');
+            added = open == std::string::npos ? 0.0 : value_after("x " + what.substr(open + 1), "x");
+            continue;
+        }
+        if (name == "PAGE") {
+            continue;
+        }
         auto& d = device(name);
+        // "swap-out, one call per page   n  19738: p50 ... mean 7505 ns", what follows the label is padding
+        auto const swap_part = [&](char const* label, part& p) {
+            auto const l = std::string(label);
+            if (what.rfind(l, 0) != 0 || what.size() <= l.size() || what[l.size()] != ' ') {
+                return false;
+            }
+            p.mean = value_after(what, "mean");
+            p.n = value_after(what, "n");
+            return true;
+        };
         if (what.rfind("mm_stat after recompress ", 0) == 0 || what.rfind("mm_stat ", 0) == 0) {
             auto const after = what.rfind("mm_stat after recompress ", 0) == 0;
             auto const v = mm_stat(what.substr(after ? 25 : 8));
@@ -87,10 +112,25 @@ std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& pre
             d.read = d.c.read_ns >= 0.0;
         } else if (what.rfind("recompress:", 0) == 0) {
             d.c.recompress_ns = value_after(what, "recompress:");
+        } else {
+            (void)(swap_part("swap-out, one call per page", d.out) || swap_part("swap-out, same-filled", d.out_same) ||
+                   swap_part("swap-in, flushed", d.in) || swap_part("swap-in, flushed, same-filled", d.in_same));
         }
     }
     auto out = std::vector<codec_cost>();
-    for (auto const& d : devices) {
+    for (auto& d : devices) {
+        if (d.out.mean >= 0.0 && d.out_same.mean >= 0.0 && d.in.mean >= 0.0 && d.in_same.mean >= 0.0) {
+            // MODE=swap: the corpus's pages, without the same-filled ones the mode adds, as in read mode
+            auto const same = d.out_same.n - added;
+            auto const corpus = d.out.n + same;
+            if (d.mm && corpus > 0.0 && same >= 0.0 && d.c.pages > added) {
+                d.c.bytes_per_page *= d.c.pages / (d.c.pages - added);
+                d.c.pages -= added;
+                d.c.write_ns = (d.out.n * d.out.mean + same * d.out_same.mean) / corpus;
+                d.c.read_ns = (d.in.n * d.in.mean + same * d.in_same.mean) / corpus;
+                d.write = d.read = true;
+            }
+        }
         if (!d.mm || !d.write || !d.read) {
             throw std::runtime_error(d.c.name + ": no mm_stat, or no mean of the writes or the cold reads");
         }

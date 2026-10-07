@@ -43,6 +43,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 **The score, and the whole page fault**
 
 - [The designs by the score](#the-designs-by-the-score)
+- [The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
 - [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 - [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
@@ -268,6 +269,59 @@ The other designs in this file have no codec in the harness any more, only the s
 their own loops: the word model, BΔI, the shuffle, XOR, FSST, BPC, the pair matcher. None of them was
 dropped for a p99 alone; they were larger than a codec that was also faster, which the score does not
 change.
+
+## The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279
+
+*The score of "The designs by the score" took its times from zram's read and write benchmark, which
+decodes every page several times. With the times of a swap-out and a swap-in, each page compressed and
+decompressed once, `seqlz-fast-lit` still has the lowest score from 3.2 and 10.4 bytes per µs on, but
+only up to 155 and 211 instead of 200 and 279. Its reads are 0.52 and 0.72 µs slower than `lz4`'s in a
+fault, and 0.12 and 0.27 in the read benchmark.* `quetschn-score` reads the logs of `MODE=swap` now.
+
+VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, the backend's prefetch, 20 000 pages per
+dump, CPU 2 at 4.5 GHz, boost off, the tables of 7 October. Per dump 2 boots in each mode, in turns,
+the means of the two. The read mode: write with another page before, read cold with another page first
+and the compressed data flushed, as before. `MODE=swap`: the swap-out with one call per page, the
+swap-in with the compressed data flushed. Both are means over the 20 000 pages, the same-filled ones of
+the dump included and the 2000 that `MODE=swap` adds left out. The swap times have the kernel's part
+in them, about 2.5 µs per write and 1.8 µs per read for every codec, which moves every codec by the same
+time and changes no exchange rate. `r = 0.34`, `b = 1`, µs, first dump / second dump:
+
+| codec | bytes per page | write, read mode | cold read, read mode | swap-out | swap-in | µs per page written, read mode | µs per page written, swap |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1450.4 / 1754.5 | 5.25 / 5.76 | 2.64 / 2.63 | 6.41 / 6.99 | 3.23 / 3.27 | 6.16 / 6.66 | 7.51 / 8.10 |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.08 / 5.70 | 2.86 / 2.97 | 6.24 / 6.96 | 3.69 / 3.89 | 6.06 / 6.71 | 7.50 / 8.28 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.32 / 14.42 | 5.45 / 5.69 | 14.56 / 15.81 | 6.44 / 6.73 | 15.17 / 16.36 | 16.76 / 18.10 |
+| `seqlz-fast` | 1123.7 / 1472.5 | 5.88 / 6.44 | 2.72 / 2.77 | 6.96 / 7.54 | 3.59 / 3.69 | 6.81 / 7.38 | 8.19 / 8.79 |
+| `seqlz-fast-lit` | 1037.5 / 1284.5 | 6.30 / 7.06 | 2.76 / 2.90 | 7.46 / 8.32 | 3.75 / 3.99 | 7.24 / 8.05 | 8.74 / 9.68 |
+
+The hull, from the fastest to the smallest, in bytes per µs, read mode / swap:
+
+| | first dump | second dump |
+| --- | --- | --- |
+| `lz4` to `lzo-rle` | `lzo-rle` is faster in both | 1689 / 422 |
+| `lzo-rle` to `seqlz-fast` | 317 / 344 | 307 / 404 |
+| `seqlz-fast` to `seqlz-fast-lit` | 200 / 155 | 279 / 211 |
+| `seqlz-fast-lit` to `zstd` 3 | 3.2 / 3.1 | 10.5 / 10.3 |
+
+The writes move by about the same time for every codec, `seqlz-fast-lit` is 1.05 µs behind `lz4` on the
+first dump in both modes. The reads do not: in a fault `seqlz-fast` and `seqlz-fast-lit` read 0.36 to
+0.72 µs slower than `lz4`, in the read benchmark 0.08 to 0.27. "The decoder in a fault, found" has why,
+the branch predictor that the read benchmark trains on each page. `lzo-rle` loses as much in a fault,
+for some reason, so the step from `lzo-rle` to `seqlz-fast` gets cheaper and the one from `seqlz-fast`
+to `seqlz-fast-lit` dearer. The lower end does not move: `seqlz-fast-lit` is 25 and 87 bytes per page
+above `zstd` 3 for 8 µs less, and with the tables of 7 October that is 3.1 and 10.3 bytes per µs, not
+the 8.4 and 24 above, which had the old tables. In one boot of each dump in swap mode `lz4` and
+`lzo-rle` swap places, they are the same speed within the noise of a boot.
+
+`seqlz-fast-lit` is the codec with the lowest score for lambda from 3.1 to 155 bytes per µs on the
+first dump and from 10.3 to 211 on the second, with these times. Not measured: the phone's swap times
+in the score, and `r` on a phone.
+
+```sh
+KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus> >swap.log
+./build/quetschn-score swap.log
+```
 
 ## The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves
 

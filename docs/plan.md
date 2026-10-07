@@ -89,12 +89,17 @@ lambda is not fixed. `quetschn-score` reads the logs of `tools/zram-vm/run.sh` o
 convex hull of (time, bytes), with the exchange rate between neighbours: the lambda at which the
 faster one starts to win. A design is worth keeping if it is on the hull at a lambda that matters.
 
-**`seqlz-fast-lit` has the lowest score for any lambda from 24 to about 150 bytes per µs, on both
-desktop dumps.** VM of Phase 5, `r = 0.34`, `b = 1`
-([explored-designs.md, "The designs by the score"](explored-designs.md#the-designs-by-the-score)). The
-hull is `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and `zstd` 3. From `seqlz-fast-lit` to `zstd` 3 it is
-8 and 24 bytes per µs, from `lzo-rle` to `seqlz-fast-lit` about 220 and 210. Whoever runs `lz4` or
-`lzo-rle` instead of `zstd` says that lambda is above 8 to 24 for them. Recompression is not pursued:
+**`seqlz-fast-lit` has the lowest score for any lambda from 3.1 to 155 bytes per µs on the first
+desktop dump and from 10.3 to 211 on the second**, with the times of a swap-out and a swap-in in the VM
+of Phase 5, `r = 0.34`, `b = 1`, the tables of 7 October
+([explored-designs.md, "The score with the swap times"](explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
+The hull is `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and `zstd` 3, with `lz4` next to `lzo-rle` within
+the noise. From `seqlz-fast-lit` to `zstd` 3 it is 3.1 and 10.3 bytes per µs, from `seqlz-fast` to
+`seqlz-fast-lit` 155 and 211. Whoever runs `lz4` or `lzo-rle` instead of `zstd` says that lambda is above
+3 to 10 for them. With the times of zram's read benchmark, which decodes every page several times, the
+range went up to 200 and 279
+([explored-designs.md, "The designs by the score"](explored-designs.md#the-designs-by-the-score) has the
+older tables). Recompression is not pursued:
 with `zstd` it pays only where the CPU time of an idle machine counts for less, and it makes each read
 of a recompressed page 2.3 µs slower. `seqlz-opt` is removed
 ([explored-designs.md, "Recompression, measured, not pursued"](explored-designs.md#recompression-measured-not-pursued)).
@@ -105,7 +110,8 @@ decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 µ
 40% slower than `lz4` makes a swap-in about 20% slower
 ([explored-designs.md, "The whole page fault"](explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)).
 In the fault the gap between the two decoders is 0.28 µs larger than in zram's read benchmark with
-`O_DIRECT`, which the hull above does not count yet. The read benchmark decodes every page several
+`O_DIRECT`, which the hull above counts now: the swap times have the kernel's part in them too, the
+same for every codec, which moves no exchange rate. The read benchmark decodes every page several
 times, which trains the branch predictor on it: in a fault `seqlz-fast-lit` mispredicts about 110
 branches per page more, and cold caches add 0.12 µs ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 
@@ -871,7 +877,7 @@ Next, in this order:
    ([explored-designs.md](explored-designs.md#the-offset-below-8-one-copy-for-every-offset-saves-12-misses-per-page-and-costs-more-not-kept)). The other choices between
    a branch and more work hold with `MODE=swap`
    ([explored-designs.md](explored-designs.md#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)).
-   Next: the score with the times of `MODE=swap`.
+   The score with the swap times is in §1.1.
 3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
    Android.

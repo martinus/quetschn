@@ -25,7 +25,9 @@ void usage() {
                  "Each log is the output of tools/zram-vm/run.sh or of quetschn-bench-* with timing, all from the\n"
                  "same corpus; <prefix> goes in front of its codec names, to tell runs apart. Time per page written =\n"
                  "write + r * cold read + b * recompression, the means over the pages; in a bench log write is\n"
-                 "compress and read is decompress cold. --reads-per-write default 0.34, --recompress-weight 1.\n"
+                 "compress and read is decompress cold, in a log of MODE=swap the swap-out with one call per page\n"
+                 "and the swap-in with the compressed data flushed. --reads-per-write default 0.34,\n"
+                 "--recompress-weight 1.\n"
                  "Lists the codecs with the lowest bytes + lambda * us for some lambda, with the exchange rates\n"
                  "between them; with --lambda also that score for each codec.\n");
 }
