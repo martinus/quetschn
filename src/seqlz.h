@@ -64,6 +64,7 @@ extern "C" {
 #define SEQLZ_MAX_ESCAPE_LEN (31U - QUETSCHN_PAGE_BITS - SEQLZ_ESCAPE_BITS)
 #define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U)    /* in the token, larger literal lengths follow as a value */
 #define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U)    /* the same for ml - 4 */
+#define SEQLZ_LEN_DIRECT 16U                         /* length values below it are their own symbol */
 #define SEQLZ_LEN_SYMBOLS (13U + QUETSCHN_PAGE_BITS) /* 16 direct values, then buckets 4 to page bits */
 #define SEQLZ_HEADER 2U
 #define SEQLZ_LIT_CODED 0x8000U /* in the u16 at the start of a page with coded literals */
@@ -80,7 +81,7 @@ struct seqlz_lengths {
 static inline unsigned int seqlz_len_symbol(unsigned int v, unsigned int* extra_bits) {
     unsigned int b;
 
-    if (v < 16) {
+    if (v < SEQLZ_LEN_DIRECT) {
         *extra_bits = 0;
         return v;
     }
@@ -132,6 +133,10 @@ int seqlz_tables_init(struct seqlz_tables* t, const struct seqlz_lengths* length
  * slower in the kernel ("seqlz-fast-lit by the score: no budget, offsets in steps of 8"). */
 #define SEQLZ_LIT_BITS 10U
 #define SEQLZ_LIT_SETS 8U
+/* Literal k is in stream k % 8, so that the decoder has 8 chains side by side. 4 streams made pages 2.7
+ * bytes smaller and were no faster on the phone ("Six choices made on the PC, measured on the phone",
+ * 3). */
+#define SEQLZ_LIT_STREAMS 8U
 extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS) /* literals per stream and refill: a refill leaves 56 bits */
 /* The header of a page with coded literals: the 2 bytes of every page, a byte with the literal table in
@@ -143,6 +148,11 @@ extern const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_HEADER(w) (3U + (w))
 #define SEQLZ_SIZE_BITS_MIN 5U
 #define SEQLZ_SIZE_BITS_MAX 12U
+/* Where the fields of byte 2 start: the literal table at bit 0, w - SEQLZ_SIZE_BITS_MIN at bit 3, the
+ * bits that must be zero at bit 6. The two fields have 3 bits each, masked with SEQLZ_LIT_SETS - 1 and
+ * SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN. */
+#define SEQLZ_LIT_WIDTH_AT 3
+#define SEQLZ_LIT_ZERO_AT 6
 /* The encoder codes literals only where that saves 1/16 of them and 51 bytes. A page with coded literals
  * costs a fixed time to read, its literal table and the buffer they are decoded into: on phone pages 51
  * instead of 19 bytes made a page 7.9 bytes larger and the time per page written 2.7 us shorter on the
