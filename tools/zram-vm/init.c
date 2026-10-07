@@ -336,7 +336,7 @@ int main(void) {
     static const int modes[3] = {0, 2, 8};
     static const char* const conds[4] = {"warm", "compressed data flushed", "both flushed", "flushed, other page first"};
     char cmdline[4096] = {0}, algos[MAX_ALGOS][32];
-    int n_algos = 0, fds[MAX_ALGOS], swap;
+    int n_algos = 0, fds[MAX_ALGOS], swap, decomp;
 
     mount("devtmpfs", "/dev", "devtmpfs", 0, 0);
     mount("sysfs", "/sys", "sysfs", 0, 0);
@@ -346,6 +346,8 @@ int main(void) {
         read(cf, cmdline, sizeof cmdline - 1);
         close(cf);
         swap = strstr(cmdline, "quetschn.mode=swap") != NULL;
+        /* quetschn.decomp=1: also zcomp_decompress() alone in the timed reads, as the swap mode has it */
+        decomp = strstr(cmdline, "quetschn.decomp=1") != NULL;
         char* a = strstr(cmdline, "quetschn.algos=");
         if (a) {
             a += strlen("quetschn.algos=");
@@ -458,6 +460,7 @@ int main(void) {
     size_t per = (size_t)n_algos * 3;
     long long* t = malloc(sizeof(long long) * n * REPS * per);
     for (int c = 0; c < 4; c++) {
+        unsigned long dsum[3 * MAX_ALGOS] = {0}, dcount[3 * MAX_ALGOS] = {0};
         for (int r = 0; r < REPS; r++) {
             for (size_t i = 0; i < n; i++) {
                 for (size_t k = 0; k < per; k++) {
@@ -472,9 +475,20 @@ int main(void) {
                     put("/sys/module/zram/parameters/zram_flush_src", c >= 1 ? "1" : "0");
                     if (c == 2)
                         flush(buf, 4096);
+                    unsigned long d0 = 0, dn0 = 0;
+                    if (decomp) {
+                        put("/sys/module/zram/parameters/zram_time_decomp", "1");
+                        d0 = read_ulong("/sys/module/zram/parameters/zram_decomp_ns");
+                        dn0 = read_ulong("/sys/module/zram/parameters/zram_decomp_n");
+                    }
                     long long t0 = now();
                     pread(fds[a], buf, 4096, (off_t)(i * 4096));
                     t[(which * REPS + (size_t)r) * n + i] = now() - t0;
+                    if (decomp) {
+                        put("/sys/module/zram/parameters/zram_time_decomp", "0");
+                        dsum[which] += read_ulong("/sys/module/zram/parameters/zram_decomp_ns") - d0;
+                        dcount[which] += read_ulong("/sys/module/zram/parameters/zram_decomp_n") - dn0;
+                    }
                 }
             }
         }
@@ -497,6 +511,13 @@ int main(void) {
                    med[n * 99 / 100],
                    mean(med, n));
             free(med);
+            if (decomp)
+                printf("RESULT %-8s %-26s prefetch %d: zcomp_decompress() alone, mean of %lu, %lu ns\n",
+                       algos[which % (size_t)n_algos],
+                       conds[c],
+                       modes[which / (size_t)n_algos],
+                       dcount[which],
+                       dcount[which] ? dsum[which] / dcount[which] : 0);
         }
     }
     fflush(stdout);

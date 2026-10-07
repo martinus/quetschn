@@ -104,8 +104,9 @@ the whole page fault: on the PC 1.9 µs of it are the kernel's for every codec, 
 decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 µs of 4.1 µs. So a codec
 40% slower than `lz4` makes a swap-in about 20% slower
 ([explored-designs.md, "The whole page fault"](explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)).
-In the fault `seqlz-fast-lit` decodes about 0.4 µs slower than zram's read benchmark with `O_DIRECT`
-says, which the hull above does not count yet.
+In the fault the gap between the two decoders is 0.28 µs larger than in zram's read benchmark with
+`O_DIRECT`, which the hull above does not count yet. Cold tables are not the reason, warm caches give
+back 0.12 µs of it ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 
 Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
 samples `pswpin` every 10 ms and groups the swap-ins into bursts. 9 minutes on the development machine
@@ -857,8 +858,10 @@ Next, in this order:
 
 1. Send the question to Sergey Senozhatsky and Minchan Kim: a new algorithm at all, and as a zram
    backend or as an acomp algorithm (§3.4). The answer decides the form of Phase 5.
-2. The decoder in a real fault. It is about 0.4 µs slower there than in zram's read benchmark,
-   probably because its tables leave the caches between two faults. Measure that, then keep them in.
+2. The decoder in a real fault. Its gap to `lz4` is 0.28 µs larger there than in zram's read
+   benchmark, and warm caches explain 0.12 µs of it, the tables only 25 ns
+   ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)). Next: `perf kvm` of `seqlz_decode()` in a fault against the
+   read benchmark, for the other 0.17 µs.
 3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
    Android.
