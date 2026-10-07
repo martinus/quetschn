@@ -861,12 +861,12 @@ Next, in this order:
 1. Send the question to Sergey Senozhatsky and Minchan Kim: a new algorithm at all, and as a zram
    backend or as an acomp algorithm (§3.4). The answer decides the form of Phase 5.
 2. Fewer data-dependent branches in the decoder. In a fault it mispredicts about 110 branches per page
-   that it gets right after a decode of the same page, about 0.5 µs of a swap-in, which every benchmark
-   before hid by decoding a page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). Three branches of
-   the sequence loop are 58% of them, the refill check of the bit buffer the largest
-   ([explored-designs.md](explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)). First the refill without a branch, measured with `MODE=swap`,
-   then the other choices between a branch and more work again, and the score with the times of
-   `MODE=swap`, which are what a swap-in waits for.
+   that it gets right after a decode of the same page, which every benchmark before hid by decoding a
+   page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). The refill without its branch on
+   out-of-order cores took 63 ns off a swap-in on x86-64
+   ([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)). Next: the fast path's condition and the
+   offset below 8 ([explored-designs.md](explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)), the other choices between
+   a branch and more work again with `MODE=swap`, and the score with the times of `MODE=swap`.
 3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
    Android.

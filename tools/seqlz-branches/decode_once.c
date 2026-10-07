@@ -4,14 +4,31 @@
  * the first time, as in a swap-in. Compresses every page as seqlz-fast-lit, then decodes each page once,
  * in order (mode 0), or twice in a row, timing the second, which the branch predictor learned (mode 1),
  * or not at all (mode 2, the baseline to subtract in perf stat). Same-filled pages and pages zram stores
- * as they are, of 3625 bytes and more, are left out, as zram does. Prints TSC ticks per timed decode.
+ * as they are, of 3625 bytes and more, are left out, as zram does. Prints the time per timed decode, in
+ * TSC ticks on x86-64, in ns elsewhere.
  * With seqlz.c built with the kernel's flags, as cmake/kernel_codecs.cmake builds it, see run.sh.
  */
 #include "seqlz.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <x86intrin.h>
+#if defined(__x86_64__)
+#    include <x86intrin.h>
+/* TSC ticks */
+static unsigned long long ticks(void) {
+    return __rdtsc();
+}
+#    define TICKS "TSC ticks"
+#else
+#    include <time.h>
+/* ns; arm64's counter ticks at only 19.2 MHz on the phones, too coarse for one decode */
+static unsigned long long ticks(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000000ULL + (unsigned long long)ts.tv_nsec;
+}
+#    define TICKS "ns"
+#endif
 
 int main(int argc, char** argv) {
     FILE* f = fopen(argv[1], "rb");
@@ -49,11 +66,11 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < m; i++) {
         if (mode == 1)
             seqlz_decode(t, c[i], len[i], out, scratch);
-        unsigned long long t0 = __rdtsc();
+        unsigned long long t0 = ticks();
         if (seqlz_decode(t, c[i], len[i], out, scratch))
             return 2;
-        cyc += __rdtsc() - t0;
+        cyc += ticks() - t0;
     }
-    printf("%zu pages decoded, mode %d, %llu TSC ticks per timed decode\n", m, mode, m ? cyc / m : 0);
+    printf("%zu pages decoded, mode %d, %llu " TICKS " per timed decode\n", m, mode, m ? cyc / m : 0);
     return 0;
 }

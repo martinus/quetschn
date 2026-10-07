@@ -605,25 +605,35 @@ unsigned int seqlz_compress(
 /* ---- decoder ---- */
 
 /*
- * Whether to prefetch the token table, 2048 entries of 4 bytes, before a page. An in-order core waits
- * for each miss it did not see coming: a Cortex-A55 read cold 14.5 us slower without the prefetches.
- * An out-of-order core fetches the 43 or so lines a page needs as it needs them, and the 128
- * prefetches are in the way: a Cortex-A76 read cold 1.3 to 2.6 us faster without this one
- * (docs/explored-designs.md). On arm64 kernels by the core's id, every other build prefetches.
+ * Two choices that an in-order core makes the other way, by the core's id on arm64 kernels; every other
+ * build counts as out of order, x86-64 too.
+ * - The token table, 2048 entries of 4 bytes, prefetched before a page. An in-order core waits for
+ *   each miss it did not see coming: a Cortex-A55 read cold 14.5 us slower without the prefetches. An
+ *   out-of-order core fetches the 43 or so lines a page needs as it needs them, and the 128 prefetches
+ *   are in the way: a Cortex-A76 read cold 1.3 to 2.6 us faster without this one. Every build but an
+ *   arm64 kernel on an out-of-order core prefetches.
+ * - The refill on the fast path, see seqlz_decode(): every second sequence on an out-of-order core,
+ *   only when the bits run short on an in-order one, which cannot hide the refill's load.
+ * The numbers are in docs/explored-designs.md.
  */
 #if defined(__KERNEL__) && defined(__aarch64__)
 #    include <asm/cputype.h>
 /* Cortex-A53, A55, A510, A520, and Qualcomm's Kryo silver cores */
-static inline int prefetch_tokens(void) {
+static inline int in_order_core(void) {
     u32 m = read_cpuid_id(), imp = m >> 24, part = (m >> 4) & 0xfffU;
 
     return (imp == 0x41U && (part == 0xd03U || part == 0xd05U || part == 0xd46U || part == 0xd80U)) ||
            (imp == 0x51U && (part == 0x803U || part == 0x805U));
 }
+#    define SEQLZ_PREFETCH_TOKENS(in_order) (in_order)
 #else
-static inline int prefetch_tokens(void) {
-    return 1;
+#    ifndef SEQLZ_IN_ORDER /* for tests of the in-order path: -DSEQLZ_IN_ORDER=1 */
+#        define SEQLZ_IN_ORDER 0
+#    endif
+static inline int in_order_core(void) {
+    return SEQLZ_IN_ORDER;
 }
+#    define SEQLZ_PREFETCH_TOKENS(in_order) 1
 #endif
 
 static inline u64 load_be64(const u8* p) {
@@ -847,21 +857,24 @@ decode_literals(const struct seqlz_tables* t, const u8* s, unsigned int src_len,
     return q + total;
 }
 
-int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
+/* seqlz_decode() for one kind of core, in_order a constant: on an in-order core the loop is the one
+ * without the refill every second fast sequence, not the same loop with a branch more */
+static ALWAYS_INLINE int decode_page(
+    const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch, const int in_order) {
     const u8* s = src;
     const u8* const s_end = s + src_len;
     u8* d = dst;
     u8* const d_end = d + SEQLZ_PAGE;
     const u8 *lit, *lit_end, *lit_bound;
     u8* d_fast;
-    unsigned long lit_fast;
+    unsigned long lit_fast, in_fast;
     struct bit_reader br;
-    unsigned int n_lit, last = 1, tok;
+    unsigned int n_lit, last = 1, tok, skip = 0;
 
     if (src_len < SEQLZ_HEADER)
         return -1;
     /* the decoder's tables, so that their misses overlap when they are cold */
-    if (prefetch_tokens())
+    if (SEQLZ_PREFETCH_TOKENS(in_order))
         prefetch_lines(t->token.decode, sizeof(t->token.decode[0]) << SEQLZ_TOKEN_BITS);
     prefetch_lines(t->ll.decode, sizeof(t->ll.decode[0]) << SEQLZ_MAX_BITS);
     prefetch_lines(t->ml.decode, sizeof(t->ml.decode[0]) << SEQLZ_MAX_BITS);
@@ -889,6 +902,8 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
      * compare each; lit_fast as a number, because the input can be shorter than 16 bytes */
     d_fast = d_end - 64;
     lit_fast = (unsigned long)lit_bound - 16U;
+    /* and 8 bytes of input for the refill without a check; 0 when there are fewer at all */
+    in_fast = src_len >= 8U ? (unsigned long)s_end - 8U : 0;
 
     /* A refill only when token and offset might not fit, 11 + 12 bits: the next token's lookup then
      * does not wait for the refill's load, and a refill leaves 56 bits for two or three sequences. The
@@ -931,13 +946,33 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         /* Far from the end of the page and of the literals, and no length value: 16 literal bytes
          * and 16 or 32 bytes of match copied without checking the room behind them; nl + len is at
          * most 14 + 34, and the last sequence always has its literals up to the end of the page. */
-        if (!(tok & (1U << 30)) && d <= d_fast && (unsigned long)lit <= lit_fast) {
+        if (!(tok & (1U << 30)) && d <= d_fast && (unsigned long)lit <= lit_fast &&
+            (in_order || (unsigned long)br.p <= in_fast)) {
             u64 a, b;
 
             /* The next token now, before the copies: no length value follows this one, and the
              * copies fill the time the load takes on an in-order core such as the Cortex-A55. A
-             * fast sequence is never the last, that one ends the page. */
-            NEXT_TOKEN();
+             * fast sequence is never the last, that one ends the page.
+             * The refill: on an out-of-order core every second fast sequence, without a check of the
+             * bits left. Whether they run short depends on the codes before, which the branch
+             * predictor learns only for a page it has seen, and a swap-in decodes a page once. A
+             * refill leaves at least 56 bits, two fast sequences take at most 2 * (11 + 14), after a
+             * slow one it always refills; 8 bytes of input are there, and count is at least 0. On
+             * an in-order core only when they run short: there the load would wait in every second
+             * sequence. */
+            if (in_order) {
+                NEXT_TOKEN();
+            } else {
+                if (!skip) {
+                    u64 v = load_be64(br.p);
+
+                    br.bits |= v >> br.count;
+                    br.p += (63 - br.count) >> 3;
+                    br.count |= 56;
+                }
+                skip ^= 1U;
+                tok = t->token.decode[br.bits >> (64U - SEQLZ_TOKEN_BITS)];
+            }
             /* No check of nl against the literals left: the 16 bytes are inside lit_bound, so lit
              * stays inside too. Past lit_end it reads the next bytes of the input, and the page is
              * rejected by the next sequence on the path below, where every page ends, because
@@ -1026,9 +1061,15 @@ int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src
         copy_match(d, d_end, off, len);
         d += len;
         NEXT_TOKEN();
+        skip = 0;
     }
 #undef NEXT_TOKEN
     if (d != d_end || lit != lit_end || br.count < 0)
         return -1;
     return 0;
+}
+
+int seqlz_decode(const struct seqlz_tables* t, const void* src, unsigned int src_len, void* dst, void* scratch) {
+    /* two copies of the loop in an arm64 kernel, one per kind of core; one everywhere else */
+    return in_order_core() ? decode_page(t, src, src_len, dst, scratch, 1) : decode_page(t, src, src_len, dst, scratch, 0);
 }
