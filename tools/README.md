@@ -13,6 +13,7 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`phone-apps/`](phone-apps) | the app launch test on a rooted Android phone: 25 apps in turn, zram on each codec, a reboot before every run |
 | [`swap-bursts/`](swap-bursts) | `quetschn-swap-bursts`: samples `pswpin`, groups the swap-ins into bursts, and gives `r`, the reads per write of the score |
 | [`seqlz-bound/`](seqlz-bound) | per kind of field the bits a dump's pages take, next to their entropy, and layouts of the offset classes priced on real sequences |
+| [`seqlz-branches/`](seqlz-branches) | which branches of the decoder mispredict on pages it sees once, as in a swap-in: `perf stat` per decode, and the mispredicted branches by source line from the CPU's branch records |
 | [`seqlz-worst/`](seqlz-worst) | the worst case: `quetschn-seqlz-worst` counts the instructions of every page of a corpus and writes made-up pages that are slow, `cost_fuzz.c` searches for slower ones, also for `lz4`, `lzo-rle` and `zstd`. The slowest pages found are in [`seqlz-worst/pages/`](seqlz-worst/pages) |
 | [`seqlz-viz/`](seqlz-viz) | builds [seqlz, bit by bit](../docs/seqlz-bit-by-bit.html) and [seqlz, compressed](../docs/seqlz-compressed.html), see its [README](seqlz-viz/README.md) |
 | [`check-links.py`](check-links.py) | every relative link and `#anchor` in the Markdown files must resolve, run by CI |

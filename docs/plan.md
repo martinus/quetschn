@@ -862,9 +862,11 @@ Next, in this order:
    backend or as an acomp algorithm (§3.4). The answer decides the form of Phase 5.
 2. Fewer data-dependent branches in the decoder. In a fault it mispredicts about 110 branches per page
    that it gets right after a decode of the same page, about 0.5 µs of a swap-in, which every benchmark
-   before hid by decoding a page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). First find
-   which branches, with `perf record -e branch-misses` on decodes of distinct pages. And the score
-   again with the times of `MODE=swap`, which are what a swap-in waits for.
+   before hid by decoding a page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). Three branches of
+   the sequence loop are 58% of them, the refill check of the bit buffer the largest
+   ([explored-designs.md](explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)). First the refill without a branch, measured with `MODE=swap`,
+   then the other choices between a branch and more work again, and the score with the times of
+   `MODE=swap`, which are what a swap-in waits for.
 3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
    check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
    Android.
