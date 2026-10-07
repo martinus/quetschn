@@ -50,6 +50,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The refill without its branch, every second fast sequence: 63 ns less per swap-in on x86-64 and the A76, kept](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)
 - [The fast path's condition: its 22 misses per page are the length values, four ways around them slower, not kept](#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)
 - [The offset below 8: one copy for every offset saves 12 misses per page and costs more, not kept](#the-offset-below-8-one-copy-for-every-offset-saves-12-misses-per-page-and-costs-more-not-kept)
+- [A branch or more work, again in a swap-in: the old choices hold, and loops over 2000 pages were never trained](#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -557,7 +558,8 @@ What could take them out, none built yet:
 * **A match longer than 16 bytes**, line 963. Fixed copies of 32 or 40 bytes instead were slower
   ("Six choices made on the PC", 6), but measured with a hot loop and the read benchmark, where the
   predictor knew the page. In a fault the branch costs more. That holds for every choice so far between
-  a branch and more work: each should be measured again with `MODE=swap`.
+  a branch and more work: each should be measured again with `MODE=swap`. Measured again, both hold, see
+  [A branch or more work, again in a swap-in](#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained).
 * **The loops of long copies**, `copy_match()` and `copy_literals()`, run a number of times that depends
   on the length. No idea yet.
 
@@ -4292,6 +4294,82 @@ of the offset, 7 misses more.
 
 Not measured: the A55 and the A76, since none of it was faster on x86-64. On the in-order A55 a miss
 costs fewer cycles and every instruction more, so I expect the one copy to lose there too.
+
+## A branch or more work, again in a swap-in: the old choices hold, and loops over 2000 pages were never trained
+
+*"Which branches" asked for every choice between a branch and more work to be measured again where a
+page is decoded once. Two choices of the decoder apply to the code as it is. Both hold in the kernel
+VM with `MODE=swap`: the fast path's match copies without their branches are 30 ns slower per decode,
+the slow path's first copy of 32 bytes instead of 16 gives nothing. And loops over 2000 pages, with
+which many choices before were measured, do not let the branch predictor learn the pages, for the
+decoder and for the compressor.* Measured with a changed `src/seqlz.c` and `src/page_lz.h`; the
+variants are not in the repository.
+
+The two choices:
+
+* **The fast path's match copies**, 16 bytes and 16 or 8 more behind `len > 16` and `len > 32`. In
+  ["Six choices made on the PC", 6](#6-the-fast-paths-copies-as-they-are) 32 bytes always and 8 more
+  behind `len > 32`, and 40 bytes always, were slower on the phone and in the PC's loop.
+* **`copy_match()`'s first copy**, 16 bytes without a loop. 32 bytes were faster at p50 and slower at
+  p99, when most matches went through it. Now the fast path takes the short ones, and the slow path
+  gets mostly the matches with a length value, of 35 bytes and more.
+
+The others in this file are of an older format, or were measured on pages seen once already: the
+refill, the fast path's condition and the offset below 8 above.
+
+**Pages seen once, userspace.** `tools/seqlz-branches/run.sh`, `seqlz.c` with the kernel's flags, gcc
+16.2.1, the 19 577 pages of the first desktop dump, CPU 2 of the Ryzen 9 7950X at 4.5 GHz, boost off.
+Per decode, 2 runs each:
+
+| | branch misses, page seen once | TSC ticks, page seen once | TSC ticks, right after the same page |
+| --- | ---: | ---: | ---: |
+| as now | 101.2, 101.2 | 6740, 6811 | 4915, 4922 |
+| fast path, 32 bytes always, 8 more behind `len > 32` | 87.2, 87.5 | 6944, 7170 | 5528, 5679 |
+| fast path, 40 bytes always | 87.3, 87.7 | 7119, 7240 | 5724, 5753 |
+| `copy_match()`, 32 bytes first | 99.6, 99.9 | 6673, 6699 | 4937, 4946 |
+
+The fixed copies take out 14 misses, and are slower even on a page the predictor knows, by 600 to 800
+ticks for 574 instructions more. Most likely the loads: for an offset below 32 the added copies load
+bytes that the stores just before them wrote, and a load that overlaps a store only in part waits for
+it, as `ls_bad_status2.stli_other` showed for the first fast path, in [zram: prefetch the compressed data before decompression](#zram-prefetch-the-compressed-data-before-decompression).
+
+**In the kernel.** VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, `MODE=swap`, the
+backend's prefetch, 20 000 pages of the first desktop dump, CPU 2 at 4.5 GHz, boost off, the kernels
+booted in turns. ns:
+
+| kernel | boots | `seqlz-fast-lit` `zcomp_decompress()` | its swap-in, mean | its swap-in, p99 |
+| --- | ---: | ---: | ---: | ---: |
+| as now | 6 | 1930 to 1950, mean 1940 | 4042 to 4070 | 5789 to 5845 |
+| `copy_match()`, 32 bytes first | 6 | 1928 to 1951, mean 1936 | 4048 to 4066 | 5743 to 5811 |
+| fast path, 32 bytes always, 8 more behind `len > 32` | 3 | 1969, 1975, 1980 | 4078 to 4100 | 6042 to 6115 |
+
+`lz4`'s `zcomp_decompress()` moved by 1416 to 1443 ns over the same boots. The fast path's copies
+stay, they are about 30 ns faster per decode and 250 ns at p99 of the swap-in. 32 bytes first in
+`copy_match()` is 3.5 ns faster on the mean of 6 boots, less than the boots scatter, so the 16 bytes
+stay too.
+
+**Which measurements before let the predictor learn the pages.** The same decoder and the compressor
+of `seqlz-fast-lit`, in a loop over the first 200 or 2000 pages or over all, per page from the
+difference of 22 and 11 loops, and each page once or right after the same page as in
+`tools/seqlz-branches/decode_once.c`:
+
+| | decode, branch misses | compress, branch misses |
+| --- | ---: | ---: |
+| each page once | 101.2 | 302.2 |
+| right after the same page | 10.1 | 22.4 |
+| a loop over 200 pages | 1.5 | 175.9 |
+| a loop over 2000 pages | 100.1 | 299.8 |
+| a loop over the 19 577 pages | 101.1 | 303.1 |
+
+So a loop over 2000 pages sees the pages as a swap-in and a swap-out do, and the choices measured
+with one hold. What was optimistic were the measurements that use a page twice in a row: zram's read
+benchmark, see "The decoder in a fault", and the harness, which times 5 runs of each codec one page
+after the other. The compressor mispredicts 280 branches more on a page it has not seen, about 6900
+cycles or 1.5 µs per page written, against about 2100 cycles for the decoder. A swap-out compresses each page
+once, so the VM's writes already have them.
+
+Not measured: the phone, since the choices hold on x86-64 and the A55 pays more for every store and
+less for every miss.
 
 ## Recompression, measured, not pursued
 
