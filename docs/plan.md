@@ -690,7 +690,8 @@ This phase exists because of §2.2: everything Biggers asked for, before the fir
 
 - [x] The codec, `src/seqlz.c` and `src/seqlz.h`: C11, freestanding, no libc, no allocation, a
   scratch buffer of at most `lz4`'s 16 416 B passed in by the caller. The page size is a parameter.
-- [ ] Every test with 4 KiB and with 16 KiB pages (§3.5). The tests run with 4 KiB pages only.
+- [x] The tests with 4 KiB and with 16 KiB pages (§3.5), both in CI. Not the tests of the kernel codecs:
+  zram's calls into them are built for 4 KiB pages.
 - [x] **[The format](format.md)**: a byte-exact specification, and two deliberately slow reference
   decoders written from the spec alone, `tools/seqlz-ref/seqlz_ref.py` and `tools/seqlz-ref/seqlz_ref.c`.
   The fast decoder is tested against them.
@@ -842,8 +843,8 @@ As of 7th October 2026:
   tables of 6th October, 1.5 billion with libFuzzer on the new ones, no difference found. ASan and UBSan
   in CI, big-endian on s390x in CI. The worst case is measured: against its own p99,
   `seqlz-fast-lit`'s slowest pages cost 1.14 times to compress and 1.59 times to decode, the least of
-  it, `lz4`, `lzo-rle` and `zstd`. Open: MSan, continuous fuzzing (ClusterFuzzLite), the tests with
-  16 KiB pages in CI, and an AFL++ run on the new tables (AFL++ is not installed any more).
+  it, `lz4`, `lzo-rle` and `zstd`. The tests run with 16 KiB pages too, in CI. Open: MSan, continuous
+  fuzzing (ClusterFuzzLite), and an AFL++ run on the new tables (AFL++ is not installed any more).
 - **Phase 5: started.** The kernel VM of `tools/zram-vm/` runs seqlz as a zram backend and measures
   `mm_stat`, reads and writes, and with `MODE=swap` the whole page fault, with `zcomp_decompress()`
   timed alone. Open: the split into `lib/` and a backend, swap thrash under KASAN and lockdep, the zram
