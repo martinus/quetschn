@@ -34,7 +34,7 @@ cmake --build build
 | `-DQUETSCHN_WERROR=ON` | warnings are errors, as in CI |
 | `-DQUETSCHN_SANITIZE=ON` | ASan and UBSan |
 | `-DQUETSCHN_KERNEL_TREE=<linux>` | builds zram's `lz4`, `lzo` and `zstd` from a Linux tree with the kernel's flags, and with them `quetschn-bench-*` and the kernel codec tests |
-| `-DQUETSCHN_PAGE_BITS=14` | seqlz for 16 KiB pages. The tests assume 4 KiB |
+| `-DQUETSCHN_PAGE_BITS=14` | seqlz for 16 KiB pages. The tests run with it, except the kernel codecs', so configure it without a kernel tree |
 | `-DQUETSCHN_FUZZ=ON` | the fuzz targets, needs clang or AFL++'s `afl-clang-lto` |
 | `-DQUETSCHN_ALIGN_FUNCTIONS=ON` | every kernel codec function aligned to 64 bytes, for A/B comparisons of two builds |
 
