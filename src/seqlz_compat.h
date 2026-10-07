@@ -91,13 +91,6 @@ static inline unsigned int min(unsigned int a, unsigned int b) {
 #        define SEQLZ_BE64(x) __builtin_bswap64(x)
 #    endif
 
-/* from bytes, as page_lz.h had them: with memcpy, gcc gave code_literals() other registers */
-static __always_inline u16 get_unaligned_le16(const void* p) {
-    const u8* b = (const u8*)p;
-
-    return (u16)(b[0] | b[1] << 8);
-}
-
 static __always_inline u32 get_unaligned_le32(const void* p) {
     u32 v;
 
@@ -117,13 +110,6 @@ static __always_inline u64 get_unaligned_be64(const void* p) {
 
     memcpy(&v, p, sizeof(v));
     return SEQLZ_BE64(v);
-}
-
-static __always_inline void put_unaligned_le16(u16 val, void* p) {
-    u8* b = (u8*)p;
-
-    b[0] = (u8)val;
-    b[1] = (u8)(val >> 8);
 }
 
 static __always_inline void put_unaligned_le64(u64 val, void* p) {

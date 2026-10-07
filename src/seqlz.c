@@ -380,7 +380,7 @@ static unsigned int encoder_finish(struct encoder* e, u8* d) {
         e->p++;
     }
     bytes = (unsigned int)(e->p - bits);
-    put_unaligned_le16((u16)n_lit, d);
+    store16(d, n_lit);
     memmove(e->lit, bits, bytes);
     return SEQLZ_HEADER + n_lit + bytes;
 }
@@ -423,27 +423,28 @@ static unsigned int encode_raw(const struct seqlz_tables* t,
 
 /* The whole bytes of a stream's accumulator out, and the byte of the bits left over, which the next
  * flush writes again. cnt is the number of bits in acc; the bits above it are old ones, shifted out
- * here. 8 bytes at once while the stream has room for them, it ends where the next begins. */
-#define ENC_FLUSH(p, end, acc, cnt, sum)          \
-    do {                                          \
-        unsigned int n_ = (cnt) + ((sum) & 255U); \
-        u64 w_ = (acc) << ((64U - n_) & 63U);     \
-                                                  \
-        if ((end) - (p) >= 8)                     \
-            put_unaligned_be64(w_, (p));          \
-        else                                      \
-            store_tail((p), w_, (n_ + 7U) >> 3);  \
-        (p) += n_ >> 3;                           \
-        (cnt) = n_ & 7U;                          \
-        (sum) = 0;                                \
+ * here. 8 bytes at once while the stream has room for them, it ends where the next begins. Swapped
+ * once, before the branch: put_unaligned_be64() in both gave code_literals() other code on arm64. */
+#define ENC_FLUSH(p, end, acc, cnt, sum)                         \
+    do {                                                         \
+        unsigned int n_ = (cnt) + ((sum) & 255U);                \
+        u64 w_ = __builtin_bswap64((acc) << ((64U - n_) & 63U)); \
+                                                                 \
+        if ((end) - (p) >= 8)                                    \
+            put_unaligned_le64(w_, (p));                         \
+        else                                                     \
+            store_tail((p), w_, (n_ + 7U) >> 3);                 \
+        (p) += n_ >> 3;                                          \
+        (cnt) = n_ & 7U;                                         \
+        (sum) = 0;                                               \
     } while (0)
 
-/* the first n bytes of w as put_unaligned_be64() would write them, n < 8 */
+/* the first n bytes of w as put_unaligned_le64() would write them, n < 8 */
 static void store_tail(u8* p, u64 w, unsigned int n) {
     u8 b[8];
     unsigned int k;
 
-    put_unaligned_be64(w, b);
+    put_unaligned_le64(w, b);
     for (k = 0; k < n; k++)
         p[k] = b[k];
 }
@@ -463,7 +464,7 @@ lit_bits(u64 even[][LIT_COST_WORDS], u64 odd[][LIT_COST_WORDS], unsigned int j, 
  */
 static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned int len) {
     const u64 lanes = 0x00ff00ff00ff00ffULL; /* every second byte: 8-bit lanes widened to 16 */
-    const unsigned int n_literals = get_unaligned_le16(d), body = len - SEQLZ_HEADER;
+    const unsigned int n_literals = load16(d), body = len - SEQLZ_HEADER;
     const u8* literals = d + SEQLZ_HEADER;
     unsigned int bits = ~0U, k, j, coded, set = 0, sizes[SEQLZ_LIT_STREAMS], all, width, header;
     /* per stream the bits in all tables, 16-bit lanes: tables 0, 2, 4, 6 and 1, 3, 5, 7 of each word */
@@ -576,7 +577,7 @@ static unsigned int code_literals(const struct seqlz_tables* t, u8* d, unsigned 
             ENC_FLUSH(p3, e3, a3, c3, s3);
         }
     }
-    put_unaligned_le16((u16)(SEQLZ_LIT_CODED | n_literals), d);
+    store16(d, SEQLZ_LIT_CODED | n_literals);
     /* byte 2: the table in bits 0 to 2, width - SEQLZ_SIZE_BITS_MIN in bits 3 to 5 */
     d[2] = (u8)(set | (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT);
     /* the 8 sizes, width bits each, lowest bit first: exactly width bytes, from byte 3 on */
@@ -915,7 +916,7 @@ static __always_inline int decode_page(
         prefetch_lines(t->token.decode, sizeof(t->token.decode[0]) << SEQLZ_TOKEN_BITS);
     prefetch_lines(t->ll.decode, sizeof(t->ll.decode[0]) << SEQLZ_MAX_BITS);
     prefetch_lines(t->ml.decode, sizeof(t->ml.decode[0]) << SEQLZ_MAX_BITS);
-    n_lit = get_unaligned_le16(s);
+    n_lit = load16(s);
     if (n_lit & SEQLZ_LIT_CODED) {
         const u8* q;
 

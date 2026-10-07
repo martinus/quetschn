@@ -46,6 +46,18 @@ static inline void prefetch_lines(const void* p, unsigned long size) {
     }
 }
 
+/* The u16 at the start of a page, from bytes. Not get_unaligned_le16() and
+ * put_unaligned_le16(): with them clang gave seqlz_decode() and code_literals() other
+ * registers, and in the kernel VM a page read 0.04 us and written 0.08 us slower (#108). */
+static inline void store16(u8* p, unsigned int v) {
+    p[0] = (u8)v;
+    p[1] = (u8)(v >> 8);
+}
+
+static inline unsigned int load16(const u8* p) {
+    return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
+}
+
 /* a hash of the low 5 bytes of v, as zstd's: << 24 keeps only them, 889523592379 is zstd's prime5bytes */
 static inline unsigned int hash5(u64 v) {
     return (unsigned int)(((v << 24) * 889523592379ULL) >> (64U - PAGE_LZ_HASH_BITS));
