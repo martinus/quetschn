@@ -45,6 +45,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The designs by the score](#the-designs-by-the-score)
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
 - [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
+- [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -424,8 +425,8 @@ page, for every codec, 4 does 3 and 2. `MODE=swap`, the same setup, ns:
 * **Everything warm gives back 0.12 µs of the 0.28.** The decoder's code and branch predictors are
   about 50 ns, the destination page about 65 ns, which a fault takes new from the allocator, where the
   read benchmark decodes into the same buffer every time. `lz4` gains up to 30 ns from the same.
-* **0.17 µs are not found.** Not measured yet: `perf kvm` of `seqlz_decode()` in a fault against the read
-  benchmark, which would say whether it is cache misses, TLB misses or something else.
+* **0.17 µs are not found here.** They are branch prediction: the read benchmark decodes a page several
+  times in a row, see [The decoder in a fault, found](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides).
 
 The fault's times, not the read benchmark's, are what a swap-in waits for, and the score is not
 recomputed with them yet, see "The whole page fault". Warming the caches in the kernel is no fix: the
@@ -434,6 +435,68 @@ warm-up costs more than it saves, with mode 2 the whole swap-in took 2.0 µs lon
 ```sh
 KARGS="zram.zram_prefetch=8 zram.zram_warm=2" MODE=swap ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
 KARGS="quetschn.decomp=1" ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
+```
+
+## The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides
+
+*What are the 0.17 µs that cold caches do not explain in "The decoder in a fault"? The branch
+predictor. `seqlz-fast-lit`'s decoder mispredicts about 110 branches per page more in a fault than right
+after it decoded the same page, and every benchmark so far decoded a page more than once.* Code:
+`zram.zram_pmu` and `zram.zram_warm=5` to `7` in `tools/zram-vm/zram-prefetch.patch` and
+`backend_seqlz.c`, `quetschn.cond` in `tools/zram-vm/init.c`.
+
+**perf kvm was the wrong tool.** Sampling the guest from the host with periods of 100 000 cycles and 500
+cache misses gave 75 000 samples a second, each one an interrupt of the guest, and `lz4`'s swap-in
+took 7.1 instead of 3.5 µs. Periods long enough not to disturb leave too few samples in the decoder.
+So zram counts instead: `zram.zram_pmu=1` creates six of the guest's counters at boot and adds up
+their difference around every timed `zcomp_decompress()`, kernel only. Every read of a counter exits
+to the host, which costs 77 to 80 µs per call and stirs the caches the same way in every mode: the
+counts are the guest's alone, but not those of an undisturbed fault. The data TLB counter is not
+supported in the guest and reads 0.
+
+**Decoding the same page right before.** Two more warm-ups of the kind of "The decoder in a fault": 5
+decodes the compressed page of the fault before, a real page instead of 2's made-up one, and 6 also
+writes the destination. 7 decodes this very page once, right before it is timed, as the read
+benchmark does without meaning to: it reads every page 6 times in a row, once per codec and prefetch
+mode, so "other page first" still decoded the same page with the same codec a few reads earlier. The
+same setup as there, `zcomp_decompress()` alone, means in ns:
+
+| `zram_warm` | boots | `lz4` | `seqlz-fast-lit` |
+| --- | ---: | ---: | ---: |
+| 0, nothing | 3 | 1415 to 1442 | 1991 to 2017 |
+| 5, the page before decoded again | 2 | 1416, 1437 | 1933, 1964 |
+| 6, 5 and the destination written | 2 | 1386, 1391 | 1864, 1873 |
+| 7, this page decoded before | 2 | 1429, 1430 | 1412, 1419 |
+
+With `zram.zram_pmu=1`, per `zcomp_decompress()` of 58 098, one boot each:
+
+| `seqlz-fast-lit` | `zram_warm=0` | `zram_warm=7` |
+| --- | ---: | ---: |
+| cycles | 13 436 | 11 569 |
+| instructions | 24 087 | 24 082 |
+| branch misses | 200.9 | 89.5 |
+| L1 data cache misses | 389.4 | 386.1 |
+
+`lz4`, without a warm-up in either boot, 162.3 and 161.6 branch misses.
+
+* **Another page decoded before does not help, the same page does.** 5 gives back about 50 ns, as 2 did. 7
+  gives back 0.6 µs and makes `seqlz-fast-lit` as fast as `lz4`.
+* **It is branch prediction, not the caches.** With 7, the branch misses fall by 111 and the cycles by
+  1867, about 17 cycles per miss; instructions and L1 misses stay the same.
+* **Every number of the decoder before this is too good for it.** The read benchmark of
+  `tools/zram-vm/run.sh` reads each page 6 times in a row, and the userspace harness takes the median of
+  5 decodes per page, probably with the same effect, not measured. `MODE=swap` decodes each page once
+  per pass, with 20 000 other pages in between, and is what a swap-in waits for: `seqlz-fast-lit`
+  decodes 0.59 µs slower than `lz4` there, not 0.31.
+* **Where the decoder can still get faster.** About 200 branch misses per page in a fault, counted with
+  the counters' exits in between, 110 of them in branches that a predictor gets right only after it saw
+  the page. A decoder with fewer branches that depend on the data would gain up to about 0.5 µs per
+  swap-in. Which branches they are is not measured yet; a
+  userspace run that decodes every page once, under `perf record -e branch-misses`, would show it.
+
+```sh
+KARGS="zram.zram_prefetch=8 zram.zram_warm=7" MODE=swap ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
+KARGS="zram.zram_prefetch=8 zram.zram_pmu=1" MODE=swap ALGOS=lz4,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus>
 ```
 
 ## The first runs with dictionaries, Phases 0 to 2

@@ -85,10 +85,18 @@ tools/plot-swap-fault.py --row "PC=swap.log" --row "Phone, little core=cpu2.log"
 tools/plot-codecs.py --run "first dump=reads.log" --out codecs.svg
 ```
 
-Two options are for finding where a fault's time goes: `KARGS=zram.zram_warm=1` to `4` warms seqlz's
-tables, its code or the destination page right before the timed decompression, and
-`KARGS=quetschn.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, see
-[explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012).
+Some options are for finding where a fault's time goes, all in `KARGS`:
+
+- `zram.zram_warm=1` to `7` warms something right before the timed decompression: seqlz's tables, its
+  code, the destination page, or a decode of another or of the same page.
+- `zram.zram_pmu=1` counts cycles, instructions, branch and cache misses around every timed
+  `zcomp_decompress()`, in the guest. Each read of a counter exits to the host, about 77 µs, so the times
+  of such a boot are useless, only the counts are not.
+- `quetschn.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, and
+  `quetschn.cond=3` runs only its condition "flushed, other page first".
+
+See [explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
+and ["The decoder in a fault, found"](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides).
 
 > [!TIP]
 > A single boot can be off: `zstd` came out 18% slower in one boot with nothing changed. Compare
@@ -190,6 +198,11 @@ Each of these cost a wrong result first. The measurements behind them are in
 - **Several processes.** One process's confidence interval covers which pages were sampled, not which
   physical pages its buffers got. Five identical runs gave `zstd -1` against `lz4` from +1800 to
   +4620 ns, with about ±80 ns each.
+- **Decode each page once, for the decoder's time.** A decode of the same page just before trains the
+  branch predictor: `seqlz-fast-lit` then decodes a page in a fault in 1.41 instead of 2.01 µs. The read
+  benchmark of `tools/zram-vm/run.sh` reads every page 6 times in a row, the userspace harness takes
+  the median of 5 decodes, so both make `seqlz` look faster than it is in a swap-in. `MODE=swap` decodes
+  each page once per pass and is the one to trust ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
 - **Compressions apart from decompressions.** `lz4hc` touches 256 KiB when it compresses, and moved the
   next codec's cold reads by 300 ns. Every repetition times all compressions first, then all
   decompressions.
