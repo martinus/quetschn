@@ -12,6 +12,7 @@
 set -euo pipefail
 
 [[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-lit] [LLVM=1] [MODE=swap] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
+# ALGOS: zram's names of the backends, a level after a colon, e.g. zstd:-1 or zstd:9
 # LLVM=1 builds the kernel with clang, as Android does, instead of gcc
 kmake=(make ${LLVM:+LLVM=$LLVM})
 tree=$1

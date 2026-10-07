@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 // /init of the VM of run.sh. One zram device per algorithm of quetschn.algos= on the kernel command
-// line; writes /pages to each and reads each page back with O_DIRECT, timed, so that zram decompresses
-// straight into this program's page. Per page all algorithms and the prefetches of zram-prefetch.patch
+// line, e.g. quetschn.algos=lz4,zstd:-1,zstd:3, a level after the colon; writes /pages to each and reads
+// each page back with O_DIRECT, timed, so that zram decompresses straight into this program's page. Per
+// page all algorithms and the prefetches of zram-prefetch.patch
 // (0 none, 2 the compressed data in zram, 8 the same in the backend, which lz4's ignores) in turn, one
 // device after the other, warm and with the compressed data or also the destination flushed from the
 // cache first. Each timed read comes after a read of the same page, or of another one, which does not
@@ -26,11 +27,28 @@
 #define MAX_ALGOS 8
 #define REPS 3
 
-static void put(const char* path, const char* v) {
-    int fd = open(path, O_WRONLY);
-    if (fd < 0 || write(fd, v, strlen(v)) < 0)
+static int put(const char* path, const char* v) {
+    int fd = open(path, O_WRONLY), ok = fd >= 0 && write(fd, v, strlen(v)) >= 0;
+    if (!ok)
         printf("cannot write %s\n", path);
     close(fd);
+    return ok;
+}
+
+/* zram device a on algo; "zstd:5" is zstd at level 5, through algorithm_params */
+static void set_algo(int a, const char* algo) {
+    char path[128], name[32], arg[64];
+    const char* colon = strchr(algo, ':');
+
+    snprintf(name, sizeof name, "%.*s", colon ? (int)(colon - algo) : (int)strlen(algo), algo);
+    snprintf(path, sizeof path, "/sys/block/zram%d/comp_algorithm", a);
+    put(path, name);
+    if (colon) {
+        snprintf(path, sizeof path, "/sys/block/zram%d/algorithm_params", a);
+        snprintf(arg, sizeof arg, "algo=%s level=%s", name, colon + 1);
+        if (!put(path, arg))
+            printf("RESULT %s: zram did not take the level\n", algo);
+    }
 }
 
 static long long now(void) {
@@ -193,8 +211,7 @@ static int swap_main(char* pages, size_t n_corpus, char algos[][32], int n_algos
         for (int c = 0; c < 3; c++)
             t[a][c] = malloc(sizeof(long long) * n * REPS);
         fresh[a] = malloc(sizeof(long long) * N_FRESH * REPS);
-        snprintf(path, sizeof path, "/sys/block/zram%d/comp_algorithm", a);
-        put(path, algos[a]);
+        set_algo(a, algos[a]);
         snprintf(path, sizeof path, "/sys/block/zram%d/disksize", a);
         put(path, "512M");
         memset(&hdr, 0, sizeof hdr);
@@ -416,8 +433,7 @@ int main(void) {
         /* primary+secondary: the secondary for zram's recompression of idle pages, before the reads */
         char* plus = strchr(algos[a], '+');
         snprintf(primary, sizeof primary, "%.*s", plus ? (int)(plus - algos[a]) : (int)strlen(algos[a]), algos[a]);
-        snprintf(path, sizeof path, "/sys/block/zram%d/comp_algorithm", a);
-        put(path, primary);
+        set_algo(a, primary);
         if (plus) {
             char arg[64];
             snprintf(path, sizeof path, "/sys/block/zram%d/recomp_algorithm", a);

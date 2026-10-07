@@ -22,6 +22,7 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`bench-dict.sh`](bench-dict.sh) | trains a dictionary on one dump and measures every codec with and without it on another |
 | [`plot-codecs.py`](plot-codecs.py) | memory against time, from the logs of `zram-vm/run.sh` |
 | [`plot-swap-fault.py`](plot-swap-fault.py) | the same for the whole page fault, from `zram-vm/run.sh` with `MODE=swap` and from `swap-fault/` |
+| [`plot-zstd-levels.py`](plot-zstd-levels.py) | `seqlz-fast-lit` against `zstd` at each level, from `zram-vm/run.sh` logs with `MODE=swap` and `zstd:<level>` codecs |
 | [`plot-devices.py`](plot-devices.py) | memory against time on several CPUs, one row per CPU |
 | [`plot-speed.py`](plot-speed.py) | the first chart of [docs/seqlz.md](../docs/seqlz.md#the-result-lz4s-time-zstds-size-almost): cycles in a hot loop, and write, cold read and memory in the kernel VM |
 

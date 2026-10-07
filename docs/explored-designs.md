@@ -44,6 +44,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [The designs by the score](#the-designs-by-the-score)
 - [The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)
+- [zstd at every level, in a swap-in: no level stores less in less time than seqlz-fast-lit](#zstd-at-every-level-in-a-swap-in-no-level-stores-less-in-less-time-than-seqlz-fast-lit)
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
 - [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 - [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
@@ -322,6 +323,64 @@ in the score, and `r` on a phone.
 ```sh
 KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus> >swap.log
 ./build/quetschn-score swap.log
+```
+
+## zstd at every level, in a swap-in: no level stores less in less time than seqlz-fast-lit
+
+*zram lets `zstd` run at any level, from the fast negative ones to 22, through `algorithm_params`. So is
+there a level that beats `seqlz-fast-lit`? Not in a swap-in: every level that stores less takes at least
+6.6 µs more per page written, and every faster negative level stores more and is still slower. With
+the score's exchange rates `seqlz-fast-lit` is the best choice from 3.2 to 318 bytes per µs on the
+first desktop dump and from 5.1 to 342 on the second phone dump.* Code: `tools/zram-vm/init.c` takes
+a level as `zstd:5`, `tools/plot-zstd-levels.py` draws it.
+
+![seqlz-fast-lit against zstd at each level, memory against time](plots/zstd-levels.svg)
+
+VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, `MODE=swap`, the backend's prefetch,
+20 000 pages per dump, CPU 2 at 4.5 GHz, boost off, the tables of 7 October. zram has 8 devices, so two
+groups of levels per dump, each with `lz4` and `seqlz-fast-lit`, each group booted twice, in turns.
+Bytes per page and µs per page from `quetschn-score`, the means of the boots, first desktop dump /
+second phone dump; time per page written is swap-out + 0.34 × swap-in:
+
+| codec | bytes per page | swap-out | swap-in, cold | time per page written |
+| --- | ---: | ---: | ---: | ---: |
+| `lz4` | 1450.3 / 1291.2 | 6.38 / 5.83 | 3.23 / 3.11 | 7.48 / 6.89 |
+| `seqlz-fast-lit` | 1037.5 / 944.5 | 7.51 / 6.71 | 3.74 / 3.51 | 8.78 / 7.90 |
+| `zstd` -5 | 1551.9 / 1346.9 | 9.13 / 8.22 | 5.03 / 4.64 | 10.84 / 9.80 |
+| `zstd` -3 | 1359.8 / 1193.9 | 9.71 / 8.74 | 5.15 / 4.75 | 11.46 / 10.36 |
+| `zstd` -1 | 1148.9 / 1019.2 | 10.23 / 9.23 | 5.33 / 4.86 | 12.04 / 10.88 |
+| `zstd` 1 | 1022.3 / 921.3 | 13.54 / 12.43 | 6.62 / 6.17 | 15.79 / 14.52 |
+| `zstd` 2 | 1024.8 / 909.7 | 13.73 / 12.66 | 6.68 / 6.23 | 16.01 / 14.78 |
+| `zstd` 3 | 1012.3 / 906.8 | 14.46 / 13.27 | 6.44 / 6.06 | 16.65 / 15.34 |
+| `zstd` 5 | 973.4 / 885.7 | 30.35 / 26.82 | 6.21 / 5.86 | 32.46 / 28.81 |
+| `zstd` 7 | 971.9 / 881.4 | 52.45 / 44.66 | 6.08 / 5.76 | 54.52 / 46.62 |
+| `zstd` 9 | 972.3 / 881.0 | 79.97 / 67.49 | 6.11 / 5.76 | 82.05 / 69.45 |
+| `zstd` 12 | 957.0 / 841.1 | 209.38 / 175.18 | 6.49 / 6.21 | 211.58 / 177.28 |
+| `zstd` 15 | 936.9 / 826.3 | 485.39 / 419.23 | 6.63 / 6.28 | 487.64 / 421.37 |
+| `zstd` 19 | 939.4 / 827.4 | 946.63 / 816.81 | 6.67 / 6.29 | 948.90 / 818.95 |
+
+The lowest score for some exchange rate, the same on both dumps: `lz4`, `seqlz-fast-lit`, `zstd` 3,
+`zstd` 5, `zstd` 12, `zstd` 15. From `seqlz-fast-lit` to `zstd` 3 it is 25 and 38 bytes per page for
+7.9 and 7.4 µs, 3.2 and 5.1 bytes per µs; from `lz4` to `seqlz-fast-lit` 413 and 347 bytes for 1.3 and
+1.0 µs.
+
+* **The negative levels lose on both axes.** `zstd` -1 stores 111 and 75 bytes per page more than
+  `seqlz-fast-lit` and takes 3.3 and 3.0 µs more; `zstd` -5 stores more than `lz4`. Their swap-in
+  alone is 4.6 to 5.3 µs, `seqlz-fast-lit`'s 3.5 and 3.7.
+* **`zstd` 1 is the closest that stores less**: 15 and 23 bytes per page, 1.5% and 2.5%, for 7.0 and 6.6
+  µs more per page written, and a swap-in of 6.6 and 6.2 µs against 3.7 and 3.5.
+* **Above level 3 only the swap-out grows.** The swap-in stays at 5.8 to 6.7 µs, and the last 75 and 80
+  bytes per page, down to `zstd` 15, cost 470 and 406 µs per swap-out. Levels 1, 2, 7, 9 and 19 do not
+  have the lowest score for any exchange rate, the line between their neighbours is below them.
+
+Not measured: the phone's own kernel with `zstd`'s levels, and the levels above 19.
+
+```sh
+KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,seqlz-lit,zstd:-5,zstd:-3,zstd:-1,zstd:1,zstd:2,zstd:3 \
+    tools/zram-vm/run.sh <linux tree> <corpus> >g1.log
+KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,seqlz-lit,zstd:5,zstd:7,zstd:9,zstd:12,zstd:15,zstd:19 \
+    tools/zram-vm/run.sh <linux tree> <corpus> >g2.log
+tools/plot-zstd-levels.py --row "First desktop dump=g1.log,g2.log" --out zstd-levels.svg
 ```
 
 ## The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves
