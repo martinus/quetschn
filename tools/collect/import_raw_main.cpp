@@ -11,9 +11,9 @@
 
 #include <unistd.h>
 
+#include <charconv>
 #include <cstddef>
 #include <cstdio>
-#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <string>
@@ -29,6 +29,12 @@ void usage() {
                  "--name is stored as the process name of every page, default: the dump's file name.\n"
                  "--page-size is the page size of the machine the dump is from, e.g. 16384 for a zram device of\n"
                  "an Android with 16 KiB pages; default: this machine's.\n");
+}
+
+template <typename T>
+bool parse(std::string_view s, T& out) {
+    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
+    return ec == std::errc{} && ptr == s.data() + s.size();
 }
 
 } // namespace
@@ -47,12 +53,7 @@ int main(int argc, char** argv) {
             out = argv[++i];
         } else if (arg == "--name" && has_value) {
             name = argv[++i];
-        } else if (arg == "--page-size" && has_value) {
-            page_size = static_cast<std::size_t>(std::strtoul(argv[++i], nullptr, 10));
-            if (page_size < 4096 || (page_size & (page_size - 1)) != 0) {
-                usage();
-                return 2;
-            }
+        } else if (arg == "--page-size" && has_value && parse(argv[++i], page_size)) {
         } else {
             usage();
             return 2;

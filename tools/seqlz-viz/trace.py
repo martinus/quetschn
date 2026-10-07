@@ -28,7 +28,7 @@ def field(name):
 
 
 TOK_LEN, LL_LEN, ML_LEN = field("token"), field("ll"), field("ml")
-lit_src = (ref.REPO / "src/seqlz_lit_sets.c").read_text()
+lit_src = (ref.REPO / "src/seqlz_lit_sets_4k.inc").read_text()
 LIT_LEN = ref.numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
 
 

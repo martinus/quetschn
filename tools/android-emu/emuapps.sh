@@ -9,7 +9,7 @@ rounds=${1:-3}
 APPS="com.android.chrome com.google.android.youtube com.google.android.apps.maps com.google.android.gm com.google.android.apps.photos com.google.android.calendar com.google.android.contacts com.google.android.dialer com.google.android.apps.messaging com.google.android.deskclock com.google.android.apps.docs com.android.camera2 com.android.settings com.google.android.documentsui com.google.android.apps.youtube.music com.google.android.googlequicksearchbox"
 URLS="https://en.wikipedia.org/wiki/Linux_kernel https://www.bbc.com/news https://github.com/torvalds/linux https://www.theverge.com https://developer.android.com https://www.kernel.org"
 if [ "$2" = b ]; then
-  r=""; for a in $APPS; do r="$a $r"; done; APPS=$r
+  rev=""; for a in $APPS; do rev="$a $rev"; done; APPS=$rev
   URLS="https://en.wikipedia.org/wiki/Zram https://www.reuters.com https://news.ycombinator.com https://www.lwn.net https://www.mozilla.org https://www.python.org"
 fi
 svc power stayon true; input keyevent 224; wm dismiss-keyguard
@@ -18,6 +18,8 @@ for s in 1 2 3 4 5; do cmd media_session volume --stream $s --set 0 > /dev/null 
 r=1
 while [ $r -le $rounds ]; do
   for a in $APPS; do
+    # Android's cached process limit, which a flag sync after boot sets back to 32, as in swapbench.sh
+    [ "$(device_config get activity_manager max_cached_processes)" = 96 ] || device_config put activity_manager max_cached_processes 96
     comp=$(cmd package resolve-activity --brief $a | tail -1)
     timeout 30 am start -W -n $comp > /dev/null 2>&1
     if [ $a = com.android.chrome ] && [ $r = 1 ]; then

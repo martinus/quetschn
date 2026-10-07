@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * The literal tables for 16 KiB pages (QUETSCHN_PAGE_BITS 14), included by seqlz_lit_sets.c, trained as
- * the ones for 4 KiB pages there, on the pages of seqlz_default_tables_16k.inc, with
+ * the ones for 4 KiB pages in seqlz_lit_sets_4k.inc, on the pages of seqlz_default_tables_16k.inc, with
  *   quetschn-seqlz-train --corpus emu-a17-16k-a-train --lit-sets
  */
 const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
