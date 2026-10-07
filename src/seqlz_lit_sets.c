@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * The literal tables of pages with coded literals, one chosen per page, part of the format (docs/format.md).
- * Trained on the same pages as seqlz_default_tables.c, with
+ * For 4 KiB pages, trained on the same pages as seqlz_default_tables.c, with
  *   quetschn-seqlz-train --corpus train-rz-phone5 --lit-sets
  * k-means over the literal histograms of the pages with seqlz-fast's matcher: each page goes to the
  * table that codes its literals in the fewest bits, each table is the code of its pages' literals; 32
- * starts, the one with the fewest bits wins. The most used table first.
+ * starts, the one with the fewest bits wins. The most used table first. For 16 KiB pages they are in
+ * seqlz_lit_sets_16k.inc.
  */
 #include "seqlz.h"
 
+#if QUETSCHN_PAGE_BITS != 12
+#    include "seqlz_lit_sets_16k.inc"
+#else
 const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
     {8,  10, 10, 10, 10, 10, 10, 10, 10, 7,  6,  10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
      10, 10, 10, 4,  10, 8,  10, 10, 10, 10, 10, 7,  7,  8,  9,  7,  7,  7,  7,  7,  7,  7,  8,  8,  8,  8,  9,  8,  9,
@@ -80,3 +84,4 @@ const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
      8, 2,  8, 10, 8, 10, 8, 10, 9, 10, 9, 10, 8, 10, 7, 10, 9, 10, 8, 10, 8, 10, 8, 9,  8, 9,  8, 9,  8, 10, 8, 10,
      8, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 4,  4, 4,  9, 10},
 };
+#endif

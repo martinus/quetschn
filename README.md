@@ -42,7 +42,8 @@ As of 7th October 2026. The details, and what comes next, are in [the plan, §9]
 - [x] [The format](docs/format.md), two reference decoders written from it, fuzzing, the worst case measured
 - [x] Measured in a kernel: a VM on x86-64, and the Mi 9T's own kernel on arm64
 - [ ] Ask the zram maintainers whether they want a new backend at all, and in which form
-- [ ] 16 KiB pages: real pages to train on, and work memory within `lz4`'s
+- [x] 16 KiB pages: tables trained on the pages of the Android 17 emulator
+- [ ] 16 KiB pages: work memory within `lz4`'s, and a phone with 16 KiB pages
 - [ ] The kernel port: `lib/` and a zram backend, swap thrash under KASAN, the zram selftests
 
 > [!WARNING]
