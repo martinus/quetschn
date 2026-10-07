@@ -28,20 +28,20 @@ def spec_hashes():
 
 def load_tables(page_bits):
     """canonical codes of TOK, LL, ML and the 8 literal tables, after checking the lengths' SHA-256"""
-    codec = REPO / "src"
-    src = (codec / f"seqlz_default_tables_{4 if page_bits == 12 else 16}k.inc").read_text()
+    codec, size = REPO / "src", f"{4 if page_bits == 12 else 16}k"
+    src = (codec / f"seqlz_default_tables_{size}.inc").read_text()
 
     def field(name):
         return numbers(re.search(r"\." + name + r"\s*=\s*\{([^}]*)\}", src).group(1))
 
     tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml")}
-    lit_src = (codec / "seqlz_lit_sets.c").read_text()
+    lit_src = (codec / f"seqlz_lit_sets_{size}.inc").read_text()
     lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
     assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 13 + page_bits
     assert len(lit) == 8 * 256
-    hashes, size = spec_hashes(), f"{4 if page_bits == 12 else 16}k"
+    hashes = spec_hashes()
     for name, lengths in [*tables.items(), ("LIT", lit)]:
-        key = f"{name}_{size}" if name != "LIT" else "LIT"
+        key = f"{name}_{size}"
         if hashlib.sha256(bytes(lengths)).hexdigest() != hashes[key]:
             raise SystemExit(f"{key}: the table is not the one docs/format.md names")
     return (

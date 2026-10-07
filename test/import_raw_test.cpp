@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -43,28 +44,35 @@ private:
     std::filesystem::path m_path;
 };
 
-std::vector<std::byte> page_with(unsigned char value) {
-    auto p = std::vector<std::byte>(page_size);
-    for (std::size_t i = 0; i < page_size; i += 7) {
+std::vector<std::byte> page_with(unsigned char value, std::size_t size = page_size) {
+    auto p = std::vector<std::byte>(size);
+    for (std::size_t i = 0; i < size; i += 7) {
         p[i] = std::byte{value};
     }
     return p;
 }
 
-// a sparse file like `dd conv=sparse` writes: 128 pages, data at pages 0, 3 and 100, an explicitly written
-// zero page at 5, holes everywhere else
-void write_dump(std::filesystem::path const& path) {
+// a sparse file like `dd conv=sparse` writes: n pages of size bytes, the given ones written at their
+// index, holes everywhere else
+void write_sparse(std::filesystem::path const& path,
+                  std::size_t size,
+                  std::size_t n,
+                  std::vector<std::pair<std::size_t, std::vector<std::byte>>> const& pages) {
     auto const fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
     REQUIRE(fd >= 0);
-    REQUIRE(::ftruncate(fd, 128 * page_size) == 0);
-    auto put = [&](std::size_t index, std::vector<std::byte> const& p) {
-        REQUIRE(::pwrite(fd, p.data(), page_size, static_cast<off_t>(index * page_size)) == static_cast<ssize_t>(page_size));
-    };
-    put(0, page_with(1));
-    put(3, page_with(3));
-    put(5, std::vector<std::byte>(page_size));
-    put(100, page_with(100));
+    REQUIRE(::ftruncate(fd, static_cast<off_t>(n * size)) == 0);
+    for (auto const& [index, p] : pages) {
+        REQUIRE(::pwrite(fd, p.data(), size, static_cast<off_t>(index * size)) == static_cast<ssize_t>(size));
+    }
     ::close(fd);
+}
+
+// 128 pages, data at pages 0, 3 and 100, an explicitly written zero page at 5
+void write_dump(std::filesystem::path const& path) {
+    write_sparse(path,
+                 page_size,
+                 128,
+                 {{0, page_with(1)}, {3, page_with(3)}, {5, std::vector<std::byte>(page_size)}, {100, page_with(100)}});
 }
 
 // the address column of the TSV, in order
@@ -119,11 +127,35 @@ TEST_CASE("import_raw: a dump that is not a whole number of pages is an error") 
 TEST_CASE("import_raw: a dump that is all holes gives an empty corpus") {
     auto dir = temp_dir();
     auto const path = dir.path() / "empty.raw";
-    auto const fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    REQUIRE(fd >= 0);
-    REQUIRE(::ftruncate(fd, 64 * page_size) == 0);
-    ::close(fd);
+    write_sparse(path, page_size, 64, {});
     auto const r = quetschn::import_raw(path, dir.path() / "c", "x", page_size);
     CHECK(r.pages_written == 0);
     CHECK(quetschn::load_corpus(dir.path() / "c").size() == 0);
+}
+
+TEST_CASE("import_raw: a dump of 16 KiB pages, a page with data only in its last 4 KiB kept") {
+    constexpr std::size_t size = 16384;
+    auto dir = temp_dir();
+    auto const path = dir.path() / "zram0-16k.raw";
+    auto const a = page_with(7, size);
+    auto b = std::vector<std::byte>(size);
+    b[size - 1] = std::byte{9};
+    write_sparse(path, size, 16, {{2, a}, {9, b}});
+    auto const r = quetschn::import_raw(path, dir.path() / "c", "x", size);
+    CHECK(r.pages_written == 2);
+    auto const c = quetschn::load_corpus(dir.path() / "c");
+    CHECK(c.page_size == size);
+    REQUIRE(c.size() == 2);
+    CHECK(std::memcmp(c.page(0).data(), a.data(), size) == 0);
+    CHECK(std::memcmp(c.page(1).data(), b.data(), size) == 0);
+    CHECK(addresses(dir.path() / "c") == std::vector<std::uintptr_t>{2 * size, 9 * size});
+}
+
+TEST_CASE("import_raw: a page size that is no kernel's is an error") {
+    auto dir = temp_dir();
+    write_dump(dir.path() / "zram0.raw");
+    for (std::size_t size : {std::size_t{0}, std::size_t{2048}, std::size_t{6144}, std::size_t{131072}}) {
+        CHECK_THROWS_AS((void)quetschn::import_raw(dir.path() / "zram0.raw", dir.path() / "c", "x", size),
+                        std::invalid_argument);
+    }
 }

@@ -476,7 +476,8 @@ Where it stands:
 - [x] Zram dumps: three of the desktop, two of the Mi 9T.
 - [ ] The scripted VM workloads, and with them the public corpus.
 - [ ] Cuttlefish pages.
-- [ ] Real 16 KiB pages.
+- [x] Real 16 KiB pages: two zram dumps of the Android 17 emulator, and two of its image with 4 KiB
+  pages ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 
 *Gate: at least 500 000 pages from at least 6 kinds of workload, Cuttlefish included, with the
 same-filled fraction measured and reported apart.* Not met as written: the numbers come from the
@@ -825,7 +826,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 | R1 | **No arm64 hardware.** Phones are the users, and lzo-rle was merged on arm64 data first. | a known constraint | An old rooted phone with a big and a little core is used from Phase 2 on. Phase 6 adds a current phone with 16 KiB pages and is a hard gate. Do not submit without it. |
 | R2 | **Not enough headroom over `lz4` with a dictionary.** Nobody had measured it, and the project rested on it. | the gate of Phase 2: `zstd -1` needs 16.9% less than `lzo-rle` | Answered before any codec work. The fallback would have been the benchmark, and then *a targeted improvement of `lz4` or `lzo-rle` for page-sized inputs*. That is what lzo-rle was, and it is a much easier merge. |
 | R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Ask before the kernel port. The question to Sergey Senozhatsky and Minchan Kim is drafted (7th October 2026), with the phone's numbers, and not sent yet. A "no" sends the project to the fallback of R2. |
-| R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-fast-lit` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. Open: a current Android, and 16 KiB pages. |
+| R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-fast-lit` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. On the Android 17 emulator they are within 0.6% of tables trained on its own pages, and its 16 KiB pages have tables of their own ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)). Open: a current phone. |
 | R5 | **The zram backend API changes.** The rewrite of 2024, the preemption series of 2025, parameter and naming changes in 2026. | `git log drivers/block/zram/` | The codec has no kernel API dependency, `backend_quetschn.c` absorbs the changes. Rebase against mainline in CI. |
 | R6 | **A fuzzing bug or a sleep in atomic context burns the maintainers' goodwill.** | Biggers's objection, Minchan's panic | Phase 4, and the gate of Phase 5 with KASAN and `DEBUG_ATOMIC_SLEEP`, exist for this. Continuous fuzzing with ClusterFuzzLite before the submission, OSS-Fuzz if it takes the project. |
 | R7 | **Time.** 3 to 8 hours a week against a path of 18 to 24 months. | lzo-rle: 4 months, v5, paid work, an existing codec | Each phase can be published on its own. Phase 2 alone is worth it. |
@@ -857,9 +858,9 @@ As of 7th October 2026:
   timed alone. Open: the split into `lib/` and a backend, swap thrash under KASAN and lockdep, the zram
   selftests.
 - **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages, its own pages, in its own kernel as zram and
-  as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on pages made of
-  four 4 KiB pages, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory per CPU,
-  above C5.
+  as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on the pages
+  of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
+  per CPU, above C5.
 - **Phase 7: the question to the maintainers is drafted** (R3, R11), and not sent.
 
 Next, in this order:
@@ -878,9 +879,10 @@ Next, in this order:
    a branch and more work hold with `MODE=swap`
    ([explored-designs.md](explored-designs.md#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)).
    The score with the swap times is in §1.1.
-3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: train and
-   check the 16 KiB tables on real 16 KiB pages, and check that the 4 KiB tables still fit a current
-   Android.
+3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: done. The
+   4 KiB tables fit, within 0.6% of tables trained on its pages; the 16 KiB tables are trained on its
+   16 KiB pages, 2.6% smaller on a second dump
+   ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 4. The work memory with 16 KiB pages: within C5, or a reason why not.
 5. Phase 5: `lib/` and the backend in the form the maintainers want, swap thrash under KASAN and
    lockdep, the selftests.

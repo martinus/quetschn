@@ -15,7 +15,7 @@ struct import_result {
 // Turns a raw page dump, e.g. `dd if=/dev/zram0`, into a corpus. Every page-sized block that is not all
 // zero becomes one page, with `name` as its process name and its offset in the dump as its address.
 // Holes of a sparse file are skipped without reading them. Throws std::runtime_error if the dump is not a
-// whole number of pages.
+// whole number of pages, std::invalid_argument if page_size is not a power of two in [4096, 65536].
 import_result import_raw(std::filesystem::path const& dump,
                          std::filesystem::path const& out_base,
                          std::string const& name,

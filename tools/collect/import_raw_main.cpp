@@ -11,6 +11,8 @@
 
 #include <unistd.h>
 
+#include <charconv>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -21,10 +23,18 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-import-raw --in <dump> --out <base> [--name <process name>]\n"
+                 "usage: quetschn-import-raw --in <dump> --out <base> [--name <process name>] [--page-size <bytes>]\n"
                  "\n"
                  "Writes every page of the dump that is not all zero to <base>.pages and <base>.tsv, mode 0600.\n"
-                 "--name is stored as the process name of every page, default: the dump's file name.\n");
+                 "--name is stored as the process name of every page, default: the dump's file name.\n"
+                 "--page-size is the page size of the machine the dump is from, e.g. 16384 for a zram device of\n"
+                 "an Android with 16 KiB pages; default: this machine's.\n");
+}
+
+template <typename T>
+bool parse(std::string_view s, T& out) {
+    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
+    return ec == std::errc{} && ptr == s.data() + s.size();
 }
 
 } // namespace
@@ -33,6 +43,7 @@ int main(int argc, char** argv) {
     auto in = std::string();
     auto out = std::string();
     auto name = std::string();
+    auto page_size = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
@@ -42,6 +53,7 @@ int main(int argc, char** argv) {
             out = argv[++i];
         } else if (arg == "--name" && has_value) {
             name = argv[++i];
+        } else if (arg == "--page-size" && has_value && parse(argv[++i], page_size)) {
         } else {
             usage();
             return 2;
@@ -55,7 +67,7 @@ int main(int argc, char** argv) {
         name = std::filesystem::path(in).stem().string();
     }
     try {
-        auto const r = quetschn::import_raw(in, out, name, static_cast<std::size_t>(::sysconf(_SC_PAGESIZE)));
+        auto const r = quetschn::import_raw(in, out, name, page_size);
         std::fprintf(stderr, "%zu pages written, %zu all-zero pages skipped\n", r.pages_written, r.zero_pages);
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

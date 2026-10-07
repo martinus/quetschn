@@ -781,8 +781,9 @@ things make the difference, each measured:
 > * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 784 bytes of
 >   work memory per CPU, twice `lz4`'s, which breaks the project's limit of `lz4`'s work memory. A way
 >   around it is built and measured, but not kept, see [explored-designs.md](explored-designs.md). Their
->   tables are trained and measured on 2052 pages made of four adjacent 4 KiB pages each; there is no
->   real 16 KiB page yet, and the format for 16 KiB pages is not fixed
+>   tables are trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured on a
+>   second one ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)); there is
+>   no phone with 16 KiB pages yet, and the format for 16 KiB pages is not fixed
 >   ([format.md](format.md#status)).
 > * **Writes at p99** take 1.21 and 1.19 times `lz4`'s time.
 

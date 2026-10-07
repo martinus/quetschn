@@ -7,8 +7,10 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -34,6 +36,11 @@ import_result import_raw(std::filesystem::path const& dump,
                          std::filesystem::path const& out_base,
                          std::string const& name,
                          std::size_t page_size) {
+    // a kernel's page size, as zsmalloc_cost.cpp accepts it
+    if (!std::has_single_bit(page_size) || page_size < 4096 || page_size > 65536) {
+        throw std::invalid_argument("import_raw: the page size must be a power of two in [4096, 65536], not " +
+                                    std::to_string(page_size));
+    }
     auto const fd = ::open(dump.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         throw_errno("cannot open " + dump.string());

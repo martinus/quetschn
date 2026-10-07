@@ -26,12 +26,14 @@ file, slow on purpose, and checked against `seqlz_decode()`, see
 The tables of 6th October were trained again before anyone used them, on swapped pages too
 ([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 
-The format for 16 KiB pages is not fixed yet. Its tables were trained on 2052 pages made of four
-adjacent resident 4 KiB pages each, and measured on the same pages; there was no real 16 KiB page yet. A
-corpus from a system with 16 KiB pages may still change them. And with 16 KiB pages `seqlz-fast-lit`
+The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
+since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
+on a second one, where they make `seqlz-fast-lit` 2.6% smaller than the tables before, which were
+trained on desktop pages
+([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
+That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-fast-lit`
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
-([seqlz.md](seqlz.md#what-is-not-known-yet)). The literal tables are the same as for 4 KiB
-pages; those of 7 October make the 16 KiB pages 1.0% larger than those of 6 October did.
+([seqlz.md](seqlz.md#what-is-not-known-yet)).
 
 ## The idea
 
@@ -147,7 +149,7 @@ byte per symbol, symbol 0 first:
 | tokens and escape, `TOK` | 3073 | 11 bits | `src/seqlz_default_tables_4k.inc`, `.token` | `src/seqlz_default_tables_16k.inc`, `.token` |
 | literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | the same, `.ll` | the same, `.ll` |
 | match length values, `ML` | `LEN_SYMBOLS` | 8 bits | the same, `.ml` | the same, `.ml` |
-| literal tables 0 to 7 | 256 each | 10 bits | `src/seqlz_lit_sets.c`, `seqlz_lit_sets[0]` to `[7]` | the same |
+| literal tables 0 to 7 | 256 each | 10 bits | `src/seqlz_lit_sets_4k.inc`, `seqlz_lit_sets[0]` to `[7]` | `src/seqlz_lit_sets_16k.inc`, the same |
 
 `LL` and `ML` are not the literal tables: they code the lengths `ll` and `ml` of a sequence when they
 are too large for a token. The literal tables code the literals themselves.
@@ -160,10 +162,11 @@ so that a decoder can check that it has the right ones; `tools/seqlz-ref/seqlz_r
 | `TOK_4k` | `8348c354f914ba1510728521a7ee3d1469e998ec8ff71dcdd35140e6c9d6e997` |
 | `LL_4k` | `f019bfe73f61b5452473b27764ae587244bb5e31ddfca19c4a20288f2cce84d5` |
 | `ML_4k` | `25e6a220de355e0508ac0478b9ba4df4511bb4477600f2741e7feed9206b375b` |
-| `TOK_16k` | `c0456a5a34f29618709e4cd6efba0e6db0926cc4c4948f4ae8df8b2b44f07613` |
-| `LL_16k` | `e0dde5e597bce7ad74677227800d41de02c1a3b167786564dbf7cf8296ecc4cc` |
-| `ML_16k` | `e487aeb101066058f2794a507d4c7bc48962dedcbfcfda92e4e621a196cc8bcc` |
-| `LIT` | `efa140477f179ce5a9c5cc27b462fe5da459839b2ff71e0ee94fef939d63f4c2` |
+| `LIT_4k` | `efa140477f179ce5a9c5cc27b462fe5da459839b2ff71e0ee94fef939d63f4c2` |
+| `TOK_16k` | `50aa5b0520f5402c36d6c11fb30f582a8e2982ad1703b1da3449e0e678c3db94` |
+| `LL_16k` | `381d75ffcbba3662c01fb3a7d4445fa662da4e60af0195651a5ab1d7e91c887a` |
+| `ML_16k` | `a44d8993849e2385181b89d8299a518a39071652bb6d09d61383a5153acbb867` |
+| `LIT_16k` | `cc37c3ba7e7ffdb91ff873d7c9a19f04301efe79c4b2fd7202c137212a769db4` |
 
 How the tables were trained is in [explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
 

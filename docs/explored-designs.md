@@ -113,6 +113,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [16 KiB pages](#16-kib-pages)
 - [16 KiB pages, tuned: C5 does not hold, the literals in the page would fix it, not kept](#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept)
+- [Android 17 in the emulator: the 4 KiB tables fit, the 16 KiB ones trained again, 2.6% smaller](#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)
 
 **Other designs, not kept**
 
@@ -5016,6 +5017,75 @@ behind it. Mutations, each caught: the fast path with 16 bytes of room to the li
 (a crash), the copies of the literals and of the matches bounded by the page and not by the literals
 (3 tests each), the last block of literals written straight into the page (ASan, a write behind the
 page).
+## Android 17 in the emulator: the 4 KiB tables fit, the 16 KiB ones trained again, 2.6% smaller
+
+*The 16 KiB tables were trained on desktop pages, four adjacent 4 KiB pages each, and measured on the
+same pages: there was no real 16 KiB page. The Android 17 emulator has an image with 16 KiB pages. Its
+zram dumps give tables that make `seqlz-fast-lit` 2.6% smaller on a second dump, half of it from
+literal tables of their own, kept. The 4 KiB tables are within 0.6% of tables trained on the 4 KiB
+image's pages, so they fit a current Android.* Code: `src/seqlz_default_tables_16k.inc`,
+`src/seqlz_lit_sets_16k.inc`, `tools/android-emu/`.
+
+**The corpus.** The images `google_apis_ps16k` and `google_apis` of Android 17 (API 37), x86_64, kernels
+6.12.81 and 6.12.58, a Pixel 8 with 4 GB of RAM, `hog` holding 2 GB of it. `tools/android-emu/emuapps.sh`
+starts 16 apps of the image in turn, 3 rounds, Chrome on 6 web pages in the first; no account is
+signed in. Then a `dd` of `/dev/block/zram0`. A second run per image after a reboot with `-wipe-data`,
+the apps in reverse order and other web pages, gives the dump to measure on. The training side is the
+first dump without the pages that are also in the second (`quetschn-split-corpus --exclude`). The 16 KiB
+image's zram has 734 MiB of swap, the 4 KiB one's 2.9 GiB, so the two dumps are not the same workload:
+
+| dump | pages | of them same-filled | training side |
+| --- | ---: | ---: | ---: |
+| 16 KiB, first | 27 292 | 7 | 26 933 |
+| 16 KiB, second | 38 396 | 8 | |
+| 4 KiB, first | 283 566 | 8609 | 246 262 |
+| 4 KiB, second | 302 939 | 8828 | |
+
+**On the second dumps**, zsmalloc bytes per page from `quetschn-bench-interleaved --no-timing`, the
+same-filled pages left out, the tables as they were:
+
+| codec | 4 KiB | 16 KiB |
+| --- | ---: | ---: |
+| `lz4` | 1470.7 | 4087.8 |
+| `lzo-rle` | 1385.8 | 3815.0 |
+| `zstd` 3 | 1005.9 | 2710.1 |
+| `seqlz-fast` | 1111.3 | 3054.4 |
+| `seqlz-fast-lit` | 1053.4 | 2924.5 |
+
+`seqlz-fast-lit` is 4.7% above `zstd` 3 with 4 KiB pages and 7.9% with 16 KiB pages; on the second phone
+dump it is 4%, on the first desktop dump 2.5%.
+
+**4 KiB.** Token and length tables trained on the first dump make the second 0.6% smaller,
+`seqlz-fast-lit` 1047.3 and `seqlz-fast` 1105.2 bytes per page. The tables of desktop and phone pages
+are that close to the emulator's own. Not changed.
+
+**16 KiB**, on the second dump, the token and length tables and the literal tables each as they were or
+trained on the first dump:
+
+| tables | `seqlz-fast` | `seqlz-fast-lit` |
+| --- | ---: | ---: |
+| as they were | 3054.4 | 2924.5 |
+| token and length tables trained | 3022.7, -1.0% | 2893.1, -1.1% |
+| literal tables trained | 3054.4 | 2880.9, -1.5% |
+| both | 3022.7, -1.0% | 2849.4, -2.6% |
+
+`seqlz-fast-lit` is then 5.1% above `zstd` 3. Do the emulator's tables fit only the emulator? On the
+desktop's 16 KiB pages (`resident-16k`), on which the old tables were trained, the new token and length
+tables are 0.9% larger, 3958.9 against 3922.4 bytes per page, and the new literal tables make that
+3950.9 again. So both are kept. The literal tables are the 16 KiB format's own now, which costs no
+memory: a kernel has one page size and compiles one set. The 4 KiB tables and their hashes stay the
+same; the four 16 KiB hashes in `docs/format.md` are new.
+
+Not measured: a phone with 16 KiB pages, the times with 16 KiB pages in a kernel, and the work memory
+with 16 KiB pages, which is still twice `lz4`'s (next action 4 of `plan.md`).
+
+```sh
+quetschn-split-corpus --corpus emu-a17-16k-a --train emu-a17-16k-a-train --exclude emu-a17-16k-b
+quetschn-seqlz-train --corpus emu-a17-16k-a-train             # a build with -DQUETSCHN_PAGE_BITS=14
+quetschn-seqlz-train --corpus emu-a17-16k-a-train --lit-sets
+quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd:3,seqlz-fast,seqlz-fast-lit --corpus emu-a17-16k-b --no-timing --out sizes
+```
+
 ## Word model: WKdm-style 64-bit words
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `plan.md` Phase 2b.

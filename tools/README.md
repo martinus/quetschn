@@ -11,6 +11,7 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`zram-vm/`](zram-vm) | `run.sh` builds a kernel with seqlz as a zram backend, boots it in a VM, and measures zram's reads and writes, or with `MODE=swap` the whole page fault |
 | [`swap-fault/`](swap-fault) | the whole page fault on a running Linux as root, e.g. a rooted phone |
 | [`phone-apps/`](phone-apps) | the app launch test on a rooted Android phone: 25 apps in turn, zram on each codec, a reboot before every run |
+| [`android-emu/`](android-emu) | a zram dump from the Android 17 emulator, with 4 KiB or 16 KiB pages: its apps in turn while `hog` holds the RAM |
 | [`swap-bursts/`](swap-bursts) | `quetschn-swap-bursts`: samples `pswpin`, groups the swap-ins into bursts, and gives `r`, the reads per write of the score |
 | [`seqlz-bound/`](seqlz-bound) | per kind of field the bits a dump's pages take, next to their entropy, and layouts of the offset classes priced on real sequences |
 | [`seqlz-branches/`](seqlz-branches) | which branches of the decoder mispredict on pages it sees once, as in a swap-in: `perf stat` per decode, and the mispredicted branches by source line from the CPU's branch records |
