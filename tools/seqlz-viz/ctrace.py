@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """ctrace.py <dir>: the trace of seqlz's compressor for compress.html, from the pages in dir and their
 compressed forms <page>.fast and <page>.lit (compress.c), to <dir>/ctrace.json. The matcher of
-explore/page_lz.h and the encoder of explore/seqlz.c written again step by step, and checked: the bytes
+src/page_lz.h and the encoder of src/seqlz.c written again step by step, and checked: the bytes
 they give must be the ones compress.c wrote. Needs the Python packages lz4 and zstandard for the sizes
 of the same pages in those two."""
 
@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "seqlz-ref"))
 import lz4.block
 import seqlz_ref as ref
 import zstandard
@@ -54,7 +54,7 @@ def count(src, p, q):
 
 
 def match_page(src):
-    """explore/page_lz.h's match_page(): the sequences, and for each what the matcher did"""
+    """src/page_lz.h's match_page(): the sequences, and for each what the matcher did"""
     limit = P - 8
     table = [0] * (1 << HASH_BITS)
     pos, anchor, last = 1, 0, 1
@@ -144,7 +144,7 @@ def value(bits, codes, v):
 
 
 def encode(src, seqs):
-    """explore/seqlz.c's encoder: the page with the literals as they are, and per sequence its fields"""
+    """src/seqlz.c's encoder: the page with the literals as they are, and per sequence its fields"""
     bits = Bits()
     lits = bytearray()
     last = 1
@@ -182,7 +182,7 @@ def encode(src, seqs):
 
 
 def code_literals(raw, lits):
-    """explore/seqlz.c's code_literals(): the cost in every table, and the page with coded literals if
+    """src/seqlz.c's code_literals(): the cost in every table, and the page with coded literals if
     that pays"""
     n = len(lits)
     cost = [[sum(LITS[t][lits[k]][1] for k in range(j, n, 8)) for j in range(8)] for t in range(8)]
@@ -245,12 +245,12 @@ PAGES = [
     (
         "heap",
         "Heap of a program",
-        "A page of a small C++ program's heap: a hash map of the words of FORMAT.md, each a struct with a string, two counters, a pointer to the one before and a double. malloc's chunk headers, pointers, and short strings.",
+        "A page of a small C++ program's heap: a hash map of the words of docs/format.md, each a struct with a string, two counters, a pointer to the one before and a double. malloc's chunk headers, pointers, and short strings.",
     ),
     (
         "text",
         "Source code",
-        "4 KiB of explore/seqlz.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
+        "4 KiB of src/seqlz.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
     ),
     (
         "relro",

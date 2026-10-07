@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
 // Turns a raw page dump into a corpus. The dump of a zram device is the real thing, the pages that
-// reclaim swapped out (PLAN.md Phase 1, collector 2):
+// reclaim swapped out (docs/plan.md Phase 1, collector 2):
 //
 //   mkdir -m 700 -p ~/quetschn-corpus
 //   sudo dd if=/dev/zram0 bs=1M iflag=direct status=progress |

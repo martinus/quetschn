@@ -357,7 +357,7 @@ TEST_CASE("kernel codecs: every page is compressed on its own, also with a dicti
 
 TEST_CASE("kernel codecs: seqlz takes no dictionary, its tables are part of the format") {
     // A dictionary of exactly the size of struct seqlz_lengths once replaced seqlz's code lengths. The
-    // tables are fixed now (FORMAT.md), so such a dictionary is ignored like any other: one of zeros,
+    // tables are fixed now (docs/format.md), so such a dictionary is ignored like any other: one of zeros,
     // no code at all, would have failed the setup.
     auto const dict = page(sizeof(seqlz_lengths));
     auto const p = text_page();
@@ -380,7 +380,7 @@ TEST_CASE("kernel codecs: lzo-rle writes the lzo-rle stream, lzo does not") {
 }
 
 TEST_CASE("kernel codecs: memory per CPU and per device") {
-    // PLAN.md §3.3: LZ4_MEM_COMPRESS = 16416, LZO1X_MEM_COMPRESS = 16384, zstd "far larger". On top,
+    // docs/plan.md §3.3: LZ4_MEM_COMPRESS = 16416, LZO1X_MEM_COMPRESS = 16384, zstd "far larger". On top,
     // lz4 and zstd allocate a small context struct of pointers per stream.
     auto per_cpu = [](quetschn_codec const& codec, page dict = {}) {
         auto d = device(codec, QUETSCHN_LEVEL_DEFAULT, std::move(dict));

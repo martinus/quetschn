@@ -27,7 +27,7 @@ struct split_result {
 // side, because zram stores them without a codec and they would only teach the dictionary zeros; the
 // test side keeps them, the harness skips them anyway.
 //
-// A process name stands in for a workload until the scripted VM workloads of PLAN.md Phase 1 exist.
+// A process name stands in for a workload until the scripted VM workloads of docs/plan.md Phase 1 exist.
 // Throws std::runtime_error if one side would be empty.
 split_result split_corpus(std::filesystem::path const& base,
                           std::filesystem::path const& train_base,

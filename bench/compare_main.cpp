@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Paired comparison of two quetschn-bench-* --out files from the same corpus, see PLAN.md §5.2.
+// Paired comparison of two quetschn-bench-* --out files from the same corpus, see docs/plan.md §5.2.
 
 #include "compare.h"
 

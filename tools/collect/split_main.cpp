@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
 // Splits a page corpus into a training side for dictionaries and a test side for measuring, by process
-// name. See split.h, and PLAN.md §5.3 for why the dictionary must not see the pages it is measured on.
+// name. See split.h, and docs/plan.md §5.3 for why the dictionary must not see the pages it is measured on.
 
 #include "split.h"
 

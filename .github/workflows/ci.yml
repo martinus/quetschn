@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
-      # Only the files the kernel codecs need, from the commit PLAN.md was verified against. About 3s.
+      # Only the files the kernel codecs need, from the commit docs/plan.md was verified against. About 3s.
       - name: fetch kernel lz4, lzo and zstd sources
         run: |
           git init -q kernel && cd kernel
@@ -96,9 +96,9 @@ jobs:
         with:
           platforms: s390x
       - run: |
-          src="test/seqlz_endian.c explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c"
-          gcc -O2 -Iexplore -o le $src && ./le | tee le.txt
-          docker run --rm --platform linux/s390x -v "$PWD:/w" -w /w gcc:14 sh -c "gcc -O2 -Iexplore -o be $src && ./be" | tee be.txt
+          src="test/seqlz_endian.c src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
+          gcc -O2 -Isrc -o le $src && ./le | tee le.txt
+          docker run --rm --platform linux/s390x -v "$PWD:/w" -w /w gcc:14 sh -c "gcc -O2 -Isrc -o be $src && ./be" | tee be.txt
           diff le.txt be.txt
 
   # The one required check. A job whose dependency failed is skipped, and a skipped required check

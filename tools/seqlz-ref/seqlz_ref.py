@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
-"""seqlz_ref.py <compressed page>...: a decoder written from FORMAT.md alone, slow on purpose, to check
-the spec against explore/seqlz.c. Prints per file "invalid" or "valid <sha256 of the page>".
---page-bits 14 for 16 KiB pages. The tables are read from the files FORMAT.md names, and checked
-against the SHA-256 FORMAT.md gives for them."""
+"""seqlz_ref.py <compressed page>...: a decoder written from docs/format.md alone, slow on purpose, to check
+the spec against src/seqlz.c. Prints per file "invalid" or "valid <sha256 of the page>".
+--page-bits 14 for 16 KiB pages. The tables are read from the files docs/format.md names, and checked
+against the SHA-256 docs/format.md gives for them."""
 
 import argparse
 import hashlib
 import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 
 
 class Invalid(Exception):
@@ -22,20 +22,20 @@ def numbers(text):
 
 
 def spec_hashes():
-    """the SHA-256 of each table, from FORMAT.md's table of tables"""
-    return dict(re.findall(r"^\| `(\w+)` \| `([0-9a-f]{64})` \|", (REPO / "FORMAT.md").read_text(), re.MULTILINE))
+    """the SHA-256 of each table, from docs/format.md's table of tables"""
+    return dict(re.findall(r"^\| `(\w+)` \| `([0-9a-f]{64})` \|", (REPO / "docs" / "format.md").read_text(), re.MULTILINE))
 
 
 def load_tables(page_bits):
     """canonical codes of TOK, LL, ML and the 8 literal tables, after checking the lengths' SHA-256"""
-    explore = REPO / "explore"
-    src = (explore / f"seqlz_default_tables_{4 if page_bits == 12 else 16}k.inc").read_text()
+    codec = REPO / "src"
+    src = (codec / f"seqlz_default_tables_{4 if page_bits == 12 else 16}k.inc").read_text()
 
     def field(name):
         return numbers(re.search(r"\." + name + r"\s*=\s*\{([^}]*)\}", src).group(1))
 
     tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml")}
-    lit_src = (explore / "seqlz_lit_sets.c").read_text()
+    lit_src = (codec / "seqlz_lit_sets.c").read_text()
     lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
     assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 13 + page_bits
     assert len(lit) == 8 * 256
@@ -43,7 +43,7 @@ def load_tables(page_bits):
     for name, lengths in [*tables.items(), ("LIT", lit)]:
         key = f"{name}_{size}" if name != "LIT" else "LIT"
         if hashlib.sha256(bytes(lengths)).hexdigest() != hashes[key]:
-            raise SystemExit(f"{key}: the table is not the one FORMAT.md names")
+            raise SystemExit(f"{key}: the table is not the one docs/format.md names")
     return (
         canonical(tables["TOK"], 11),
         canonical(tables["LL"], 8),
@@ -53,7 +53,7 @@ def load_tables(page_bits):
 
 
 def canonical(lengths, max_bits):
-    """{(length, code): symbol}, FORMAT.md's "Prefix codes"; complete codes only"""
+    """{(length, code): symbol}, docs/format.md's "Prefix codes"; complete codes only"""
     assert max(lengths) <= max_bits
     assert sum(2.0**-n for n in lengths if n) == 1.0
     count = [0] * (max_bits + 1)

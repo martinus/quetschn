@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 #include "score.h"
 
-#include "../tools/swap_bursts.h"
+#include "../tools/swap-bursts/swap_bursts.h"
 
 #include <doctest/doctest.h>
 

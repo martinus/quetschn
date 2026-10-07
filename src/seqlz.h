@@ -168,7 +168,7 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml, unsigne
 }
 
 /*
- * The compressor: its own matcher (explore/page_lz.h), and the sequences coded straight into dst. The
+ * The compressor: its own matcher (src/page_lz.h), and the sequences coded straight into dst. The
  * state is per CPU, the matcher's hash table, cleared for each page.
  */
 #define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
@@ -188,7 +188,7 @@ unsigned int seqlz_find(struct seqlz_state* st, const void* src, struct seqlz_se
 unsigned int seqlz_compress(
     const struct seqlz_tables* t, struct seqlz_state* st, const void* src, void* dst, unsigned int dst_cap, int coded);
 
-/* the tables compiled in, trained on resident pages (explore/seqlz_default_tables.c) */
+/* the tables compiled in, trained on resident pages (src/seqlz_default_tables.c) */
 extern const struct seqlz_lengths seqlz_default_own;
 
 #ifdef __cplusplus

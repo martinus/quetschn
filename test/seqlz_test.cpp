@@ -857,7 +857,7 @@ std::vector<std::vector<std::pair<unsigned, unsigned char>>> canonical_codes(uns
     return by_length;
 }
 
-// In a page with coded literals (FORMAT.md): the width of its stream sizes, the length of its header, and
+// In a page with coded literals (docs/format.md): the width of its stream sizes, the length of its header, and
 // the size of literal stream st, width bits from bit st * width of the bytes behind byte 2.
 unsigned size_width(std::vector<unsigned char> const& c) {
     return SEQLZ_SIZE_BITS_MIN + ((c[2] >> 3U) & 7U);

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-/* The tables of FORMAT.md, "The tables": code lengths, one byte per symbol. */
+/* The tables of docs/format.md, "The tables": code lengths, one byte per symbol. */
 struct seqlz_ref_tables {
     const unsigned char* tok;        /* 3073 symbols, the escape last */
     const unsigned char* ll;         /* 13 + page_bits symbols */
@@ -16,7 +16,7 @@ struct seqlz_ref_tables {
     const unsigned char (*lit)[256]; /* the 8 literal tables */
 };
 
-/* The codes of one table, FORMAT.md "Prefix codes", for symbols with codes of at most 15 bits. */
+/* The codes of one table, docs/format.md "Prefix codes", for symbols with codes of at most 15 bits. */
 struct seqlz_ref_code {
     unsigned int count[16];   /* symbols with a code of each length */
     unsigned int first[16];   /* the number of the first code of each length */
@@ -37,8 +37,8 @@ struct seqlz_ref {
 int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsigned int page_bits);
 
 /*
- * Decodes the compressed page src of len bytes into out, 1 << page_bits bytes, as FORMAT.md says, bit
- * by bit and without anything from explore/: a second decoder to check seqlz_decode() against. Returns
+ * Decodes the compressed page src of len bytes into out, 1 << page_bits bytes, as docs/format.md says, bit
+ * by bit and without anything from src/: a second decoder to check seqlz_decode() against. Returns
  * 0 for a valid page, -1 for an invalid one; out is undefined then.
  */
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out);

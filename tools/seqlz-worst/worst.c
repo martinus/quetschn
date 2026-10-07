@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * Pages made to be slow for seqlz, for its worst-case time (PLAN.md, Phase 4).
+ * Pages made to be slow for seqlz, for its worst-case time (docs/plan.md, Phase 4).
  *
  * Counts instructions and branch misses in user space with perf_event_open: they do not change with the
  * load on the machine, as time does.

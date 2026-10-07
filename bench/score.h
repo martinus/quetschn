@@ -29,7 +29,7 @@ struct codec_cost {
 // decompress cold.
 [[nodiscard]] std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& prefix);
 
-// PLAN.md §1.1. All times per page written to zram.
+// docs/plan.md §1.1. All times per page written to zram.
 struct score_weights {
     double reads_per_write = 0.34; // pswpin / pswpout, 27.5 days of a desktop
     double recompress_weight = 1.0;

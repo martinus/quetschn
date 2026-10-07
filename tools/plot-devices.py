@@ -4,7 +4,7 @@
 
 A row is the log of tools/zram-vm/run.sh, zram in a VM on the PC, or of zramphone, zram in the
 phone's own kernel (docs/explored-designs.md, "In the phone's own kernel"). Panels: cold read, warm
-read, write, and the score of PLAN.md §1.1. Each row has its own time axis, the CPUs are far apart.
+read, write, and the score of docs/plan.md §1.1. Each row has its own time axis, the CPUs are far apart.
 
     tools/plot-devices.py --row "PC=vm.log" --row "Phone, big core=cpu7.log" \\
         --row "Phone, little core=cpu2.log" --out devices.svg
@@ -63,7 +63,7 @@ def main():
     ap.add_argument(
         "--out", action="append", required=True, help="output file, .png or .svg, can be given more than once"
     )
-    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (PLAN.md §1.1)")
+    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (docs/plan.md §1.1)")
     ap.add_argument("--note", default="", help="the footer's lines about what was measured, \\n between lines")
     args = ap.parse_args()
 
@@ -166,7 +166,7 @@ def main():
         0.01,
         0.01,
         args.note.replace("\\n", "\n")
-        + f"\nEach row has its own time axis. Score: PLAN.md §1.1, {r:g} reads per write; B/µs: bytes saved per page for each "
+        + f"\nEach row has its own time axis. Score: docs/plan.md §1.1, {r:g} reads per write; B/µs: bytes saved per page for each "
         "µs more, the exchange rate at which the faster codec starts to win.",
         fontsize=8.5,
         color="#555555",

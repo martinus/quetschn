@@ -336,7 +336,7 @@ body.quick .arc { animation-duration: .01s; }
         <p><b>Two candidates per position.</b> The 4 bytes at the position are compared with the 4 bytes at the last offset, and with the 4 bytes at the position a hash of 5 bytes points to. No other search: that is what makes it about as fast as <code>lz4</code>.</p>
         <p><b>Greedy.</b> The first match found is taken, grown backwards into the literals and forwards as far as the bytes are equal, and the matcher jumps behind it.</p>
         <p><b>Literals last.</b> At the end the literals are counted in all 8 literal tables at once. Where the best table saves 1/16 of them and 51 bytes, they are coded in 8 streams; else they stay as they are.</p>
-        <p class="small">What the bytes mean is in <a href="seqlz-bit-by-bit.html">seqlz, bit by bit</a> and <a href="https://github.com/martinus/quetschn/blob/main/FORMAT.md" target="_blank" rel="noopener">FORMAT.md</a>; why it is this way in <a href="https://github.com/martinus/quetschn/blob/main/docs/seqlz.md" target="_blank" rel="noopener">docs/seqlz.md</a>.</p>
+        <p class="small">What the bytes mean is in <a href="seqlz-bit-by-bit.html">seqlz, bit by bit</a> and <a href="https://github.com/martinus/quetschn/blob/main/docs/format.md" target="_blank" rel="noopener">docs/format.md</a>; why it is this way in <a href="https://github.com/martinus/quetschn/blob/main/docs/seqlz.md" target="_blank" rel="noopener">docs/seqlz.md</a>.</p>
       </div>
     </div>
   </section>

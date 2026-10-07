@@ -229,7 +229,7 @@ TEST_CASE("zsmalloc: 16 KiB pages") {
     CHECK(classes.back().size == 16384);
 
     // Regression pin, not an independent oracle: this value comes from a separate Python port of the
-    // same kernel code, written by the same author. It is in PLAN.md §3.5.
+    // same kernel code, written by the same author. It is in docs/plan.md §3.5.
     CHECK(model.huge_class_size() == 14553);
     CHECK(model.classes().size() == 121);
 }
@@ -243,8 +243,8 @@ TEST_CASE("zsmalloc: invalid input is rejected") {
     CHECK_THROWS_AS(zsmalloc_model(zsmalloc_config{.handle_size = 0}), std::invalid_argument);
 }
 
-TEST_CASE("zsmalloc: the cost table in PLAN.md §3.1") {
-    // Regression pin for the numbers PLAN.md publishes. Rows 100, 3624 and 3625 are checked against
+TEST_CASE("zsmalloc: the cost table in docs/plan.md §3.1") {
+    // Regression pin for the numbers docs/plan.md publishes. Rows 100, 3624 and 3625 are checked against
     // independent values above; the others come from the same Python port as the 16 KiB pin.
     struct entry {
         std::size_t comp_len;

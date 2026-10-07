@@ -120,7 +120,7 @@ std::vector<unsigned char> check_same(seqlz_tables const* t, seqlz_ref const* r,
     return slow;
 }
 
-// Bits most significant first, as FORMAT.md writes the bitstream, for pages made by hand.
+// Bits most significant first, as docs/format.md writes the bitstream, for pages made by hand.
 struct bit_writer {
     std::vector<unsigned char> bytes;
     unsigned int n = 0;
@@ -183,7 +183,7 @@ std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int literal
 } // namespace
 
 #if QUETSCHN_PAGE_BITS == 12
-TEST_CASE("seqlz_ref: the example of FORMAT.md is ab 2048 times") {
+TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
     auto const r = make_ref();
     auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb, 0x8a};
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);

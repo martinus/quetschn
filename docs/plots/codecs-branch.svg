@@ -8868,7 +8868,7 @@ z
     <use xlink:href="#NotoSans-Regular-37" transform="translate(7657.598175 0)"/>
     <use xlink:href="#NotoSans-Regular-2e" transform="translate(7714.798172 0)"/>
    </g>
-   <!-- Score: PLAN.md §1.1, 0.34 reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which the faster codec starts to win. Ratio = uncompressed size / memory used by zsmalloc. -->
+   <!-- Score: docs/plan.md §1.1, 0.34 reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which the faster codec starts to win. Ratio = uncompressed size / memory used by zsmalloc. -->
    <g style="fill: #555555" transform="translate(13.68 753.528) scale(0.085 -0.085)">
     <defs>
      <path id="NotoSans-Regular-4e" d="M 4243 0 

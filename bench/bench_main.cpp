@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
 // One binary per codec (QUETSCHN_CODEC is set by CMake), so that code layout and alignment of one
-// codec cannot shift the numbers of another. See PLAN.md §5.2 for the metrics.
+// codec cannot shift the numbers of another. See docs/plan.md §5.2 for the metrics.
 
 #include "compare.h"
 #include "harness.h"
