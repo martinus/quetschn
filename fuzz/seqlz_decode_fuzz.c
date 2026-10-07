@@ -8,6 +8,7 @@
  * Without a scratch only pages with raw literals are valid, and those decode the same with one: a page
  * that decodes without the scratch and not with it, or to other bytes, is a bug as well.
  */
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,8 +46,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     memset(scratch, 0x3c, SEQLZ_SCRATCH);
 
     r_with = seqlz_decode(tables, src, (unsigned int)size, with, scratch);
-    r_without = seqlz_decode(tables, src, (unsigned int)size, without, 0);
-    if (r_with != 0 && r_with != -1)
+    r_without = seqlz_decode(tables, src, (unsigned int)size, without, NULL);
+    if (r_with != 0 && r_with != -EINVAL)
         abort();
     if (r_without == 0 && (r_with != 0 || memcmp(with, without, SEQLZ_PAGE) != 0))
         abort();

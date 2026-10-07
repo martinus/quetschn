@@ -7,7 +7,10 @@
 
 #include "harness.h"
 #include "page_stats.h"
+// seqlz.h is C, written for the kernel
+extern "C" {
 #include "seqlz.h"
+}
 
 #include <algorithm>
 #include <array>

@@ -4,7 +4,7 @@
  * seqlz_default_tables_4k.inc, with
  *   quetschn-seqlz-train --corpus train-rz-phone5 --lit-sets
  */
-const unsigned char seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
+const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
     {8,  10, 10, 10, 10, 10, 10, 10, 10, 7,  6,  10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
      10, 10, 10, 4,  10, 8,  10, 10, 10, 10, 10, 7,  7,  8,  9,  7,  7,  7,  7,  7,  7,  7,  8,  8,  8,  8,  9,  8,  9,
      8,  8,  10, 8,  9,  10, 10, 7,  8,  7,  7,  7,  8,  8,  8,  7,  10, 9,  7,  7,  7,  7,  7,  10, 7,  7,  7,  8,  9,

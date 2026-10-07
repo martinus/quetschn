@@ -26,12 +26,12 @@ static int setup(struct quetschn_params* p) {
 
 static void release(struct quetschn_params* p) {
     quetschn_free(p->drv_data, &p->allocated);
-    p->drv_data = 0;
+    p->drv_data = NULL;
 }
 
 static void destroy(struct quetschn_stream* s) {
     quetschn_free(s->context, &s->allocated);
-    s->context = 0;
+    s->context = NULL;
 }
 
 /* seqlz-fast's context is the matcher's hash table */
@@ -67,7 +67,7 @@ static int fast_decompress(struct quetschn_params* p,
                            unsigned int* dst_len) {
     (void)s;
     quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
-    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst, 0))
+    if (*dst_len < SEQLZ_PAGE || seqlz_decode(p->drv_data, src, src_len, dst, NULL))
         return -1;
     *dst_len = SEQLZ_PAGE;
     return 0;

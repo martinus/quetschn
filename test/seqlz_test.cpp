@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
+// seqlz.h is C, written for the kernel
+extern "C" {
 #include "seqlz.h"
+}
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -137,7 +141,7 @@ TEST_CASE("seqlz: pages from random sequences come back, with every kind of copy
         REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), nullptr) == 0);
         CHECK(out == p.bytes);
         // and a byte less is not a valid page
-        CHECK(seqlz_decode(t.get(), c.data(), len - 1, out.data(), nullptr) == -1);
+        CHECK(seqlz_decode(t.get(), c.data(), len - 1, out.data(), nullptr) == -EINVAL);
     }
 }
 
@@ -216,15 +220,15 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     auto l = seqlz_default_own;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
     l.ll[0] = SEQLZ_MAX_BITS + 1;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL);
     l = seqlz_default_own;
     l.ml[0] = 1; // together with the others more codes than fit: over-subscribed
     l.ml[1] = 1;
     l.ml[2] = 1;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL);
     l = seqlz_default_own;
     std::memset(l.ml, 0, sizeof(l.ml)); // no code at all
-    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL);
     // A complete code: the tokens with SEQLZ_TOKEN_BITS (n) bits, then the first ones n - 1 bits, then
     // n - 2, until they fill the table of 2^n entries exactly.
     constexpr auto n = static_cast<unsigned char>(SEQLZ_TOKEN_BITS);
@@ -254,10 +258,10 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     complete();
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
     l.token[with_bits(n - 1U, 0)] = n;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1); // a gap of one n-bit code
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL); // a gap of one n-bit code
     complete();
     l.token[with_bits(n, 0)] = n + 1U;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1); // longer than n bits
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL); // longer than n bits
     // A complete code, and then one of n + 1 bits more: the Kraft sum over n bits is still complete,
     // only the length check stops the code of n + 1 bits.
     complete();
@@ -266,12 +270,12 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     l.token[b] = n - 2U;
     CHECK(seqlz_tables_init(t.get(), &l) == 0);
     l.token[a] = n + 1U;
-    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL);
     // a gap: every bit pattern must start a code, the decoder does not check
     l = seqlz_default_own;
     auto const shortest = std::min_element(l.ll, l.ll + SEQLZ_LEN_SYMBOLS);
     *shortest = static_cast<unsigned char>(*shortest + 1);
-    CHECK(seqlz_tables_init(t.get(), &l) == -1);
+    CHECK(seqlz_tables_init(t.get(), &l) == -EINVAL);
 }
 
 TEST_CASE("seqlz: any input is safe for the decoder") {
@@ -317,7 +321,7 @@ TEST_CASE("seqlz: any input is safe for the decoder") {
             }
         }
         auto const ret = seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), nullptr);
-        CHECK((ret == 0 || ret == -1));
+        CHECK((ret == 0 || ret == -EINVAL));
     }
 }
 
@@ -698,7 +702,7 @@ TEST_CASE("seqlz: the last sequence has ml - 4 = 0 and class 0, any other is inv
         CAPTURE(mlf);
         CAPTURE(cls);
         auto const bad = reference_encode(seqlz_default_own, seq, literals, mlf, cls);
-        CHECK(seqlz_decode(t.get(), bad.data(), static_cast<unsigned>(bad.size()), out.data(), nullptr) == -1);
+        CHECK(seqlz_decode(t.get(), bad.data(), static_cast<unsigned>(bad.size()), out.data(), nullptr) == -EINVAL);
     }
 }
 
@@ -715,7 +719,7 @@ TEST_CASE("seqlz: sequences that need more literals than the header has are reje
         auto const encoded = reference_encode(seqlz_default_own, seq, literals);
         auto const c = std::make_unique<unsigned char[]>(encoded.size());
         std::copy(encoded.begin(), encoded.end(), c.get());
-        CHECK(seqlz_decode(t.get(), c.get(), static_cast<unsigned>(encoded.size()), out.data(), nullptr) == -1);
+        CHECK(seqlz_decode(t.get(), c.get(), static_cast<unsigned>(encoded.size()), out.data(), nullptr) == -EINVAL);
     }
 }
 
@@ -765,13 +769,13 @@ TEST_CASE("seqlz: pages with coded literals come back, only with scratch, and ar
         coded_pages += coded ? 1 : 0;
         REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == p.bytes);
-        CHECK(seqlz_decode(t.get(), c.data(), len, out.data(), nullptr) == (coded ? -1 : 0));
+        CHECK(seqlz_decode(t.get(), c.data(), len, out.data(), nullptr) == (coded ? -EINVAL : 0));
         // flipped bits: never unsafe
         for (int f = 0; f < 3; ++f) {
             c[rng() % c.size()] ^= static_cast<unsigned char>(1U << (rng() % 8));
         }
         auto const ret = seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data());
-        CHECK((ret == 0 || ret == -1));
+        CHECK((ret == 0 || ret == -EINVAL));
     }
     CHECK(coded_pages > 1000);
 }
@@ -974,7 +978,7 @@ TEST_CASE("seqlz: the stream sizes take as many bits as the largest needs, 5 to 
             auto reserved = c;
             reserved[2] = static_cast<unsigned char>(reserved[2] | 1U << bit);
             CHECK(seqlz_decode(t.get(), reserved.data(), static_cast<unsigned>(reserved.size()), out.data(), scratch.data()) ==
-                  -1);
+                  -EINVAL);
         }
     }
     CHECK(widths.size() >= 4);
@@ -1010,7 +1014,7 @@ TEST_CASE("seqlz: a literal stream without its last byte is rejected") {
             set_stream_size(shorter, st, size - 1);
             shorter.erase(shorter.begin() + static_cast<std::ptrdiff_t>(end - 1));
             CHECK(seqlz_decode(t.get(), shorter.data(), static_cast<unsigned>(shorter.size()), out.data(), scratch.data()) ==
-                  -1);
+                  -EINVAL);
             ++checked;
         }
     }
@@ -1129,7 +1133,7 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             }
         }
         auto const ret = seqlz_decode(t.get(), c.data(), static_cast<unsigned>(c.size()), out.data(), scratch.data());
-        CHECK((ret == 0 || ret == -1));
+        CHECK((ret == 0 || ret == -EINVAL));
     }
 }
 

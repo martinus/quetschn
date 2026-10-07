@@ -3,7 +3,10 @@
 // The kernel's lz4, lzo and zstd, built in userspace from QUETSCHN_KERNEL_TREE. Only compiled when that is set.
 
 #include "kernel_codecs/zram_codec.h"
+// seqlz.h is C, written for the kernel
+extern "C" {
 #include "seqlz.h"
+}
 
 #include <doctest/doctest.h>
 
