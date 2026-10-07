@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT OR GPL-2.0-only
+# The zram backend here goes into the kernel tree and is written in its style, not this project's;
+# checkpatch checks it, see check.sh.
+DisableFormat: true

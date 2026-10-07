@@ -71,7 +71,7 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
 
 - CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, gcc 16 KiB
   release+sanitize (no kernel tree), fuzz 60 s per target, `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
-  (`tools/seqlz-ref/check.sh`, `tools/check-links.py`); `ci-ok` is the one required check (branch
+  (`tools/seqlz-ref/check.sh`, `tools/check-links.py`), `kernel-port` (`tools/kernel-port/check.sh`); `ci-ok` is the one required check (branch
   protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
   its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.
 - `src/` is in the kernel's style, `src/.clang-format`: tabs, 80 columns, `u8 *p`. clang-format does not

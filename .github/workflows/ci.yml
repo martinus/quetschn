@@ -124,9 +124,27 @@ jobs:
 
   # The one required check. A job whose dependency failed is skipped, and a skipped required check
   # counts as passed, so this needs if: always() and has to look at every result itself.
+  # The codec as the kernel would have it, tools/kernel-port/: written into the tree of KERNEL_COMMIT,
+  # built with W=1 without a warning, kernel-doc without one. checkpatch's findings are printed, they
+  # do not fail the job.
+  kernel-port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: tools to build a kernel
+        run: sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev
+      - name: fetch the kernel tree
+        run: |
+          git init -q kernel && cd kernel
+          git remote add origin https://github.com/torvalds/linux.git
+          git fetch -q --depth 1 origin ${{ env.KERNEL_COMMIT }}
+          git checkout -q FETCH_HEAD
+      - name: port, build and check
+        run: tools/kernel-port/check.sh kernel
+
   ci-ok:
     if: always()
-    needs: [format, test, fuzz, same-bytes, docs]
+    needs: [format, test, fuzz, same-bytes, docs, kernel-port]
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -135,3 +153,4 @@ jobs:
           test "${{ needs.fuzz.result }}" = success
           test "${{ needs.same-bytes.result }}" = success
           test "${{ needs.docs.result }}" = success
+          test "${{ needs.kernel-port.result }}" = success

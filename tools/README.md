@@ -8,6 +8,7 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | --- | --- |
 | [`collect/`](collect) | the page collectors: `quetschn-collect-resident` samples resident memory, `quetschn-import-raw` turns a `dd` of a zram device into a corpus, `quetschn-split-corpus` and `quetschn-sample-corpus` split it and draw samples |
 | [`seqlz-ref/`](seqlz-ref) | two decoders written from [docs/format.md](../docs/format.md) alone, slow on purpose, in Python and in C. The tests and the fuzzers check `seqlz_decode()` against the C one, and `check.sh`, run by CI, checks the spec's table hashes and decodes pages `src/` compressed with the Python one |
+| [`kernel-port/`](kernel-port) | `port.py` writes the codec into a Linux tree as the kernel would have it: `lib/seqlz/`, `include/linux/seqlz.h`, Kconfig, and a zram backend `seqlz` without the experiments of `zram-vm/`. `check.sh`, run by CI, builds that in a copy of a tree and runs checkpatch and kernel-doc on it |
 | [`zram-vm/`](zram-vm) | `run.sh` builds a kernel with seqlz as a zram backend, boots it in a VM, and measures zram's reads and writes, or with `MODE=swap` the whole page fault |
 | [`swap-fault/`](swap-fault) | the whole page fault on a running Linux as root, e.g. a rooted phone |
 | [`phone-apps/`](phone-apps) | the app launch test on a rooted Android phone: 25 apps in turn, zram on each codec, a reboot before every run |
