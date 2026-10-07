@@ -93,7 +93,8 @@ function(quetschn_kernel_codec target libdir extra_flags)
     target_include_directories(${target} PRIVATE
         "${CMAKE_SOURCE_DIR}/bench/kernel_codecs/compat" "${quetschn_kernel_include}"
         "${QUETSCHN_KERNEL_TREE}/${libdir}" "${CMAKE_SOURCE_DIR}/bench/kernel_codecs")
-    target_include_directories(${target} SYSTEM PRIVATE "${quetschn_cc_include}")
+    # as an option: CMake drops the compiler's own directory from target_include_directories() as implicit
+    target_compile_options(${target} PRIVATE "SHELL:-isystem ${quetschn_cc_include}")
     target_link_libraries(${target} PUBLIC quetschn_kernel_runtime)
 endfunction()
 
