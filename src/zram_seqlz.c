@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz (src/seqlz.h) as a zram backend would call it: "seqlz-fast" with raw
+ * seqlz as a zram backend calls it, for the benchmarks: "seqlz-fast" with raw
  * literals, "seqlz-fast-lit" with the literals Huffman coded where that pays.
- * The tables are part of the format (docs/format.md), so zram's dictionary
- * parameter is ignored, like lzo ignores it.
+ * The tables are fixed, part of the format (docs/format.md), so zram's
+ * dictionary is ignored, as lzo ignores it.
  */
 #include "seqlz.h"
 #include "zram_codec.h"
@@ -18,8 +18,8 @@ static int setup(struct quetschn_params *p)
 	if (!t)
 		return -1;
 	/*
-	 * the encoder needs a code for every symbol; the tables are fixed, this
-	 * keeps a bad retraining out
+	 * the encoder needs a code for every symbol; the tables are fixed, so
+	 * this only catches a training that went wrong
 	 */
 	if (seqlz_tables_init(t, &seqlz_default_own) || !seqlz_all_symbols(t)) {
 		quetschn_free(t, &p->allocated);

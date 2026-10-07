@@ -3,32 +3,32 @@
 #define SEQLZ_PAGE_LZ_H
 
 /*
- * seqlz's matcher, seqlz_find, and the literal and match copies of its decoder.
- * Everything static inline, so that it is inlined into the loops of seqlz.c.
+ * The parts of seqlz that are plain LZ: the matcher, which finds the sequences
+ * of a page, and the decoder's copies of literals and matches. All of it is
+ * static inline, so that it ends up inside the loops of seqlz.c.
  */
 
 #include "seqlz_compat.h"
 
-/*
- * 12 for 4 KiB pages, 14 for 16 KiB, set for the whole build (CMake's
- * QUETSCHN_PAGE_BITS)
- */
+/* 12 for 4 KiB pages, 14 for 16 KiB, the same for the whole build */
 #ifndef QUETSCHN_PAGE_BITS
 #define QUETSCHN_PAGE_BITS 12
 #endif
 #define PAGE_LZ_PAGE (1U << QUETSCHN_PAGE_BITS)
 /*
- * The matcher's table has 1 << PAGE_LZ_HASH_BITS entries of 2 bytes: 8 KiB for
- * 4 KiB pages, where 2048 slots were 2.7 bytes per page larger and no faster,
- * and 8192 cost the A55 1.6 us per write ("Six choices made on the PC, measured
- * on the phone", 5); 16 KiB for 16 KiB pages, lz4's size.
+ * The matcher's hash table has 1 << PAGE_LZ_HASH_BITS entries of 2 bytes, 8 KiB
+ * for 4 KiB pages. With 2048 entries pages were 2.7 bytes larger and the
+ * compressor no faster; with 8192 the A55 wrote a page 1.6 us slower ("Six
+ * choices made on the PC, measured on the phone", 5). For 16 KiB pages it is
+ * 16 KiB, as lz4's table.
  */
 #define PAGE_LZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
 
 /*
- * Prefetch for reading. Without SSE, as the kernel builds x86-64, clang drops
- * __builtin_prefetch and the kernel's prefetch() with it, gcc does not. Every
- * x86-64 CPU has prefetcht0.
+ * Asks the CPU to load a cache line, without waiting for it. The kernel builds
+ * x86-64 without SSE, and then clang drops __builtin_prefetch(), and the
+ * kernel's prefetch() with it; gcc keeps it. Every x86-64 CPU has prefetcht0,
+ * so here it is the instruction itself.
  */
 #if defined(__x86_64__) && !defined(__SSE__)
 #define PAGE_LZ_PREFETCH(p) __asm__("prefetcht0 %0" : : "m"(*(const char *)(p)))
@@ -37,10 +37,12 @@
 #endif
 
 /*
- * Every cache line of [p, p + size), size a multiple of 512: 8 lines of 64
- * bytes per iteration, the line size of x86-64, the Cortex-A55 and the A76. A
- * loop of one line per iteration was 4 instructions per line, about 500 per
- * page for seqlz's tables, 3% of a page's decode on a Cortex-A55.
+ * Prefetches every cache line of [p, p + size); size is a multiple of 512. In
+ * a swap-in the decoder's tables are often no longer in the cache: asking for
+ * all of their lines at once lets the misses overlap, instead of one after the
+ * other as the decoder runs into them. 8 lines of 64 bytes per iteration: one
+ * line per iteration took 4 instructions per line, 3% of a page's decode on
+ * the Cortex-A55.
  */
 static inline void prefetch_lines(const void *p, unsigned long size)
 {
@@ -60,10 +62,10 @@ static inline void prefetch_lines(const void *p, unsigned long size)
 }
 
 /*
- * The u16 at the start of a page, from bytes. Not get_unaligned_le16() and
- * put_unaligned_le16(): with them clang gave seqlz_decode() and code_literals()
- * other registers, and in the kernel VM a page read 0.04 us and written 0.08 us
- * slower (#108).
+ * The u16 at the start of a page, byte by byte. get_unaligned_le16() and
+ * put_unaligned_le16() would do the same, but with them clang compiled
+ * seqlz_decode() and code_literals() with other registers, and in the kernel VM
+ * a page was read 0.04 us and written 0.08 us slower.
  */
 static inline void store16(u8 *p, unsigned int v)
 {
@@ -77,8 +79,9 @@ static inline unsigned int load16(const u8 *p)
 }
 
 /*
- * a hash of the low 5 bytes of v, as zstd's: << 24 keeps only them,
- * 889523592379 is zstd's prime5bytes
+ * A hash of the low 5 bytes of v, as zstd computes it: the shift by 24 drops
+ * the other 3, the multiply mixes them, and the top bits are the hash.
+ * 889523592379 is zstd's prime5bytes.
  */
 static inline unsigned int hash5(u64 v)
 {
@@ -86,17 +89,21 @@ static inline unsigned int hash5(u64 v)
 			      (64U - PAGE_LZ_HASH_BITS));
 }
 
-/* number of equal bytes at p and q, p after q, up to end */
+/*
+ * How many bytes at p are the same as at q, at most up to end: the length of a
+ * match, q is where it copies from.
+ */
 static inline unsigned int count(const u8 *p, const u8 *q, const u8 *end)
 {
 	const u8 *start = p;
 
 	/*
-	 * The first 16 bytes without a branch: whether the first 8 are equal
-	 * mispredicted, 24% of the matches are longer than 11 bytes. One ctz,
-	 * of the first word that differs: two, combined, took more
-	 * instructions, and 74% of the matches end in the first 8 bytes. With
-	 * the top bit set, a ctz of 7 bytes stands for 8.
+	 * The first 16 bytes are compared without a branch between the two
+	 * halves of 8: whether a match ends in the first 8 bytes is hard to
+	 * predict, 74% do and 24% are longer than 11 bytes. x is the first half
+	 * that differs, and its lowest set bit is in the first byte that
+	 * differs, the bytes are little endian. x is never 0 here, the top bit
+	 * set tells the compiler so: __builtin_ctzll() of 0 is undefined.
 	 */
 	if (end - p >= 16) {
 		u64 x1 = get_unaligned_le64(p) ^ get_unaligned_le64(q),
@@ -127,46 +134,51 @@ static inline unsigned int count(const u8 *p, const u8 *q, const u8 *end)
 }
 
 /*
- * What the matcher hands on per sequence: the literals before the match, the
- * match length, 0 for the last sequence, and the offset.
+ * The matcher calls this for every sequence it finds, with the literals before
+ * the match, the match length (0 for the last sequence) and the offset.
  */
 typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
 			unsigned int ml, unsigned int off);
 
 /*
- * Greedy, like lz4's fast mode: at every position the last offset and one
- * candidate from a hash of 5 bytes. With 5 instead of 4 the matcher finds fewer
- * sequences: 5% fewer compress cycles for 0.6 points of memory, and in the
- * kernel 10% less write time at p99 (docs/explored-designs.md). Matches of 4
- * bytes still come from the last offset. Every position is tried, without lz4's
- * growing step after a long run without a match: the step needed the start of
- * the literals in the loop, and without it the pages that compress were 5%
- * faster, the ones zram stores raw 2.3 us slower (docs/explored-designs.md,
- * "The matcher without its step"). Each sequence goes to emit as soon as it is
- * found; inlined with the encoder that is one pass over the page, and the same
- * matcher feeds seqlz_find.
+ * Finds the sequences of a page, greedy like lz4's fast mode: at each position
+ * it tries two places where the next 4 bytes might have been before, and takes
+ * the first match it finds. One is the offset of the match before, which
+ * repeats often. The other is the last position whose 5 bytes had the same
+ * hash, from the hash table. Hashing 5 bytes instead of 4 finds fewer and
+ * longer matches: 5% fewer cycles to compress, 0.6% more memory, and 10% less
+ * time per write at p99 in the kernel. Matches of 4 bytes still come from the
+ * repeated offset.
+ *
+ * Unlike lz4 it tries every position, also after a long stretch without a
+ * match, where lz4 starts to skip. Skipping needed more state in the loop:
+ * without it, pages that compress were written 5% faster and pages that do not
+ * 2.3 us slower ("The matcher without its step").
+ *
+ * Each sequence goes to emit() as soon as it is found. With the encoder's
+ * emit() inlined, finding and writing the sequences is one pass over the page.
  */
 static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 				       void *ctx)
 {
 	/*
-	 * positions, not pointers: the end is a constant, and the position for
-	 * the table is at hand
+	 * Positions in the page, not pointers: the limit is a constant, and the
+	 * table stores positions. The last 8 bytes are not tried, every try
+	 * reads 8 bytes.
 	 */
-	/* 8 bytes readable for the hash and the comparison */
 	const unsigned int limit = PAGE_LZ_PAGE - 8U;
 	unsigned int pos = 1, anchor = 0, last = 1, h, cand;
 	/*
-	 * -last as an index, so the load at the last offset needs no
-	 * subtraction of its own
+	 * The repeated offset as a negative index, src + pos + back, so the
+	 * load needs no subtraction of its own.
 	 */
 	long back = -1;
 	/*
-	 * This position's 8 bytes, hash, table entry and the 4 bytes there, all
-	 * loaded one position ahead: on the in-order Cortex-A55 each step
-	 * waited for the one before, 3.4% of the compressor's cycles. The entry
-	 * is read after the position before was stored, as before, so the
-	 * matches are the same.
+	 * The 8 bytes at pos, their hash, the table's entry and the 4 bytes
+	 * at that entry, each loaded one position ahead. Each of them needs
+	 * the one before, and the in-order Cortex-A55 waited for every load,
+	 * 3.4% of the compressor's cycles. The entry is still read after the
+	 * position before it was stored, so the matches are the same.
 	 */
 	u64 v;
 	u32 cand_bytes;
@@ -180,18 +192,15 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 	while (pos < limit) {
 		u64 v_next = get_unaligned_le64(src + pos + 1);
 		unsigned int h_next = hash5(v_next), m, len;
-		/*
-		 * the first 4 bytes of the 8 for the hash, without a
-		 * second load
-		 */
+		/* the first 4 of those 8 bytes, without another load */
 		u32 cur = (u32)v;
 		/*
-		 * One branch for both candidates, not three: the last offset
-		 * always points into the page (it starts at 1, the search at
-		 * position 1), and so does a table entry, so both can be read
-		 * before it is known whether they count. Three branches
-		 * mispredicted almost twice as often as lz4's one. The table is
-		 * cleared for each page, so every entry is before pos.
+		 * Both candidates are read before either is tested, and one
+		 * branch tests both: with a branch for each, the matcher
+		 * mispredicted almost twice as often as lz4. Reading both is
+		 * always safe. The repeated offset starts at 1 and the search
+		 * at position 1, and the table is cleared for each page, so
+		 * both point into the page, before pos.
 		 */
 		unsigned int rep_hit = get_unaligned_le32(src + pos + back) ==
 				       cur;
@@ -207,7 +216,10 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 			continue;
 		}
 		m = rep_hit ? pos - last : cand;
-		/* backwards into the literals, then forwards */
+		/*
+		 * The match may have started before pos: extend it backwards
+		 * into the literals, then count how far it goes forwards.
+		 */
 		while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {
 			pos--;
 			m--;
@@ -220,8 +232,9 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 		pos += len;
 		anchor = pos;
 		/*
-		 * a position near the end of the match, 2 bytes before it as in
-		 * lz4's fast mode, for the next matches
+		 * The positions inside the match were skipped. One of them, 2
+		 * bytes before its end as lz4's fast mode does, goes into the
+		 * table, so later matches can find it.
 		 */
 		if (pos < limit) {
 			table[hash5(get_unaligned_le64(src + pos - 2))] =
@@ -236,17 +249,17 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 }
 
 /*
- * The copies of a fixed 8 or 16 bytes are __builtin_memcpy(), as lib/lz4's
- * LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang does not inline the kernel's
- * memcpy() in the Mi 9T's 4.14, and every copy was a call.
+ * The copies below are __builtin_memcpy() of 8 bytes, as lib/lz4's
+ * LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang did not inline the kernel's
+ * memcpy() in the Mi 9T's 4.14, and every copy of 8 bytes was a call.
  */
 
 /*
- * The literals of a sequence, nl bytes from lit to d; the caller has checked
- * that they fit in both. 16 bytes at a time while there are 16 bytes of room
- * behind, in the page and in the input; may write and read past nl, which is
- * overwritten or ignored. The rest one by one, at most 15 bytes at the end of
- * the page or of the input.
+ * Copies the nl literals of a sequence from lit to d; the caller has checked
+ * that they fit. It copies 16 bytes at a time, also past nl, as long as 16
+ * bytes fit in the page and in the input: what it writes past nl, the next
+ * sequence overwrites. Only near the end of the page or of the input does it
+ * copy byte by byte, at most 15 bytes.
  */
 static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
 					  const u8 *s_end, unsigned int nl)
@@ -254,8 +267,8 @@ static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
 	unsigned int k = 0;
 
 	/*
-	 * most literal runs are shorter than 16 bytes: one unconditional copy,
-	 * no loop to mispredict
+	 * Most sequences have fewer than 16 literals, so the first 16 bytes are
+	 * one copy without a loop, which could mispredict.
 	 */
 	if ((unsigned int)(d_end - d) >= 16U &&
 	    (unsigned int)(s_end - lit) >= 16U) {
@@ -282,25 +295,24 @@ static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
 }
 
 /*
- * per offset below 8 the largest multiple of off up to 8, for copy_match() and
- * seqlz.c's fast path
+ * For an offset below 8, the largest multiple of it up to 8: how far a copy of
+ * 8 bytes of a repeated pattern can go on, see copy_match().
  */
 static const u8 page_lz_step_for[8] = { 0, 8, 8, 6, 8, 5, 6, 7 };
 
 /*
- * A match of len bytes, off back from d; the caller has checked that 0 < off <=
- * d - start of the page and that len fits. 8 bytes at a time while there are 8
- * bytes of room behind in the page; may write past len, which the next sequence
- * overwrites. The rest one by one, at most 7 bytes at the end of the page; a
- * run to the end of the page byte by byte made the slowest pages 10 times
- * slower than lz4.
+ * Copies a match of len bytes that starts off bytes before d; the caller has
+ * checked that it fits and that off points into the page. Like the literals, 8
+ * bytes at a time as long as 8 bytes fit in the page, also past len; only the
+ * last 7 bytes of a page are copied one by one. Copying byte by byte up to the
+ * end of the page made the slowest pages 10 times slower than lz4.
  *
- * For an offset below 8 the first 8 bytes of the match are built in a register:
- * the off bytes before the match, repeated with shifts, then one 8-byte store.
- * From there each step copies from step bytes back, the largest multiple of off
- * up to 8, which is exactly what the previous store wrote, so the load gets it
- * from that store. Writing the first bytes one by one made the load wait for
- * four stores, and a loop over them mispredicted its exit.
+ * An offset below 8 overlaps the bytes it writes: off = 1 repeats one byte,
+ * off = 2 two bytes, and so on. Then the off bytes before d are repeated to 8
+ * bytes in a register, with shifts, and stored. The same 8 bytes fit again
+ * every step bytes, a multiple of off, so the rest are stores of that register
+ * only. Writing the first bytes one by one made each load wait for the stores
+ * before it, and the loop over them mispredicted its end.
  */
 static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 				       unsigned int len)
@@ -313,7 +325,10 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 			u64 w, pat;
 			unsigned int bits = 8U * off;
 
-			/* d - off + 7 < d + 8 <= d_end: inside the page */
+			/*
+			 * reads d - off up to d - off + 7, which is below
+			 * d + 8 <= d_end: inside the page
+			 */
 			w = get_unaligned_le64(d - off);
 			pat = w & ((1ULL << bits) - 1ULL);
 			pat |= pat << bits;
@@ -322,25 +337,22 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 			pat |= (pat << ((4U * bits) & 63U)) &
 			       (0ULL - (u64)(4U * bits < 64U));
 			put_unaligned_le64(pat, d);
-			/*
-			 * step bytes on, a multiple of off, it is the same 8
-			 * bytes again: stores only, without a load that waits
-			 * for the store before it
-			 */
+			/* the same 8 bytes every step bytes, stores only */
 			for (k = step;
 			     k < len && (unsigned int)(d_end - d) >= k + 8U;
 			     k += step)
 				put_unaligned_le64(pat, d + k);
 			back = 0;
 		} else {
-			back = 0; /* at the end of the page: one by one below */
+			back = 0; /* less than 8 bytes left: byte by byte */
 		}
 	} else if ((unsigned int)(d_end - d) >= 16U) {
 		/*
-		 * 79% of the matches are at most 16 bytes: two unconditional
-		 * copies, the second reads only bytes the first wrote or that
-		 * were there before, because off >= 8. Four copies, for 91% of
-		 * them, were faster at p50 and slower at p99: the slowest pages
+		 * 79% of the matches are at most 16 bytes, so 16 bytes are
+		 * copied without a loop. With off >= 8 the second copy reads
+		 * bytes the first one wrote or that were there before, so the
+		 * order is right. 32 bytes, enough for 91% of the matches, made
+		 * the median page faster and the slowest ones slower: those
 		 * have many short matches, and copied 32 bytes for each.
 		 */
 		u64 a, b;
