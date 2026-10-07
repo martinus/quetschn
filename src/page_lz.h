@@ -17,8 +17,9 @@ typedef unsigned char u8;
 #    define QUETSCHN_PAGE_BITS 12
 #endif
 #define PAGE_LZ_PAGE (1U << QUETSCHN_PAGE_BITS)
-/* the matcher's table has 1 << PAGE_LZ_HASH_BITS unsigned shorts: 8 KiB for 4 KiB pages, 16 KiB for
- * larger ones, lz4's size */
+/* The matcher's table has 1 << PAGE_LZ_HASH_BITS unsigned shorts: 8 KiB for 4 KiB pages, where 2048
+ * slots were 2.7 bytes per page larger and no faster, and 8192 cost the A55 1.6 us per write ("Six choices
+ * made on the PC, measured on the phone", 5); 16 KiB for 16 KiB pages, lz4's size. */
 #define PAGE_LZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
 
 #define ALWAYS_INLINE inline __attribute__((always_inline))
@@ -31,9 +32,9 @@ typedef unsigned char u8;
 #    define PAGE_LZ_PREFETCH(p) __builtin_prefetch(p)
 #endif
 
-/* Every cache line of [p, p + size), size a multiple of 512: 8 lines per iteration. A loop of one line
- * per iteration was 4 instructions per line, about 500 per page for seqlz's tables, 3% of a page's
- * decode on a Cortex-A55. */
+/* Every cache line of [p, p + size), size a multiple of 512: 8 lines of 64 bytes per iteration, the
+ * line size of x86-64, the Cortex-A55 and the A76. A loop of one line per iteration was 4 instructions
+ * per line, about 500 per page for seqlz's tables, 3% of a page's decode on a Cortex-A55. */
 static inline void prefetch_lines(const void* p, unsigned long size) {
     const u8* q = p;
     const u8* const end = q + size;
@@ -86,7 +87,7 @@ static inline void store64(u8* p, u64 v) {
     __builtin_memcpy(p, &v, 8);
 }
 
-/* a hash of the low 5 bytes of v, as zstd's */
+/* a hash of the low 5 bytes of v, as zstd's: << 24 keeps only them, 889523592379 is zstd's prime5bytes */
 static inline unsigned int hash5(u64 v) {
     return (unsigned int)(((v << 24) * 889523592379ULL) >> (64U - PAGE_LZ_HASH_BITS));
 }
@@ -188,7 +189,8 @@ static ALWAYS_INLINE void match_page(unsigned short* table, const u8* src, emit_
         emit(ctx, src + anchor, pos - anchor, len, last);
         pos += len;
         anchor = pos;
-        /* a position near the end of the match, for the next matches */
+        /* a position near the end of the match, 2 bytes before it as in lz4's fast mode, for the next
+         * matches */
         if (pos < limit) {
             table[hash5(load64(src + pos - 2))] = (unsigned short)(pos - 2);
             v = load64(src + pos);
@@ -232,6 +234,9 @@ static ALWAYS_INLINE void copy_literals(u8* d, const u8* d_end, const u8* lit, c
         d[k] = lit[k];
 }
 
+/* per offset below 8 the largest multiple of off up to 8, for copy_match() and seqlz.c's fast path */
+static const u8 page_lz_step_for[8] = {0, 8, 8, 6, 8, 5, 6, 7};
+
 /*
  * A match of len bytes, off back from d; the caller has checked that 0 < off <= d - start of the page
  * and that len fits.
@@ -245,8 +250,7 @@ static ALWAYS_INLINE void copy_literals(u8* d, const u8* d_end, const u8* lit, c
  * and a loop over them mispredicted its exit.
  */
 static ALWAYS_INLINE void copy_match(u8* d, const u8* d_end, unsigned int off, unsigned int len) {
-    static const u8 step_for[8] = {0, 8, 8, 6, 8, 5, 6, 7};
-    unsigned int step = off >= 8 ? 8U : step_for[off & 7U], back = off >= 8 ? off : step, k = 0;
+    unsigned int step = off >= 8 ? 8U : page_lz_step_for[off & 7U], back = off >= 8 ? off : step, k = 0;
 
     if (off < 8) {
         if ((unsigned int)(d_end - d) >= 8U) {

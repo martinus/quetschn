@@ -43,6 +43,7 @@ static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what
 		const volatile unsigned char *p = params->drv_data;
 		unsigned long k, sum = 0;
 
+		/* one byte of each cache line of 64 bytes */
 		for (k = 0; k < seqlz_tables_size(); k += 64)
 			sum += p[k];
 		for (k = 0; k < SEQLZ_SCRATCH; k += 64)
@@ -73,7 +74,11 @@ static int sz_setup_params(struct zcomp_params *params)
 		return -EINVAL;
 	}
 	params->drv_data = t;
-	/* the warm-up page: random letters, skewed, and spaces: about 100 sequences and coded literals */
+	/*
+	 * the warm-up page: random letters, skewed, and spaces: about 100 sequences and coded literals. x is
+	 * the generator of the C standard's example rand(), its upper 16 bits used: one byte in 5 a space,
+	 * the others one of the first 1 to 16 letters in English order of frequency, by the top 4 bits.
+	 */
 	st = kzalloc(sizeof(*st), GFP_KERNEL);
 	if (st) {
 		unsigned int x = 1;
@@ -138,7 +143,8 @@ static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, s
 
 static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
-	/* EXPERIMENT: the compressed data requested first, here instead of in zram_drv.c */
+	/* EXPERIMENT: the compressed data requested first, here instead of in zram_drv.c, every cache
+	 * line from the second on, as quetschn_prefetch_page() of bench/kernel_codecs/zram_codec.h */
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			PAGE_LZ_PREFETCH((const char *)req->src + q);
