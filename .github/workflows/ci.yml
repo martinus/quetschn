@@ -86,30 +86,45 @@ jobs:
           name: fuzz-crashes
           path: build-fuzz/crashes
 
-  # The format is little endian on every CPU: on big-endian s390x, under qemu, the same compressed bytes
-  # as on x86-64, and every page decodes again. Plain C, so that it builds in seconds under qemu.
-  big-endian:
+  # The same compressed bytes on every CPU, and every page decodes again: on big-endian s390x under
+  # qemu, and on 32-bit x86, which the kernel's build bots build too, as on x86-64. Plain C, so that it
+  # builds in seconds under qemu.
+  same-bytes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: s390x
+      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - run: |
           src="test/seqlz_endian.c src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
           gcc -O2 -Isrc -o le $src && ./le | tee le.txt
+          gcc -m32 -O2 -Isrc -o le32 $src && ./le32 | tee le32.txt
           docker run --rm --platform linux/s390x -v "$PWD:/w" -w /w gcc:14 sh -c "gcc -O2 -Isrc -o be $src && ./be" | tee be.txt
+          diff le.txt le32.txt
           diff le.txt be.txt
+
+  # The docs against the code: the tables' hashes in docs/format.md, and pages compressed by src/
+  # decoded by the decoder written from docs/format.md alone. And every relative link and #anchor in
+  # the Markdown files, which a renamed heading breaks without anything else failing.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: tools/seqlz-ref/check.sh
+      - run: tools/check-links.py
 
   # The one required check. A job whose dependency failed is skipped, and a skipped required check
   # counts as passed, so this needs if: always() and has to look at every result itself.
   ci-ok:
     if: always()
-    needs: [format, test, fuzz, big-endian]
+    needs: [format, test, fuzz, same-bytes, docs]
     runs-on: ubuntu-latest
     steps:
       - run: |
           test "${{ needs.format.result }}" = success
           test "${{ needs.test.result }}" = success
           test "${{ needs.fuzz.result }}" = success
-          test "${{ needs.big-endian.result }}" = success
+          test "${{ needs.same-bytes.result }}" = success
+          test "${{ needs.docs.result }}" = success

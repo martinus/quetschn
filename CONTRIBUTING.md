@@ -89,6 +89,10 @@ in the same pull request:
 3. A long fuzz run before the merge: 1 billion inputs without a crash, the gate of
    [Phase 4](docs/plan.md#phase-4-reference-implementation-format-spec-fuzzing-20-weeks).
 
+`tools/seqlz-ref/check.sh` checks the first two points in seconds, and CI runs it: the hashes in
+docs/format.md against the tables in `src/`, and pages that `src/` compressed decoded by
+`seqlz_ref.py`.
+
 ```sh
 fuzz/smoke.sh 60 build-fuzz                 # what CI runs, a minute per target, needs clang
 AFL=$HOME/AFLplusplus fuzz/afl.sh out 30    # 30 AFL++ instances in the background, a third per target
@@ -120,5 +124,7 @@ starts with its SPDX line:
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 ```
 
-CI has one required check, `ci-ok`. It needs the format check, the tests with gcc and clang, on x86-64
-and arm64, the fuzz smoke run and the big-endian run to pass.
+CI has one required check, `ci-ok`. It needs these to pass: the format check, the tests with gcc and
+clang on x86-64 and arm64, the fuzz smoke run, the same compressed bytes on x86-64, 32-bit x86 and
+big-endian s390x, and the docs: `tools/seqlz-ref/check.sh` and `tools/check-links.py`, both quick to
+run before a push.

@@ -398,7 +398,8 @@ Each phase ends in an artifact and a gate. The durations are calendar weeks at 3
 - [x] `.gitignore` with `corpus/` and `*.pages` from the first commit. **Page dumps are never committed
   or published**, they contain keys, passwords and personal data.
 - [x] CMake, C++20 for the tools and the harness, C11 for the codec.
-- [x] CI from the first day: ASan and UBSan, gcc and clang, arm64, big-endian on s390x under qemu.
+- [x] CI from the first day: ASan and UBSan, gcc and clang, arm64, the same bytes on big-endian s390x
+  under qemu and on 32-bit x86, the spec's table hashes, the links of the docs.
 - [ ] A CI job that compiles the codec with the kernel's flags
   (`-std=gnu11 -ffreestanding -nostdinc -Wframe-larger-than=256 -fno-builtin`), and `checkpatch.pl`.
 - [x] [`CONTRIBUTING.md`](../CONTRIBUTING.md), with `Signed-off-by:` (DCO) as the kernel does it.
@@ -792,7 +793,7 @@ tools/                      see tools/README.md
   seqlz-bound/, seqlz-worst/  bits per field against their entropy; the worst case
   seqlz-viz/                  the two pages that show seqlz step by step
 docs/                       this plan, the format, how seqlz works, measuring, explored designs, plots
-.github/workflows/ci.yml    gcc and clang, ASan and UBSan, arm64, big-endian, fuzz smoke run, format
+.github/workflows/ci.yml    gcc and clang, ASan and UBSan, arm64, s390x and 32-bit, fuzz smoke, format, docs
 ```
 
 ---
