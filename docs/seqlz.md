@@ -12,10 +12,10 @@
 
 This document explains how `seqlz` works for someone who has not written a compressor before. Every
 term is explained where it is first used, and the [glossary](#glossary) at the end lists them all.
-The exact bytes of a compressed page, for writing a decoder, are in [FORMAT.md](../FORMAT.md); the
+The exact bytes of a compressed page, for writing a decoder, are in [format.md](format.md); the
 history of every idea, also of the ones that failed, is in [explored-designs.md](explored-designs.md).
-The code is in [`explore/seqlz.c`](../explore/seqlz.c), [`explore/seqlz.h`](../explore/seqlz.h) and
-[`explore/page_lz.h`](../explore/page_lz.h).
+The code is in [`src/seqlz.c`](../src/seqlz.c), [`src/seqlz.h`](../src/seqlz.h) and
+[`src/page_lz.h`](../src/page_lz.h).
 
 ## How to read this
 
@@ -42,13 +42,16 @@ The code is in [`explore/seqlz.c`](../explore/seqlz.c), [`explore/seqlz.h`](../e
   takes 1035 bytes; 0.5 points less means about 20 bytes less.
 * **When it was measured.** [The result](#the-result-lz4s-time-zstds-size-almost), its charts and
   the cycle counts in [why it is fast](#why-it-is-nearly-as-fast-as-lz4) are from 5th October 2026,
-  with the format as it is now. The breakdowns further down, where the bytes and bits of a page go,
-  were measured before, with the code tables used until 5th October and stream sizes of 2 bytes each.
-  The code lengths in the examples are from the tables now in the code. These are trained on pages that programs had in RAM on a desktop,
-  not the two dumps, and on a phone's zram dump, and change the stored size by about 0.4%
-  ([explored-designs.md](explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
-  The stream sizes now take as many bits as the largest needs, which stores a page about 5 bytes
-  smaller ([explored-designs.md](explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
+  with the tables used before 7th October. The tables of 7th October, now in the code, store the pages
+  of the first dump 0.3% and of the second 4% smaller than those of 6th October, at the same speed
+  ([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
+  They are trained on pages that programs had in RAM on a desktop, on a third zram dump of that desktop,
+  and on a phone's zram dump, not on the two dumps measured here. The breakdowns further down, where the
+  bytes and bits of a page go, were measured earlier still, with the tables used until 5th October and
+  stream sizes of 2 bytes each. The stream sizes now take as many bits as the largest needs, which
+  stores a page about 5 bytes smaller
+  ([explored-designs.md](explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
+  The code lengths and the byte counts in the examples are from the tables now in the code.
 
 ## Contents
 
@@ -148,7 +151,7 @@ rare sequence gets up to 11, the rarest 16.
 
 > [!TIP]
 > For the page of pointers above, `lz4` needs 2058 bytes, about 4 bytes per pointer: a byte for
-> `ll` and `ml`, the literal, and 2 bytes of offset. `seqlz-fast-lit` needs 664 bytes, about 10.4 bits
+> `ll` and `ml`, the literal, and 2 bytes of offset. `seqlz-fast-lit` needs 730 bytes, about 11.4 bits
 > per pointer: a 4-bit token and the literal byte, Huffman coded too, and no offset at all, because it
 > is the same as before. `lzo-rle` needs 1564 bytes and `zstd` 434.
 
@@ -181,7 +184,7 @@ zram has decompressed it. Four things follow from that, and they shape everythin
 >    counts: the project's limit is `lz4`'s work space, 16 416 bytes per CPU.
 
 To compare codecs by their time, writes and reads go into one number, the time part of the score of
-[PLAN.md](../PLAN.md#11-the-score-memory-against-time-not-bars):
+[plan.md](plan.md#11-the-score-memory-against-time-not-bars):
 
 $$\text{time per page written} = t_\text{write} + 0.34 \cdot t_\text{read}$$
 
@@ -196,7 +199,7 @@ The stored size is the other side. Which codec is best depends on how many bytes
 page is worth to you, an exchange rate between time and size. Say it is 100 bytes per µs. Going from
 `lzo-rle` to `seqlz-fast-lit` costs 7.36 − 6.04 = 1.32 µs, worth 132 bytes, and saves 1361 − 1035 =
 326 bytes: worth it. Going on to `zstd` costs 7.93 µs more, worth 793 bytes, and saves 23 bytes: not
-worth it. PLAN.md's score adds both with such a rate.
+worth it. plan.md's score adds both with such a rate.
 
 ## The result: lz4's time, zstd's size, almost
 
@@ -357,7 +360,7 @@ a token byte, the 2 literal bytes and 2 bytes of offset: 24 bits plus the litera
 array's sequence is token 49: "1 literal, a match of 7 bytes, the repeat offset", `1 + 16 × 3 +
 512 × 0 = 49`, with a 4-bit code and no offset bits.
 
-**Escapes.** Only 512 of the 3072 tokens have a code of their own. Each of the other 2560 is rare,
+**Escapes.** Only 576 of the 3072 tokens have a code of their own. Each of the other 2496 is rare,
 but together they are a good part of the sequences, 14 to 38 of about 200 per page on my dumps. So
 they share one code, the **escape**, followed by the token's number in 12 plain bits: 4 + 12 = 16
 bits. The escape is itself a frequent **symbol**, a thing that gets a code, and has a 4-bit code. Giving codes to more tokens would
@@ -435,33 +438,36 @@ choice costs 3 bits of header, the table's number. A choice per literal would ne
 every literal, just to say which table.
 
 The 8 tables are fixed in the code and part of the format. They were trained on the pages programs
-had in RAM on a desktop and on the pages of a phone's zram: a clustering method, k-means, puts pages
-whose literals look alike into one group, and each table is the Huffman code of one group, see
-[explored-designs.md](explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold).
+had in RAM on a desktop, on pages that desktop swapped, and on the pages of a phone's zram: a
+clustering method, k-means, puts pages whose literals look alike into one group, and each table is the
+Huffman code of one group, see
+[explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
 So the tables are quite different. How many bits each table spends on a few byte values:
 
 | byte | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `00` | 3 | 2 | 3 | 3 | 2 | 5 | 5 | 7 |
-| `20`, a space | 6 | 7 | 5 | 5 | 7 | 7 | 6 | 8 |
-| `65`, the letter `e` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
-| `ff` | 7 | 6 | 7 | 9 | 8 | 10 | 9 | 10 |
+| `00` | 8 | 2 | 2 | 2 | 2 | 9 | 3 | 8 |
+| `20`, a space | 4 | 7 | 7 | 6 | 7 | 9 | 8 | 8 |
+| `65`, the letter `e` | 4 | 9 | 10 | 5 | 9 | 9 | 10 | 10 |
+| `ff` | 10 | 7 | 9 | 8 | 8 | 10 | 4 | 10 |
 
-Table 3 gives `e` 4 bits, so it fits text. Tables 1 and 4 give `00` 2 bits, they fit pages with many
-zero bytes. Table 7 is for pages of a few other bytes: it gives `c1` 2 bits and `00` 7.
+Table 0 gives `e` and the space 4 bits each, so it fits text. Tables 1 to 4 give `00` 2 bits, they fit
+pages with many zero bytes. Table 6 gives `ff` 4 bits. Table 7 is for pages of a few other bytes: it
+gives `c1` 2 bits and `00` 8.
 
 **Picking the table.** The encoder adds up the code lengths of all literals of the page in all 8
 tables and takes the table with the smallest sum. E.g. for the literals `65 20 65 00`:
 
 | literal | table 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `65` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
-| `20` | 6 | 7 | 5 | 5 | 7 | 7 | 6 | 8 |
-| `65` | 5 | 9 | 9 | 4 | 10 | 6 | 8 | 10 |
-| `00` | 3 | 2 | 3 | 3 | 2 | 5 | 5 | 7 |
-| **sum** | 19 | 27 | 26 | **16** | 29 | 24 | 27 | 35 |
+| `65` | 4 | 9 | 10 | 5 | 9 | 9 | 10 | 10 |
+| `20` | 4 | 7 | 7 | 6 | 7 | 9 | 8 | 8 |
+| `65` | 4 | 9 | 10 | 5 | 9 | 9 | 10 | 10 |
+| `00` | 8 | 2 | 2 | 2 | 2 | 9 | 3 | 8 |
+| **sum** | 20 | 27 | 29 | **18** | 27 | 36 | 31 | 36 |
 
-Table 3 wins with 16 bits, where the bytes as they are take 32.
+Table 3 wins with 18 bits, where the bytes as they are take 32. Table 0 fits text better, but one zero
+byte costs it 8 bits.
 
 <details>
 <summary>How the 8 sums are one addition per literal</summary>
@@ -480,7 +486,7 @@ per literal.
 
 **The 1/16 rule.** The encoder codes the literals only if the 8 streams and 51 bytes more are smaller
 than 15/16 of the literals as they are, `coded + 51 < n − n / 16` in
-[`code_literals()`](../explore/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
+[`code_literals()`](../src/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
 apart, so saving a few bytes mostly saves nothing, and coding the literals whenever they save
 anything gave less than 0.1 points more, for decoding time on every such page. The 51 bytes are for
 the phone: a page with coded literals costs a fixed time to read, its literal table and the buffer the
@@ -542,11 +548,11 @@ Most pages have streams below 128 bytes. With 2 bytes per size, as until 5th Oct
 The bitstream has no length of its own: it goes to the end of the compressed page, and zram stores
 that page's size.
 
-E.g. the 9 bytes `02 00 61 62 47 96 7b fb 19` are a page of `ab` 2048 times. `02 00` is the number of
+E.g. the 9 bytes `02 00 61 62 dc 65 ef db 8a` are a page of `ab` 2048 times. `02 00` is the number of
 literals, 2, with the top bit clear; `61 62` are the literals `a` and `b`. The 40 bits after them are
 one sequence and the end: the code of token 1010 (`ll` 2, `ml − 4` 31, class 1), 4 offset bits for
 offset 2, a length value that makes `ml` 4094, the rest of the page, and the code of token 0, the last
-sequence with 0 literals. [FORMAT.md](../FORMAT.md#example) takes it apart bit by bit.
+sequence with 0 literals. [format.md](format.md#example) takes it apart bit by bit.
 
 <details>
 <summary>Why the tables are fixed, and why there are no tables per device</summary>
@@ -575,7 +581,7 @@ flowchart LR
     R --> O
 ```
 
-The matcher, [`match_page()`](../explore/page_lz.h), is **greedy**: it takes the first match it
+The matcher, [`match_page()`](../src/page_lz.h), is **greedy**: it takes the first match it
 finds, without checking whether one that starts a byte later would be longer.
 
 1. At every position it checks two candidates: the repeat offset, and the last position whose next
@@ -697,8 +703,8 @@ used, so a damaged page is rejected and never makes the decoder read or write ou
 A literal stream whose literals need more bits than its size makes the page invalid: the decoder reads
 8 bytes of a stream at a time and may read into the next one, so it checks at the end that each stream
 stayed within its bytes. The fuzz tests in [`fuzz/`](../fuzz) feed the decoder billions of random and
-damaged pages to keep it that way, and hold it against a second decoder, `tools/seqlz_ref.c`, written
-from [FORMAT.md](../FORMAT.md) alone: both have to call the same pages valid and decode them to the same
+damaged pages to keep it that way, and hold it against a second decoder, `tools/seqlz-ref/seqlz_ref.c`, written
+from [format.md](format.md) alone: both have to call the same pages valid and decode them to the same
 bytes. The work per page has a bound, at most `PAGE / 4 + 1` sequences; the slowest pages found decode
 in 1.3 times the p99 of real pages
 ([explored-designs.md](explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
@@ -768,7 +774,7 @@ things make the difference, each measured:
 >   around it is built and measured, but not kept, see [explored-designs.md](explored-designs.md). Their
 >   tables are trained and measured on 2052 pages made of four adjacent 4 KiB pages each; there is no
 >   real 16 KiB page yet, and the format for 16 KiB pages is not fixed
->   ([FORMAT.md](../FORMAT.md#status)).
+>   ([format.md](format.md#status)).
 > * **Writes at p99** take 1.21 and 1.19 times `lz4`'s time.
 
 ## The choices, with their numbers
@@ -877,7 +883,7 @@ sequence becomes numbers, how numbers become bits, and the compressed page.
 | word | meaning |
 | --- | --- |
 | **symbol** | whatever is coded. In the token table a symbol is a token, in a literal table a byte value, in a length table a length or a range of lengths |
-| **code** | the bits written for one symbol, e.g. `11100010011` for token 1010. Frequent symbols get short codes, rare ones long codes |
+| **code** | the bits written for one symbol, e.g. `11011100011` for token 1010. Frequent symbols get short codes, rare ones long codes |
 | **code length** | how many bits a symbol's code has; a table stores only these, the codes follow from them by a fixed rule |
 | **prefix code** | a set of codes where no code is the start of another, so a decoder reading bit by bit knows where a code ends: `0`, `10`, `11` is one, `0`, `01` is not |
 | **Huffman code** | the best prefix code for how often each symbol occurs; seqlz's tables are Huffman codes |
@@ -926,4 +932,4 @@ sequence becomes numbers, how numbers become bits, and the compressed page.
 | **p99** | the time 99% of the pages stay below, the slowest 1% take longer |
 | **time per page written** | write time + 0.34 × read time, see [What makes zram different](#what-makes-zram-different) |
 | **exchange rate** | how many bytes of stored size one µs per page is worth to you |
-| **score** | PLAN.md's measure of a codec: the stored size and the time per page written, added up at an exchange rate |
+| **score** | plan.md's measure of a codec: the stored size and the time per page written, added up at an exchange rate |

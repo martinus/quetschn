@@ -3,7 +3,7 @@
 """The chart of the zram codecs: memory against latency, from the logs of tools/zram-vm/run.sh.
 
 One row per log, e.g. one per zram dump, and four panels per row: cold reads, warm reads and writes
-(p50, mean and p99 per page), and the score of PLAN.md §1.1, memory against the time per page written,
+(p50, mean and p99 per page), and the score of docs/plan.md §1.1, memory against the time per page written,
 with the codecs that have the lowest score for some exchange rate. The logs have only sizes and
 timings, no page content.
 
@@ -136,7 +136,7 @@ def main():
     ap.add_argument("--run", action="append", required=True, metavar="TITLE=LOG",
                     help="a row: its title and the log of tools/zram-vm/run.sh")
     ap.add_argument("--out", action="append", required=True, help="output file, .png or .svg, can be given more than once")
-    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (PLAN.md §1.1)")
+    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (docs/plan.md §1.1)")
     ap.add_argument("--clock", default="4.5 GHz", help="the fixed clock of the CPU the VM ran on, for the footer")
     ap.add_argument("--source", default=None, help="what was measured, for the footer; default git describe")
     ap.add_argument("--skip", default="", help="zram's names of codecs to leave out, comma separated, e.g. seqlz")
@@ -242,7 +242,7 @@ def main():
         + "The seqlz codecs"
         + " prefetch the compressed data in their zram backend, lz4, lzo-rle and zstd run as the kernel has them.\n"
         + (about + "\n" if about else "")
-        + f"Score: PLAN.md §1.1, {r:g} reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which "
+        + f"Score: docs/plan.md §1.1, {r:g} reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which "
         "the faster codec starts to win. Ratio = uncompressed size / memory used by zsmalloc.",
         fontsize=8.5,
         color="#555555",

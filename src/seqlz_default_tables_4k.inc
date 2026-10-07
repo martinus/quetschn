@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * The code lengths for 4 KiB pages, included by seqlz_default_tables.c; how they were made is there.
- * Only the initializer, so that tools/seqlz_ref.py reads them without knowing C.
+ * Only the initializer, so that tools/seqlz-ref/seqlz_ref.py reads them without knowing C.
  */
 const struct seqlz_lengths seqlz_default_own = {
     .token =

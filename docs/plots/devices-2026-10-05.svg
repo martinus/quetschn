@@ -11142,7 +11142,7 @@ z
     <use xlink:href="#NotoSans-Regular-73" transform="translate(10581.397293 0)"/>
     <use xlink:href="#NotoSans-Regular-2e" transform="translate(10629.297287 0)"/>
    </g>
-   <!-- Each row has its own time axis. Score: PLAN.md §1.1, 0.34 reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which the faster codec starts to win. -->
+   <!-- Each row has its own time axis. Score: docs/plan.md §1.1, 0.34 reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which the faster codec starts to win. -->
    <g style="fill: #555555" transform="translate(13.68 960.24) scale(0.085 -0.085)">
     <defs>
      <path id="NotoSans-Regular-45" d="M 3174 0 

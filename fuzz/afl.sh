@@ -1,7 +1,7 @@
 #!/bin/bash
 # afl.sh <out dir> [jobs] [cmake args]: builds the fuzz targets with AFL++ and starts them in the
 # background, a third of the jobs each on the decoder, the roundtrip and the decoder against the one
-# written from FORMAT.md (diff). Per target one main instance, then
+# written from docs/format.md (diff). Per target one main instance, then
 # by turns one with ASan and UBSan, which see a read one byte too far, one with CMPLOG for the header's
 # magic values, and a plain one. AFL++ from PATH, or from the checkout in $AFL.
 #

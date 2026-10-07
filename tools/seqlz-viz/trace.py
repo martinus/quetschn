@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """trace.py <dir>: the trace of seqlz's decoder for page.html, from the pages in dir and their
 compressed forms <page>.fast and <page>.lit (compress.c), to <dir>/trace.json. Every field with its bit
-position, decoded with tools/seqlz_ref.py's tables, and the C decoder's register refills and fast path
+position, decoded with tools/seqlz-ref/seqlz_ref.py's tables, and the C decoder's register refills and fast path
 emulated. A position is byte * 8 + the bit's index in reading order, highest bit first in the
 sequences' bitstream and in a literal stream. Needs the Python packages lz4 and zstandard for the
 sizes of the same pages in those two."""
@@ -13,14 +13,14 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "seqlz-ref"))
 import lz4.block
 import seqlz_ref as ref
 import zstandard
 
 P = 4096
 tok_codes, ll_codes, ml_codes, lit_codes = ref.load_tables(12)
-src = (ref.REPO / "explore/seqlz_default_tables_4k.inc").read_text()
+src = (ref.REPO / "src/seqlz_default_tables_4k.inc").read_text()
 
 
 def field(name):
@@ -28,7 +28,7 @@ def field(name):
 
 
 TOK_LEN, LL_LEN, ML_LEN = field("token"), field("ll"), field("ml")
-lit_src = (ref.REPO / "explore/seqlz_lit_sets.c").read_text()
+lit_src = (ref.REPO / "src/seqlz_lit_sets.c").read_text()
 LIT_LEN = ref.numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
 
 
@@ -193,12 +193,12 @@ PAGES = [
     (
         "heap",
         "Heap of a program",
-        "A page of a small C++ program's heap: a hash map of the words of FORMAT.md, each a struct with a string, two counters, a pointer to the one before and a double. malloc's chunk headers, pointers, and short strings.",
+        "A page of a small C++ program's heap: a hash map of the words of docs/format.md, each a struct with a string, two counters, a pointer to the one before and a double. malloc's chunk headers, pointers, and short strings.",
     ),
     (
         "text",
         "Source code",
-        "4 KiB of explore/seqlz.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
+        "4 KiB of src/seqlz.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
     ),
     (
         "relro",

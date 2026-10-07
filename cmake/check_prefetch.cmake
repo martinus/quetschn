@@ -2,7 +2,7 @@
 #
 # Fails if seqlz.c, built with the kernel's flags, has no prefetch instruction. The kernel builds x86-64
 # without SSE, and clang then drops __builtin_prefetch without a warning, see PAGE_LZ_PREFETCH in
-# explore/page_lz.h. Run by ctest: cmake -DOBJDUMP=... -DOBJECTS=a.o|b.o -P check_prefetch.cmake
+# src/page_lz.h. Run by ctest: cmake -DOBJDUMP=... -DOBJECTS=a.o|b.o -P check_prefetch.cmake
 string(REPLACE "|" ";" objects "${OBJECTS}")
 list(FILTER objects INCLUDE REGEX "/seqlz\\.c\\.o(bj)?$")
 if(NOT objects)

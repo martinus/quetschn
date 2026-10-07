@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Trains the static Huffman tables of seqlz (explore/seqlz.h) on a corpus: the matches of seqlz's own
+// Trains the static Huffman tables of seqlz (src/seqlz.h) on a corpus: the matches of seqlz's own
 // matcher on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
-// SEQLZ_MAX_BITS bits. Writes a C initializer for explore/seqlz_default_tables_4k.inc, with --lit-sets
-// the literal tables of explore/seqlz_lit_sets.c instead.
+// SEQLZ_MAX_BITS bits. Writes a C initializer for src/seqlz_default_tables_4k.inc, with --lit-sets
+// the literal tables of src/seqlz_lit_sets.c instead.
 
 #include "harness.h"
 #include "page_stats.h"
@@ -288,7 +288,7 @@ void usage() {
                  "\n"
                  "Counts seqlz's symbols over the matches of its own matcher on every page. Prints the code\n"
                  "lengths as a C initializer.\n"
-                 "--lit-sets prints the literal tables of explore/seqlz_lit_sets.c instead, from the pages with\n"
+                 "--lit-sets prints the literal tables of src/seqlz_lit_sets.c instead, from the pages with\n"
                  "more than 64 literals: k-means from --seeds starts (32), seeds --first-seed (1) on, each at\n"
                  "most --rounds rounds (60).\n");
 }

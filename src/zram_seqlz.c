@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz (explore/seqlz.h) as a zram backend would call it: "seqlz-fast" with raw literals,
+ * seqlz (src/seqlz.h) as a zram backend would call it: "seqlz-fast" with raw literals,
  * "seqlz-fast-lit" with the literals Huffman coded where that pays. The tables are part of the format
- * (FORMAT.md), so zram's dictionary parameter is ignored, like lzo ignores it.
+ * (docs/format.md), so zram's dictionary parameter is ignored, like lzo ignores it.
  */
 #include "seqlz.h"
 #include "zram_codec.h"

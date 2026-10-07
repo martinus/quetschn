@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Samples resident anonymous memory of running processes into a page corpus. See PLAN.md, Phase 1,
+// Samples resident anonymous memory of running processes into a page corpus. See docs/plan.md, Phase 1,
 // collector 1. This corpus is biased: zram stores cold, reclaimed pages, and these are resident ones.
 // Good enough to shake out the harness, not for headline numbers.
 

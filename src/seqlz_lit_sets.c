@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * The literal tables of pages with coded literals, one chosen per page, part of the format (FORMAT.md).
+ * The literal tables of pages with coded literals, one chosen per page, part of the format (docs/format.md).
  * Trained on the same pages as seqlz_default_tables.c, with
  *   quetschn-seqlz-train --corpus train-rz-phone5 --lit-sets
  * k-means over the literal histograms of the pages with seqlz-fast's matcher: each page goes to the

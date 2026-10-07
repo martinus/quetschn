@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
-/* seqlz (explore/seqlz.h) as zram backends, for the VM test of run.sh: seqlz with raw literals
+/* seqlz (src/seqlz.h) as zram backends, for the VM test of run.sh: seqlz with raw literals
  * (seqlz-fast) and seqlz-lit with coded ones (seqlz-fast-lit), the tables compiled in, a hash table per
  * CPU. */
 #include <linux/kernel.h>

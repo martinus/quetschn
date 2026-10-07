@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Memory against time per page, from runs of tools/zram-vm/run.sh or quetschn-bench-*, see PLAN.md
+// Memory against time per page, from runs of tools/zram-vm/run.sh or quetschn-bench-*, see docs/plan.md
 // §1.1.
 
 #include "score.h"

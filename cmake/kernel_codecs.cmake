@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 #
-# The kernel's own compressors, built from a Linux source tree for the benchmark harness (PLAN.md §5.1).
+# The kernel's own compressors, built from a Linux source tree for the benchmark harness (docs/plan.md §5.1).
 # The kernel sources are compiled from QUETSCHN_KERNEL_TREE and never copied into this repository:
 # lib/lzo is GPL-2.0-only. The quetschn-bench-* binaries link them and are therefore GPL-2.0 works;
 # they are measurement tools and not distributed.
@@ -123,10 +123,10 @@ quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
     bench/kernel_codecs/zram_zstd.c)
 
 # seqlz with lz4's flags, -O3 included
-quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 ${QUETSCHN_SEQLZ_SOURCES} explore/zram_seqlz.c)
-target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/explore")
+quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 ${QUETSCHN_SEQLZ_SOURCES} src/zram_seqlz.c)
+target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/src")
 add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp)
-target_include_directories(quetschn-seqlz-train PRIVATE explore)
+target_include_directories(quetschn-seqlz-train PRIVATE src)
 target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_seqlz quetschn_warnings)
 
 foreach(codec lz4 lz4hc lzo lzo_rle zstd seqlz_fast seqlz_fast_lit)
@@ -153,7 +153,7 @@ target_link_libraries(quetschn-bench-interleaved PRIVATE quetschn_bench quetschn
 
 # Where the ratio of zstd comes from: lz4hc's matches, costed with entropy coding
 add_executable(quetschn-lz-analysis bench/lz_analysis_main.cpp bench/lz_analysis.cpp)
-target_include_directories(quetschn-lz-analysis PRIVATE explore)
+target_include_directories(quetschn-lz-analysis PRIVATE src)
 target_link_libraries(quetschn-lz-analysis PRIVATE quetschn_bench quetschn_kernel_lz4 quetschn_kernel_seqlz quetschn_warnings)
 
 set(QUETSCHN_HAVE_KERNEL_CODECS ON)

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz_decode() against tools/seqlz_ref.c, the decoder written from FORMAT.md alone, on any input: both
+ * seqlz_decode() against tools/seqlz-ref/seqlz_ref.c, the decoder written from docs/format.md alone, on any input: both
  * must call the same inputs valid, and decode a valid one to the same page. A difference is a bug in one
- * of them or a place where FORMAT.md is not clear. Each buffer gets an allocation of exactly its size,
+ * of them or a place where docs/format.md is not clear. Each buffer gets an allocation of exactly its size,
  * as in seqlz_decode_fuzz.c.
  */
 #include <stdint.h>

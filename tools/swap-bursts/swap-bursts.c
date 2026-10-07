@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// How swap-ins come: alone or in bursts, and how large the bursts are (PLAN.md §1.1). Reads pswpin
+// How swap-ins come: alone or in bursts, and how large the bursts are (docs/plan.md §1.1). Reads pswpin
 // and pswpout of /proc/vmstat every interval for a while. A burst is a run of intervals with swap-ins,
 // with gaps of at most --gap empty intervals. Prints the bursts by size and the share of all swap-ins
 // in bursts of each size: a burst of n pages waits for n decompressions, so its wait is n times the
