@@ -40,8 +40,9 @@
 #include <stddef.h>
 
 /*
- * With libc, its declarations; the kernel codecs' build
- * (cmake/kernel_codecs.cmake) has no libc headers, as the kernel has none.
+ * With libc, its declarations. The benchmarks also build the codec with the
+ * kernel's flags and without libc headers, as the kernel is built
+ * (cmake/kernel_codecs.cmake); then only these prototypes.
  */
 #if __has_include(<string.h>)
 #include <string.h>
