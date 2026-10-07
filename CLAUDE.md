@@ -74,6 +74,10 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
   (`tools/seqlz-ref/check.sh`, `tools/check-links.py`); `ci-ok` is the one required check (branch
   protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
   its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.
+- `src/` is in the kernel's style, `src/.clang-format`: tabs, 80 columns, `u8 *p`. clang-format does not
+  reflow comments there; wrap them by hand to 80 columns in the kernel's block form. The `.inc` tables
+  are not in the format check: after training, `clang-format -i src/*.inc`.
+  Everything else keeps the project's `.clang-format`.
 - Run locally before pushing a docs or table change: `tools/seqlz-ref/check.sh` (hashes in
   docs/format.md vs `src/` tables, 22 pages decoded by the spec decoder, ~1.5 s) and
   `tools/check-links.py`.
