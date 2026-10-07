@@ -272,6 +272,76 @@ Without the prefetch in the module, on the same phone pages, `seqlz-fast-lit` sw
 on the A55 warm and 0.2 µs slower on the A76 cold, as "The phone's module did not prefetch the
 compressed data" found for zram's reads.
 
+## The first runs with dictionaries, Phases 0 to 2
+
+*Before any codec: is there room between `lzo-rle` and `zstd`, and does a dictionary close it for
+`lz4`?* This was the cheapest check that could have disproved the project, so it came first. The
+harness ran `lz4`, `lzo`, `lzo-rle` and `zstd` from the kernel tree with kernel flags, with and without
+a dictionary. The zsmalloc cost model, `bench/zsmalloc_cost.cpp`, stored exactly as many pages
+uncompressed as zram on the first dump.
+
+First run with dictionaries, only to shake out the harness. 61 043 resident pages of the
+development machine (the biased collector 1), split by process name: 72 names to train a 64 KiB
+dictionary with `zstd --train -B4096 --maxdict=64KB` (Honor's settings), 32 other names with 8937
+measured pages to test on. Ryzen 9 7950X pinned to one core, `powersave` governor so the frequency
+was not fixed, median of 5 runs per page, TSC resolution about 10 ns:
+
+| codec | Σ zsmalloc cost | per CPU | per device | decompress cold p50 / p99 |
+| --- | --- | --- | --- | --- |
+| `lz4` | 38.2% | 16 440 B | 0 | 1840 / 2940 ns |
+| `lz4` + dict | 36.6% | 16 472 B | 16 416 B | 1740 / 3010 ns |
+| `lzo-rle` | 36.0% | 16 384 B | 0 | 1820 / 3480 ns |
+| `lzo` | 35.2% | 16 384 B | 0 | 2240 / 3800 ns |
+| `zstd -1` | 30.2% | 169 728 B | 75 112 B | 3490 / 5120 ns |
+| `zstd -1` + dict | 29.5% | 153 344 B | 58 728 B | 3150 / 4820 ns |
+| `zstd 3` (zram default) | 27.6% | 186 112 B | 91 496 B | 4260 / 6570 ns |
+| `zstd 3` + dict | 27.3% | 186 112 B | 435 560 B | 4890 / 7820 ns |
+
+The dictionary saves `lz4` 4% here, not enough to beat `lzo-rle`. The Phase 2 gate proxy:
+`zstd -1` needs 16% less memory than `lzo-rle`, the better of `lz4` + dict and `lzo-rle`, above the
+12% bar. Still not the gate: wrong page population, one run, unfixed frequency.
+
+Two side findings. `backend_zstd.c` creates a cdict and a ddict also without a dictionary, which
+costs 73 to 89 KiB per zram device for nothing. And the `zstd --train ... --split=4096` in the
+f0f6f7871430 commit message is not an option zstd 1.5.7 accepts; `-B4096` cuts the samples into
+pages.
+
+The same codecs on the pages zram really holds, the first zram dump (Phase 1): 455 239 pages
+measured, 5684 same-filled skipped. Same machine and setup, median of 3 runs per page. The
+dictionary is the one from above, trained on resident pages. Memory per CPU and per device are the
+same as in the table above:
+
+| codec | Σ zsmalloc cost | stored uncompressed | compress p99 | decompress cold p50 / p99 |
+| --- | --- | --- | --- | --- |
+| `lz4` | 34.5% | 10 523 | 3540 ns | 1660 / 2930 ns |
+| `lz4` + dict | 33.7% | 11 783 | 3910 ns | 1670 / 3060 ns |
+| `lzo-rle` | 32.4% | 11 852 | 3770 ns | 1660 / 3040 ns |
+| `lzo` | 31.9% | 11 831 | 3770 ns | 2020 / 6270 ns |
+| `zstd -1` | 26.9% | 9638 | 8680 ns | 3290 / 4730 ns |
+| `zstd -1` + dict | 26.8% | 9846 | 9930 ns | 3020 / 5560 ns |
+| `zstd 3` (zram default) | 23.6% | 7491 | 15 700 ns | 3990 / 7080 ns |
+| `zstd 3` + dict | 24.2% | 7499 | 18 530 ns | 3860 / 7210 ns |
+
+The gate proxy holds up on swapped pages: `zstd -1` needs 16.9% less Σ zsmalloc cost than
+`lzo-rle`, which is again better than `lz4` + dict. A dictionary trained on resident pages saves
+`lz4` only 2.3% on swapped pages, and makes `zstd 3` worse. Still not the gate: one machine,
+one dump, no confidence intervals, and the dictionary was trained on a different page population.
+
+`lz4` + dict stores 1292 pages uncompressed that `lz4` alone does not, and 75 the other way. The
+harness is right about that, upstream LZ4 1.10.0 gives the same sizes. The dictionary gains 2.72% Σ
+zsmalloc cost on the pages it helps and loses 0.35% on the others, mostly on pages that already
+compress to 2.5 to 3.5 KiB, 0.107% alone for the pages pushed over the cliff. The extreme case is
+weird: a page of `ff`×16 `00`×16 repeated compresses to 49 bytes without a dictionary and to 1543
+bytes with one, and a dictionary of the 8 bytes `00 00 00 00 00 00 00 04` is enough. A match into
+the dictionary at the start shifts the greedy parse, and from then on the "test next position"
+shortcut of `LZ4_compress_generic` only finds matches of 5 to 11 bytes with offsets 2 and 21 to 27,
+512 of them, and never gets back to the search that would find the 4019-byte match at offset 32.
+Without a dictionary the same chain happens too, but it breaks after 72 bytes. Rotating the page
+shows that it is the dictionary: without one, all 32 rotations compress to 36 to 49 bytes, with the
+8-byte dictionary 8 of 32 rotations go to about 1540 bytes. On the zram dump only 107 pages got
+more than twice as large, 0.01%, so it does not change the table. Reported upstream as
+[lz4/lz4#1805](https://github.com/lz4/lz4/issues/1805).
+
 ## Baselines
 
 Full run, all 455 239 pages. Cold p99 over all pages is what zram sees: for pages stored uncompressed

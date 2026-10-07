@@ -566,7 +566,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        // token classes: bytelz's layout, then a search from it that changes one class at a time
+        // token classes: a byte-oriented layout (bytelz's, docs/explored-designs.md), then a search from it
+        // that changes one class at a time
         auto layout_cost = [&](std::vector<token_class> const& layout, layout_stats* st) {
             auto tokens = 0U;
             for (auto const& tc : layout) {

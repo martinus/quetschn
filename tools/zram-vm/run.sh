@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz] [LLVM=1] [MODE=swap] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
+[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-lit] [LLVM=1] [MODE=swap] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
 # LLVM=1 builds the kernel with clang, as Android does, instead of gcc
 kmake=(make ${LLVM:+LLVM=$LLVM})
 tree=$1
@@ -23,15 +23,14 @@ trap 'rm -rf "$work"' EXIT
 
 git -C "$tree" archive HEAD | tar -x -C "$work" --one-top-level=src
 patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
-# seqlz and bytelz as zram backends, with lz4's -O3
+# seqlz as zram backends, seqlz (raw literals) and seqlz-lit, with lz4's -O3
 z="$work/src/drivers/block/zram"
-cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/backend_bytelz.c" "$here/backend_bytelz.h" \
-    "$here/../../explore/seqlz.c" "$here/../../explore/seqlz.h" "$here/../../explore/bytelz.c" \
-    "$here/../../explore/bytelz.h" "$here/../../explore/page_lz.h" "$here/../../explore/seqlz_default_tables.c" \
+cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../explore/seqlz.c" "$here/../../explore/seqlz.h" \
+    "$here/../../explore/page_lz.h" "$here/../../explore/seqlz_default_tables.c" \
     "$here/../../explore/seqlz_default_tables_4k.inc" "$here/../../explore/seqlz_lit_sets.c" "$z/"
-sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"\n#include "backend_bytelz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\t\&backend_bytelz,\n\tNULL|' "$z/zcomp.c"
-printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o backend_bytelz.o bytelz.o\n' >>"$z/Makefile"
-printf 'CFLAGS_seqlz.o += -O3\nCFLAGS_bytelz.o += -O3\n' >>"$z/Makefile"
+sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\tNULL|' "$z/zcomp.c"
+printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\n' >>"$z/Makefile"
+printf 'CFLAGS_seqlz.o += -O3\n' >>"$z/Makefile"
 "${kmake[@]}" -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \
     --enable DEVTMPFS --enable BLK_DEV_INITRD --enable ZRAM_MULTI_COMP --enable ZRAM_TRACK_ENTRY_ACTIME

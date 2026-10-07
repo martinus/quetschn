@@ -12,9 +12,8 @@ timings, no page content.
     tools/plot-codecs.py --run "zram dump of 23 Sep=first.log" --run "zram dump of 24 Sep=second.log" \\
         --out codecs.png --out codecs.svg
 
-bytelz and seqlz (seqlz-fast) are not in the default run: on x86-64 no exchange rate makes them the
-best choice, they stay for arm64's little cores (docs/explored-designs.md). --skip leaves them out of a
-log that has them.
+seqlz (seqlz-fast) is not in the default run: on x86-64 no exchange rate makes it the best choice
+(docs/explored-designs.md). --skip leaves codecs out of a log that has them, e.g. bytelz in old logs.
 
 Needs matplotlib and the Noto Sans font.
 """
@@ -36,7 +35,6 @@ NAMES = {
     "lz4": "lz4",
     "lzo-rle": "lzo-rle",
     "zstd": "zstd",
-    "bytelz": "bytelz",
     "seqlz": "seqlz-fast",
     "seqlz-lit": "seqlz-fast-lit",
 }
@@ -44,7 +42,6 @@ STYLE = {
     "lz4": ("#7f7f7f", "o"),
     "lzo-rle": ("#2b2b2b", "s"),
     "zstd": ("#8e44ad", "D"),
-    "bytelz": ("#e67e22", "^"),
     "seqlz-fast": ("#1f6fd1", "o"),
     "seqlz-fast-lit": ("#17a2b8", "v"),
 }
@@ -142,7 +139,7 @@ def main():
     ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (PLAN.md §1.1)")
     ap.add_argument("--clock", default="4.5 GHz", help="the fixed clock of the CPU the VM ran on, for the footer")
     ap.add_argument("--source", default=None, help="what was measured, for the footer; default git describe")
-    ap.add_argument("--skip", default="", help="zram's names of codecs to leave out, comma separated, e.g. bytelz,seqlz")
+    ap.add_argument("--skip", default="", help="zram's names of codecs to leave out, comma separated, e.g. seqlz")
     args = ap.parse_args()
 
     r = args.reads_per_write
@@ -242,7 +239,7 @@ def main():
         f"Linux kernel in a VM, zram with zsmalloc, one device per codec, one boot per row ({args.source or git_source()}). "
         f"{cpu_model()}, one CPU at a fixed {args.clock}. Per page the median of 3 runs;\n"
         "each timed read and write comes after another page; cold: the compressed data flushed from the cache first. "
-        + ("bytelz and the seqlz codecs" if "bytelz" in names else "The seqlz codecs")
+        + "The seqlz codecs"
         + " prefetch the compressed data in their zram backend, lz4, lzo-rle and zstd run as the kernel has them.\n"
         + (about + "\n" if about else "")
         + f"Score: PLAN.md §1.1, {r:g} reads per write; B/µs: bytes saved per page for each µs more, the exchange rate at which "

@@ -115,12 +115,8 @@ std::vector<quetschn_codec const*> codecs() {
             &quetschn_codec_lzo,
             &quetschn_codec_lzo_rle,
             &quetschn_codec_zstd,
-            &quetschn_codec_shuffle_lz4,
-            &quetschn_codec_bdelta,
-            &quetschn_codec_zstd_nolit,
             &quetschn_codec_seqlz_fast,
-            &quetschn_codec_seqlz_fast_lit,
-            &quetschn_codec_bytelz};
+            &quetschn_codec_seqlz_fast_lit};
 }
 
 // A zram device (params) with one per-CPU stream, set up the way zram does it.
@@ -320,10 +316,7 @@ TEST_CASE("kernel codecs: compressed sizes are plausible") {
         CHECK(n > page_size);
         CHECK(n < page_size + page_size / 16);
         CHECK(compress(*codec, zero_runs_page()).size() < 200);
-        // the byte-oriented kernel codecs find the repeats in text, the word-oriented candidates do not
-        if (codec != &quetschn_codec_shuffle_lz4 && codec != &quetschn_codec_bdelta) {
-            CHECK(compress(*codec, text_page()).size() < page_size / 2);
-        }
+        CHECK(compress(*codec, text_page()).size() < page_size / 2);
     }
 }
 
@@ -524,24 +517,6 @@ TEST_CASE("kernel codecs: lz4hc writes lz4, defaults to level 9, and zram's leve
     auto const hc9 = compress(quetschn_codec_lz4hc, t).size();
     CHECK(hc9 < hc1);
     CHECK(hc9 < compress(quetschn_codec_lz4, t).size());
-}
-
-TEST_CASE("kernel codecs: zstd-nolit is zstd without Huffman coded literals") {
-    // 16 different bytes in random order: few matches, and 4 bits of entropy per literal byte, so
-    // Huffman coding the literals nearly halves them
-    auto rng = std::mt19937_64(17);
-    auto p = page(page_size);
-    for (auto& b : p) {
-        b = static_cast<std::uint8_t>('a' + rng() % 16);
-    }
-    auto const with = device(quetschn_codec_zstd, 3).compress(p).size();
-    auto const without = device(quetschn_codec_zstd_nolit, 3).compress(p).size();
-    CHECK(with < 2600);
-    CHECK(without > 3900);
-    // zstd itself never Huffman codes literals at negative levels, so there both are the same
-    CHECK(device(quetschn_codec_zstd_nolit, -1).compress(p) == device(quetschn_codec_zstd, -1).compress(p));
-    CHECK(device(quetschn_codec_zstd_nolit).params().level == 3);
-    CHECK(rejects(quetschn_codec_zstd_nolit, 23));
 }
 
 TEST_CASE("kernel codecs: levels zram rejects are rejected") {

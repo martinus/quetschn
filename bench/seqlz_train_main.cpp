@@ -28,10 +28,6 @@
 
 namespace {
 
-#ifndef LIT_FLOOR
-#    define LIT_FLOOR 0.0
-#endif
-
 // The optimal code lengths of at most max_bits bits, by package-merge (Larmore and Hirschberg): the
 // lists of the levels from max_bits up to 1 each hold the symbols and the pairs of the level below,
 // sorted by weight; a symbol's length is how often it is among the 2n - 2 lightest items of the top
@@ -156,14 +152,10 @@ std::vector<std::vector<unsigned char>> lit_sets(std::vector<std::array<double, 
         throw std::runtime_error("too few pages with literals for the literal tables");
     }
     auto code = [](std::array<double, 256> const& h) {
-        // every byte gets a code, the encoder needs one: + 1, and FLOOR of all literals
+        // every byte gets a code, the encoder needs one: + 1
         auto c = std::vector<double>(256);
-        auto n = 0.0;
-        for (auto v : h) {
-            n += v;
-        }
         for (std::size_t s = 0; s < 256; ++s) {
-            c[s] = h[s] + 1.0 + n * LIT_FLOOR;
+            c[s] = h[s] + 1.0;
         }
         return code_lengths(c, SEQLZ_LIT_BITS);
     };

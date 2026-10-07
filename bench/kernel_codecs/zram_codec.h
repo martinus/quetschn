@@ -67,15 +67,6 @@ extern const struct quetschn_codec quetschn_codec_lz4hc;
 extern const struct quetschn_codec quetschn_codec_lzo;
 extern const struct quetschn_codec quetschn_codec_lzo_rle;
 extern const struct quetschn_codec quetschn_codec_zstd;
-/* the Phase 2b decoder spike, spike/zram_spike.c */
-extern const struct quetschn_codec quetschn_codec_spike_switch;
-extern const struct quetschn_codec quetschn_codec_spike_branchless;
-extern const struct quetschn_codec quetschn_codec_spike_zeroskip;
-extern const struct quetschn_codec quetschn_codec_spike_slots;
-/* candidate designs, explore/zram_explore.c */
-extern const struct quetschn_codec quetschn_codec_shuffle_lz4;
-extern const struct quetschn_codec quetschn_codec_bdelta;
-extern const struct quetschn_codec quetschn_codec_zstd_nolit;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast;
 extern const struct quetschn_codec quetschn_codec_seqlz_fast_lit;
 extern const struct quetschn_codec quetschn_codec_lz4_prefetch;
@@ -95,9 +86,6 @@ static inline void quetschn_prefetch_page(const void* src, unsigned int src_len,
     for (o = (char*)dst; o < (char*)dst + dst_len; o += 64)
         __builtin_prefetch(o, 1);
 }
-extern const struct quetschn_codec quetschn_codec_bytelz;
-/* optional, explore/zram_memlz.c with QUETSCHN_MEMLZ_DIR */
-extern const struct quetschn_codec quetschn_codec_memlz;
 
 /*
  * Stands in for kzalloc/vzalloc/kvzalloc: zeroed, 64 byte aligned, NULL on failure. The size is added

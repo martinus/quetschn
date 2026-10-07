@@ -60,16 +60,10 @@ target_link_libraries(quetschn-score PRIVATE quetschn_bench quetschn_warnings)
 add_executable(quetschn-swap-bursts tools/swap-bursts.c)
 target_link_libraries(quetschn-swap-bursts PRIVATE quetschn_warnings)
 
-# Phase 2b decoder spike, see spike/wk64.h. Built here with our warnings for the tests, and in
-# cmake/kernel_codecs.cmake a second time with the kernel's flags for the benchmark.
-add_library(quetschn_spike STATIC spike/wk64.c spike/zram_spike.c)
-target_include_directories(quetschn_spike PUBLIC spike bench/kernel_codecs)
-target_link_libraries(quetschn_spike PRIVATE quetschn_warnings)
-
-# Candidate designs, see docs/explored-designs.md. The parts that need no kernel code, for the tests.
-# seqlz's sources, for every target that builds it: the explore library, the kernel codecs, the fuzzers
+# seqlz without kernel code, for the tests and tools. seqlz's sources, for every target that builds it:
+# this library, the kernel codecs, the fuzzers
 set(QUETSCHN_SEQLZ_SOURCES explore/seqlz.c explore/seqlz_default_tables.c explore/seqlz_lit_sets.c)
-add_library(quetschn_explore STATIC explore/shuffle.c explore/bdelta.c ${QUETSCHN_SEQLZ_SOURCES} explore/bytelz.c)
+add_library(quetschn_explore STATIC ${QUETSCHN_SEQLZ_SOURCES})
 target_include_directories(quetschn_explore PUBLIC explore)
 target_link_libraries(quetschn_explore PRIVATE quetschn_warnings)
 
@@ -146,15 +140,13 @@ if(BUILD_TESTING)
 
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
                                  test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp
-                                 test/compare_test.cpp test/score_test.cpp test/spike_test.cpp
-                                 test/explore_test.cpp test/seqlz_ref_test.cpp tools/seqlz_ref.c)
-    target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_spike quetschn_explore quetschn_warnings
+                                 test/compare_test.cpp test/score_test.cpp test/explore_test.cpp test/seqlz_ref_test.cpp tools/seqlz_ref.c)
+    target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_explore quetschn_warnings
                                                 doctest::doctest)
     target_include_directories(quetschn_test PRIVATE tools)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp test/lz_analysis_test.cpp bench/lz_analysis.cpp)
         target_link_libraries(quetschn_test PRIVATE quetschn_kernel_lz4 quetschn_kernel_lzo quetschn_kernel_zstd
-                                                    quetschn_kernel_explore quetschn_kernel_explore_zstd
                                                     quetschn_kernel_seqlz)
         target_compile_definitions(quetschn_test PRIVATE QUETSCHN_HAVE_KERNEL_CODECS)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
