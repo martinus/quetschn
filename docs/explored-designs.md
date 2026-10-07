@@ -49,6 +49,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [Which branches: three in the sequence loop are 58% of the 130 misses of a page seen once](#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)
 - [The refill without its branch, every second fast sequence: 63 ns less per swap-in on x86-64 and the A76, kept](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)
 - [The fast path's condition: its 22 misses per page are the length values, four ways around them slower, not kept](#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)
+- [The offset below 8: one copy for every offset saves 12 misses per page and costs more, not kept](#the-offset-below-8-one-copy-for-every-offset-saves-12-misses-per-page-and-costs-more-not-kept)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
 
 **Where the bytes are**
@@ -551,7 +552,8 @@ What could take them out, none built yet:
   change; or the length values in the fast path too. Tried, four ways, none faster, see
   [The fast path's condition](#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept).
 * **The offset below 8** goes to its own copy. One copy for every offset, without a branch, would have to
-  build the repeated 8 bytes also when the offset is 8 or more.
+  build the repeated 8 bytes also when the offset is 8 or more. Tried, slower, see
+  [The offset below 8](#the-offset-below-8-one-copy-for-every-offset-saves-12-misses-per-page-and-costs-more-not-kept).
 * **A match longer than 16 bytes**, line 963. Fixed copies of 32 or 40 bytes instead were slower
   ("Six choices made on the PC", 6), but measured with a hot loop and the read benchmark, where the
   predictor knew the page. In a fault the branch costs more. That holds for every choice so far between
@@ -4240,6 +4242,56 @@ the literal length doubles the token's 1536 symbols, and codes of at most 11 bit
 ([seqlz, third decoder round](#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow),
 4 / 5 bits for ll / ml are kept from there). Not measured: any of the variants on the phone or in
 the kernel VM, since none was faster in userspace on x86-64.
+
+## The offset below 8: one copy for every offset saves 12 misses per page and costs more, not kept
+
+*The third largest branch of "Which branches": the fast path's `off >= 8U`, 19 misses per page seen
+once. One copy for every offset, without that branch, takes 12 of them out, and needs 10 to 19
+instructions more in every fast sequence. The loop runs at about 0.2 cycles per instruction, so that is
+more than the misses cost. Slower with gcc and with clang, not kept.* Measured with
+`tools/seqlz-branches/run.sh` and a changed `src/seqlz.c`; the variants are not in the repository.
+
+Of the 178.5 fast sequences of a page, 12.8 have an offset below 8: 10.4 the offset 2, 0.85 the
+offset 6, 0.69 the offset 1, 0.46 the offset 4, 0.37 the offset 7, the rest almost never. 19.0 have the
+offset 8. The branch misses more often than it is taken, so the predictor also guesses a short offset
+where there is none.
+
+**One copy for every offset.** The first 8 bytes are `(load64(d - off) & mask) * repeat`: for an offset
+below 8 the low `off` bytes, repeated as the branch's copy does now, and for 8 and more `mask` is all
+ones and `repeat` 1, which is the plain load. The next chunks load from `d + 8 - back`, where `back` is
+the offset, or for an offset below 8 the smallest multiple of it that is at least 8: 8, 8, 9, 8, 10,
+12, 14. So each load reads only bytes the stores before it wrote or that were there before, as for
+offsets of 8 to 16 now, and a match of up to 34 bytes needs no loop for any offset. The index into the
+tables of `repeat` and of `back` is the offset, or 8 for 8 and more.
+
+**Merged into the fast path's condition.** A single test of "a length value follows or the offset is
+below 8", and the short offsets go to `copy_match()` on the slow path.
+
+x86-64 as in "Which branches": `seqlz.c` with the kernel's flags, gcc 16.2.1 or clang 22.1.8, the
+19 577 pages of the first desktop dump, CPU 2 of the Ryzen 9 7950X at 4.5 GHz, boost off. Per decode,
+2 runs each:
+
+| | branch misses, page seen once | instructions | TSC ticks, page seen once | TSC ticks, right after the same page |
+| --- | ---: | ---: | ---: | ---: |
+| gcc, before | 101.1, 101.6 | 24 595 | 6701, 6703 | 4913, 4914 |
+| gcc, one copy | 88.9, 89.0 | 28 011 | 7045, 7060 | 5508, 5517 |
+| gcc, one copy with fewer instructions | 88.7, 88.8 | 27 476 | 6949, 7046 | 5473, 5500 |
+| gcc, one copy, index masked by `& 7` | 88.6, 88.7 | 27 718 | 7059, 7175 | 5504, 5578 |
+| gcc, merged into the condition | 107.9, 108.0 | 25 168 | 7094, 7102 | 5069, 5075 |
+| clang, before | 99.7, 100.0 | 26 433 | 6971, 7009 | 5243, 5444 |
+| clang, one copy, index masked by `& 7` | 88.2, 88.6 | 28 293 | 7121, 7121 | 5614, 5619 |
+
+A miss costs about 20 ticks here, (6700 - 4914) / (101 - 10). On a page the predictor knows, the
+loop does 24 580 instructions in 4914 ticks, so 12 misses less pay for about 1200 instructions more,
+6.7 per fast sequence. The one copy has 16 to 19 with gcc and 10 with clang: the minimum of the offset and 8, two table loads, the
+mask with two shifts, the multiply, the start of the next chunks. And the x86-64 kernel flags have
+`-fsanitize=bounds-strict`, as Fedora's config: gcc keeps a compare and a branch for each table, also
+with the index masked by `& 7`, because it gets the index from a register that holds 0 for another
+reason. Merged into the condition, the short offsets miss there and again at `copy_match()`'s own test
+of the offset, 7 misses more.
+
+Not measured: the A55 and the A76, since none of it was faster on x86-64. On the in-order A55 a miss
+costs fewer cycles and every instruction more, so I expect the one copy to lose there too.
 
 ## Recompression, measured, not pursued
 
