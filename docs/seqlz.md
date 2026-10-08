@@ -605,7 +605,7 @@ sequence the encoder checks that its literals and 32 bytes more are free between
 page that does not fit is an error, as for the other compressors. With a buffer of exactly one page, as
 zswap gives, pages take 1.7% to 2.9% more memory on three dumps, because coding the literals needs the
 raw and the coded ones in the buffer at the same time
-([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-kept)).
+([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)).
 
 ### The table of positions is a cache, not a map
 

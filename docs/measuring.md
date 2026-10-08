@@ -210,6 +210,13 @@ Each of these cost a wrong result first. The measurements behind them are in
   benchmark of `tools/zram-vm/run.sh` reads every page 6 times in a row, the userspace harness takes
   the median of 5 decodes, so both make `seqlz` look faster than it is in a swap-in. `MODE=swap` decodes
   each page once per pass and is the one to trust ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
+- **On the phone, one codec per process for differences below 1 µs.** With all codecs in one zramphone
+  process, the devices taking turns per page, a codec's time depends on the others whose calls run
+  between its own: two copies of the same code differed by 0.44 µs, a change looked 0.6 to 1.0 µs slower
+  on writes that was the same speed alone, within 0.1 µs between two runs
+  ([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)).
+  Run `zramphone pages 1 <codec>` once per codec, in turns, for an A/B; all codecs in one process
+  only for differences of several µs.
 - **Compressions apart from decompressions.** `lz4hc` touches 256 KiB when it compresses, and moved the
   next codec's cold reads by 300 ns. Every repetition times all compressions first, then all
   decompressions.
