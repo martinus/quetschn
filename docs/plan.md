@@ -771,6 +771,9 @@ tables is still open.
   It measures the **actual** memory of `mm_stat`, which is where the fragmentation of §3.1 shows up and
   where the userspace cost model is confirmed or not.
 - [ ] Sustained swap thrash under memory pressure.
+- [x] KUnit tests of `lib/seqlz/`: the tables against the hashes of the spec, its example, round trips,
+  damaged pages, and pages made from the spec's rules that break one rule each. CI runs them in UML
+  with KASAN and UBSan, `tools/kernel-port/kunit.sh`.
 - [ ] `tools/testing/selftests/zram/`, with new cases as needed.
 - [ ] Correct under `CONFIG_DEBUG_ATOMIC_SLEEP`, `PROVE_LOCKING`, KASAN, and with preemption disabled.
   Minchan's zBeWalgo panic was exactly this kind of bug.
@@ -801,7 +804,7 @@ phase does not start from zero.
 - Then an RFC series, with a cover letter modelled on `5ee4014af99f`: where the pages come from, their
   distribution, both architectures, paired regression analysis per page, the state of the fuzzing,
   and the workspace against the other codecs.
-- The series: (1) `lib/quetschn`, the spec and `MAINTAINERS`, (2) the zram backend with Kconfig and
+- The series: (1) `lib/quetschn` with its KUnit tests, the spec and `MAINTAINERS`, (2) the zram backend with Kconfig and
   Makefile, (3) documentation, (4) selftests. 4 KiB pages only: the format for 16 KiB pages is not
   fixed until a phone with 16 KiB pages has measured it (format.md, Status), and a second series adds
   it then.
