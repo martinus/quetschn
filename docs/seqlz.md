@@ -244,8 +244,9 @@ and than `lz4` (4.72 and 4.71). It writes in 11.2 and 11.3 µs, where `lz4` need
 8192 bytes and a buffer of 4112 bytes the decoder decodes literals into. `lz4`'s is 16 440: the
 16 416 bytes of work space the limit is about, and a small struct. Two things are not work memory:
 the buffer the compressed page is written into is zram's, two pages per CPU for every codec, and the
-tables for encoder and decoder, 43 280 bytes, are built once per zram device from the fixed code
-lengths and shared by all CPUs.
+tables for encoder and decoder, 43 280 bytes, are built from the fixed code lengths and shared by all
+CPUs: once when the kernel starts in the kernel's copy (`tools/kernel-port/`), once per zram device in
+the experiments of `tools/zram-vm/` and in the harness.
 
 </details>
 
@@ -844,11 +845,11 @@ userspace the hull is the same").
 
 | | `lz4` | `lzo`, `lzo-rle` | `zstd` 3 | `seqlz` |
 | --- | --- | --- | --- | --- |
-| tables | none | none | built for each page from the description in it, or predefined ones | fixed, built once per zram device |
+| tables | none | none | built for each page from the description in it, or predefined ones | fixed, built once when the kernel starts |
 | per sequence | read the token, copy the literals, read 2 bytes of offset, copy the match | a branch on the top bits of the instruction, then the same | 3 FSE states step from one bitstream, read backwards, then copy | 1 table lookup for the token, the offset bits, copy |
 | literals | copied with the sequence | copied with the sequence | Huffman decoded first, in 1 or 4 streams | Huffman decoded first, in 8 streams, if coded |
 | work memory per CPU | 16 440 B, 16 384 of them the hash table | 16 384 B | 186 112 B | 12 304 B |
-| memory per zram device | none | none | 91 496 B, a dictionary without content | 43 280 B, the decoded tables |
+| memory per zram device | none | none | 91 496 B, a dictionary without content | none; 43 280 B once, the decoded tables |
 
 The byte formats are what makes `lz4` and `lzo` fast to decode: no bit is read, every length and
 offset is a byte or two at a known place. `zstd` decodes its tables from the page before the first

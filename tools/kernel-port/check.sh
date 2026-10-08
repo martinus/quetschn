@@ -29,4 +29,4 @@ grep -q '^CONFIG_ZRAM_BACKEND_SEQLZ=y' "$work/build/.config" || { echo "CONFIG_Z
 ls "$work/build/lib/seqlz/seqlz_codec.o" "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null && echo "build: no warnings"
 
 (cd "$work/src" && git diff --cached | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
-(cd "$work/src" && scripts/kernel-doc -none -Wall lib/seqlz/seqlz_codec.c include/linux/seqlz.h) && echo "kernel-doc: no warnings"
+(cd "$work/src" && scripts/kernel-doc -none -Wall lib/seqlz/seqlz_codec.c lib/seqlz/seqlz.h include/linux/seqlz.h) && echo "kernel-doc: no warnings"
