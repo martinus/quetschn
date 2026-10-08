@@ -16,7 +16,10 @@ trap 'rm -rf "$work"' EXIT
 kmake=(make -C "$work/src" O="$work/build" "$@")
 
 git -C "$tree" archive HEAD | tar -x -C "$work" --one-top-level=src
-git -C "$work/src" init -q && git -C "$work/src" add -A && git -C "$work/src" -c user.name=port -c user.email=port@localhost commit -qm base
+# without automatic maintenance: the commit of a whole tree starts it in the background, and it still
+# wrote into .git when the trap removed it, which failed the job
+git -C "$work/src" init -q && git -C "$work/src" config maintenance.auto false && git -C "$work/src" config gc.auto 0
+git -C "$work/src" add -A && git -C "$work/src" -c user.name=port -c user.email=port@localhost commit -qm base
 python3 "$here/port.py" "$work/src" >/dev/null
 git -C "$work/src" add -A
 git -C "$work/src" diff --cached --stat | tail -1
