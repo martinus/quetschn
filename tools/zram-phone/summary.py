@@ -47,8 +47,7 @@ for line in open(sys.argv[1], errors="replace"):
             else:
                 for k, v in run:
                     times[k].append(v)
-            run = []
-            if any(before.get(k) != v for k, v in kv.items() if k.startswith("cpu") and "-" in k and "step" not in k):
+            if any(before.get(k) != v for k, v in kv.items() if k.startswith("bus:")):
                 mem_changed[cur] += 1
             temps += [int(v) / 1000 for k, v in kv.items() if k in ("cpu-0-max-step", "cpu-1-max-step")]
         continue

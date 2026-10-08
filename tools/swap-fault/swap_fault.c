@@ -73,7 +73,7 @@ static void print_state(const char* when, int cpu) {
             continue;
         snprintf(path, sizeof path, "/sys/class/devfreq/%s/cur_freq", e->d_name);
         first_line(path, v, sizeof v);
-        printf(" %s=%s", q + 5, v);
+        printf(" bus:%s=%s", q + 5, v);
     }
     if (d)
         closedir(d);

@@ -95,16 +95,17 @@ std::string first_line(std::string const& path) {
 
 // What moves cold reads besides the code: the core's clock, on a phone the memory's devfreq frequencies
 // (L3, LLCC, DDR) and the temperatures. Printed before and after a run, so that a run where one of them
-// changed can be thrown away (docs/measuring.md). Prints what the machine has.
+// changed can be thrown away (docs/measuring.md). Prints what the machine has, as the STATE lines of
+// tools/zram-phone/ and swap_fault.c.
 void print_state(char const* when, int cpu) {
-    auto s = std::string("state      ") + when + ": cpu" + std::to_string(cpu) + " " +
-             first_line("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/scaling_cur_freq") + " kHz";
+    auto s = std::string("STATE ") + when + " cpu" + std::to_string(cpu) + "=" +
+             first_line("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/scaling_cur_freq");
     auto ec = std::error_code();
     auto devfreq = std::vector<std::string>();
     for (auto const& d : std::filesystem::directory_iterator("/sys/class/devfreq", ec)) {
         auto const name = d.path().filename().string();
-        if (name.find("qcom,cpu") != std::string::npos) {
-            devfreq.push_back(name.substr(name.find("qcom,") + 5) + "=" + first_line(d.path() / "cur_freq"));
+        if (auto const at = name.find("qcom,cpu"); at != std::string::npos) {
+            devfreq.push_back("bus:" + name.substr(at + 5) + "=" + first_line(d.path() / "cur_freq"));
         }
     }
     std::sort(devfreq.begin(), devfreq.end());
@@ -411,6 +412,7 @@ int main(int argc, char** argv) {
         }
 
         auto const results = quetschn::run_interleaved(c, codecs, model, opts);
+        print_state("end", governor_cpu);
         for (std::size_t k = 0; k < codecs.size(); ++k) {
             auto const* codec = codecs[k];
             auto const& r = results[k];
@@ -457,8 +459,6 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        std::printf("\n");
-        print_state("end", governor_cpu);
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;

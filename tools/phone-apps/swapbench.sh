@@ -10,14 +10,21 @@ snap() {
     echo "mm_stat $(cat /sys/block/zram0/mm_stat)"; echo "io_stat $(cat /sys/block/zram0/io_stat)"
     for p in $(ps -A -o PID,NAME | awk '$2 ~ /kswapd0/ {print $1}'); do echo "kswapd $(cut -d' ' -f14,15 /proc/$p/stat)"; done
     echo "battery_temp $(dumpsys battery | grep temperature | tr -dc 0-9)"
-    # what moves launch times besides the codec: the memory's clocks and the temperatures
-    echo "devfreq $(for d in /sys/class/devfreq/soc:qcom,cpu*; do printf '%s=%s ' ${d##*qcom,} $(cat $d/cur_freq); done)"
-    echo "temps $(for z in /sys/class/thermal/thermal_zone*; do case $(cat $z/type) in cpu-0-max-step|cpu-1-max-step|ddr-usr|xo_therm) printf '%s=%s ' $(cat $z/type) $(cat $z/temp);; esac; done)"
+    # what moves launch times besides the codec: the memory's clocks and the temperatures, as the STATE
+    # lines of tools/zram-phone/, read with the shell's read so that this costs no processes
+    st="STATE $1"
+    for d in /sys/class/devfreq/soc:qcom,cpu*; do read -r v < $d/cur_freq; st="$st bus:${d##*qcom,}=$v"; done
+    for zt in $zones; do read -r v < ${zt#*=}; st="$st ${zt%%=*}=$v"; done
+    echo "$st"
     grep -E "^(MemFree|MemAvailable|Cached|SwapFree):" /proc/meminfo; } >> $out/stats.txt
 }
+# the temperatures for snap(), found once
+zones=""
+for z in /sys/class/thermal/thermal_zone*; do
+  read -r t < $z/type
+  case $t in cpu-0-max-step|cpu-1-max-step|ddr-usr|xo_therm|battery) zones="$zones $t=$z/temp";; esac
+done
 logcat -b events -c
-# the same app versions in every run, or the launch times compare different apps
-for a in $APPS; do echo "$a $(dumpsys package $a | grep -m1 versionName | cut -d= -f2)"; done > $out/versions.txt
 snap start
 : > $out/launches.txt
 r=1
@@ -55,4 +62,7 @@ logcat -b events -d | grep -cE "am_kill|am_proc_died" > $out/kills.txt
 logcat -b events -d | grep -E "am_kill" > $out/am_kill.txt
 logcat -d | grep -iE "lowmemorykiller|lmkd.*kill" | tail -200 > $out/lmkd.txt
 snap end
+# the same app versions in every run, or the launch times compare different apps; after the run, so
+# that 25 dumpsys calls do not come right before the first launch
+for a in $APPS; do echo "$a $(dumpsys package $a | grep -m1 versionName | cut -d= -f2)"; done > $out/versions.txt
 echo "done"

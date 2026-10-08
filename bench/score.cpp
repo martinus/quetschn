@@ -2,6 +2,7 @@
 #include "score.h"
 
 #include <algorithm>
+#include <array>
 #include <istream>
 #include <sstream>
 #include <stdexcept>
@@ -142,27 +143,35 @@ std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& pre
 }
 
 std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefix) {
-    auto boots = std::vector<std::string>(1);
+    // the lines before the first BOOT, e.g. run.sh's KERNEL line, belong to no boot
+    auto before = std::string();
+    auto boots = std::vector<std::string>();
     auto line = std::string();
     while (std::getline(in, line)) {
         if (line.rfind("BOOT ", 0) == 0) {
-            if (!boots.back().empty()) {
-                boots.emplace_back();
-            }
-            continue;
+            boots.emplace_back();
+        } else {
+            (boots.empty() ? before : boots.back()) += line + "\n";
         }
-        boots.back() += line + "\n";
     }
+    if (boots.empty()) {
+        boots.push_back(before);
+    }
+    // the fields that are a mean over the boots: all but the name
+    static constexpr auto fields = std::array{&codec_cost::pages,
+                                              &codec_cost::bytes_per_page,
+                                              &codec_cost::write_ns,
+                                              &codec_cost::read_ns,
+                                              &codec_cost::recompress_ns,
+                                              &codec_cost::write_kernel_ns,
+                                              &codec_cost::read_kernel_ns};
     auto sum = std::vector<codec_cost>();
-    auto n_boots = 0;
     for (auto const& text : boots) {
         auto boot_in = std::istringstream(text);
         auto const b = read_vm_results(boot_in, prefix);
-        // the lines before the first BOOT, e.g. run.sh's KERNEL line, are no boot
         if (b.empty()) {
-            continue;
+            throw std::runtime_error("a boot without results");
         }
-        ++n_boots;
         if (sum.empty()) {
             sum = b;
             continue;
@@ -174,25 +183,14 @@ std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefi
             if (it == b.end()) {
                 throw std::runtime_error(s.name + " is missing in a boot");
             }
-            s.pages += it->pages;
-            s.bytes_per_page += it->bytes_per_page;
-            s.write_ns += it->write_ns;
-            s.read_ns += it->read_ns;
-            s.recompress_ns += it->recompress_ns;
-            s.write_kernel_ns += it->write_kernel_ns;
-            s.read_kernel_ns += it->read_kernel_ns;
+            for (auto const f : fields) {
+                s.*f += (*it).*f;
+            }
         }
     }
-    if (n_boots > 1) {
-        auto const n = static_cast<double>(n_boots);
-        for (auto& s : sum) {
-            s.pages /= n;
-            s.bytes_per_page /= n;
-            s.write_ns /= n;
-            s.read_ns /= n;
-            s.recompress_ns /= n;
-            s.write_kernel_ns /= n;
-            s.read_kernel_ns /= n;
+    for (auto& s : sum) {
+        for (auto const f : fields) {
+            s.*f /= static_cast<double>(boots.size());
         }
     }
     return sum;

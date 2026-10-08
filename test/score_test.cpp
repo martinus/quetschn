@@ -143,6 +143,9 @@ TEST_CASE("score: a run with BOOTS=n, the means over the boots") {
     }
     auto missing = std::istringstream("BOOT 1 of 2\n" + log + "BOOT 2 of 2\n" + other);
     CHECK_THROWS_AS((void)read_vm_boots(missing, ""), std::runtime_error);
+    // a boot that died before its first result is not left out of the mean
+    auto died = std::istringstream("BOOT 1 of 2\n" + log + "BOOT 2 of 2\n");
+    CHECK_THROWS_AS((void)read_vm_boots(died, ""), std::runtime_error);
 }
 
 TEST_CASE("score: a codec made faster keeps its bytes and the kernel's part of the time") {
