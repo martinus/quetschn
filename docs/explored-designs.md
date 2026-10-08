@@ -88,7 +88,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The matcher without its step against the other codecs: 0.02 to 0.05 us per page less](#the-matcher-without-its-step-against-the-other-codecs-002-to-005-us-per-page-less)
 - [The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept](#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)
 - [The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, not kept](#the-matchers-table-with-the-bytes-its-loop-in-assembly-on-arm64-9-fewer-compress-cycles-on-the-a55-not-kept)
-- [The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster, kept](#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-kept)
+- [The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster in the VM, kept](#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)
 - [Memory for speed on the phone: no trade worth it, not kept](#memory-for-speed-on-the-phone-no-trade-worth-it-not-kept)
 - [seqlz-fast-lit faster at the same memory: five tries, none kept](#seqlz-fast-lit-faster-at-the-same-memory-five-tries-none-kept)
 
@@ -3928,7 +3928,7 @@ above already priced (2 positions per hash, hash chains, lazy matching).
 Tests: a page with a match of 8 bytes at offset 20 and, 600 to 615 bytes later, a repeat of exactly
 4 bytes at the same offset, which only the check of the last offset finds and only at its first
 byte. Mutation, caught: the step back in (the repeat is lost at p = 600).
-## The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster, kept
+## The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster in the VM, kept
 
 *The encoder wrote the bitstream behind room for a page of literals, so `seqlz_compress()` needed a
 buffer of two pages and refused anything smaller (#122). zram gives two pages, zswap one, and `lz4`,
@@ -3982,8 +3982,30 @@ buffer at the same time: 504, 1126 and 501 pages keep raw literals. And the raw 
 table, 8 KiB, is free once the matcher is done and could hold the raw literals while they are coded,
 which would take most of the first cost away. Not built: nobody gives seqlz one page yet.
 
-Not measured: the phone. The change is in the compressor only, and the A76 and A55 store with a byte
-swap too.
+**The Mi 9T: the same time, the VM's gain does not show.** zramphone in the phone's 4.14 kernel, 20 000
+pages of the second phone dump, the A55 at 1.80 GHz and the A76 at 2.21 GHz, modules built with NDK
+r21e and functions aligned to 64 bytes: `main` before this (`ma`) and this change (`nb`), each codec
+alone in its own zramphone process, 2 runs, write means in µs; the two runs agree within 0.1 µs:
+
+| | `ma` | `nb` |
+| --- | ---: | ---: |
+| A76, `seqlz-fast` | 10.97 | 11.00 |
+| A76, `seqlz-fast-lit` | 11.88 | 11.92 |
+| A55, `seqlz-fast` | 31.46 | 31.45 |
+| A55, `seqlz-fast-lit` | 34.53 | 34.75 |
+
+The bytes stored are the same. Within 0.22 µs, under 1%, on both cores. The 0.16 to 0.24 µs that the
+VM gained are not there on the phone.
+
+The first runs said something else, and were wrong. With all codecs in one zramphone process, the
+devices taking turns per page, `nb` looked 0.6 to 1.0 µs slower than `main` for `seqlz-fast-lit` on
+both cores, in 4 runs against 3 copies of `main`, and 0.5 µs faster for `seqlz-fast` on the A76. Its
+warm reads moved too, with a decoder that is the same code. The copies of `main` disagreed by up to
+0.44 µs among themselves: two under other names, one with `seqlz.o` 512 bytes later. A copy of `nb`
+whose `code_literals()` is the same machine code as `main`'s was as slow in that run. Alone in a process
+all of it is gone. So in one process a codec's time depends on the codecs whose calls run between its
+own, as in "The harness on the PC: a codec's times depend on the other codecs in the run", by up to
+1 µs. docs/measuring.md has the rule that follows.
 
 ## The token's table by the offset before it: 3 and 12 bytes per page, not kept
 
