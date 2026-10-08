@@ -55,6 +55,17 @@
  * measurements behind each choice, by the headings quoted below.
  */
 
+/*
+ * The bit operations and the short copies are the compiler's builtins, as in
+ * lib/lz4 and lib/zstd. __builtin_ctzll() and __builtin_clz() instead of
+ * __ffs64(), __fls() and fls(): on x86-64 those are inline assembly, and with
+ * them gcc compiled the literal coder and decoder in another shape.
+ * __builtin_memcpy() for copies of 8 and 16 bytes, as LZ4_memcpy() and
+ * ZSTD_memcpy(): it is always inlined, and memcpy() is not with every
+ * CONFIG_FORTIFY_SOURCE, which makes each copy a call. __builtin_bswap64()
+ * turns a literal stream's bits around once, in a register, see lit_flush().
+ */
+
 #ifndef QUETSCHN_PAGE_BITS
 #define QUETSCHN_PAGE_BITS 12 /* 12 for 4 KiB pages, 14 for 16 KiB */
 #endif

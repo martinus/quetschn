@@ -17,8 +17,10 @@ src/ stays the one source of the codec. This writes from it:
   drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c
 On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT instead of
 QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
-references to this repository in the comments (its documents, tools and build); a comment that
-changed is wrapped again to 80 columns. Fails if a reference is left, naming it. Writes only into the
+references to this repository in the comments (its documents, tools and build) and no reasons that
+only hold for the Mi 9T's 4.14, Fedora's config or our test machines, which say the reason in general
+terms instead; a comment that changed is wrapped again to 80 columns. in_order_core() with the kernel's
+MIDR_* macros. Fails if a reference is left, naming it. Writes only into the
 tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
 """
 import pathlib
@@ -39,7 +41,10 @@ HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\
 SPEC_URL = "https://github.com/martinus/quetschn/blob/main/docs/format.md"
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
-                       r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b")
+                       r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
+                       # the reasons of an old kernel, a distribution or our test machines, which mainline
+                       # does not have
+                       r"4\.14|Mi 9T|Fedora|kernel VM|\bthe phone|\bthe PC\b")
 
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
@@ -57,7 +62,36 @@ REWRITES = [
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
     ("seqlz_compress()", "seqlz_compress_page()"),
+    # the reasons in general terms: mainline has no 4.14, no Fedora config and not our machines
+    ("no faster on the phone and made pages", "no faster on a Cortex-A76 and A55 and made pages"),
+    ("smaller and no faster on the phone", "smaller and no faster on a Cortex-A76 and A55"),
+    ("On the phone's pages, 51 instead of 19 bytes made pages 7.9 bytes larger and saved 2.7 us per page "
+     "written on the A55, 1.1 us on the A76; on the PC 11 bytes for 0.1 us",
+     "On pages of a phone, 51 instead of 19 bytes made pages 7.9 bytes larger and saved 2.7 us per page "
+     "written on a Cortex-A55, 1.1 us on a Cortex-A76; on pages of a desktop 11 bytes for 0.1 us"),
+    ("clang compiled seqlz_decode() and code_literals() with other registers, and in the kernel VM a page",
+     "clang gave seqlz_decode() and code_literals() other registers, and on x86-64 a page"),
+    ("as lib/lz4's LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang did not inline the kernel's memcpy() in "
+     "the Mi 9T's 4.14, and every copy of 8 bytes was a call.", "as lib/lz4's LZ4_memcpy(), see seqlz.h."),
+    ("Fedora builds its kernel with -fsanitize=bounds-strict and -fsanitize=shift, which add",
+     "CONFIG_UBSAN_BOUNDS and CONFIG_UBSAN_SHIFT, which distributions enable, add"),
 ]
+# which cores run in order, in the kernel's terms
+IN_ORDER_CORE = """/*
+ * The in-order cores: Cortex-A53, A55, A510 and A520, and Qualcomm's Kryo
+ * silver cores of the 2xx to 4xx series, which are Cortex-A53 and A55.
+ */
+static inline int in_order_core(void)
+{
+	u32 m = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
+
+	return m == MIDR_CORTEX_A53 || m == MIDR_CORTEX_A55 ||
+	       m == MIDR_CORTEX_A510 || m == MIDR_CORTEX_A520 ||
+	       m == MIDR_QCOM_KRYO_2XX_SILVER ||
+	       m == MIDR_QCOM_KRYO_3XX_SILVER ||
+	       m == MIDR_QCOM_KRYO_4XX_SILVER;
+}
+"""
 # a measurement's heading in parentheses, with a number of an item or a remark after it
 HEADING = re.compile(r" ?\(\"[^\"]+\"(?:,? [^)]*)?\)")
 PAGE_BITS_BLOCK = re.compile(r"(/\*[^*]*?(?:\*[^/][^*]*?)*?\*/\n)?#ifndef QUETSCHN_PAGE_BITS\n#define QUETSCHN_PAGE_BITS 12[^\n]*\n#endif\n")
@@ -264,6 +298,9 @@ def port_codec():
              "#include <linux/errno.h>\n#include <linux/export.h>\n#include <linux/init.h>\n"
              "#include <linux/module.h>\n#include <linux/seqlz.h>\n\n#include \"seqlz.h\"\n")
     t = must(t, "#if defined(__KERNEL__) && defined(__aarch64__)\n", "#ifdef CONFIG_ARM64\n")
+    # src/ writes the cores' numbers out, for older kernels; the kernel's copy has its macros
+    t = cut(t, r"/\*\n \* The in-order cores: .*?\n\}\n(?=\nstatic inline int prefetch_tokens)")
+    t = must(t, "#include <asm/cputype.h>\n", "#include <asm/cputype.h>\n" + IN_ORDER_CORE)
     t = must(t, "/* tests take the in-order path on any CPU with -DSEQLZ_IN_ORDER=1 */\n#ifndef SEQLZ_IN_ORDER\n"
              "#define SEQLZ_IN_ORDER 0\n#endif\n", "")
     t = must(t, "\treturn SEQLZ_IN_ORDER;\n", "\treturn 0;\n")
@@ -354,7 +391,7 @@ def main():
             if FORBIDDEN.search(line.replace(SPEC_URL, "")) or HARNESS_ONLY.search(line):
                 left.append(f"{path}:{n}: {line.strip()}")
     if left:
-        sys.exit("references to this repository left:\n" + "\n".join(left))
+        sys.exit("references to this repository or reasons of our machines left:\n" + "\n".join(left))
     for path, text in out.items():
         (tree / path).parent.mkdir(parents=True, exist_ok=True)
         (tree / path).write_text(text)
