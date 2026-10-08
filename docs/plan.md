@@ -253,7 +253,8 @@ Which means that:
   of the first zram dump (Phase 1) the model gives 604 MB, and zram's `mem_used_total` was 954 MB. Some
   minutes later zram had compacted (`pages_compacted` from 641 229 to 725 853) and used 628 MB for 3%
   more pages, close to the model. Fragmentation comes and goes, and at its worst it is larger than the
-  differences between the codecs.
+  differences between the codecs. On a new device, without frees, the model is exact
+  ([explored-designs.md](explored-designs.md#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)).
 
 So the ratio metric of this project is **Σ zsmalloc cost**, the last column, plus the **number of pages
 over the cliff**. Not the mean compression ratio.
@@ -427,13 +428,13 @@ Each phase ends in an artifact and a gate. The durations are calendar weeks at 3
 
 | phase | what | status |
 | --- | --- | --- |
-| [0](#phase-0-repository-foundation-2-weeks) | repository, license, CI | done, except a CI job with the kernel's flags and `checkpatch.pl` |
+| [0](#phase-0-repository-foundation-2-weeks) | repository, license, CI | done |
 | [1](#phase-1-corpus-tooling-4-weeks) | collecting pages | done for zram dumps of a desktop and of a phone |
 | [2](#phase-2-benchmark-harness-and-baseline-8-weeks) | harness and baseline | done, the gate passed, not published yet |
 | [2b](#phase-2b-decoder-latency-spike-2-weeks) | decoder latency spike | done on x86-64 |
 | [3](#phase-3-page-analysis-and-design-exploration-12-weeks) | design exploration | done: `seqlz-fast-lit` |
 | [4](#phase-4-reference-implementation-format-spec-fuzzing-20-weeks) | spec, reference decoders, fuzzing | mostly done |
-| [5](#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) | kernel port, validation in a VM | started |
+| [5](#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) | kernel port, validation in a VM | done, the gate passed on 8th October 2026 |
 | [6](#phase-6-arm64-validation-a-hard-gate-before-phase-7) | arm64 | half: one phone, 4 KiB pages |
 | [7](#phase-7-upstreaming-6-months-or-more-expect-v5) | upstreaming | the question to the maintainers is drafted |
 
@@ -445,8 +446,10 @@ Each phase ends in an artifact and a gate. The durations are calendar weeks at 3
 - [x] CMake, C++20 for the tools and the harness, C11 for the codec.
 - [x] CI from the first day: ASan and UBSan, gcc and clang, arm64, the same bytes on big-endian s390x
   under qemu and on 32-bit x86, the spec's table hashes, the links of the docs.
-- [ ] A CI job that compiles the codec with the kernel's flags
-  (`-std=gnu11 -ffreestanding -nostdinc -Wframe-larger-than=256 -fno-builtin`), and `checkpatch.pl`.
+- [x] A CI job that compiles the codec with the kernel's flags
+  (`-std=gnu11 -ffreestanding -nostdinc -Wframe-larger-than=256 -fno-builtin`), and `checkpatch.pl`:
+  `kernel-port` builds the kernel's copy in a kernel tree with W=1 for x86-64, arm64, arm and s390, and
+  runs checkpatch and kernel-doc on it.
 - [x] [`CONTRIBUTING.md`](../CONTRIBUTING.md), with `Signed-off-by:` (DCO) as the kernel does it.
 - [x] Get the old phone and root it: a Xiaomi Mi 9T, rooted on 3rd October 2026.
 - [x] Check the employer rules (R8). Side projects are fine.
@@ -762,24 +765,36 @@ tables is still open.
 
 ### Phase 5: kernel port and validation in a VM (16 weeks)
 
-- [ ] `lib/quetschn/` and `include/linux/quetschn.h`, **free of any zram API dependency**. The zram
+- [x] `lib/quetschn/` and `include/linux/quetschn.h`, **free of any zram API dependency**. The zram
   backend API has changed again and again (the rewrite of 2024, the preemption series of 2025, the
-  parameter handling of 2026). A thin `backend_quetschn.c` absorbs that.
-- [ ] `backend_quetschn.c` modelled on `backend_lz4.c`, including the validation in `setup_params`
-  (`7b0f677c7bd5`) and `pr_fmt` (`70922d5ef84a`).
+  parameter handling of 2026). A thin `backend_quetschn.c` absorbs that. Done as `lib/seqlz/`,
+  `include/linux/seqlz.h` with only `seqlz_compress()` and `seqlz_decompress()`, which
+  `tools/kernel-port/port.py` writes into a kernel tree.
+- [x] `backend_quetschn.c` modelled on `backend_lz4.c`, including the validation in `setup_params`
+  (`7b0f677c7bd5`) and `pr_fmt` (`70922d5ef84a`): `backend_seqlz.c`.
 - [x] A QEMU test rig: a VM with zram, reads, writes and the whole page fault, `tools/zram-vm/run.sh`.
   It measures the **actual** memory of `mm_stat`, which is where the fragmentation of §3.1 shows up and
   where the userspace cost model is confirmed or not.
-- [ ] Sustained swap thrash under memory pressure.
+- [x] Sustained swap thrash under memory pressure: `tools/kernel-port/stress.sh`, 4 CPUs swapping 1.5
+  times the free memory to zram with seqlz for 15 minutes per boot, every page compared with what it
+  should hold.
 - [x] KUnit tests of `lib/seqlz/`: the tables against the hashes of the spec, its example, round trips,
   damaged pages, and pages made from the spec's rules that break one rule each. CI runs them in UML
   with KASAN and UBSan, `tools/kernel-port/kunit.sh`.
-- [ ] `tools/testing/selftests/zram/`, with new cases as needed.
-- [ ] Correct under `CONFIG_DEBUG_ATOMIC_SLEEP`, `PROVE_LOCKING`, KASAN, and with preemption disabled.
-  Minchan's zBeWalgo panic was exactly this kind of bug.
+- [x] `tools/testing/selftests/zram/`, with new cases as needed: `stress.sh` runs them with seqlz.
+  No new cases so far; the thrash covers what they don't.
+- [x] Correct under `CONFIG_DEBUG_ATOMIC_SLEEP`, `PROVE_LOCKING`, KASAN, and with preemption disabled.
+  Minchan's zBeWalgo panic was exactly this kind of bug. Also UBSan's bounds and shift checks.
+  x86-64 has no `preempt=none` any more, its choices are `full` and `lazy`, and `stress.sh` boots
+  both.
 
 *Gate: a kernel with quetschn survives sustained swap thrash under KASAN, and `mm_stat` in the VM
-confirms the userspace prediction within 2%.*
+confirms the userspace prediction within 2%.* Passed on 8th October 2026, kernel `986c24e0fe44`: 4
+boots of `stress.sh` on the whole second phone dump, `preempt=full` and `lazy`, levels 1 and 2, 15
+minutes each. 34.9 million pages swapped out and 33.6 million in, 37.2 million compared, none
+different, no report from KASAN, lockdep, UBSan or `DEBUG_ATOMIC_SLEEP`, KUnit and the selftests
+passed. `mem_used_total` on a new device is exactly the model's, the sum of the per-page costs 0.35 to
+0.47% below it ([explored-designs.md](explored-designs.md#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)).
 
 ### Phase 6: arm64 validation, a hard gate before Phase 7
 
@@ -893,8 +908,8 @@ As of 8th October 2026:
 
 - **Phases 0 to 3: done.** The harness, the collectors, zram dumps of the desktop and of the Mi 9T,
   and the design: `seqlz-fast-lit` ([seqlz.md](seqlz.md)), with every alternative that was measured in
-  [explored-designs.md](explored-designs.md). Not done from them: the CI job with the kernel's flags,
-  the scripted VM workloads, and publishing the comparison.
+  [explored-designs.md](explored-designs.md). Not done from them: the scripted VM workloads, and
+  publishing the comparison.
 - **Phase 4: mostly done.** [The format](format.md), and two reference decoders written from it. The
   tables were trained again on 7th October, on swapped pages too. Fuzzing of the decoder, of the
   roundtrip, and of the decoder against the reference decoder in C: 1.7 billion inputs with AFL++ on the
@@ -903,10 +918,13 @@ As of 8th October 2026:
   `seqlz-fast-lit`'s slowest pages cost 1.14 times to compress and 1.59 times to decode, the least of
   it, `lz4`, `lzo-rle` and `zstd`. The tests run with 16 KiB pages too, in CI. Open: MSan, continuous
   fuzzing (ClusterFuzzLite), and an AFL++ run on the new tables (AFL++ is not installed any more).
-- **Phase 5: started.** The kernel VM of `tools/zram-vm/` runs seqlz as a zram backend and measures
-  `mm_stat`, reads and writes, and with `MODE=swap` the whole page fault, with `zcomp_decompress()`
-  timed alone. Open: the split into `lib/` and a backend, swap thrash under KASAN and lockdep, the zram
-  selftests.
+- **Phase 5: done, the gate passed.** `tools/kernel-port/` writes `lib/seqlz/`, a minimal
+  `include/linux/seqlz.h`, the zram backend and KUnit tests into a kernel tree; CI builds it for
+  x86-64, arm64, arm and s390 and runs the KUnit tests. `stress.sh` swapped 34.9 million pages through
+  it under KASAN, lockdep and UBSan without a report or a wrong page, the zram selftests pass with it,
+  and `mm_stat` on a new device is exactly the model's memory
+  ([explored-designs.md](explored-designs.md#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)). The kernel VM of `tools/zram-vm/` measures reads, writes and the whole
+  page fault.
 - **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages, its own pages, in its own kernel as zram and
   as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on the pages
   of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
@@ -935,6 +953,6 @@ Next, in this order:
    ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 4. The work memory with 16 KiB pages: within C5, or a reason why not. Which context C5 limits, once
    zram splits them, is open (§3.3).
-5. Phase 5: `lib/` and the backend in the form the maintainers want, swap thrash under KASAN and
-   lockdep, the selftests.
+5. Phase 5 again if the maintainers want another form than a zram backend, e.g. an acomp algorithm:
+   `lib/seqlz/` stays, the glue changes, and `stress.sh` runs again.
 6. MSan, continuous fuzzing, and AFL++ again for the gate of Phase 4.

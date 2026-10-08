@@ -35,7 +35,7 @@ every codec. How it was measured is in
 
 ## Where it stands
 
-As of 7th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
+As of 8th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
 
 - [x] Benchmark harness, page collectors, zram dumps of a desktop and of a phone
 - [x] The codec, [`seqlz-fast-lit`](docs/seqlz.md), and every alternative that was measured
@@ -44,7 +44,7 @@ As of 7th October 2026. The details, and what comes next, are in [the plan, §9]
 - [ ] Ask the zram maintainers whether they want a new backend at all, and in which form
 - [x] 16 KiB pages: tables trained on the pages of the Android 17 emulator
 - [ ] 16 KiB pages: work memory within `lz4`'s, and a phone with 16 KiB pages
-- [ ] The kernel port: `lib/` and a zram backend, swap thrash under KASAN, the zram selftests
+- [x] The kernel port: `lib/` and a zram backend, swap thrash under KASAN, the zram selftests
 
 > [!WARNING]
 > Nobody uses seqlz yet, and the format can still change. Don't store pages with it that have to

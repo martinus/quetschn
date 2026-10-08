@@ -37,6 +37,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [How the numbers are measured](#how-the-numbers-are-measured)
 - [The harness on the PC: a codec's times depend on the other codecs in the run, not found why](#the-harness-on-the-pc-a-codecs-times-depend-on-the-other-codecs-in-the-run-not-found-why)
 - [Less noise on the phone: one codec per process and the memory's clocks fixed](#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed)
+- [zram's memory against the model: exact on a new device, Σ zsmalloc cost 0.35 to 0.47% below it](#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)
 - [The first runs with dictionaries, Phases 0 to 2](#the-first-runs-with-dictionaries-phases-0-to-2)
 - [Baselines](#baselines)
 - [`lz4` with a dictionary](#lz4-with-a-dictionary)
@@ -842,6 +843,42 @@ Checked: the tests with both loops, `SEQLZ_IN_ORDER` 0 and 1, with ASan and UBSa
 spec decoder, the same bytes on the endian test, 60 s of fuzzing per target with each loop. Three
 mutations fail the tests under the sanitizers: the alternation not reset after the slow path, no
 refill at all, and the fast path without its input bound.
+
+## zram's memory against the model: exact on a new device, Σ zsmalloc cost 0.35 to 0.47% below it
+
+*The gate of [plan.md Phase 5](plan.md#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) asks
+whether `mm_stat` in the VM confirms the userspace prediction within 2%. It does: after writing all
+pages of a dump to a new zram device, `mem_used_total` is exactly what the model gives for a new
+pool, to the byte, for `lz4` and both seqlz levels. The sum of the per-page costs, the score's
+memory, is 0.35 to 0.47% below it.* Kept, as `zsmalloc_model::fresh_pool_bytes()`.
+
+The per-page cost of the model, `cost()`, spreads each zspage's tail over its objects, so it has no
+partly filled zspage. A new device has one in every class it uses: per class, zsmalloc takes as many
+whole zspages as the class's objects need, the last one partly filled. `fresh_pool_bytes()` counts
+that, and `quetschn-bench-*` prints it as `zsmalloc new device`. Without frees there is no
+fragmentation, so on a new device it is the whole story.
+
+`tools/kernel-port/stress.sh`, phase 1: the kernel's own seqlz (`tools/kernel-port/`, kernel
+`986c24e0fe44` with KASAN and lockdep), every page written to a new device with `O_DIRECT`,
+`mem_used_total` from `mm_stat` right after, bytes:
+
+| pages | zram | `mem_used_total` | model, new device | Σ zsmalloc cost |
+| --- | --- | ---: | ---: | ---: |
+| 20 000, the second phone dump's sample | `lz4` | 25 825 280 | 25 825 280 | 24 665 262, -4.5% |
+| | `seqlz` level 1 | 19 820 544 | 19 820 544 | 18 808 935, -5.1% |
+| | `seqlz` level 2 | 18 890 752 | 18 890 752 | 17 756 217, -6.0% |
+| 267 269, the whole second phone dump | `lz4` | 330 706 944 | 330 706 944 | 329 558 036, -0.35% |
+| | `seqlz` level 1 | 252 211 200 | 252 211 200 | 251 043 035, -0.46% |
+| | `seqlz` level 2 | 238 022 656 | 238 022 656 | 236 933 698, -0.46% |
+
+The partly filled zspages are about 1.1 MB per device, nearly the same for every codec, so on 20 000
+pages they are 4.5 to 6% and on the whole dump below 0.5%. The score's comparisons between codecs are
+not changed by them. Under churn it is different. At the end of each 15 minutes of swap thrash in the
+same runs, 8.6 to 8.8 million pages swapped out, the workers had exited and 953 pages were left in
+zram: 3.9 MB, compressed to 2.2 to 2.5 MB, held in 6.1 to 6.5 MB of zsmalloc, after a peak of 338 to
+358 MB and 186 335 to 267 113 pages compacted. That is fragmentation, which a model of sizes can't
+predict; [plan.md §3.1](plan.md#31-zram-does-not-pay-for-bytes-it-pays-for-zsmalloc-size-classes)
+has how large it got on the development machine.
 
 ## The first runs with dictionaries, Phases 0 to 2
 

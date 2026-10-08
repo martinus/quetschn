@@ -53,6 +53,12 @@ public:
     // tail waste. This is the ratio metric of the benchmark.
     [[nodiscard]] double cost(std::size_t comp_len) const;
 
+    // Bytes of a new pool after one zs_malloc() per entry of comp_lens and no free: per class, the
+    // zspages its objects need, the last one partly filled. That is zram's mem_used_total right after
+    // these pages were written to a new device. It is more than the sum of cost(), by up to a zspage per
+    // class, and it has no fragmentation, which only frees cause.
+    [[nodiscard]] std::size_t fresh_pool_bytes(std::span<std::size_t const> comp_lens) const;
+
     // All classes after merging, smallest first. Same rows as the debugfs `classes` file.
     [[nodiscard]] std::span<size_class const> classes() const;
 

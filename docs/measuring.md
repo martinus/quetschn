@@ -98,6 +98,17 @@ Some options are for finding where a fault's time goes, all in `KARGS`:
 - `quetschn.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, and
   `quetschn.cond=3` runs only its condition "flushed, other page first".
 
+`tools/kernel-port/stress.sh` is the gate of Phase 5, not a benchmark: the kernel's own seqlz from
+`port.py`, built with KASAN, lockdep, `DEBUG_ATOMIC_SLEEP` and UBSan, booted in a VM with 4 CPUs. It
+writes the corpus to new zram devices and prints `mm_stat`, swaps to zram with seqlz under memory
+pressure for `MINUTES` per boot and compares every page, and runs the kernel's zram selftests. It fails
+on any report in the console. With `BUILD`, the model's memory for the same pages is printed next to
+`mm_stat`. About 17 minutes per boot with the defaults:
+
+```sh
+BUILD=build tools/kernel-port/stress.sh <linux tree> corpus/first stress-logs
+```
+
 See [explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 and ["The decoder in a fault, found"](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides).
 
