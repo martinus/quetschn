@@ -422,6 +422,12 @@ for 5.6 and 6.6 µs per page written. So whoever values 1 µs at less than about
 lowest score with `seqlz-fast-lit` instead of free hardware `lz4`. `seqlz-fast` leaves the hull at x =
 0.5 on the first dump and at x = 0.75 on the second; `lzo-rle` at x = 0.75.
 
+A faster `lz4` cannot push `seqlz-fast-lit` off the hull, it only lowers the upper end. Off the hull
+means the upper end falls below the lower end, so that no lambda is left. On the first dump that is
+413 / (8.74 µs - `lz4`'s time) < 3.1, which needs `lz4` at 8.74 - 133 µs per page written, on the
+second 9.68 - 45.6 µs: both below 0. Only a codec that also stores small can do it, from below, e.g. a
+`zstd` that is much faster.
+
 The Mi 9T has no log that `quetschn-score` reads, so its numbers come from the table of "The numbers
 again, with the bit order and the token table's prefetch", zramphone, the first desktop dump's 20 000
 pages, bytes from the rounded memory column. Its times are zram's reads and writes, with zram's own
