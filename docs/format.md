@@ -158,6 +158,25 @@ byte per symbol, symbol 0 first:
 `LL` and `ML` are not the literal tables: they code the lengths `ll` and `ml` of a sequence when they
 are too large for a token. The literal tables code the literals themselves.
 
+### Where the tables come from
+
+Every table is built from counts that are in this repository:
+[`bench/seqlz_counts_4k.txt`](../bench/seqlz_counts_4k.txt) and
+[`bench/seqlz_counts_16k.txt`](../bench/seqlz_counts_16k.txt). They have how often each token, `ll` and
+`ml` symbol occurred on the training pages, and for each literal table, how often each byte occurred as
+a literal on the pages that table codes best. `quetschn-seqlz-train --from-counts <file>` turns the counts
+into the code lengths, and with `--lit-sets` into the literal tables; `bench/seqlz_train.cpp` has how.
+The test `seqlz_train` checks in CI that this gives the tables in `src/` bit for bit, for both page sizes.
+
+The 4 KiB tables are counted on 524 912 pages: the resident pages of a desktop, 60 132 pages of its zram
+dump of 28th September 2026, and the first zram dump of a Xiaomi Mi 9T, five times, so that the phone
+does not lose what the desktop's pages gain. The 16 KiB tables are counted on 26 933 pages of a zram dump of the
+Android 17 emulator with 16 KiB pages. Those pages are not published, because memory dumps hold keys
+and passwords. The counts can't give those back: they are sums over all pages, each literal table's over
+845 pages or more for 4 KiB (the phone's counted five times) and 453 or more for 16 KiB, and they don't say which symbol came after which
+or on which page. `quetschn-seqlz-train --corpus <pages> --counts <file>` counts other pages the same
+way.
+
 The SHA-256 of each table's lengths, as bytes in symbol order (the literal tables one after the other),
 so that a decoder can check that it has the right ones; `tools/seqlz-ref/seqlz_ref.py` checks them:
 
