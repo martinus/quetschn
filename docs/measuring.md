@@ -136,11 +136,13 @@ tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-fast-lit
 [the plan, §1.1](plan.md#11-the-score-memory-against-time-not-bars), from the output of
 `quetschn-bench-*` or of `tools/zram-vm/run.sh`, in either mode; with `MODE=swap` its times are the
 swap-out with one call per page and the swap-in with the compressed data flushed, the ones the plan
-uses. `r`, the reads per write, comes from
+uses. `--what-if lz4:0.5` adds `lz4` with its own time halved, and with `MODE=swap` the kernel's part
+unchanged, for the question of hardware `lz4` (plan R12). `r`, the reads per write, comes from
 `quetschn-swap-bursts` on a running machine:
 
 ```sh
 ./build/quetschn-score --reads-per-write 0.34 run.txt
+./build/quetschn-score --what-if lz4:0.5 swap.log
 ./build/quetschn-swap-bursts --seconds 3600
 ```
 

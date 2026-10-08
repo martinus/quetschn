@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -20,7 +21,7 @@ namespace {
 void usage() {
     std::fprintf(stderr,
                  "usage: quetschn-score [--reads-per-write <r>] [--recompress-weight <b>] [--lambda <bytes per us>]\n"
-                 "                      <run.log>[:<prefix>] ...\n"
+                 "                      [--what-if <codec>:<factor>] ... <run.log>[:<prefix>] ...\n"
                  "\n"
                  "Each log is the output of tools/zram-vm/run.sh or of quetschn-bench-* with timing, all from the\n"
                  "same corpus; <prefix> goes in front of its codec names, to tell runs apart. Time per page written =\n"
@@ -29,7 +30,10 @@ void usage() {
                  "and the swap-in with the compressed data flushed. --reads-per-write default 0.34,\n"
                  "--recompress-weight 1.\n"
                  "Lists the codecs with the lowest bytes + lambda * us for some lambda, with the exchange rates\n"
-                 "between them; with --lambda also that score for each codec.\n");
+                 "between them; with --lambda also that score for each codec.\n"
+                 "--what-if adds a codec with the bytes of <codec> (its name with the prefix) and its own time times\n"
+                 "<factor>, e.g. lz4 in hardware. In a log of MODE=swap the time of a same-filled page is the kernel's\n"
+                 "part and stays; elsewhere the whole time is scaled.\n");
 }
 
 bool parse(std::string_view s, double& out) {
@@ -43,6 +47,7 @@ int main(int argc, char** argv) {
     auto w = quetschn::score_weights{};
     auto lambda = -1.0;
     auto codecs = std::vector<quetschn::codec_cost>();
+    auto what_ifs = std::vector<std::pair<std::string, double>>();
     try {
         for (int i = 1; i < argc; ++i) {
             auto const arg = std::string_view(argv[i]);
@@ -58,6 +63,15 @@ int main(int argc, char** argv) {
                 value(w.recompress_weight);
             } else if (arg == "--lambda") {
                 value(lambda);
+            } else if (arg == "--what-if") {
+                auto const spec = std::string_view(i + 1 < argc ? argv[i + 1] : "");
+                auto const colon = spec.rfind(':');
+                auto factor = 0.0;
+                if (colon == std::string_view::npos || colon == 0 || !parse(spec.substr(colon + 1), factor) || factor < 0.0) {
+                    throw std::invalid_argument("--what-if needs <codec>:<factor>, factor >= 0");
+                }
+                what_ifs.emplace_back(std::string(spec.substr(0, colon)), factor);
+                ++i;
             } else if (arg.starts_with("-")) {
                 usage();
                 return 2;
@@ -85,6 +99,18 @@ int main(int argc, char** argv) {
     if (codecs.empty()) {
         usage();
         return 2;
+    }
+    for (auto const& [name, factor] : what_ifs) {
+        auto const n = codecs.size();
+        for (std::size_t k = 0; k < n; ++k) {
+            if (codecs[k].name == name) {
+                codecs.push_back(quetschn::what_if(codecs[k], factor));
+            }
+        }
+        if (codecs.size() == n) {
+            std::fprintf(stderr, "error: --what-if: no codec %s in the logs\n", name.c_str());
+            return 2;
+        }
     }
 
     std::printf("time per page written = write + %.2f * cold read + %.2f * recompression, means, us\n\n",

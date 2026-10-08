@@ -20,6 +20,10 @@ struct codec_cost {
     double read_ns = 0.0;        // mean; VM: "flushed, other page first", prefetch 8, or MODE=swap "swap-in,
                                  // flushed"; bench: decompress cold
     double recompress_ns = 0.0;  // VM, per page, 0 without a secondary algorithm
+    // the part of write_ns and read_ns that is the kernel's, the same for every codec: MODE=swap, the mean
+    // swap-out and swap-in of a same-filled page, which zram stores without the codec; 0 elsewhere
+    double write_kernel_ns = 0.0;
+    double read_kernel_ns = 0.0;
 };
 
 // The RESULT lines of one run, in the order of the devices; other lines are skipped. prefix goes in
@@ -40,6 +44,10 @@ struct score_weights {
 
 // Time per page written: its write, the reads of it, its recompression. In us.
 [[nodiscard]] double us_per_page(codec_cost const& c, score_weights const& w);
+
+// c with its bytes, and its own time times factor: what c would be if it were that much faster, e.g.
+// lz4 in hardware (docs/plan.md R12). The kernel's part of the times stays. Named "<name> x<factor>".
+[[nodiscard]] codec_cost what_if(codec_cost const& c, double factor);
 
 // The codecs that have the lowest bytes_per_page + lambda * us_per_page for some lambda >= 0, as
 // indices into codecs: the lower left convex hull of the points (us, bytes), from the fastest to the

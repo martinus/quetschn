@@ -45,6 +45,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The designs by the score](#the-designs-by-the-score)
 - [The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)
 - [zstd at every level, in a swap-in: no level stores less in less time than seqlz-fast-lit](#zstd-at-every-level-in-a-swap-in-no-level-stores-less-in-less-time-than-seqlz-fast-lit)
+- [lz4 in hardware, a what-if: seqlz-fast-lit stays on the hull, up to 73 and 72 bytes per µs instead of 155 and 211](#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
 - [The decoder in a fault: 0.28 µs slower than in zram's read benchmark, warm caches give back 0.12](#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)
 - [The decoder in a fault, found: 110 branch mispredictions per page that a decode of the same page before hides](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)
@@ -383,6 +384,71 @@ KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,seqlz-lit,zstd:-5,zstd:-3,zstd:-1
 KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,seqlz-lit,zstd:5,zstd:7,zstd:9,zstd:12,zstd:15,zstd:19 \
     tools/zram-vm/run.sh <linux tree> <corpus> >g2.log
 tools/plot-zstd-levels.py --row "First desktop dump=g1.log,g2.log" --out zstd-levels.svg
+```
+
+## lz4 in hardware, a what-if: seqlz-fast-lit stays on the hull, up to 73 and 72 bytes per µs instead of 155 and 211
+
+*Qualcomm posted a zram backend `qpace-lz4` for a page compression engine in its new SoCs on 30th
+September 2026 ([series 1177021](https://patchwork.kernel.org/series/1177021/), `docs/plan.md` R12).
+It makes `lz4` faster and stores the same bytes, so how fast must `lz4` get before `seqlz-fast-lit`
+has the lowest score for no lambda at all? It never gets there: even with `lz4`'s own time at 0,
+`seqlz-fast-lit` stays on the hull from 3.1 to 73 bytes per µs on the first desktop dump and from 10.3
+to 72 on the second. Without the hardware it was up to 155 and 211.* Nothing is measured on the
+hardware, there is no such device here. Code: `quetschn-score --what-if <codec>:<factor>`
+(`bench/score.cpp`, `what_if()`).
+
+`--what-if lz4:x` adds a codec with `lz4`'s bytes and `lz4`'s own time times x. In a log of
+`MODE=swap` the time of a same-filled page is the kernel's part, zram stores such a page without the
+codec, and that part stays: about 2.5 µs per swap-out and 1.8 µs per swap-in. For the reads that fits
+what `zcomp_decompress()` takes alone in the same boot, 1.43 µs of `lz4`'s swap-in against 1.45 µs
+from the difference.
+
+The logs of "The score with the swap times": VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc
+16.2.1, 20 000 pages per dump, CPU 2 at 4.5 GHz, boost off, the tables of 7 October, 2 boots per dump,
+the means of the two. `r = 0.34`, `b = 1`, first dump / second dump:
+
+| x | `lz4`'s µs per page written | `seqlz-fast-lit` on the hull, bytes per µs | faster codecs on the hull |
+| ---: | ---: | --- | --- |
+| 1 | 7.50 / 8.10 | 3.1 to 155 / 10.3 to 211 | `lzo-rle`, `seqlz-fast` / `lz4`, `lzo-rle`, `seqlz-fast` |
+| 0.75 | 6.41 / 6.86 | 3.1 to 155 / 10.3 to 167 | `lz4` x, `seqlz-fast` / `lz4` x |
+| 0.5 | 5.30 / 5.62 | 3.1 to 120 / 10.3 to 116 | `lz4` x |
+| 0.25 | 4.21 / 4.37 | 3.1 to 91 / 10.3 to 89 | `lz4` x |
+| 0.1 | 3.55 / 3.62 | 3.1 to 80 / 10.3 to 78 | `lz4` x |
+| 0 | 3.11 / 3.12 | 3.1 to 73 / 10.3 to 72 | `lz4` x |
+
+The lower end does not move, it is the step to `zstd` 3. The upper end is the step from `lz4` x, and
+at x = 0 it is simply what `seqlz-fast-lit` saves per page divided by its own time: 413 and 470 bytes
+for 5.6 and 6.6 µs per page written. So whoever values 1 µs at less than about 72 bytes still gets the
+lowest score with `seqlz-fast-lit` instead of free hardware `lz4`. `seqlz-fast` leaves the hull at x =
+0.5 on the first dump and at x = 0.75 on the second; `lzo-rle` at x = 0.75.
+
+The Mi 9T has no log that `quetschn-score` reads, so its numbers come from the table of "The numbers
+again, with the bit order and the token table's prefetch", zramphone, the first desktop dump's 20 000
+pages, bytes from the rounded memory column. Its times are zram's reads and writes, with zram's own
+work in them, and the factor scales all of it. At x = 1 this gives the hull of that entry again, 0.9 to
+82 and 0.2 to 16. Big core / little core:
+
+| x | `seqlz-fast-lit` on the hull, bytes per µs |
+| ---: | --- |
+| 1 | 0.9 to 82 / 0.2 to 16 |
+| 0.75 | 0.9 to 72 / 0.2 to 16 |
+| 0.5 | 0.9 to 45 / 0.2 to 12 |
+| 0.25 | 0.9 to 32 / 0.2 to 8.8 |
+| 0.1 | 0.9 to 28 / 0.2 to 7.7 |
+| 0 | 0.9 to 25 / 0.2 to 7.1 |
+
+At x = 0 on the phone that is 430 bytes for 16.9 µs on the big core and 60.9 µs on the little one.
+
+x = 0 is the limit, not a likely value. `qpace-lz4` copies the page into a DMA buffer and the result
+out of one, and the CPU polls until the engine is done, which is time the factor does not see. Also the
+kernel's part above is a same-filled page's, which skips `zs_malloc()` and the copy into zsmalloc, so x =
+0 takes those away from `lz4` too, and the phone's rows scale zram's own work. All of this makes the
+hardware `lz4` faster than it can be, and the ranges end lower than they would. Not known: whether
+`qpace-lz4` stores the bytes of software `lz4` at all (if it stores more, the gap grows), and the swap
+times of a phone with the engine.
+
+```sh
+./build/quetschn-score --what-if lz4:0.5 swap.log
 ```
 
 ## The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves

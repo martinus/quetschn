@@ -16,6 +16,7 @@ using quetschn::read_bench_results;
 using quetschn::read_vm_results;
 using quetschn::score_weights;
 using quetschn::us_per_page;
+using quetschn::what_if;
 
 namespace {
 
@@ -116,6 +117,27 @@ TEST_CASE("score: MODE=swap, the corpus's pages without the same-filled ones the
     auto const line = log.find("RESULT lz4       swap-in, flushed, same-filled");
     auto incomplete = std::istringstream(log.substr(0, line) + log.substr(log.find('\n', line) + 1));
     CHECK_THROWS_AS((void)read_vm_results(incomplete, ""), std::runtime_error);
+}
+
+TEST_CASE("score: a codec made faster keeps its bytes and the kernel's part of the time") {
+    auto in = std::istringstream(swap_log);
+    auto const c = read_vm_results(in, "");
+    REQUIRE(c.size() == 1);
+    // the same-filled pages are the kernel's part: zram stores them without the codec
+    CHECK(c[0].write_kernel_ns == 2485.0);
+    CHECK(c[0].read_kernel_ns == 1803.0);
+    auto const half = what_if(c[0], 0.5);
+    CHECK(half.name == "lz4 x0.5");
+    CHECK(half.bytes_per_page == c[0].bytes_per_page);
+    CHECK(half.write_ns == doctest::Approx(2485.0 + 0.5 * (c[0].write_ns - 2485.0)));
+    CHECK(half.read_ns == doctest::Approx(1803.0 + 0.5 * (c[0].read_ns - 1803.0)));
+    auto const zero = what_if(c[0], 0.0);
+    CHECK(zero.name == "lz4 x0");
+    CHECK(zero.write_ns == 2485.0);
+    CHECK(zero.read_ns == 1803.0);
+    // without a kernel's part, e.g. a bench log, the whole time is scaled
+    auto const p = what_if(point("b", 10, 1000), 0.25);
+    CHECK(p.write_ns == doctest::Approx(2500.0));
 }
 
 TEST_CASE("score: the codecs of a quetschn-bench run, with a level where there is one") {
