@@ -126,9 +126,6 @@ quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
 # seqlz with lz4's flags, -O3 included
 quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 ${QUETSCHN_SEQLZ_SOURCES} src/zram_seqlz.c)
 target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/src")
-add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp)
-target_include_directories(quetschn-seqlz-train PRIVATE src)
-target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_bench quetschn_kernel_seqlz quetschn_warnings)
 
 foreach(codec lz4 lz4hc lzo lzo_rle zstd seqlz_fast seqlz_fast_lit)
     string(REPLACE "_" "-" name ${codec})

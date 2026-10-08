@@ -98,7 +98,9 @@ fuzz/smoke.sh 60 build-fuzz                 # what CI runs, a minute per target,
 AFL=$HOME/AFLplusplus fuzz/afl.sh out 30    # 30 AFL++ instances in the background, a third per target
 ```
 
-`quetschn-seqlz-train` trains the tables, and `src/seqlz_default_tables.c` says on which pages.
+`quetschn-seqlz-train` trains the tables, and `src/seqlz_default_tables.c` says on which pages. With
+`--counts bench/seqlz_counts_4k.txt` (or `_16k.txt`) it also writes the counts the tables are built
+from; the test `seqlz_train` fails until the counts in `bench/` give the tables in `src/`.
 
 ## Measuring
 

@@ -68,6 +68,13 @@ add_library(quetschn_seqlz STATIC ${QUETSCHN_SEQLZ_SOURCES})
 target_include_directories(quetschn_seqlz PUBLIC src)
 target_link_libraries(quetschn_seqlz PRIVATE quetschn_warnings)
 
+# the tables' training, and building them from the counts of bench/seqlz_counts_*.txt
+add_library(quetschn_seqlz_train STATIC bench/seqlz_train.cpp)
+target_include_directories(quetschn_seqlz_train PUBLIC bench)
+target_link_libraries(quetschn_seqlz_train PUBLIC quetschn_seqlz PRIVATE quetschn_warnings)
+add_executable(quetschn-seqlz-train bench/seqlz_train_main.cpp)
+target_link_libraries(quetschn-seqlz-train PRIVATE quetschn_seqlz_train quetschn_bench quetschn_warnings)
+
 # pages made to be slow for seqlz, for its worst-case time
 add_executable(quetschn-seqlz-worst tools/seqlz-worst/worst.c)
 target_link_libraries(quetschn-seqlz-worst PRIVATE quetschn_seqlz quetschn_warnings m)
@@ -141,9 +148,12 @@ if(BUILD_TESTING)
 
     add_executable(quetschn_test test/main.cpp test/zsmalloc_cost_test.cpp test/page_stats_test.cpp test/resident_test.cpp
                                  test/harness_test.cpp test/split_test.cpp test/import_raw_test.cpp
-                                 test/compare_test.cpp test/score_test.cpp test/seqlz_test.cpp test/seqlz_ref_test.cpp tools/seqlz-ref/seqlz_ref.c)
-    target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_seqlz quetschn_warnings
-                                                doctest::doctest)
+                                 test/compare_test.cpp test/score_test.cpp test/seqlz_test.cpp test/seqlz_ref_test.cpp tools/seqlz-ref/seqlz_ref.c
+                                 test/seqlz_train_test.cpp)
+    target_link_libraries(quetschn_test PRIVATE quetschn_bench quetschn_collect quetschn_seqlz quetschn_seqlz_train
+                                                quetschn_warnings doctest::doctest)
+    # where the test finds bench/seqlz_counts_*.txt
+    target_compile_definitions(quetschn_test PRIVATE QUETSCHN_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     target_include_directories(quetschn_test PRIVATE tools/seqlz-ref)
     if(QUETSCHN_HAVE_KERNEL_CODECS)
         target_sources(quetschn_test PRIVATE test/kernel_codecs_test.cpp test/lz_analysis_test.cpp bench/lz_analysis.cpp)

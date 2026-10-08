@@ -98,7 +98,8 @@ PAGE_BITS_BLOCK = re.compile(r"(/\*[^*]*?(?:\*[^/][^*]*?)*?\*/\n)?#ifndef QUETSC
 
 TABLE_HEADERS = {
     "seqlz_default_tables.c": "The code lengths compiled in, part of the format, trained on pages of\n"
-                              "desktops and phones.",
+                              "desktops and phones. The specification, see seqlz.h, has the symbol counts\n"
+                              "they are built from, and how.",
     "seqlz_lit_sets.c": "The literal tables of pages with coded literals, one chosen per page, part of\n"
                         "the format: 8, by k-means over the literal histograms of the training pages.\n"
                         "The most used table first.",

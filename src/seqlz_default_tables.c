@@ -10,6 +10,8 @@
  * measure, so the tables never saw the pages they are measured on
  * (docs/explored-designs.md, "The tables trained again"). Made with
  *   quetschn-seqlz-train --corpus train-rz-phone5
+ * The counts they are built from are in bench/seqlz_counts_4k.txt and _16k.txt,
+ * see docs/format.md, "Where the tables come from".
  */
 #include "seqlz.h"
 

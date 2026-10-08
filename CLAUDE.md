@@ -34,7 +34,8 @@ src/                 the codec, freestanding C11 (kernel rules): seqlz.c/.h, pag
                      seqlz_default_tables*.{c,inc} + seqlz_lit_sets*.{c,inc} (trained tables = part of the
                      format), zram_seqlz.c (zram call shape, for the harness), seqlz_compat.h (the
                      kernel's names, u8, get_unaligned_le64(), ..., outside the kernel too)
-bench/               C++20 harness, zsmalloc cost model, table training (seqlz_train_main.cpp),
+bench/               C++20 harness, zsmalloc cost model, table training (seqlz_train*.cpp, the counts the
+                     tables are built from in seqlz_counts_*.txt),
                      kernel_codecs/ (zram's lz4/lzo/zstd glue, built from a kernel tree)
 test/                doctest, one binary quetschn_test; test/seqlz_endian.c is CI's same-bytes check
 fuzz/                libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs)
@@ -113,7 +114,8 @@ Commands: `docs/measuring.md`. Rules that matter:
   `format.md#status`, `format.md#example`, many `explored-designs.md#...` heading slugs). Renaming a
   heading breaks links. After editing Markdown, run `tools/check-links.py` (CI runs it too).
 - `tools/seqlz-ref/seqlz_ref.py` parses `docs/format.md` rows of the form ``| `TOK_4k` | `<sha256>` |``.
-  Keep that table format exactly. Retrained tables need new hashes there, or `check.sh` fails in CI.
+  Keep that table format exactly. Retrained tables need new hashes there, or `check.sh` fails in CI, and
+  new `bench/seqlz_counts_*.txt` (`quetschn-seqlz-train --counts`), or the test `seqlz_train` fails.
 - `tools/seqlz-viz/build.sh` feeds `docs/format.md` as text into one demo page; the committed
   `docs/seqlz-*.html` are generated, rebuild them with build.sh rather than editing by hand (paths
   inside them were last changed by `sed`).
