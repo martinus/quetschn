@@ -47,9 +47,42 @@ struct page_result {
     double decompress_cold_ns = 0.0; // same, with source and destination flushed from all caches first
 };
 
+// The per-CPU contexts of a codec as zram creates them: create_cctx, and create_dctx where the codec
+// has it. Without it, decompress() gets the compression context, see quetschn_codec. Both are released
+// in the destructor. Throws std::runtime_error when the codec fails to create one; then nothing stays.
+class codec_contexts {
+public:
+    codec_contexts(quetschn_codec const& codec, quetschn_params* params);
+    ~codec_contexts();
+    codec_contexts(codec_contexts const&) = delete;
+    codec_contexts& operator=(codec_contexts const&) = delete;
+
+    [[nodiscard]] quetschn_stream* compression() {
+        return &m_cctx;
+    }
+    [[nodiscard]] quetschn_stream* decompression() {
+        return m_codec.create_dctx != nullptr ? &m_dctx : &m_cctx;
+    }
+    // what the codec holds per CPU for compression and for decompression; 0 for decompression when it
+    // uses the compression context
+    [[nodiscard]] std::size_t compression_bytes() const {
+        return m_cctx.allocated;
+    }
+    [[nodiscard]] std::size_t decompression_bytes() const {
+        return m_dctx.allocated;
+    }
+
+private:
+    quetschn_codec const& m_codec;
+    quetschn_stream m_cctx{};
+    quetschn_stream m_dctx{};
+};
+
 struct run_result {
     int level = 0;                // after the codec applied its default
-    std::size_t stream_bytes = 0; // what the codec holds per CPU at the end of the run
+    std::size_t stream_bytes = 0; // what the codec holds per CPU at the end of the run, both contexts
+    std::size_t cctx_bytes = 0;   // of it the compression context
+    std::size_t dctx_bytes = 0;   // and the decompression context, 0 if it uses the compression context
     std::size_t params_bytes = 0; // what it holds per zram device, e.g. a prepared dictionary
     std::size_t same_filled = 0;  // skipped: zram stores these without a codec
     std::vector<page_result> pages;

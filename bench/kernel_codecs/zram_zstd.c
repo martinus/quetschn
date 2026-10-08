@@ -204,8 +204,8 @@ const struct quetschn_codec quetschn_codec_zstd = {
     .name = "zstd",
     .setup_params = zstd_setup_params,
     .release_params = zstd_release_params,
-    .create = zstd_create,
-    .destroy = zstd_destroy,
+    .create_cctx = zstd_create,
+    .destroy_cctx = zstd_destroy,
     .compress = zstd_compress,
     .decompress = zstd_decompress,
 };

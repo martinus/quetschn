@@ -125,8 +125,8 @@ const struct quetschn_codec quetschn_codec_lz4hc = {
     .name = "lz4hc",
     .setup_params = lz4hc_setup_params,
     .release_params = lz4hc_release_params,
-    .create = lz4hc_create,
-    .destroy = lz4hc_destroy,
+    .create_cctx = lz4hc_create,
+    .destroy_cctx = lz4hc_destroy,
     .compress = lz4hc_compress,
     .decompress = lz4hc_decompress,
 };

@@ -2,6 +2,7 @@
 //
 // The kernel's lz4, lzo and zstd, built in userspace from QUETSCHN_KERNEL_TREE. Only compiled when that is set.
 
+#include "harness.h"
 #include "kernel_codecs/zram_codec.h"
 // seqlz.h is C, written for the kernel
 extern "C" {
@@ -20,6 +21,7 @@ extern "C" {
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <random>
 #include <string>
 #include <system_error>
@@ -122,7 +124,7 @@ std::vector<quetschn_codec const*> codecs() {
             &quetschn_codec_seqlz_fast_lit};
 }
 
-// A zram device (params) with one per-CPU stream, set up the way zram does it.
+// A zram device (params) with the per-CPU contexts of one CPU, set up the way zram does it.
 class device {
 public:
     explicit device(quetschn_codec const& codec, int level = QUETSCHN_LEVEL_DEFAULT, page dict = {})
@@ -133,11 +135,11 @@ public:
         m_params.level = level;
         m_params.page_size = page_size;
         REQUIRE(codec.setup_params(&m_params) == 0);
-        REQUIRE(codec.create(&m_params, &m_stream) == 0);
+        m_contexts = std::make_unique<quetschn::codec_contexts>(codec, &m_params);
     }
 
     ~device() {
-        m_codec.destroy(&m_stream);
+        m_contexts.reset();
         m_codec.release_params(&m_params);
     }
 
@@ -147,8 +149,10 @@ public:
     page compress(page const& src) {
         auto dst = page(2 * page_size);
         auto len = static_cast<unsigned int>(dst.size());
-        REQUIRE(m_codec.compress(&m_params, &m_stream, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) ==
-                0);
+        REQUIRE(
+            m_codec.compress(
+                &m_params, m_contexts->compression(), src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) ==
+            0);
         dst.resize(len);
         return dst;
     }
@@ -157,8 +161,8 @@ public:
     int decompress(page const& src, page& out) {
         out.assign(page_size, 0);
         auto len = static_cast<unsigned int>(out.size());
-        auto const ret =
-            m_codec.decompress(&m_params, &m_stream, src.data(), static_cast<unsigned int>(src.size()), out.data(), &len);
+        auto const ret = m_codec.decompress(
+            &m_params, m_contexts->decompression(), src.data(), static_cast<unsigned int>(src.size()), out.data(), &len);
         out.resize(len);
         return ret;
     }
@@ -166,15 +170,15 @@ public:
     [[nodiscard]] quetschn_params const& params() const {
         return m_params;
     }
-    [[nodiscard]] quetschn_stream const& stream() const {
-        return m_stream;
+    [[nodiscard]] quetschn::codec_contexts const& contexts() const {
+        return *m_contexts;
     }
 
 private:
     quetschn_codec const& m_codec;
     page m_dict;
     quetschn_params m_params{};
-    quetschn_stream m_stream{};
+    std::unique_ptr<quetschn::codec_contexts> m_contexts;
 };
 
 page compress(quetschn_codec const& codec, page const& src) {
@@ -388,7 +392,7 @@ TEST_CASE("kernel codecs: memory per CPU and per device") {
     auto per_cpu = [](quetschn_codec const& codec, page dict = {}) {
         auto d = device(codec, QUETSCHN_LEVEL_DEFAULT, std::move(dict));
         (void)d.compress(text_page()); // zstd allocates part of it lazily
-        return d.stream().allocated;
+        return d.contexts().compression_bytes() + d.contexts().decompression_bytes();
     };
     CHECK(per_cpu(quetschn_codec_lzo) == 16384);
     CHECK(per_cpu(quetschn_codec_lzo_rle) == 16384);
@@ -407,6 +411,30 @@ TEST_CASE("kernel codecs: memory per CPU and per device") {
     CHECK(per_cpu(quetschn_codec_zstd, dict) > per_cpu(quetschn_codec_zstd) * 9 / 10);
     CHECK(per_cpu(quetschn_codec_zstd, dict) < per_cpu(quetschn_codec_zstd) * 11 / 10);
     CHECK(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated > 0);
+}
+
+TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-fast-lit decompresses with the scratch") {
+    // the split of zram's series of October 2026 costs seqlz no memory: what the one context had, the
+    // compression context and the decompression context have now
+    auto fast = device(quetschn_codec_seqlz_fast);
+    auto lit = device(quetschn_codec_seqlz_fast_lit);
+    CHECK(fast.contexts().compression_bytes() == sizeof(seqlz_state));
+    CHECK(fast.contexts().decompression_bytes() == 0);
+    CHECK(quetschn_codec_seqlz_fast.create_dctx == nullptr);
+    CHECK(lit.contexts().compression_bytes() == sizeof(seqlz_state));
+    CHECK(lit.contexts().decompression_bytes() == SEQLZ_SCRATCH);
+
+    // seqlz-fast decodes with no context at all, as zram's series gives a codec without create_dctx
+    for (auto const& src : test_pages()) {
+        auto const c = fast.compress(src);
+        auto out = page(page_size);
+        auto len = static_cast<unsigned int>(out.size());
+        auto none = quetschn_stream{};
+        auto p = fast.params();
+        CHECK(quetschn_codec_seqlz_fast.decompress(
+                  &p, &none, c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) == 0);
+        CHECK(out == src);
+    }
 }
 
 TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts") {
@@ -447,14 +475,24 @@ TEST_CASE("kernel codecs: every allocation is released again") {
             p.page_size = page_size;
             REQUIRE(codec->setup_params(&p) == 0);
             auto s = quetschn_stream{};
-            REQUIRE(codec->create(&p, &s) == 0);
+            auto d = quetschn_stream{};
+            REQUIRE(codec->create_cctx(&p, &s) == 0);
+            REQUIRE((codec->create_dctx == nullptr || codec->create_dctx(&p, &d) == 0));
             auto dst = page(2 * page_size);
             auto len = static_cast<unsigned int>(dst.size());
             auto const src = text_page();
             REQUIRE(codec->compress(&p, &s, src.data(), page_size, dst.data(), &len) == 0);
-            codec->destroy(&s);
+            auto out = page(page_size);
+            auto out_len = static_cast<unsigned int>(out.size());
+            REQUIRE(codec->decompress(&p, codec->create_dctx != nullptr ? &d : &s, dst.data(), len, out.data(), &out_len) ==
+                    0);
+            if (codec->create_dctx != nullptr) {
+                codec->destroy_dctx(&d);
+            }
+            codec->destroy_cctx(&s);
             codec->release_params(&p);
             CHECK(s.allocated == 0);
+            CHECK(d.allocated == 0);
             CHECK(p.allocated == 0);
         }
     }

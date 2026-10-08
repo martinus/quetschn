@@ -87,8 +87,8 @@ const struct quetschn_codec quetschn_codec_lzo = {
     .name = "lzo",
     .setup_params = lzo_setup_params,
     .release_params = lzo_release_params,
-    .create = lzo_create,
-    .destroy = lzo_destroy,
+    .create_cctx = lzo_create,
+    .destroy_cctx = lzo_destroy,
     .compress = lzo_compress,
     .decompress = lzo_decompress,
 };
@@ -97,8 +97,8 @@ const struct quetschn_codec quetschn_codec_lzo_rle = {
     .name = "lzo-rle",
     .setup_params = lzo_setup_params,
     .release_params = lzo_release_params,
-    .create = lzo_create,
-    .destroy = lzo_destroy,
+    .create_cctx = lzo_create,
+    .destroy_cctx = lzo_destroy,
     .compress = lzorle_compress,
     .decompress = lzo_decompress,
 };

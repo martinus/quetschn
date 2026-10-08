@@ -5,8 +5,10 @@
 /*
  * One compressor as zram uses it. Each implementation makes exactly the calls of the matching
  * drivers/block/zram/backend_*.c, without the zram plumbing around them, and the same split as zram's
- * zcomp: per-device params (level, dictionary, what the codec prepares from them), and a per-CPU stream
- * that is created once and then used for every page.
+ * zcomp: per-device params (level, dictionary, what the codec prepares from them), and per-CPU contexts
+ * that are created once and then used for every page. The contexts are split as in Sergey
+ * Senozhatsky's series "zram: split zcomp into separate R/W streams" (October 2026): one for
+ * compression, create_cctx, and an optional one for decompression, create_dctx.
  *
  * Plain C, and no libc types, because the implementations are compiled like kernel code (-nostdinc).
  */
@@ -28,7 +30,7 @@ struct quetschn_params {
     __SIZE_TYPE__ allocated; /* bytes the codec allocated for these params, e.g. a prepared dictionary */
 };
 
-/* struct zcomp_ctx: one per CPU */
+/* struct zcomp_ctx: one per CPU and direction */
 struct quetschn_stream {
     void* context;
     __SIZE_TYPE__ allocated; /* bytes the codec allocated for this stream */
@@ -41,11 +43,20 @@ struct quetschn_codec {
     int (*setup_params)(struct quetschn_params* p);
     void (*release_params)(struct quetschn_params* p);
 
-    /* 0 on success */
-    int (*create)(struct quetschn_params* p, struct quetschn_stream* s);
-    void (*destroy)(struct quetschn_stream* s);
+    /* the context compress() gets, one per CPU. 0 on success */
+    int (*create_cctx)(struct quetschn_params* p, struct quetschn_stream* s);
+    void (*destroy_cctx)(struct quetschn_stream* s);
 
-    /* *dst_len is the capacity on input and the compressed length on output. 0 on success. */
+    /*
+     * The context decompress() gets, one per CPU, or NULL. A codec without it gets the compression
+     * context in decompress(), as every zram backend did before the split: the glue of lz4, lzo and
+     * zstd copies a kernel from before it, with one context for both directions.
+     */
+    int (*create_dctx)(struct quetschn_params* p, struct quetschn_stream* s);
+    void (*destroy_dctx)(struct quetschn_stream* s);
+
+    /* s is the compression context. *dst_len is the capacity on input and the compressed length on
+     * output. 0 on success. */
     int (*compress)(struct quetschn_params* p,
                     struct quetschn_stream* s,
                     const void* src,
@@ -53,7 +64,8 @@ struct quetschn_codec {
                     void* dst,
                     unsigned int* dst_len);
 
-    /* *dst_len is the capacity on input and the decompressed length on output. 0 on success. */
+    /* s is the decompression context, see create_dctx. *dst_len is the capacity on input and the
+     * decompressed length on output. 0 on success. */
     int (*decompress)(struct quetschn_params* p,
                       struct quetschn_stream* s,
                       const void* src,

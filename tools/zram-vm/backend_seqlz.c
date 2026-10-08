@@ -113,6 +113,25 @@ static void sz_destroy(struct zcomp_ctx *ctx)
 	ctx->context = NULL;
 }
 
+/*
+ * With zram's contexts split into one for compression and one for decompression (Sergey Senozhatsky's
+ * series of October 2026, struct zcomp_cstrm in zcomp.h; run.sh sets ZCOMP_RW_SPLIT), each is a whole
+ * struct sz_ctx: the decoder and zram_warm_fn find the scratch where they found it before, so the
+ * times compare with those of a tree without the split. The kernel's backend (tools/kernel-port/)
+ * gives each context only what it needs.
+ */
+#ifdef ZCOMP_RW_SPLIT
+#define SZ_CTX_OPS                       \
+	.create_cctx	= sz_create,     \
+	.destroy_cctx	= sz_destroy,    \
+	.create_dctx	= sz_create,     \
+	.destroy_dctx	= sz_destroy
+#else
+#define SZ_CTX_OPS                       \
+	.create_ctx	= sz_create,     \
+	.destroy_ctx	= sz_destroy
+#endif
+
 static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
 	unsigned int len;
@@ -157,8 +176,7 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 const struct zcomp_ops backend_seqlz = {
 	.compress	= sz_compress,
 	.decompress	= sz_decompress,
-	.create_ctx	= sz_create,
-	.destroy_ctx	= sz_destroy,
+	SZ_CTX_OPS,
 	.setup_params	= sz_setup_params,
 	.release_params	= sz_release_params,
 	.name		= "seqlz",
@@ -168,8 +186,7 @@ const struct zcomp_ops backend_seqlz = {
 const struct zcomp_ops backend_seqlz_lit = {
 	.compress	= sz_lit_compress,
 	.decompress	= sz_decompress,
-	.create_ctx	= sz_create,
-	.destroy_ctx	= sz_destroy,
+	SZ_CTX_OPS,
 	.setup_params	= sz_setup_params,
 	.release_params	= sz_release_params,
 	.name		= "seqlz-lit",

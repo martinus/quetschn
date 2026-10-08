@@ -14,7 +14,9 @@ src/ stays the one source of the codec. This writes from it:
                                         tables' SHA-256 and the worked example from docs/format.md
   lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Makefile: the module seqlz, CONFIG_SEQLZ, and
                                         CONFIG_SEQLZ_KUNIT_TEST
-  drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c
+  drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c; the
+                                        backend in the form of the tree's zcomp, with one context per
+                                        CPU or with separate ones for compression and decompression
   MAINTAINERS                           the entry of seqlz, with the project's page
   Documentation/admin-guide/blockdev/zram.rst: the backend, its page size and its levels
 On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT instead of
@@ -382,6 +384,40 @@ def port_kunit():
     return t
 
 
+def zcomp_split(tree):
+    """whether the tree's zram has separate compression and decompression contexts, as Sergey
+    Senozhatsky's series of October 2026 makes them"""
+    return "struct zcomp_cstrm" in (tree / "drivers/block/zram/zcomp.h").read_text()
+
+
+def resolve(text, split):
+    """the template's ZCOMP_RW_SPLIT parts kept for a tree with the split, the others for one without,
+    and every #ifdef, #ifndef, #else and #endif of it gone; nothing nested"""
+    out, keep = [], None
+    for line in text.split("\n"):
+        if line in ("#ifdef ZCOMP_RW_SPLIT", "#ifndef ZCOMP_RW_SPLIT"):
+            assert keep is None, "nested ZCOMP_RW_SPLIT"
+            keep = split if line.startswith("#ifdef") else not split
+        elif line == "#else" and keep is not None:
+            keep = not keep
+        elif line == "#endif" and keep is not None:
+            keep = None
+        elif keep is None or keep:
+            out.append(line)
+    assert keep is None, "ZCOMP_RW_SPLIT without #endif"
+    # a part that went can leave two blank lines in a row
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
+def port_backend(tree):
+    """backend_seqlz.c for the tree's zcomp, without the template's comment"""
+    t = (HERE / "backend_seqlz.c").read_text()
+    t = cut(t, r"/\*\n \* port\.py keeps the ZCOMP_RW_SPLIT parts.*?\*/\n")
+    t = resolve(t, zcomp_split(tree))
+    assert "ZCOMP_RW_SPLIT" not in t
+    return t
+
+
 def patch(path, a, b, marker):
     t = path.read_text()
     if marker in t:
@@ -410,7 +446,7 @@ def main():
                               "seqlz-y := seqlz_codec.o seqlz_default_tables.o seqlz_lit_sets.o\n\n"
                               "obj-$(CONFIG_SEQLZ_KUNIT_TEST) += tests/seqlz_kunit.o\n",
         "lib/seqlz/.kunitconfig": "CONFIG_KUNIT=y\nCONFIG_SEQLZ_KUNIT_TEST=y\n",
-        "drivers/block/zram/backend_seqlz.c": (HERE / "backend_seqlz.c").read_text(),
+        "drivers/block/zram/backend_seqlz.c": port_backend(tree),
         "drivers/block/zram/backend_seqlz.h": (HERE / "backend_seqlz.h").read_text(),
     }
     left = []

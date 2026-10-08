@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
+/*
+ * port.py keeps the ZCOMP_RW_SPLIT parts for a tree whose zram has separate
+ * compression and decompression contexts, struct zcomp_cstrm in zcomp.h, and
+ * the others for a tree without; the copy in the tree has no #ifdef left.
+ */
 
 #define pr_fmt(fmt) "seqlz: " fmt
 
@@ -8,11 +13,13 @@
 
 #include "backend_seqlz.h"
 
+#ifndef ZCOMP_RW_SPLIT
 /* the work memory of compression and of decompression, per CPU */
 struct seqlz_ctx {
 	u8 cmem[SEQLZ_MEM_COMPRESS];
 	u8 dmem[SEQLZ_MEM_DECOMPRESS];
 };
+#endif
 
 static void seqlz_release_params(struct zcomp_params *params)
 {
@@ -40,6 +47,24 @@ static int seqlz_setup_params(struct zcomp_params *params)
 	return 0;
 }
 
+#ifdef ZCOMP_RW_SPLIT
+static int seqlz_create_cctx(struct zcomp_params *params,
+			     struct zcomp_ctx *ctx)
+{
+	ctx->context = kvzalloc(SEQLZ_MEM_COMPRESS, GFP_KERNEL);
+	return ctx->context ? 0 : -ENOMEM;
+}
+
+/* level 1 decompresses without work memory, its pages have no coded literals */
+static int seqlz_create_dctx(struct zcomp_params *params,
+			     struct zcomp_ctx *ctx)
+{
+	if (params->level == SEQLZ_LEVEL_RAW)
+		return 0;
+	ctx->context = kvzalloc(SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
+	return ctx->context ? 0 : -ENOMEM;
+}
+#else
 static int seqlz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
 	struct seqlz_ctx *c = kvzalloc_obj(*c);
@@ -49,6 +74,7 @@ static int seqlz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 	ctx->context = c;
 	return 0;
 }
+#endif
 
 static void seqlz_destroy(struct zcomp_ctx *ctx)
 {
@@ -58,12 +84,16 @@ static void seqlz_destroy(struct zcomp_ctx *ctx)
 static int seqlz_zcomp_compress(struct zcomp_params *params,
 				struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
-	struct seqlz_ctx *c = ctx->context;
+#ifdef ZCOMP_RW_SPLIT
+	void *wrkmem = ctx->context;
+#else
+	void *wrkmem = ((struct seqlz_ctx *)ctx->context)->cmem;
+#endif
 	int ret;
 
 	if (req->src_len != PAGE_SIZE)
 		return -EINVAL;
-	ret = seqlz_compress(req->src, req->dst, req->dst_len, c->cmem,
+	ret = seqlz_compress(req->src, req->dst, req->dst_len, wrkmem,
 			     params->level);
 	if (ret < 0)
 		return ret;
@@ -74,12 +104,16 @@ static int seqlz_zcomp_compress(struct zcomp_params *params,
 static int seqlz_zcomp_decompress(struct zcomp_params *params,
 				  struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
-	struct seqlz_ctx *c = ctx->context;
+#ifdef ZCOMP_RW_SPLIT
+	void *wrkmem = ctx->context;
+#else
+	void *wrkmem = ((struct seqlz_ctx *)ctx->context)->dmem;
+#endif
 	int ret;
 
 	if (req->dst_len < PAGE_SIZE)
 		return -EINVAL;
-	ret = seqlz_decompress(req->src, req->src_len, req->dst, c->dmem);
+	ret = seqlz_decompress(req->src, req->src_len, req->dst, wrkmem);
 	if (ret)
 		return ret;
 	req->dst_len = PAGE_SIZE;
@@ -89,8 +123,15 @@ static int seqlz_zcomp_decompress(struct zcomp_params *params,
 const struct zcomp_ops backend_seqlz = {
 	.compress	= seqlz_zcomp_compress,
 	.decompress	= seqlz_zcomp_decompress,
+#ifdef ZCOMP_RW_SPLIT
+	.create_cctx	= seqlz_create_cctx,
+	.destroy_cctx	= seqlz_destroy,
+	.create_dctx	= seqlz_create_dctx,
+	.destroy_dctx	= seqlz_destroy,
+#else
 	.create_ctx	= seqlz_create,
 	.destroy_ctx	= seqlz_destroy,
+#endif
 	.setup_params	= seqlz_setup_params,
 	.release_params	= seqlz_release_params,
 	.name		= "seqlz",

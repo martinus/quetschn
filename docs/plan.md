@@ -319,15 +319,18 @@ goes with the write stream, `local_copy`, 1 page, with the read stream. A backen
 too, one from `create_cctx` for compression and an optional one from `create_dctx` for decompression.
 `seqlz-fast-lit` splits without extra memory, because compression uses only the hash table and
 decompression only the scratch for the coded literals
-([`src/zram_seqlz.c:90`](../src/zram_seqlz.c#L90), `SEQLZ_SCRATCH` in
-[`src/seqlz.h:296`](../src/seqlz.h#L296), the table in [`src/seqlz.h:359`](../src/seqlz.h#L359)):
+([`src/zram_seqlz.c:101`](../src/zram_seqlz.c#L101), `SEQLZ_SCRATCH` in
+[`src/seqlz.h:307`](../src/seqlz.h#L307), the table in [`src/seqlz.h:374`](../src/seqlz.h#L374)):
 
 | page size | compression context: hash table | decompression context: literal scratch | sum |
 | --- | ---: | ---: | ---: |
 | 4 KiB | 8192 B | 4112 B | 12 304 B |
 | 16 KiB | 16 384 B | 16 400 B | 32 784 B |
 
-`seqlz-fast` needs no decompression context. `lz4`'s 16 416 B are for compression only, and after
+`seqlz-fast` needs no decompression context. The harness (`bench/kernel_codecs/zram_codec.h`) and the
+kernel's backend (`tools/kernel-port/backend_seqlz.c`) have the two contexts since #102, the
+backend for a tree with the series; at level 1 it has no decompression context.
+`lz4`'s 16 416 B are for compression only, and after
 patch 5 of the series `lz4` has no decompression context at all. So C5 has a question now that it did
 not have with one context: is the limit for the compression context, for each context, or for the
 sum? With 16 KiB pages the compression context alone, 16 384 B, is within `lz4`'s 16 416 B, the sum

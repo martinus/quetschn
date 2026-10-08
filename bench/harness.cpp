@@ -234,9 +234,27 @@ run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_mode
     return std::move(run_interleaved(c, codecs, model, opts)[0]);
 }
 
+codec_contexts::codec_contexts(quetschn_codec const& codec, quetschn_params* params)
+    : m_codec(codec) {
+    if (codec.create_cctx(params, &m_cctx) != 0) {
+        throw std::runtime_error(std::string(codec.name) + ": create_cctx failed");
+    }
+    if (codec.create_dctx != nullptr && codec.create_dctx(params, &m_dctx) != 0) {
+        codec.destroy_cctx(&m_cctx);
+        throw std::runtime_error(std::string(codec.name) + ": create_dctx failed");
+    }
+}
+
+codec_contexts::~codec_contexts() {
+    if (m_codec.create_dctx != nullptr) {
+        m_codec.destroy_dctx(&m_dctx);
+    }
+    m_codec.destroy_cctx(&m_cctx);
+}
+
 namespace {
 
-// One codec as zram sets it up: setup_params once per device, create once per CPU. Both are released
+// One codec as zram sets it up: setup_params once per device, the contexts once per CPU. Both are released
 // again in the destructor, also when a run fails halfway.
 class codec_instance {
 public:
@@ -256,12 +274,13 @@ public:
                                         " bytes)");
         }
         m_have_params = true;
-        if (codec.create(&m_params, &m_stream) != 0) {
+        try {
+            m_contexts = std::make_unique<codec_contexts>(codec, &m_params);
+        } catch (...) {
             // the destructor does not run for an object whose constructor throws
             codec.release_params(&m_params);
-            throw std::runtime_error(std::string(codec.name) + ": create failed");
+            throw;
         }
-        m_have_stream = true;
         // Separate allocations. The output is page aligned like the page zram decompresses into. The
         // compressed data moves, see set_page.
         m_compressed_base = align(m_compressed, page_size);
@@ -270,9 +289,7 @@ public:
     }
 
     ~codec_instance() {
-        if (m_have_stream) {
-            m_codec.destroy(&m_stream);
-        }
+        m_contexts.reset();
         if (m_have_params) {
             m_codec.release_params(&m_params);
         }
@@ -296,11 +313,12 @@ public:
 
     int compress(std::span<std::byte const> src, unsigned int& len) {
         len = static_cast<unsigned int>(2 * src.size());
-        return m_codec.compress(&m_params, &m_stream, src.data(), static_cast<unsigned int>(src.size()), dst, &len);
+        return m_codec.compress(
+            &m_params, m_contexts->compression(), src.data(), static_cast<unsigned int>(src.size()), dst, &len);
     }
 
     int decompress(unsigned int comp_len, unsigned int& len) {
-        return m_codec.decompress(&m_params, &m_stream, dst, comp_len, out, &len);
+        return m_codec.decompress(&m_params, m_contexts->decompression(), dst, comp_len, out, &len);
     }
 
     [[nodiscard]] int level() const {
@@ -309,8 +327,8 @@ public:
     [[nodiscard]] std::size_t params_bytes() const {
         return m_params.allocated;
     }
-    [[nodiscard]] std::size_t stream_bytes() const {
-        return m_stream.allocated;
+    [[nodiscard]] codec_contexts const& contexts() const {
+        return *m_contexts;
     }
 
     std::byte* dst = nullptr;
@@ -325,9 +343,8 @@ private:
     quetschn_codec const& m_codec;
     std::size_t m_slot_size;
     quetschn_params m_params{};
-    quetschn_stream m_stream{};
+    std::unique_ptr<codec_contexts> m_contexts;
     bool m_have_params = false;
-    bool m_have_stream = false;
     std::vector<std::byte> m_compressed;
     std::byte* m_compressed_base = nullptr;
     std::vector<std::byte> m_restored;
@@ -485,7 +502,9 @@ std::vector<run_result> run_interleaved(corpus const& c,
     }
     // zstd allocates some of its per-stream memory lazily during the first compression
     for (std::size_t k = 0; k < n; ++k) {
-        results[k].stream_bytes = instances[k]->stream_bytes();
+        results[k].cctx_bytes = instances[k]->contexts().compression_bytes();
+        results[k].dctx_bytes = instances[k]->contexts().decompression_bytes();
+        results[k].stream_bytes = results[k].cctx_bytes + results[k].dctx_bytes;
         results[k].params_bytes = instances[k]->params_bytes();
     }
     return results;

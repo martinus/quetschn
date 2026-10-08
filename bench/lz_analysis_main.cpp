@@ -412,8 +412,8 @@ int main(int argc, char** argv) {
             throw std::invalid_argument(std::string(codec->name) + " rejects level " + std::to_string(level));
         }
         auto stream = quetschn_stream{};
-        if (codec->create(&params, &stream) != 0) {
-            throw std::runtime_error(std::string(codec->name) + ": create failed");
+        if (codec->create_cctx(&params, &stream) != 0) {
+            throw std::runtime_error(std::string(codec->name) + ": create_cctx failed");
         }
         auto dst = std::vector<std::uint8_t>(2 * c.page_size);
         auto pages = std::vector<parsed_page>();
@@ -450,7 +450,7 @@ int main(int argc, char** argv) {
             }
             pages.push_back(std::move(parsed));
         }
-        codec->destroy(&stream);
+        codec->destroy_cctx(&stream);
         codec->release_params(&params);
 
         // cost of a page of the given size, zram stores it raw at huge_class_size and above
