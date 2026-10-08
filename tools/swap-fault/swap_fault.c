@@ -19,8 +19,10 @@
 //
 // Swap-out is MADV_PAGEOUT, or /proc/self/reclaim where the kernel has that instead (Android's 4.14).
 // page-cluster is 0 while it runs, so a fault reads one page. Prints p50 / p90 / p99 and the mean over
-// the pages of the median of 3 runs per page, and the medians of every page.
+// the pages of the median of 3 runs per page, and the medians of every page. A STATE line before and
+// after has the core's clock, on a phone the memory's devfreq frequencies, and a few temperatures.
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sched.h>
@@ -43,6 +45,56 @@
 
 static volatile char sink;
 static int reclaim_fd = -1;
+
+/* the first line of a file, without its newline, or "unknown" */
+static void first_line(const char* path, char* out, size_t size) {
+    FILE* f = fopen(path, "r");
+    if (!f || !fgets(out, (int)size, f))
+        snprintf(out, size, "unknown");
+    else
+        out[strcspn(out, "\n")] = 0;
+    if (f)
+        fclose(f);
+}
+
+/* What moves cold reads besides the code: the core's clock, on a phone the memory's devfreq frequencies
+ * (L3, LLCC, DDR) and the temperatures. Before and after the run, so that a run where one of them changed
+ * can be thrown away (docs/measuring.md). Prints what the machine has. */
+static void print_state(const char* when, int cpu) {
+    static const char* const wanted[] = {"x86_pkg_temp", "cpu-0-max-step", "cpu-1-max-step", "ddr-usr", "xo_therm", "battery"};
+    char path[512], v[128];
+    snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", cpu);
+    first_line(path, v, sizeof v);
+    printf("STATE %s cpu%d=%s", when, cpu, v);
+    DIR* d = opendir("/sys/class/devfreq");
+    for (struct dirent* e; d && (e = readdir(d));) {
+        const char* q = strstr(e->d_name, "qcom,cpu");
+        if (!q)
+            continue;
+        snprintf(path, sizeof path, "/sys/class/devfreq/%s/cur_freq", e->d_name);
+        first_line(path, v, sizeof v);
+        printf(" bus:%s=%s", q + 5, v);
+    }
+    if (d)
+        closedir(d);
+    d = opendir("/sys/class/thermal");
+    for (struct dirent* e; d && (e = readdir(d));) {
+        char type[64];
+        if (strncmp(e->d_name, "thermal_zone", 12) != 0)
+            continue;
+        snprintf(path, sizeof path, "/sys/class/thermal/%s/type", e->d_name);
+        first_line(path, type, sizeof type);
+        for (size_t k = 0; k < sizeof wanted / sizeof wanted[0]; k++)
+            if (strcmp(type, wanted[k]) == 0) {
+                snprintf(path, sizeof path, "/sys/class/thermal/%s/temp", e->d_name);
+                first_line(path, v, sizeof v);
+                printf(" %s=%s", type, v);
+            }
+    }
+    if (d)
+        closedir(d);
+    printf("\n");
+}
 
 static void put(const char* path, const char* v) {
     int fd = open(path, O_WRONLY);
@@ -144,6 +196,7 @@ int main(int argc, char** argv) {
     CPU_SET(cpu, &set);
     if (sched_setaffinity(0, sizeof set, &set) != 0)
         printf("cannot pin to cpu %d\n", cpu);
+    print_state("start", cpu);
 
     int pf = open(argv[1], O_RDONLY);
     if (pf < 0) {
@@ -352,6 +405,7 @@ int main(int argc, char** argv) {
             all[i] = i;
         report(argv[4 + a], "write fault, new page", fresh[a], all, N_FRESH, N_FRESH);
     }
+    print_state("end", cpu);
     /* per page the medians, for plots: index, same-filled, then per algorithm swap-out, swap-in warm, cold */
     for (size_t i = 0; i < n; i++) {
         printf("PAGE %zu %d", i, same_filled(src + i * 4096));

@@ -21,6 +21,8 @@ def stats(path):
             cur[f[0]] = [int(x) for x in f[1:]]
         elif f[0] == 'kswapd':
             cur['kswapd'] = int(f[1]) + int(f[2])
+        elif f[0] == 'STATE':
+            continue
         elif f[0] == 'battery_temp':
             cur['temp'] = int(f[1]) if len(f) > 1 else 0
         elif f[0].endswith(':'):

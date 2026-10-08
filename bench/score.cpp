@@ -2,6 +2,7 @@
 #include "score.h"
 
 #include <algorithm>
+#include <array>
 #include <istream>
 #include <sstream>
 #include <stdexcept>
@@ -139,6 +140,60 @@ std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& pre
         out.push_back(d.c);
     }
     return out;
+}
+
+std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefix) {
+    // the lines before the first BOOT, e.g. run.sh's KERNEL line, belong to no boot
+    auto before = std::string();
+    auto boots = std::vector<std::string>();
+    auto line = std::string();
+    while (std::getline(in, line)) {
+        if (line.rfind("BOOT ", 0) == 0) {
+            boots.emplace_back();
+        } else {
+            (boots.empty() ? before : boots.back()) += line + "\n";
+        }
+    }
+    if (boots.empty()) {
+        boots.push_back(before);
+    }
+    // the fields that are a mean over the boots: all but the name
+    static constexpr auto fields = std::array{&codec_cost::pages,
+                                              &codec_cost::bytes_per_page,
+                                              &codec_cost::write_ns,
+                                              &codec_cost::read_ns,
+                                              &codec_cost::recompress_ns,
+                                              &codec_cost::write_kernel_ns,
+                                              &codec_cost::read_kernel_ns};
+    auto sum = std::vector<codec_cost>();
+    for (auto const& text : boots) {
+        auto boot_in = std::istringstream(text);
+        auto const b = read_vm_results(boot_in, prefix);
+        if (b.empty()) {
+            throw std::runtime_error("a boot without results");
+        }
+        if (sum.empty()) {
+            sum = b;
+            continue;
+        }
+        for (auto& s : sum) {
+            auto const it = std::find_if(b.begin(), b.end(), [&](codec_cost const& c) {
+                return c.name == s.name;
+            });
+            if (it == b.end()) {
+                throw std::runtime_error(s.name + " is missing in a boot");
+            }
+            for (auto const f : fields) {
+                s.*f += (*it).*f;
+            }
+        }
+    }
+    for (auto& s : sum) {
+        for (auto const f : fields) {
+            s.*f /= static_cast<double>(boots.size());
+        }
+    }
+    return sum;
 }
 
 std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& prefix) {

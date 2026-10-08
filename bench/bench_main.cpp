@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -90,6 +91,37 @@ std::string first_line(std::string const& path) {
     auto line = std::string();
     std::getline(in, line);
     return line.empty() ? "unknown" : line;
+}
+
+// What moves cold reads besides the code: the core's clock, on a phone the memory's devfreq frequencies
+// (L3, LLCC, DDR) and the temperatures. Printed before and after a run, so that a run where one of them
+// changed can be thrown away (docs/measuring.md). Prints what the machine has, as the STATE lines of
+// tools/zram-phone/ and swap_fault.c.
+void print_state(char const* when, int cpu) {
+    auto s = std::string("STATE ") + when + " cpu" + std::to_string(cpu) + "=" +
+             first_line("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/scaling_cur_freq");
+    auto ec = std::error_code();
+    auto devfreq = std::vector<std::string>();
+    for (auto const& d : std::filesystem::directory_iterator("/sys/class/devfreq", ec)) {
+        auto const name = d.path().filename().string();
+        if (auto const at = name.find("qcom,cpu"); at != std::string::npos) {
+            devfreq.push_back("bus:" + name.substr(at + 5) + "=" + first_line(d.path() / "cur_freq"));
+        }
+    }
+    std::sort(devfreq.begin(), devfreq.end());
+    for (auto const& d : devfreq) {
+        s += " " + d;
+    }
+    auto const wanted =
+        std::array<std::string_view, 6>{"x86_pkg_temp", "cpu-0-max-step", "cpu-1-max-step", "ddr-usr", "xo_therm", "battery"};
+    for (auto const& z : std::filesystem::directory_iterator("/sys/class/thermal", ec)) {
+        auto const type = first_line(z.path() / "type");
+        if (z.path().filename().string().starts_with("thermal_zone") &&
+            std::find(wanted.begin(), wanted.end(), type) != wanted.end()) {
+            s += " " + type + "=" + first_line(z.path() / "temp");
+        }
+    }
+    std::printf("%s\n", s.c_str());
 }
 
 std::string cpu_model() {
@@ -371,6 +403,7 @@ int main(int argc, char** argv) {
                     first_line(cpufreq + "scaling_min_freq").c_str(),
                     first_line(cpufreq + "scaling_max_freq").c_str(),
                     first_line("/sys/devices/system/cpu/cpufreq/boost").c_str());
+        print_state("start", governor_cpu);
         if (opts.measure_time) {
             std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
             std::printf("timer      step %.2f ns\n", quetschn::timer_step_ns());
@@ -379,6 +412,7 @@ int main(int argc, char** argv) {
         }
 
         auto const results = quetschn::run_interleaved(c, codecs, model, opts);
+        print_state("end", governor_cpu);
         for (std::size_t k = 0; k < codecs.size(); ++k) {
             auto const* codec = codecs[k];
             auto const& r = results[k];
