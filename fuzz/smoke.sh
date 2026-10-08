@@ -1,5 +1,5 @@
 #!/bin/bash
-# smoke.sh [seconds] [build dir] [cmake args]: the three fuzz targets at the same time with libFuzzer, ASan and
+# smoke.sh [seconds] [build dir] [cmake args]: the four fuzz targets at the same time with libFuzzer, ASan and
 # UBSan for the given time, 60 s by default, from make_seeds.c's seeds. Inputs that fail end up in
 # <build dir>/crashes. For CI; the long runs are afl.sh. Needs clang.
 set -euo pipefail
@@ -9,12 +9,14 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 
 cmake -S "$REPO" -B "$B" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DBUILD_TESTING=OFF -DQUETSCHN_FUZZ=ON -DQUETSCHN_SANITIZE=ON -DQUETSCHN_WERROR=ON "${@:3}"
-targets=(decode roundtrip diff)
+targets=(decode roundtrip diff encode)
 cmake --build "$B" --target $(printf "seqlz_%s_fuzz " "${targets[@]}") quetschn-fuzz-seeds
 mkdir -p "$B"/seeds-{decode,roundtrip} "$B/crashes"
 "$B/quetschn-fuzz-seeds" "$B/seeds-decode" "$B/seeds-roundtrip"
 # diff takes compressed pages, as decode does
 ln -sfn seeds-decode "$B/seeds-diff"
+# encode starts from nothing: its input is a list of sequences, and runs of zeros are bad ones
+mkdir -p "$B/seeds-encode"
 
 pids=()
 for t in "${targets[@]}"; do
