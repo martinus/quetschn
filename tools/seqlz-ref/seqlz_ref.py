@@ -91,6 +91,10 @@ class Bits:
             v = v << 1 | self.bit()
         return v
 
+    def ends_here(self, end):
+        """"The end of a page": fewer than 8 bits left before bit end, and they are 0"""
+        return 0 <= end - self.pos < 8 and self.read(end - self.pos) == 0
+
     def symbol(self, codes):
         code, length = 0, 0
         while (length, code) not in codes:
@@ -122,7 +126,7 @@ def decode(page, tables, page_bits):
             r = Bits(page, start[j])
             for k in range(j, n, 8):
                 lits[k] = r.symbol(lit_codes[page[2] & 7])
-            if r.pos > 8 * start[j + 1]:
+            if not r.ends_here(8 * start[j + 1]):
                 raise Invalid
         bits = Bits(page[start[8] :])
     else:
@@ -166,7 +170,7 @@ def decode(page, tables, page_bits):
             raise Invalid
         for _ in range(ml):
             out.append(out[-off])
-    if used != n or bits.pos > 8 * len(bits.data):
+    if used != n or not bits.ends_here(8 * len(bits.data)):
         raise Invalid
     return bytes(out)
 

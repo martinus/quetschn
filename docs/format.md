@@ -17,14 +17,17 @@ file, slow on purpose, and checked against `seqlz_decode()`, see
 ## Status
 
 > [!IMPORTANT]
-> The format for 4 KiB pages is the one of 7th October 2026, and nobody uses it yet. Until seqlz has
+> The format for 4 KiB pages is the one of 8th October 2026, and nobody uses it yet. Until seqlz has
 > users it may still change, the tables included, and such a change updates this file: its rules, the
-> hashes of the tables, the example and this section. From then on a page that decodes decodes the
-> same way in every later seqlz, and any change to this file is a new format with a new name in zram,
-> see [No version in the page](#no-version-in-the-page).
+> hashes of the tables, the example and this section. Once seqlz is in a kernel, zram's pages still live
+> only as long as the kernel that wrote them, so a change needs no new name in zram, see
+> [No version in the page](#no-version-in-the-page).
 
 The tables of 6th October were trained again before anyone used them, on swapped pages too
 ([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
+On 8th October a page became valid only if it ends where its bits end, see
+[The bitstream of the sequences](#the-bitstream-of-the-sequences) and [Coded literals](#coded-literals);
+the pages the compressor writes did not change.
 
 The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
 since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
@@ -33,7 +36,8 @@ trained on desktop pages
 ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-fast-lit`
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
-([seqlz.md](seqlz.md#what-is-not-known-yet)).
+([seqlz.md](seqlz.md#what-is-not-known-yet)). So it is not in the first series for the kernel:
+`tools/kernel-port/` builds seqlz for 4 KiB pages only.
 
 ## The idea
 
@@ -185,10 +189,11 @@ whole table. A decoder reads three kinds of things from it:
   is the code's first bit. The result is the symbol of that code.
 - `value(table)`: a length value, see below.
 
-A valid page needs at most `8 * |B|` bits of `B`. The bits and bytes after the last one it needs are
-ignored and can have any value. A decoder may read zeros past the end instead of checking at every
-read, and check at the end that it did not use them; `seqlz_decode()` does that, and the result is the
-same as checking at every read.
+A valid page ends where its bits end: after the last bit it needs, fewer than 8 bits of `B` are left,
+all in its last byte, and they are 0. *Why:* zram stores no checksum, so this is what tells a damaged
+page from a valid one, at one compare per page, and the compressor writes nothing else. A decoder may
+read zeros past the end instead of checking at every read, and check at the end that it did not use
+them; `seqlz_decode()` does that, and the result is the same as checking at every read.
 
 ### Length values
 
@@ -276,7 +281,7 @@ loop:
     if off == 0 or off > |out| or ml > PAGE - |out|: invalid
     ml times: append the byte off places before the end of out
 
-at the stop: used == n and at most 8 * |B| bits of B used, else invalid
+at the stop: used == n, and fewer than 8 bits of B left, all 0, else invalid
 ```
 
 The match is copied one byte at a time, each byte after the one before is written, so it can repeat
@@ -300,10 +305,9 @@ the page's byte `start[j] + i div 8`. Stream `j` holds literal `j`, `j + 8`, `j 
 each as one symbol of literal table `set`, one after the other; a code's first bit is the first one
 read.
 
-The codes of stream `j`'s literals must fit into its `s[j]` bytes, that is take at most `8 * s[j]` bits,
-else the page is invalid. A stream may be longer than its codes: the bits and whole bytes after its
-last code are ignored and can have any value, and a stream without literals can have any size. A
-decoder may read past the end of a stream, as long as it checks this.
+The codes of stream `j`'s literals must end in its last byte: they take at most `8 * s[j]` bits and
+fewer than 8 less, and the bits after the last code are 0. A stream without literals has `s[j] = 0`.
+Else the page is invalid. A decoder may read past the end of a stream, as long as it checks this.
 
 ## Example
 
@@ -330,8 +334,6 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
   one, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of classes 1 to 3 that holds
   it;
 - the escape only for a token without a code;
-- zero bits to fill the last byte of the bitstream and of each literal stream, and nothing after the
-  bitstream;
 - coded literals only when `51 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
   them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the
   size of the header; with it, a page has to save enough to be worth decoding its literals.
@@ -342,8 +344,13 @@ page never reaches the decoder.
 
 ## No version in the page
 
-A new format would be a new algorithm name in zram, which stores the name per device. The values of
-byte 2 with its top bits set are invalid now and free for such a format.
+zram keeps its pages only while the kernel that wrote them runs: they are decompressed by the same
+code, also the ones it wrote back to a backing device, and no page meets a newer decoder. So a change of
+the format needs a new kernel, not a new algorithm name in zram, which would be visible to users in
+`comp_algorithm` and in the Kconfig default. Two things would change that: another user of the codec
+that keeps pages longer, or zram's pages kept across a kexec by live update (`kernel/liveupdate/`),
+which zram does not do in 2026. The values of byte 2 with its top bits set are invalid now and free for
+a format that has to tell itself apart.
 
 ## How this file was checked
 

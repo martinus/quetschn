@@ -802,7 +802,9 @@ phase does not start from zero.
   distribution, both architectures, paired regression analysis per page, the state of the fuzzing,
   and the workspace against the other codecs.
 - The series: (1) `lib/quetschn`, the spec and `MAINTAINERS`, (2) the zram backend with Kconfig and
-  Makefile, (3) documentation, (4) selftests.
+  Makefile, (3) documentation, (4) selftests. 4 KiB pages only: the format for 16 KiB pages is not
+  fixed until a phone with 16 KiB pages has measured it (format.md, Status), and a second series adds
+  it then.
 - Who reads it: Sergey Senozhatsky and Minchan Kim (zram and zsmalloc, per `MAINTAINERS`), linux-mm,
   Andrew Morton (`lib/` goes through the mm tree), Eric Biggers (reviewed zBeWalgo and will review
   this), Dave Rodgman.

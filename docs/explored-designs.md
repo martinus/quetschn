@@ -68,6 +68,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [seqlz: `lz4`'s matches, Huffman coded sequences with static tables](#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables)
 - [seqlz-fast-lit: one of 8 literal tables per page](#seqlz-fast-lit-one-of-8-literal-tables-per-page)
+- [A page ends where its bits end: no damaged page with bytes or bits too many decodes, 0.1 µs on the A55, kept](#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -3990,6 +3991,52 @@ above already priced (2 positions per hash, hash chains, lazy matching).
 Tests: a page with a match of 8 bytes at offset 20 and, 600 to 615 bytes later, a repeat of exactly
 4 bytes at the same offset, which only the check of the last offset finds and only at its first
 byte. Mutation, caught: the step back in (the repeat is lost at p = 600).
+## A page ends where its bits end: no damaged page with bytes or bits too many decodes, 0.1 µs on the A55, kept
+
+*Until now the bits and bytes after a page's last code were ignored, and a literal stream could be
+longer than its codes. zram stores no checksum, so that let damaged pages through that a strict check
+catches, and `lz4` rejects input it did not use. Now a page and each of its literal streams must end in
+their last byte, with the bits after the last code 0, and a stream without literals has size 0 (#126).
+The compressor wrote such pages already; its bytes did not change. Same time in the kernel VM, on the
+phone's A55 0.07 to 0.10 µs more per warm read.* Code: `src/seqlz.c`, the end of `decode_page()` and of
+`decode_literals()`; both reference decoders; docs/format.md.
+
+**The first version rejected valid pages.** It read a literal stream's bits after its last code from
+the decoder's 64 bits. Those hold the stream's next 8 bytes with a 1 in the lowest bit that marks how
+far it read, and when exactly the stream's last 8 bytes are in them, its last bit is that 1. 3 of the
+60 000 pages of three dumps hit that, and the kernel VM's first boot on the first desktop dump stopped
+at them. The tests, the fuzzers and 4000 synthetic pages did not: it takes 57 bits read after the last
+refill, five codes of 10 bits and 7 bits of the first byte, which needs codes of different lengths.
+The check now reads those bits from the page, `test/seqlz_ref_test.cpp` has pages of 9 and 10 bit
+codes made by hand that hit it, and every page of the three dumps decodes again.
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, 20 000 pages per dump, CPU 2 at
+a fixed 4.5 GHz, boost off, `main` and this change, both kernels built first, 3 boots each per dump in
+turns. The swap-in, µs, first dump / second dump:
+
+| | `main` | strict |
+| --- | ---: | ---: |
+| `lz4` | 3.217 / 3.267 | 3.210 / 3.270 |
+| `seqlz-fast` | 3.577 / 3.703 | 3.567 / 3.697 |
+| `seqlz-fast-lit` | 3.737 / 3.993 | 3.737 / 4.000 |
+
+Within 0.01 µs; the boots of one kernel differ by up to 0.03 µs.
+
+**Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, `COOL=45`, 20 000 pages of the second phone dump, 3
+rounds, two copies of `main` (`ma`, `mb`) and this change (`st`), the warm read in µs:
+
+| | `ma` | `mb` | `st` |
+| --- | ---: | ---: | ---: |
+| A55, `seqlz-fast` | 11.20 | 11.20 | 11.27 |
+| A55, `seqlz-fast-lit` | 12.15 | 12.18 | 12.25 |
+| A76, `seqlz-fast` | 3.98 | 3.95 | 3.93 |
+| A76, `seqlz-fast-lit` | 4.36 | 4.38 | 4.36 |
+
+On the A76 the same. On the in-order A55 0.07 to 0.10 µs more, 0.6% to 0.8%, where the copies of
+`main` differ by at most 0.03: the checks at the end of each of the 8 streams and of the bitstream. The
+writes are the same, within 0.08 µs. The cold reads move by up to 1.5 µs between rounds on the A55;
+`st`'s are inside the ranges of the copies' rounds, for `seqlz-fast-lit` 0.6 µs above their means.
+
 ## The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster in the VM, kept
 
 *The encoder wrote the bitstream behind room for a page of literals, so `seqlz_compress()` needed a
