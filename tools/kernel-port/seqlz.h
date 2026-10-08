@@ -41,14 +41,16 @@ int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
  * @src: the compressed page
  * @src_len: its length
  * @dst: PAGE_SIZE bytes for the page
- * @wrkmem: SEQLZ_MEM_DECOMPRESS bytes
+ * @wrkmem: SEQLZ_MEM_DECOMPRESS bytes, or NULL if every page it gets was
+ *          compressed at SEQLZ_LEVEL_RAW
  *
  * Safe for any input: it never reads outside @src and @src_len, and never
  * writes outside @dst and @wrkmem, and its time is bounded by the page size.
  *
  * Context: Any context. It does not sleep and allocates nothing.
  *
- * Return: 0, or -EINVAL if @src is not a valid page.
+ * Return: 0, or -EINVAL if @src is not a valid page, or a page with coded
+ * literals and @wrkmem is NULL.
  */
 int seqlz_decompress(const void *src, unsigned int src_len, void *dst,
 		     void *wrkmem);

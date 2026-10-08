@@ -17,11 +17,11 @@ std::vector<std::uint8_t> lz4hc(std::vector<std::uint8_t> const& src) {
     p.page_size = 4096;
     REQUIRE(quetschn_codec_lz4hc.setup_params(&p) == 0);
     auto s = quetschn_stream{};
-    REQUIRE(quetschn_codec_lz4hc.create(&p, &s) == 0);
+    REQUIRE(quetschn_codec_lz4hc.create_cctx(&p, &s) == 0);
     auto dst = std::vector<std::uint8_t>(2 * src.size() + 64);
     auto len = static_cast<unsigned int>(dst.size());
     REQUIRE(quetschn_codec_lz4hc.compress(&p, &s, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) == 0);
-    quetschn_codec_lz4hc.destroy(&s);
+    quetschn_codec_lz4hc.destroy_cctx(&s);
     quetschn_codec_lz4hc.release_params(&p);
     dst.resize(len);
     return dst;

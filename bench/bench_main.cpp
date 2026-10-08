@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -174,15 +175,16 @@ int decode_loop(quetschn::corpus const& c,
     params.dict_size = opts.dict.size();
     params.level = opts.levels.empty() ? opts.level : opts.levels.front();
     params.page_size = static_cast<unsigned int>(c.page_size);
-    auto stream = quetschn_stream{};
-    if (codec.setup_params(&params) != 0 || codec.create(&params, &stream) != 0) {
+    if (codec.setup_params(&params) != 0) {
         std::fprintf(stderr, "error: %s: setup failed\n", codec.name);
         return 1;
     }
+    auto contexts = std::make_unique<quetschn::codec_contexts>(codec, &params);
     auto buf = std::vector<std::byte>(2 * c.page_size);
     auto compress = [&](std::size_t i, unsigned int& len) {
         len = static_cast<unsigned int>(buf.size());
-        return codec.compress(&params, &stream, c.page(i).data(), static_cast<unsigned int>(c.page_size), buf.data(), &len);
+        return codec.compress(
+            &params, contexts->compression(), c.page(i).data(), static_cast<unsigned int>(c.page_size), buf.data(), &len);
     };
     auto compressed = std::vector<std::vector<std::byte>>();
     auto lengths = std::vector<unsigned int>(c.size());
@@ -225,7 +227,8 @@ int decode_loop(quetschn::corpus const& c,
                 }
                 len = static_cast<unsigned int>(out.size());
                 auto const t0 = std::chrono::steady_clock::now();
-                ret = codec.decompress(&params, &stream, p.data(), static_cast<unsigned int>(p.size()), out.data(), &len);
+                ret = codec.decompress(
+                    &params, contexts->decompression(), p.data(), static_cast<unsigned int>(p.size()), out.data(), &len);
                 ns[l * pages + i] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
                 sum += static_cast<std::uint64_t>(out[len / 3]);
             }
@@ -235,7 +238,7 @@ int decode_loop(quetschn::corpus const& c,
             }
         }
     }
-    codec.destroy(&stream);
+    contexts.reset();
     codec.release_params(&params);
 
     auto medians = std::vector<double>(pages);
@@ -437,7 +440,11 @@ int main(int argc, char** argv) {
                             model.fresh_pool_bytes(lens));
             }
             std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
-            std::printf("memory per CPU         %zu bytes\n", r.stream_bytes);
+            std::printf("memory per CPU         %zu bytes: compression %zu, decompression %zu%s\n",
+                        r.stream_bytes,
+                        r.cctx_bytes,
+                        r.dctx_bytes,
+                        codec->create_dctx != nullptr ? "" : " (no decompression context of its own)");
             std::printf("memory per device      %zu bytes (dictionary %s, %zu bytes)\n",
                         r.params_bytes,
                         dict_path.empty() ? "none" : dict_path.c_str(),

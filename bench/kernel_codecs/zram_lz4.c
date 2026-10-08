@@ -149,8 +149,8 @@ const struct quetschn_codec quetschn_codec_lz4_prefetch = {
     .name = "lz4-prefetch",
     .setup_params = lz4_setup_params,
     .release_params = lz4_release_params,
-    .create = lz4_create,
-    .destroy = lz4_destroy,
+    .create_cctx = lz4_create,
+    .destroy_cctx = lz4_destroy,
     .compress = lz4_compress,
     .decompress = lz4_prefetch_decompress,
 };
@@ -159,8 +159,8 @@ const struct quetschn_codec quetschn_codec_lz4 = {
     .name = "lz4",
     .setup_params = lz4_setup_params,
     .release_params = lz4_release_params,
-    .create = lz4_create,
-    .destroy = lz4_destroy,
+    .create_cctx = lz4_create,
+    .destroy_cctx = lz4_destroy,
     .compress = lz4_compress,
     .decompress = lz4_decompress,
 };

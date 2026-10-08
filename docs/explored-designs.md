@@ -57,6 +57,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The offset below 8: one copy for every offset saves 12 misses per page and costs more, not kept](#the-offset-below-8-one-copy-for-every-offset-saves-12-misses-per-page-and-costs-more-not-kept)
 - [A branch or more work, again in a swap-in: the old choices hold, and loops over 2000 pages were never trained](#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)
 - [Recompression, measured, not pursued](#recompression-measured-not-pursued)
+- [zram's contexts split into compression and decompression: the same time in the VM, the same memory for seqlz](#zrams-contexts-split-into-compression-and-decompression-the-same-time-in-the-vm-the-same-memory-for-seqlz)
 
 **Where the bytes are**
 
@@ -879,6 +880,53 @@ zram: 3.9 MB, compressed to 2.2 to 2.5 MB, held in 6.1 to 6.5 MB of zsmalloc, af
 358 MB and 186 335 to 267 113 pages compacted. That is fragmentation, which a model of sizes can't
 predict; [plan.md §3.1](plan.md#31-zram-does-not-pay-for-bytes-it-pays-for-zsmalloc-size-classes)
 has how large it got on the development machine.
+
+## zram's contexts split into compression and decompression: the same time in the VM, the same memory for seqlz
+
+*Sergey Senozhatsky's series of 5th October 2026 splits zram's per-CPU stream and the backends'
+context into one for compression and one for decompression (#102, patch 09 of
+[series 1179613](https://lore.kernel.org/all/20261005122036.718976-10-senozhatsky@chromium.org/)). Its
+point is a reader that waits for a writer on the same CPU. Without contention, in the kernel VM, it
+changes no codec's time: every mean within 0.04 µs per page. seqlz needs no more memory with it.* Kept:
+the harness and the kernel's backend have both contexts.
+
+The series doesn't apply to the tree the project builds from, `986c24e0fe44`, but all 10 patches apply
+to `mm-unstable` at `fb0fbeb37` (`tools/kernel-port/zcomp-split.sh`). `mm-unstable` also reads the
+compressed data through a scatterlist, without the series too, so `tools/zram-vm/run.sh` applies
+`zram-prefetch-sg.patch` there, which maps the data for the experiments only for an object within one
+page. Kernel VM, `MODE=swap`, `zram.zram_prefetch=8`, 20 000 pages of the first desktop dump
+(`zram0-2026-09-24`), CPU 2 at 4.5 GHz, boost off, gcc 16.2.1. The tree without the series and the one
+with it took turns, A B B A, 2 boots per run; the means of each boot in µs per page:
+
+| codec | | without the series | with it | difference |
+| --- | --- | --- | --- | ---: |
+| `lz4` | swap-out, one call per page | 7.08, 7.15, 7.07, 7.12 | 7.05, 7.07, 7.05, 7.07 | -0.04 |
+| | swap-in, flushed | 3.28, 3.28, 3.28, 3.26 | 3.26, 3.25, 3.28, 3.27 | -0.01 |
+| `lzo-rle` | swap-out | 7.01, 7.02, 7.02, 7.05 | 6.99, 6.99, 7.04, 6.99 | -0.03 |
+| | swap-in | 3.88, 3.87, 3.85, 3.87 | 3.85, 3.85, 3.89, 3.84 | -0.01 |
+| `zstd` | swap-out | 16.07, 15.95, 16.13, 16.06 | 16.07, 16.04, 16.18, 16.09 | +0.04 |
+| | swap-in | 6.70, 6.70, 6.64, 6.62 | 6.62, 6.64, 6.62, 6.65 | -0.03 |
+| `seqlz-fast` | swap-out | 7.53, 7.55, 7.50, 7.51 | 7.52, 7.50, 7.49, 7.46 | -0.03 |
+| | swap-in | 3.73, 3.73, 3.72, 3.72 | 3.73, 3.72, 3.74, 3.73 | +0.01 |
+| `seqlz-fast-lit` | swap-out | 8.33, 8.33, 8.31, 8.31 | 8.29, 8.30, 8.30, 8.27 | -0.03 |
+| | swap-in | 4.02, 4.04, 4.03, 4.02 | 4.02, 4.03, 4.04, 4.03 | +0.00 |
+
+The ranges overlap for every codec. The VM's seqlz backend gives both contexts a whole context of
+before, hash table and scratch, so that the decoder finds the scratch where it found it, and the times
+compare.
+
+Memory per CPU, harness, 4 KiB pages: `seqlz-fast-lit` has 8192 bytes for compression, the hash table,
+and 4112 for decompression, the scratch of the coded literals, 12 304 together as before. `seqlz-fast`
+has no decompression context. The kernel's backend (`tools/kernel-port/backend_seqlz.c`, written by
+`port.py` in the form of the tree) has the same, and at level 1 no decompression context either,
+because `seqlz_decompress()` takes no work memory for pages without coded literals. On `mm-unstable`
+with the series, `tools/kernel-port/stress.sh` ran both levels under KASAN and lockdep, 3 minutes
+each: 12.7 million pages swapped out, none different, no report. The copied glue of `lz4`, `lzo` and
+`zstd` stays at `986c24e0fe44` with one context for both, until the series is in a tree the project
+builds from (#103).
+
+Not measured: a reader and a writer on the same CPU, the case the series is for. Patch 09's commit
+message has fio numbers for it, with `zstd` at level 12.
 
 ## The first runs with dictionaries, Phases 0 to 2
 

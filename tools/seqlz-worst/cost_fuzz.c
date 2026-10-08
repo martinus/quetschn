@@ -137,17 +137,19 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     }
 #ifdef COST_CODEC
     {
-        /* as zram: params once per device with the codec's default level, a stream per CPU, a buffer of
-         * two pages, pages of 3625 bytes and more stored as they are */
+        /* as zram: params once per device with the codec's default level, the contexts per CPU, a buffer
+         * of two pages, pages of 3625 bytes and more stored as they are; decompression with its own
+         * context where the codec has one */
         static struct quetschn_params params;
-        static struct quetschn_stream stream;
+        static struct quetschn_stream stream, dstream;
         static int ready;
         unsigned int clen = sizeof c, dlen = SEQLZ_PAGE;
 
         if (!ready) {
             params.level = QUETSCHN_LEVEL_DEFAULT;
             params.page_size = SEQLZ_PAGE;
-            if (COST_CODEC.setup_params(&params) || COST_CODEC.create(&params, &stream))
+            if (COST_CODEC.setup_params(&params) || COST_CODEC.create_cctx(&params, &stream) ||
+                (COST_CODEC.create_dctx && COST_CODEC.create_dctx(&params, &dstream)))
                 abort();
             ready = 1;
         }
@@ -167,7 +169,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         mark(i1 - i0, 0, 1024);
         if (clen < 3625U) {
             i0 = instructions();
-            if (COST_CODEC.decompress(&params, &stream, c, clen, out, &dlen))
+            if (COST_CODEC.decompress(&params, COST_CODEC.create_dctx ? &dstream : &stream, c, clen, out, &dlen))
                 abort();
             i1 = instructions();
             if (dlen != SEQLZ_PAGE || memcmp(out, data, SEQLZ_PAGE))

@@ -3,7 +3,8 @@
 #
 # zram's read latency in a VM, with and without prefetching the compressed data and the destination
 # before decompression (docs/explored-designs.md). Builds a kernel from a Linux tree with
-# zram-prefetch.patch applied to a copy, and an initramfs whose /init (init.c) writes the pages of a
+# zram-prefetch.patch applied to a copy (zram-prefetch-sg.patch where zram reads the compressed data
+# through a scatterlist, mm-unstable of October 2026), and an initramfs whose /init (init.c) writes the pages of a
 # corpus to /dev/zram0 and reads them back with O_DIRECT. The corpus pages go into the initramfs: it is
 # written with mode 600 and deleted at the end, like the corpus it contains private data. MODE=swap
 # measures zram as swap instead, the whole page fault of a swap-out and a swap-in (init.c). KARGS adds
@@ -26,7 +27,13 @@ chmod 700 "$work"
 trap 'rm -rf "$work"' EXIT
 
 git -C "$tree" archive HEAD | tar -x -C "$work" --one-top-level=src
-patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
+# trees that read the compressed data through a scatterlist (mm-unstable of October 2026) need the
+# experiments where it is mapped, zram-prefetch-sg.patch
+if grep -q zs_obj_read_sg_begin "$work/src/drivers/block/zram/zram_drv.c"; then
+    patch -d "$work/src" -p1 <"$here/zram-prefetch-sg.patch"
+else
+    patch -d "$work/src" -p1 <"$here/zram-prefetch.patch"
+fi
 # seqlz as zram backends, seqlz (raw literals) and seqlz-lit, with lz4's -O3
 z="$work/src/drivers/block/zram"
 cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/seqlz.c" "$here/../../src/seqlz.h" \
@@ -36,6 +43,11 @@ cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/seqlz.c" "$h
 sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\tNULL|' "$z/zcomp.c"
 printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\n' >>"$z/Makefile"
 printf 'CFLAGS_seqlz.o += -O3\n' >>"$z/Makefile"
+# zram's contexts split into compression and decompression, see backend_seqlz.c
+if grep -q 'struct zcomp_cstrm' "$z/zcomp.h"; then
+    printf 'CFLAGS_backend_seqlz.o += -DZCOMP_RW_SPLIT\n' >>"$z/Makefile"
+    echo "KERNEL zcomp with separate compression and decompression contexts"
+fi
 "${kmake[@]}" -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \
     --enable DEVTMPFS --enable BLK_DEV_INITRD --enable ZRAM_MULTI_COMP --enable ZRAM_TRACK_ENTRY_ACTIME

@@ -70,7 +70,9 @@ VM pinned to CPU 2, and measures zram's reads and writes. With `MODE=swap` it me
 fault of a swap-out and a swap-in instead. zram stores a same-filled page without the codec, so a fault
 on such a page is the kernel's part. `KARGS` adds to the kernel command line, and
 `zram.zram_prefetch=8` gives seqlz the prefetch that its backend has. `LLVM=1` builds the kernel with
-clang, as Android does.
+clang, as Android does. `run.sh` works on trees with zram's contexts split into compression and
+decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`), and on trees whose zram
+reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`.
 
 ```sh
 ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log

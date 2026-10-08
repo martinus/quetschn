@@ -46,8 +46,12 @@ struct lifecycle {
     int release = 0;
     int create = 0;
     int destroy = 0;
+    int create_d = 0;
+    int destroy_d = 0;
 };
 lifecycle calls;
+// what the decompression context of split_codec points to, so its decompress can tell it got that one
+int dctx_marker;
 
 // Accepts levels 0 to 9, default 5. Pretends to hold 100 bytes per level per CPU, and the dictionary once
 // per device, so the tests can see the harness report both.
@@ -87,6 +91,25 @@ void trim_destroy(quetschn_stream* s) {
     s->context = nullptr;
 }
 
+// a decompression context of 7 bytes, for split_codec
+int split_create_dctx(quetschn_params*, quetschn_stream* s) {
+    ++calls.create_d;
+    s->allocated = 7;
+    s->context = &dctx_marker;
+    return 0;
+}
+
+int failing_create_dctx(quetschn_params*, quetschn_stream*) {
+    ++calls.create_d;
+    return -1;
+}
+
+void split_destroy_dctx(quetschn_stream* s) {
+    ++calls.destroy_d;
+    s->allocated = 0;
+    s->context = nullptr;
+}
+
 int trim_compress(
     quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     if (s->context != &calls || s->allocated != 100 * static_cast<std::size_t>(p->level + 1)) {
@@ -104,8 +127,12 @@ int trim_compress(
     return 0;
 }
 
+// without a decompression context of its own, a codec gets the compression context
 int trim_decompress(
-    quetschn_params*, quetschn_stream*, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    quetschn_params*, quetschn_stream* ctx, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    if (ctx->context != &calls) {
+        return -1;
+    }
     auto const* s = static_cast<unsigned char const*>(src);
     auto const k = static_cast<unsigned int>(s[0] | (s[1] << 8));
     if (src_len != k + 2 || *dst_len < page_size) {
@@ -115,6 +142,16 @@ int trim_decompress(
     std::memset(static_cast<unsigned char*>(dst) + k, 0, page_size - k);
     *dst_len = page_size;
     return 0;
+}
+
+// trim with a decompression context of its own, which decompress must get
+int split_decompress(
+    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    if (s->context != &dctx_marker || s->allocated != 7) {
+        return -1;
+    }
+    auto cctx = quetschn_stream{&calls, 0};
+    return trim_decompress(p, &cctx, src, src_len, dst, dst_len);
 }
 
 int broken_decompress(
@@ -159,18 +196,38 @@ int dict_compress(
     return trim_compress(p, s, src, src_len, dst, dst_len);
 }
 
-quetschn_codec const trim_codec{
-    "trim", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, trim_decompress};
-quetschn_codec const dict_codec{
-    "dict", trim_setup_params, trim_release_params, trim_create, trim_destroy, dict_compress, trim_decompress};
-quetschn_codec const pad_codec{
-    "pad", trim_setup_params, trim_release_params, trim_create, trim_destroy, pad_compress, pad_decompress};
-quetschn_codec const broken_codec{
-    "broken", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, broken_decompress};
-quetschn_codec const failing_codec{
-    "failing", trim_setup_params, trim_release_params, trim_create, trim_destroy, failing_compress, trim_decompress};
-quetschn_codec const failing_create_codec{
-    "failing-create", trim_setup_params, trim_release_params, failing_create, trim_destroy, trim_compress, trim_decompress};
+// a codec of trim's functions, with the compression context's create, compress and decompress given
+constexpr quetschn_codec
+trim_like(char const* name,
+          int (*create)(quetschn_params*, quetschn_stream*),
+          int (*compress)(quetschn_params*, quetschn_stream*, void const*, unsigned int, void*, unsigned int*),
+          int (*decompress)(quetschn_params*, quetschn_stream*, void const*, unsigned int, void*, unsigned int*)) {
+    return {.name = name,
+            .setup_params = trim_setup_params,
+            .release_params = trim_release_params,
+            .create_cctx = create,
+            .destroy_cctx = trim_destroy,
+            .create_dctx = nullptr,
+            .destroy_dctx = nullptr,
+            .compress = compress,
+            .decompress = decompress};
+}
+
+quetschn_codec const trim_codec = trim_like("trim", trim_create, trim_compress, trim_decompress);
+quetschn_codec const dict_codec = trim_like("dict", trim_create, dict_compress, trim_decompress);
+quetschn_codec const pad_codec = trim_like("pad", trim_create, pad_compress, pad_decompress);
+quetschn_codec const broken_codec = trim_like("broken", trim_create, trim_compress, broken_decompress);
+quetschn_codec const failing_codec = trim_like("failing", trim_create, failing_compress, trim_decompress);
+quetschn_codec const failing_create_codec = trim_like("failing-create", failing_create, trim_compress, trim_decompress);
+
+quetschn_codec split_like(char const* name, int (*create_dctx)(quetschn_params*, quetschn_stream*)) {
+    auto c = trim_like(name, trim_create, trim_compress, split_decompress);
+    c.create_dctx = create_dctx;
+    c.destroy_dctx = split_destroy_dctx;
+    return c;
+}
+quetschn_codec const split_codec = split_like("split", split_create_dctx);
+quetschn_codec const failing_dctx_codec = split_like("failing-dctx", failing_create_dctx);
 
 // page with the first `nonzero` bytes set to non-zero values, the rest zero
 std::vector<std::byte> page_with_prefix(std::size_t nonzero) {
@@ -268,8 +325,34 @@ TEST_CASE("harness: level and dictionary reach the codec, and its memory is repo
 
     CHECK_THROWS_WITH_AS(
         (void)run_codec(c, trim_codec, model, untimed(10)), doctest::Contains("zram rejects"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS((void)run_codec(c, failing_create_codec, model, untimed()),
+                         doctest::Contains("create_cctx failed"),
+                         std::runtime_error);
+}
+
+TEST_CASE("harness: compress gets the compression context, decompress its own one if the codec has it") {
+    auto const model = zsmalloc_model();
+    auto const c = make_corpus({page_with_prefix(100), page_with_prefix(2000)});
+
+    // trim_decompress fails without the compression context, split_decompress without the decompression one
+    auto const shared = run_codec(c, trim_codec, model, untimed());
+    CHECK(shared.pages.size() == 2);
+    CHECK(shared.cctx_bytes == 600);
+    CHECK(shared.dctx_bytes == 0);
+    CHECK(shared.stream_bytes == 600);
+
+    auto const split = run_codec(c, split_codec, model, untimed());
+    CHECK(split.pages.size() == 2);
+    CHECK(split.cctx_bytes == 600);
+    CHECK(split.dctx_bytes == 7);
+    CHECK(split.stream_bytes == 607);
+    auto const codecs = std::array<quetschn_codec const*, 2>{&split_codec, &trim_codec};
+    auto const both = quetschn::run_interleaved(c, codecs, model, untimed());
+    CHECK(both[0].dctx_bytes == 7);
+    CHECK(both[1].dctx_bytes == 0);
+
     CHECK_THROWS_WITH_AS(
-        (void)run_codec(c, failing_create_codec, model, untimed()), doctest::Contains("create failed"), std::runtime_error);
+        (void)run_codec(c, failing_dctx_codec, model, untimed()), doctest::Contains("create_dctx failed"), std::runtime_error);
 }
 
 TEST_CASE("harness: the dictionary stays valid for the whole run") {
@@ -288,7 +371,8 @@ TEST_CASE("harness: the dictionary stays valid for the whole run") {
 TEST_CASE("harness: what was set up is released, also when the run fails") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100)});
-    for (auto const* codec : {&trim_codec, &broken_codec, &failing_codec, &failing_create_codec}) {
+    for (auto const* codec :
+         {&trim_codec, &broken_codec, &failing_codec, &failing_create_codec, &split_codec, &failing_dctx_codec}) {
         CAPTURE(codec->name);
         calls = lifecycle{};
         try {
@@ -298,8 +382,11 @@ TEST_CASE("harness: what was set up is released, also when the run fails") {
         CHECK(calls.setup == 1);
         CHECK(calls.release == 1);
         CHECK(calls.create == 1);
-        // a stream that could not be created is not destroyed, like in zram
+        // a context that could not be created is not destroyed, like in zram; the compression context is,
+        // also when the decompression context fails after it
         CHECK(calls.destroy == (codec == &failing_create_codec ? 0 : 1));
+        CHECK(calls.create_d == (codec->create_dctx != nullptr ? 1 : 0));
+        CHECK(calls.destroy_d == (codec == &split_codec ? 1 : 0));
     }
     // and nothing is created when the parameters are rejected
     calls = lifecycle{};
@@ -427,8 +514,7 @@ int log_decompress(
     return trim_decompress(p, s, src, src_len, dst, dst_len);
 }
 
-quetschn_codec const log_codec{
-    "log", trim_setup_params, trim_release_params, trim_create, trim_destroy, log_compress, log_decompress};
+quetschn_codec const log_codec = trim_like("log", trim_create, log_compress, log_decompress);
 
 } // namespace
 
@@ -557,8 +643,7 @@ int spin_decompress(
     return trim_decompress(p, s, src, src_len, dst, dst_len);
 }
 
-quetschn_codec const spin_codec{
-    "spin", trim_setup_params, trim_release_params, trim_create, trim_destroy, trim_compress, spin_decompress};
+quetschn_codec const spin_codec = trim_like("spin", trim_create, trim_compress, spin_decompress);
 
 } // namespace
 

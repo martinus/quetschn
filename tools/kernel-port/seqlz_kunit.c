@@ -198,6 +198,24 @@ static void seqlz_test_round_trip(struct kunit *test)
 					0);
 			KUNIT_ASSERT_MEMEQ(test, b.out, b.page, PAGE_SIZE);
 			/*
+			 * without work memory, only pages without coded
+			 * literals: zram's level 1 has no decompression context
+			 */
+			memset(b.out, 0xa5, PAGE_SIZE);
+			if (b.c[1] & 0x80) {
+				KUNIT_ASSERT_EQ(test,
+						seqlz_decompress(b.c, len, b.out,
+								 NULL),
+						-EINVAL);
+			} else {
+				KUNIT_ASSERT_EQ(test,
+						seqlz_decompress(b.c, len, b.out,
+								 NULL),
+						0);
+				KUNIT_ASSERT_MEMEQ(test, b.out, b.page,
+						   PAGE_SIZE);
+			}
+			/*
 			 * one byte less does not fit, and nothing is written
 			 * behind it
 			 */
