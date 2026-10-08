@@ -541,17 +541,35 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 {
 	const u8 *in = literals;
 	struct encoder e;
-	unsigned int i;
+	unsigned int i, pos = 0, lits = 0;
 
 	if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols || n == 0 ||
 	    n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_PAGE)
+		return 0;
+	/*
+	 * Only sequences that make a page, checked as the decoder checks them,
+	 * before anything is written. dst has room only because every match
+	 * covers at least 4 bytes: a shorter one makes ml - 4 wrap, and its
+	 * length value takes more bits than the page could save.
+	 */
+	for (i = 0; i < n; i++) {
+		lits += seq[i].literals;
+		pos += seq[i].literals;
+		if (pos > SEQLZ_PAGE)
+			return 0;
+		if (i + 1 == n)
+			break;
+		if (seq[i].match < 4U || seq[i].offset == 0 ||
+		    seq[i].offset > pos)
+			return 0;
+		pos += seq[i].match;
+	}
+	if (pos != SEQLZ_PAGE || lits != n_literals)
 		return 0;
 	encoder_init(&e, t, dst, literals + n_literals);
 	for (i = 0; i < n; i++) {
 		unsigned int ll = seq[i].literals;
 
-		if (ll > (unsigned int)(literals + n_literals - in))
-			return 0;
 		encode_emit(&e, in, ll, i + 1 == n ? 0U : seq[i].match,
 			    seq[i].offset);
 		in += ll;

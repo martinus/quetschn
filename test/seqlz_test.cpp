@@ -536,6 +536,52 @@ TEST_CASE("seqlz: the most bits per page fit into two pages, less than two pages
                        0) == 0);
 }
 
+TEST_CASE("seqlz: seqlz_encode() rejects sequences that do not make a page, before writing") {
+    auto const t = default_tables();
+    auto c = std::vector<unsigned char>(2 * page_size);
+    auto const literals = std::vector<unsigned char>(page_size, 7);
+    auto const encode = [&](std::vector<seqlz_sequence> const& seq, unsigned n_literals) {
+        return seqlz_encode(
+            t.get(), seq.data(), static_cast<unsigned>(seq.size()), literals.data(), n_literals, c.data(), 2 * page_size, 0);
+    };
+
+    // matches of 1 byte: ml - 4 wrapped, and 1025 of them wrote past the two pages of dst
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES - 1, seqlz_sequence{0, 1, 4000});
+    seq.push_back({0, 0, 0});
+    CHECK(encode(seq, 0) == 0);
+
+    // a page that is fine: 1 literal, matches of 4 bytes from 1 back, the rest literals
+    auto const valid = [] {
+        auto s = std::vector<seqlz_sequence>{{1, 4, 1}};
+        for (unsigned pos = 5; pos + 4 <= page_size; pos += 4) {
+            s.push_back({0, 4, 1});
+        }
+        s.push_back({static_cast<unsigned short>(page_size - 4 * (s.size()) - 1), 0, 0});
+        return s;
+    }();
+    auto const lits = 1U + valid.back().literals;
+    REQUIRE(encode(valid, lits) > 0);
+
+    auto bad = valid;
+    bad[1].match = 3; // shorter than 4
+    bad[2].match = 5; // the page still adds up
+    CHECK(encode(bad, lits) == 0);
+    bad = valid;
+    bad[0].offset = 0;
+    CHECK(encode(bad, lits) == 0);
+    bad = valid;
+    bad[0].offset = 2; // 1 byte of page before the match
+    CHECK(encode(bad, lits) == 0);
+    bad = valid;
+    bad[1].match = 8; // 4 bytes past the page
+    CHECK(encode(bad, lits) == 0);
+    bad = valid;
+    bad.back().literals = static_cast<unsigned short>(bad.back().literals - 1); // 1 byte short of the page
+    CHECK(encode(bad, lits - 1) == 0);
+    // more literals given than the sequences use
+    CHECK(encode(valid, lits + 1) == 0);
+}
+
 TEST_CASE("seqlz: the compressor needs a code for every symbol") {
     // a complete code where one match length symbol has none: fine for the decoder, not for the
     // encoder. 4 KiB pages: two codes of 2 bits, ten of 5 and twelve of 6, 2/4 + 10/32 + 12/64 = 1. 16 KiB

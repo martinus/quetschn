@@ -309,6 +309,11 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * For tests and tools, which make their own sequences; zram uses
  * seqlz_compress().
  *
+ * The sequences describe a page if each but the last has a match of at least
+ * 4 bytes, with an offset from 1 to the bytes of the page before the match,
+ * and the literals and matches add up to the page, with all @n_literals
+ * literals used.
+ *
  * Return: the length of the compressed page, or 0 if @dst_cap is too small,
  * @t lacks a code, or the sequences do not describe a page.
  */
