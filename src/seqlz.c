@@ -337,37 +337,39 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * The encoder writes a page in one pass, as the matcher finds the sequences.
  * The page starts with the literals and the bitstream follows, but how many
  * literals there are is known only at the end. So the literals go to the front
- * of dst, after the u16, and the bitstream goes into the second half, after
- * room for a whole page of literals. At the end, the bitstream moves down to
- * right after the literals.
+ * of dst, after the u16, and the bitstream goes to the back of dst, backwards:
+ * its first byte is the last byte of dst, and it grows down toward the
+ * literals. At the end it is copied, the right way round, to right after the
+ * literals.
  *
- * That is why dst must have two pages, and two pages are always enough. A
- * sequence covers at least 4 bytes of the page, and its token and offset take
- * at most 31 bits, also with an escaped token, see SEQLZ_MAX_ESCAPE_LEN. So
- * the bitstream has at most SEQLZ_PAGE / 4 * 31 + 31 bits: 3972 bytes for
- * 4 KiB pages, and 4078 bytes are left after the u16, a page of literals and
- * the 16 bytes their copies may write past it; for 16 KiB pages 15 876 bytes
- * in 16 366.
+ * So dst can have any size, and a page that does not fit is an error, as for
+ * the other compressors. Before each sequence the encoder checks that its
+ * literals and ENC_ROOM bytes more are free between the two: a sequence's
+ * copies write up to 15 bytes past its literals, and its at most two flushes
+ * move the bitstream down by at most 16 bytes, writing 8 bytes below it. A page
+ * that does not fit stops the writes there, and seqlz_compress() returns 0. It
+ * can happen up to ENC_ROOM bytes before dst is full. With the two pages zram
+ * gives, it never happens: a sequence covers at least 4 bytes of the page, and
+ * its token and offset take at most 31 bits, also with an escaped token, see
+ * SEQLZ_MAX_ESCAPE_LEN. So the bitstream has at most SEQLZ_PAGE / 4 * 31 + 31
+ * bits, 3972 bytes for 4 KiB pages, and with a page of literals that leaves
+ * more than ENC_ROOM bytes free; for 16 KiB pages 15 876 bytes.
  *
  * Bits are collected in a 64-bit accumulator and written 8 bytes at a time;
- * then the write position moves on by the whole bytes, and the at most 7 bits
+ * then the write position moves down by the whole bytes, and the at most 7 bits
  * left over are written again with the next ones. After a write the
  * accumulator holds at most 7 bits, so a sequence's token, offset and match
  * length value fit before the next one: 7 + 31 + 20 = 58 bits, 60 for 16 KiB
  * pages. Only a literal length value, 20 or 22 bits more, needs a write of its
  * own.
  */
-/*
- * where the bitstream goes in dst: after the u16, a page of literals and the 16
- * bytes their copies may write past them
- */
-#define ENC_BITS(d) ((d) + SEQLZ_HEADER + SEQLZ_PAGE + 16U)
+#define ENC_ROOM 32U
 
 struct encoder {
 	const struct seqlz_tables *t;
 	u64 acc; /* the bits not yet written, the newest in the low bits */
 	unsigned int cnt; /* how many bits of acc count */
-	u8 *p; /* where the next byte of the bitstream goes */
+	u8 *p; /* the next byte of the bitstream goes right below p */
 	u8 *lit; /* where the next literal goes */
 	const u8 *src_end; /* copies of 16 literals may read up to here */
 	unsigned int last; /* the offset of the sequence before, class 0 */
@@ -398,15 +400,16 @@ static __always_inline void enc_put_code(struct encoder *e, u32 entry,
 }
 
 /*
- * Writes the whole bytes of the accumulator, big endian, so that the first bit
- * is the top bit of the first byte. The shift puts the cnt bits that count on
- * top, older bits above them fall out. The last byte is written even when it is
- * not full, and again by the next write.
+ * Writes the whole bytes of the accumulator below p, the first bit as the top
+ * bit of the byte right below p, the next byte below that. The shift puts the
+ * cnt bits that count on top, older bits above them fall out, and a little
+ * endian store of the word puts its top byte last, at p - 1. The last byte is
+ * written even when it is not full, and again by the next write.
  */
 static __always_inline void enc_flush(struct encoder *e)
 {
-	put_unaligned_be64(e->acc << ((64U - e->cnt) & 63U), e->p);
-	e->p += e->cnt >> 3;
+	put_unaligned_le64(e->acc << ((64U - e->cnt) & 63U), e->p - 8);
+	e->p -= e->cnt >> 3;
 	e->cnt &= 7U;
 }
 
@@ -450,6 +453,14 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 	const struct seqlz_tables *t = e->t;
 	unsigned int k = 0;
 
+	/*
+	 * The page does not fit: no more writes. With p at lit, every later
+	 * sequence ends here too, and encoder_finish() sees it.
+	 */
+	if ((size_t)(e->p - e->lit) < ll + ENC_ROOM) {
+		e->p = e->lit;
+		return;
+	}
 	/*
 	 * The literals, 16 bytes at a time as long as the input has 16 bytes
 	 * more; dst has room for what goes past ll. The first 16 bytes without
@@ -505,31 +516,60 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 
 static __always_inline void encoder_init(struct encoder *e,
 					 const struct seqlz_tables *t, u8 *d,
+					 unsigned int dst_cap,
 					 const u8 *src_end)
 {
 	*e = (struct encoder){ .t = t,
-			       .p = ENC_BITS(d),
+			       .p = d + dst_cap,
 			       .lit = d + SEQLZ_HEADER,
 			       .src_end = src_end,
 			       .last = 1 };
 }
 
 /*
- * Writes the last bits and the u16, and moves the bitstream down to right after
- * the literals.
+ * Writes the last bits and the u16, and copies the bitstream from the back of
+ * dst to right after the literals, the right way round. Returns the length of
+ * the page, or 0 if it did not fit into the dst_cap bytes at d.
  */
-static unsigned int encoder_finish(struct encoder *e, u8 *d)
+static unsigned int encoder_finish(struct encoder *e, u8 *d,
+				   unsigned int dst_cap)
 {
-	u8 *bits = ENC_BITS(d);
-	unsigned int n_lit = (unsigned int)(e->lit - (d + SEQLZ_HEADER)), bytes;
+	u8 *end = d + dst_cap, *out = e->lit;
+	const u8 *in;
+	unsigned int n_lit = (unsigned int)(e->lit - (d + SEQLZ_HEADER)), bytes,
+		     k = 0;
 
+	if (e->p == e->lit)
+		return 0;
 	if (e->cnt > 0) {
-		put_unaligned_be64(e->acc << ((64U - e->cnt) & 63U), e->p);
-		e->p++;
+		put_unaligned_le64(e->acc << ((64U - e->cnt) & 63U), e->p - 8);
+		e->p--;
 	}
-	bytes = (unsigned int)(e->p - bits);
+	in = e->p;
+	bytes = (unsigned int)(end - in);
 	store16(d, n_lit);
-	memmove(e->lit, bits, bytes);
+	/*
+	 * Byte k of the bitstream is at end - 1 - k. 8 bytes at a time while
+	 * the copy does not overlap them, else one at a time, in place: only a
+	 * page that nearly fills dst gets there.
+	 */
+	if ((size_t)(in - out) >= bytes) {
+		for (; k + 8U <= bytes; k += 8)
+			put_unaligned_be64(get_unaligned_le64(end - 8 - k),
+					   out + k);
+		for (; k < bytes; k++)
+			out[k] = *(end - 1 - k);
+	} else {
+		u8 *lo = e->p, *hi = end - 1;
+
+		for (; lo < hi; lo++, hi--) {
+			u8 b = *lo;
+
+			*lo = *hi;
+			*hi = b;
+		}
+		memmove(out, in, bytes);
+	}
 	return SEQLZ_HEADER + n_lit + bytes;
 }
 
@@ -543,7 +583,7 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 	struct encoder e;
 	unsigned int i, pos = 0, lits = 0;
 
-	if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols || n == 0 ||
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols || n == 0 ||
 	    n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_PAGE)
 		return 0;
 	/*
@@ -566,7 +606,7 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 	}
 	if (pos != SEQLZ_PAGE || lits != n_literals)
 		return 0;
-	encoder_init(&e, t, dst, literals + n_literals);
+	encoder_init(&e, t, dst, dst_cap, literals + n_literals);
 	for (i = 0; i < n; i++) {
 		unsigned int ll = seq[i].literals;
 
@@ -574,7 +614,7 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 			    seq[i].offset);
 		in += ll;
 	}
-	return encoder_finish(&e, dst);
+	return encoder_finish(&e, dst, dst_cap);
 }
 
 /*
@@ -648,12 +688,13 @@ static __always_inline unsigned int lit_bits(u64 even[][LIT_COST_WORDS],
  * byte, and coding them wherever they save anything at all saved less than
  * 0.1% more memory. Returns the new length, or len if the literals stay raw.
  *
- * It works in the two pages of d: the raw literals and the bitstream move to
- * the end, the coded literals are written from the front, and the bitstream
- * moves down behind them at the end.
+ * It works in the dst_cap bytes of d: the raw literals and the bitstream move
+ * to the end, the coded literals are written from the front, and the bitstream
+ * moves down behind them at the end. If dst_cap has no room for both, the
+ * literals stay raw; in zram's two pages there always is.
  */
 static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
-				  unsigned int len)
+				  unsigned int dst_cap, unsigned int len)
 {
 	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
 	const u64 lanes = 0x00ff00ff00ff00ffULL;
@@ -728,13 +769,14 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	/*
 	 * The coded literals are written from the front of d while the raw ones
 	 * are still read from the end, and a write may go 16 bytes too far. The
-	 * writes must never reach the literals not read yet. Saving 1/16 makes
-	 * sure of that already; this check makes it plain.
+	 * writes must never reach the literals not read yet. In zram's two
+	 * pages, saving 1/16 makes sure of that already; in a smaller dst this
+	 * check keeps the literals raw.
 	 */
-	if (header + coded + 16U > 2U * SEQLZ_PAGE - body)
+	if (header + coded + 16U > dst_cap - body)
 		return len;
-	literals = d + 2U * SEQLZ_PAGE - body;
-	memmove(d + 2U * SEQLZ_PAGE - body, d + SEQLZ_HEADER, body);
+	literals = d + dst_cap - body;
+	memmove(d + dst_cap - body, d + SEQLZ_HEADER, body);
 	q[0] = d + header;
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		q[j + 1] = q[j] + sizes[j];
@@ -846,7 +888,7 @@ unsigned int seqlz_encode(const struct seqlz_tables *t,
 	unsigned int len =
 		encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
 
-	return len == 0 || !coded ? len : code_literals(t, dst, len);
+	return len == 0 || !coded ? len : code_literals(t, dst, dst_cap, len);
 }
 
 static unsigned int compress_page(const struct seqlz_tables *t,
@@ -855,11 +897,11 @@ static unsigned int compress_page(const struct seqlz_tables *t,
 {
 	struct encoder e;
 
-	if (dst_cap < 2U * SEQLZ_PAGE || !t->all_symbols)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)
 		return 0;
-	encoder_init(&e, t, dst, src + SEQLZ_PAGE);
+	encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
 	match_page(st->table, src, encode_emit, &e);
-	return encoder_finish(&e, dst);
+	return encoder_finish(&e, dst, dst_cap);
 }
 
 unsigned int seqlz_compress(const struct seqlz_tables *t,
@@ -868,7 +910,7 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 {
 	unsigned int len = compress_page(t, st, src, dst, dst_cap);
 
-	return len == 0 || !coded ? len : code_literals(t, dst, len);
+	return len == 0 || !coded ? len : code_literals(t, dst, dst_cap, len);
 }
 
 /* ---- decoder ---- */

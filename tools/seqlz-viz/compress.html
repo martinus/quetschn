@@ -647,15 +647,15 @@ function drawHex() {
 /* the compressed page so far */
 const COLS = 32;
 // Where the bytes of a layout are drawn. While the matcher runs, the encoder writes into one buffer of
-// two pages at two places: the literals from byte 2, the bitstream from byte 2 + 4096 + 16, behind
-// room for a page of literals. When it is done it moves the bitstream in behind the literals and writes
-// the header. So until then the bitstream is drawn as a block of its own.
-const BITS_AT = 2 + PAGE + 16;
+// two pages at two places: the literals from byte 2 on, the bitstream from the buffer's last byte down,
+// backwards. When it is done it copies the bitstream the right way round in behind the literals and
+// writes the header. So until then the bitstream is drawn as a block of its own, in its own order.
+const BITS_END = 2 * PAGE - 1;
 function segs() {
   const L = curLay(), n = S.P.n;
   if (S.cur >= S.stepIdx.lits) return [{ from: 0, len: L.bytes.length, row: 0 }];
   const r1 = Math.ceil((2 + n) / COLS);
-  return [{ from: 0, len: 2 + n, row: 0 }, { from: 2 + n, len: L.bytes.length - 2 - n, row: r1 + 1, label: r1, at: BITS_AT }];
+  return [{ from: 0, len: 2 + n, row: 0 }, { from: 2 + n, len: L.bytes.length - 2 - n, row: r1 + 1, label: r1, at: BITS_END }];
 }
 function cellOf(b) {
   for (const g of segs()) if (b >= g.from && b < g.from + g.len) { const k = b - g.from; return [k % COLS, g.row + Math.floor(k / COLS)]; }
@@ -681,7 +681,7 @@ function drawComp() {
     ctx.strokeStyle = col.line; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(c * COLS, y); ctx.stroke(); ctx.setLineDash([]);
     ctx.font = `600 ${Math.max(9, Math.min(11, c - 1))}px ${getComputedStyle(document.body).fontFamily}`;
-    const t = ` the bitstream, written from byte ${fmt(g.at)} of the buffer `;
+    const t = ` the bitstream, written backwards from byte ${fmt(g.at)} of the buffer `;
     const tw = ctx.measureText(t).width;
     ctx.fillStyle = col.panel2; ctx.fillRect(8, y - c / 2, tw, c);
     ctx.fillStyle = col.ink3; ctx.textBaseline = "middle"; ctx.fillText(t, 8, y + 0.5);
@@ -887,14 +887,14 @@ function seqCard(i) {
   const seg = (v, k) => (v ? `<div style="width:${(100 * v) / max}%;background:${kc(k)}"></div>` : "");
   h += `<div class="cost"><span class="small"><b>seqlz</b></span><div class="cbar">${seg(tb, escd ? K.ESC : K.TOK)}${seg(q.rl, K.OFF)}${seg(lvb, K.LLV)}${seg(8 * ll, K.LIT)}</div><span class="mono small">${sq} bits</span>
     <span class="small muted">lz4 format</span><div class="cbar">${seg(8, K.TOK)}${seg(last ? 0 : 16, K.OFF)}${seg(l4len, K.LLV)}${seg(8 * ll, K.LIT)}</div><span class="mono small">${l4} bits</span></div>
-    <p class="small muted" style="margin:0">${tb + q.rl + lvb} bits for the sequence, written into a 64-bit register and stored 8 bytes at a time, once per sequence, into the bitstream's own part of the buffer, from byte ${fmt(BITS_AT)}: how many literals come before it is known only at the end.${ll ? " The literals still count 8 bits each; they may get shorter at the end." : ""}</p>`;
+    <p class="small muted" style="margin:0">${tb + q.rl + lvb} bits for the sequence, written into a 64-bit register and stored 8 bytes at a time, once per sequence, into the bitstream's own part of the buffer, backwards from its last byte, ${fmt(BITS_END)}, toward the literals: how many literals come before it is known only at the end.${ll ? " The literals still count 8 bits each; they may get shorter at the end." : ""}</p>`;
   return h;
 }
 
 function litsCard() {
   const P = S.P, C = P.coding, n = P.n;
   let h = `<div class="eyebrow">The literals · ${plural(n, "byte")}</div>`;
-  const finish = op(kc(K.HDR), "↑", `<p>The matcher is done. The encoder moves the bitstream, ${plural(Math.ceil(P.nbits / 8), "byte")}, from byte ${fmt(BITS_AT)} in right behind the literals, to byte ${fmt(2 + n)}, and writes the header: ${fmt(n)} literals, <code>${hex2(S.raw[0])} ${hex2(S.raw[1])}</code>. That is the page with the literals as they are, ${fmt(S.raw.length)} bytes.</p>`);
+  const finish = op(kc(K.HDR), "↑", `<p>The matcher is done. The encoder copies the bitstream, ${plural(Math.ceil(P.nbits / 8), "byte")}, from the end of the buffer, where it was written backwards, the right way round in right behind the literals, to byte ${fmt(2 + n)}, and writes the header: ${fmt(n)} literals, <code>${hex2(S.raw[0])} ${hex2(S.raw[1])}</code>. That is the page with the literals as they are, ${fmt(S.raw.length)} bytes.</p>`);
   if (S.vk === "fast") {
     h += `<div class="steptitle">seqlz-fast keeps them as they are</div><ul class="ops">${finish}`;
     h += op(kc(K.LIT), "→", `<p>The ${fmt(n)} literals stay in front of the bitstream as they are, 1 byte each. Not counting them saves the time; seqlz-fast-lit would ${C.pays ? `save ${fmt(n + 2 - (3 + C.width + C.coded))} bytes on this page by coding them` : "not code them on this page either"}.</p>`);

@@ -88,6 +88,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The matcher without its step against the other codecs: 0.02 to 0.05 us per page less](#the-matcher-without-its-step-against-the-other-codecs-002-to-005-us-per-page-less)
 - [The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept](#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)
 - [The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, not kept](#the-matchers-table-with-the-bytes-its-loop-in-assembly-on-arm64-9-fewer-compress-cycles-on-the-a55-not-kept)
+- [The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster, kept](#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-kept)
 - [Memory for speed on the phone: no trade worth it, not kept](#memory-for-speed-on-the-phone-no-trade-worth-it-not-kept)
 - [seqlz-fast-lit faster at the same memory: five tries, none kept](#seqlz-fast-lit-faster-at-the-same-memory-five-tries-none-kept)
 
@@ -3927,6 +3928,63 @@ above already priced (2 positions per hash, hash chains, lazy matching).
 Tests: a page with a match of 8 bytes at offset 20 and, 600 to 615 bytes later, a repeat of exactly
 4 bytes at the same offset, which only the check of the last offset finds and only at its first
 byte. Mutation, caught: the step back in (the repeat is lost at p = 600).
+## The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster, kept
+
+*The encoder wrote the bitstream behind room for a page of literals, so `seqlz_compress()` needed a
+buffer of two pages and refused anything smaller (#122). zram gives two pages, zswap one, and `lz4`,
+`lzo` and `zstd` take any buffer and fail when the page does not fit. Now the literals go to the front
+of the buffer and the bitstream to its back, backwards, and at the end the bitstream is copied the
+right way round behind the literals. The page is the same: same format, same bytes. Writes in the
+kernel VM got 0.16 to 0.24 µs faster.* Code: `src/seqlz.c`, `enc_flush()`, `encode_emit()`,
+`encoder_finish()`.
+
+The flush writes its 8 bytes with a little endian store below the write position and moves it down,
+which puts the first byte of the bitstream at the end of the buffer. Before each sequence the encoder
+checks that its literals and 32 bytes more are free between the two ends; if not, the page does not
+fit, nothing more is written, and `seqlz_compress()` returns 0. In two pages that never happens, by
+the same count as before: at most 3972 bytes of bitstream for 4 KiB pages next to a page of literals.
+`code_literals()` moves the raw literals and the bitstream to the end of the buffer it is given
+instead of the end of two pages, and keeps the literals raw if the coded ones do not fit in front of
+them.
+
+**The same bytes in two pages.** `main` and the change, each page of three dumps compressed into two
+pages with raw and with coded literals, a hash over all outputs: the same on all 60 000 pages, the
+first desktop dump, the second and the phone's second dump.
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, `MODE=swap`, the backend's
+prefetch, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, boost off, tables of 7 October. Two kernels
+built first, then 3 boots of each per dump, in turns. Means of the boots, µs, first dump / second dump:
+
+| | swap-out, `main` | swap-out, this | swap-in, `main` | swap-in, this |
+| --- | ---: | ---: | ---: | ---: |
+| `lz4` | 6.403 / 6.980 | 6.393 / 6.997 | 3.223 / 3.287 | 3.230 / 3.290 |
+| `seqlz-fast` | 7.087 / 7.580 | 6.850 / 7.400 | 3.570 / 3.683 | 3.577 / 3.703 |
+| `seqlz-fast-lit` | 7.527 / 8.410 | 7.370 / 8.193 | 3.727 / 3.970 | 3.753 / 3.990 |
+
+The boots of one kernel differ by at most 0.07 µs in the swap-out, except one boot of `main`'s
+`seqlz-fast` on the first dump, 0.30 µs slower than the other two. `lz4`, whose code did not change,
+moves by 0.017 µs at most. The reads move by 0.007 to 0.027 µs, in the noise; the decoder did not
+change. Why the writes are faster is not measured. The flush stores without swapping the bytes now,
+and the bitstream is written into the end of the second page instead of right behind the first.
+
+**A buffer of exactly one page**, as zswap gives, `seqlz-fast-lit`, memory per page as zram would
+store it: 4096 bytes for a page of 3625 bytes or more or one that does not fit, else its length:
+
+| dump | two pages | one page | more |
+| --- | ---: | ---: | ---: |
+| first desktop dump | 19 248 989 | 19 570 416 | 1.67% |
+| second desktop dump | 24 052 027 | 24 744 250 | 2.88% |
+| phone, second dump | 17 303 908 | 17 649 745 | 2.00% |
+
+Two things cost it. Coding the literals needs the raw ones, the coded ones and the bitstream in the
+buffer at the same time: 504, 1126 and 501 pages keep raw literals. And the raw page is written first:
+16, 58 and 92 pages whose coded page would fit fail because their raw page does not. The matcher's
+table, 8 KiB, is free once the matcher is done and could hold the raw literals while they are coded,
+which would take most of the first cost away. Not built: nobody gives seqlz one page yet.
+
+Not measured: the phone. The change is in the compressor only, and the A76 and A55 store with a byte
+swap too.
+
 ## The token's table by the offset before it: 3 and 12 bytes per page, not kept
 
 *Built on the branch `feat/token-context`, not merged: by the score it pays, but not enough for 3

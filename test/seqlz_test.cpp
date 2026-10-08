@@ -490,7 +490,7 @@ TEST_CASE("seqlz: the matcher looks at every position, also far behind the last 
     }
 }
 
-TEST_CASE("seqlz: the most bits per page fit into two pages, less than two pages is an error") {
+TEST_CASE("seqlz: the most bits per page fit into two pages, and into one byte less the same") {
     // The most bits per page byte: matches of 4 bytes without literals, each with an offset that is not
     // one of the last three. 12 literals, then matches up to the end of the page, cycling through 4
     // offsets.
@@ -523,9 +523,15 @@ TEST_CASE("seqlz: the most bits per page fit into two pages, less than two pages
     REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), nullptr) == 0);
     CHECK(out == bytes);
 
+    // the bitstream grows down from the end of dst, so a smaller dst gives the same bytes
     auto st = std::make_unique<seqlz_state>();
+    auto two = std::vector<unsigned char>(2 * page_size);
     auto small = std::vector<unsigned char>(2 * page_size - 1);
-    CHECK(seqlz_compress(t.get(), st.get(), bytes.data(), small.data(), static_cast<unsigned>(small.size()), 0) == 0);
+    auto const clen = seqlz_compress(t.get(), st.get(), bytes.data(), two.data(), 2 * page_size, 0);
+    REQUIRE(clen > 0);
+    CHECK(seqlz_compress(t.get(), st.get(), bytes.data(), small.data(), static_cast<unsigned>(small.size()), 0) == clen);
+    CHECK(std::equal(two.begin(), two.begin() + clen, small.begin()));
+    std::fill(small.begin(), small.end(), 0);
     CHECK(seqlz_encode(t.get(),
                        seq.data(),
                        static_cast<unsigned>(seq.size()),
@@ -533,7 +539,64 @@ TEST_CASE("seqlz: the most bits per page fit into two pages, less than two pages
                        12,
                        small.data(),
                        static_cast<unsigned>(small.size()),
-                       0) == 0);
+                       0) == len);
+    CHECK(std::equal(c.begin(), c.end(), small.begin()));
+}
+
+TEST_CASE("seqlz: compress into a dst of any size, an error where the page does not fit") {
+    auto const t = default_tables();
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(122);
+    auto pages = std::vector<std::vector<unsigned char>>();
+    // random bytes, which never fit; text-like bytes with repeats and coded literals; random bytes with a
+    // few repeats, which fit only into more than a page
+    auto random = std::vector<unsigned char>(page_size);
+    for (auto& b : random) {
+        b = static_cast<unsigned char>(rng());
+    }
+    pages.push_back(random);
+    auto text = std::vector<unsigned char>(page_size);
+    for (unsigned k = 0; k < page_size; ++k) {
+        text[k] = k >= 64 && rng() % 4 != 0 ? text[k - 1 - rng() % 64] : static_cast<unsigned char>('a' + rng() % 26);
+    }
+    pages.push_back(text);
+    auto most = random;
+    for (unsigned k = 0; k + 16 <= page_size; k += 64) {
+        std::copy_n(most.begin() + (k + 1000) % (page_size - 16), 16, most.begin() + k);
+    }
+    pages.push_back(most);
+
+    for (auto const& page : pages) {
+        for (int coded = 0; coded < 2; ++coded) {
+            auto two = std::vector<unsigned char>(2 * page_size);
+            auto const len2 =
+                seqlz_compress(t.get(), st.get(), page.data(), two.data(), static_cast<unsigned>(two.size()), coded);
+            REQUIRE(len2 > 0);
+            auto any_fit = false;
+            // each size in an allocation of its own, so that ASan sees a write past it
+            for (unsigned cap = 0; cap <= page_size + 64; ++cap) {
+                auto d = std::vector<unsigned char>(cap);
+                auto const len = seqlz_compress(t.get(), st.get(), page.data(), d.data(), cap, coded);
+                if (len == 0) {
+                    continue;
+                }
+                any_fit = true;
+                REQUIRE(len <= cap);
+                auto out = std::vector<unsigned char>(page_size);
+                auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+                REQUIRE(seqlz_decode(t.get(), d.data(), len, out.data(), scratch.data()) == 0);
+                REQUIRE(out == page);
+            }
+            // a page that fits into two pages with room to spare fits into its own length and 32 bytes more,
+            // with raw literals; random bytes never fit
+            CHECK(any_fit == (len2 + 32 <= page_size + 64));
+            if (!coded && len2 + 32 <= page_size + 64) {
+                auto d = std::vector<unsigned char>(len2 + 32);
+                CHECK(seqlz_compress(t.get(), st.get(), page.data(), d.data(), len2 + 32, 0) == len2);
+                CHECK(std::equal(d.begin(), d.begin() + len2, two.begin()));
+            }
+        }
+    }
 }
 
 TEST_CASE("seqlz: seqlz_encode() rejects sequences that do not make a page, before writing") {

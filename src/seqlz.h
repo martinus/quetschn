@@ -100,8 +100,8 @@
 #define SEQLZ_ESCAPE_BITS 12U
 /*
  * The longest code the escape may have. The encoder counts on 31 bits for a
- * token and its offset, the escape included, to know that two pages are always
- * room enough for a compressed page; see the encoder in seqlz.c.
+ * token and its offset, the escape included, to know that zram's two pages are
+ * always room enough for a compressed page; see the encoder in seqlz.c.
  */
 #define SEQLZ_MAX_ESCAPE_LEN (31U - QUETSCHN_PAGE_BITS - SEQLZ_ESCAPE_BITS)
 /* the largest ll and ml - 4 a token holds: 15 and 31, larger ones follow */
@@ -303,7 +303,7 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * @literals: the literals of all sequences, one after the other
  * @n_literals: how many
  * @dst: where the compressed page goes
- * @dst_cap: the bytes at @dst, at least two pages
+ * @dst_cap: the bytes at @dst
  * @coded: whether to Huffman code the literals where that saves enough
  *
  * For tests and tools, which make their own sequences; zram uses
@@ -314,8 +314,8 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * and the literals and matches add up to the page, with all @n_literals
  * literals used.
  *
- * Return: the length of the compressed page, or 0 if @dst_cap is too small,
- * @t lacks a code, or the sequences do not describe a page.
+ * Return: the length of the compressed page, or 0 if it does not fit into
+ * @dst_cap bytes, @t lacks a code, or the sequences do not describe a page.
  */
 unsigned int seqlz_encode(const struct seqlz_tables *t,
 			  const struct seqlz_sequence *seq, unsigned int n,
@@ -384,14 +384,17 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * @st: the matcher's state, one per CPU
  * @src: the page, SEQLZ_PAGE bytes
  * @dst: where the compressed page goes
- * @dst_cap: the bytes at @dst, at least two pages, as zram's buffer has
+ * @dst_cap: the bytes at @dst
  * @coded: whether to Huffman code the literals where that saves enough
  *
- * Two pages are always enough, even for random data, see the encoder in
- * seqlz.c. The same bytes as seqlz_encode() for the sequences of seqlz_find().
+ * Two pages, as zram's buffer has, are always enough, even for random data,
+ * see the encoder in seqlz.c. A smaller @dst works too: a page that does not
+ * fit is an error, which can happen up to 32 bytes before @dst_cap is full,
+ * and the literals stay raw where coding them needs more room than @dst_cap
+ * has. The same bytes as seqlz_encode() for the sequences of seqlz_find().
  *
- * Return: the length of the compressed page, or 0 if @dst_cap is too small or
- * @t lacks a code.
+ * Return: the length of the compressed page, or 0 if it does not fit into
+ * @dst_cap bytes or @t lacks a code.
  */
 unsigned int seqlz_compress(const struct seqlz_tables *t,
 			    struct seqlz_state *st, const void *src, void *dst,
