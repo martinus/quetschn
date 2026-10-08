@@ -33,5 +33,7 @@ done
 ls "$work/build/lib/seqlz/seqlz_codec.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null && echo "build: no warnings"
 
-(cd "$work/src" && git diff --cached | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
+# with the diffstat, as a mail of git format-patch has it: checkpatch sees in it that MAINTAINERS changes.
+# Without the blank line after it, which checkpatch would take for an empty commit message
+(cd "$work/src" && { git diff --cached --stat; git diff --cached; } | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
 (cd "$work/src" && scripts/kernel-doc -none -Wall lib/seqlz/seqlz_codec.c lib/seqlz/seqlz.h include/linux/seqlz.h) && echo "kernel-doc: no warnings"

@@ -15,13 +15,15 @@ src/ stays the one source of the codec. This writes from it:
   lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Makefile: the module seqlz, CONFIG_SEQLZ, and
                                         CONFIG_SEQLZ_KUNIT_TEST
   drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c
+  MAINTAINERS                           the entry of seqlz, with the project's page
+  Documentation/admin-guide/blockdev/zram.rst: the backend, its page size and its levels
 On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT instead of
 QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
 references to this repository in the comments (its documents, tools and build) and no reasons that
 only hold for the Mi 9T's 4.14, Fedora's config or our test machines, which say the reason in general
 terms instead; a comment that changed is wrapped again to 80 columns. in_order_core() with the kernel's
-MIDR_* macros. Fails if a reference is left, naming it. Writes only into the
-tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
+MIDR_* macros. Fails if a reference is left, naming it; the two URLs it keeps are SPEC_URL and
+PROJECT_URL. Writes only into the tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
 """
 import pathlib
 import re
@@ -37,8 +39,12 @@ WIDTH = 80
 HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
                           r"\bseqlz_tables_size\b")
 
-# where the kernel's copy points for the format, the one reference to this repository it keeps
+# the two references to this repository the kernel's copy keeps: where it points for the format, and the
+# project's page in MAINTAINERS
 SPEC_URL = "https://github.com/martinus/quetschn/blob/main/docs/format.md"
+PROJECT_URL = "https://github.com/martinus/quetschn"
+# each as the whole URL: PROJECT_URL with a path after it is not one of them
+KEPT_URLS = re.compile("|".join(re.escape(u) + r"(?![\w/#-]|\.\w)" for u in (SPEC_URL, PROJECT_URL)))
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
                        r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
@@ -91,6 +97,27 @@ static inline int in_order_core(void)
 	       m == MIDR_QCOM_KRYO_3XX_SILVER ||
 	       m == MIDR_QCOM_KRYO_4XX_SILVER;
 }
+"""
+# the entry in MAINTAINERS, its fields in the order the file's head gives, the files in alphabetic order
+MAINTAINERS_ENTRY = f"""SEQLZ
+M:	Martin Leitner-Ankerl <martin.ankerl@gmail.com>
+L:	linux-kernel@vger.kernel.org
+S:	Maintained
+W:	{PROJECT_URL}
+F:	drivers/block/zram/backend_seqlz.*
+F:	include/linux/seqlz.h
+F:	lib/seqlz/
+"""
+# the backend in zram's documentation, after what it says about levels; the facts are the Kconfig help's
+# and backend_seqlz.c's
+ZRAM_RST = "Documentation/admin-guide/blockdev/zram.rst"
+ZRAM_DOC = """seqlz (CONFIG_ZRAM_BACKEND_SEQLZ) is for 4 KiB pages only. It supports
+`level`, but no dictionary. Level 1 stores the literals, the bytes that are
+not copied from earlier in the page, as they are. Level 2, the default,
+Huffman codes them where that saves space, which takes more time::
+
+	echo "algo=seqlz level=1" > /sys/block/zram0/algorithm_params
+
 """
 # a measurement's heading in parentheses, with a number of an item or a remark after it
 HEADING = re.compile(r" ?\(\"[^\"]+\"(?:,? [^)]*)?\)")
@@ -387,9 +414,10 @@ def main():
         "drivers/block/zram/backend_seqlz.h": (HERE / "backend_seqlz.h").read_text(),
     }
     left = []
-    for path, text in out.items():
+    added = {"MAINTAINERS": MAINTAINERS_ENTRY, ZRAM_RST: ZRAM_DOC}
+    for path, text in [*out.items(), *added.items()]:
         for n, line in enumerate(text.split("\n"), 1):
-            if FORBIDDEN.search(line.replace(SPEC_URL, "")) or HARNESS_ONLY.search(line):
+            if FORBIDDEN.search(KEPT_URLS.sub("", line)) or HARNESS_ONLY.search(line):
                 left.append(f"{path}:{n}: {line.strip()}")
     if left:
         sys.exit("references to this repository or reasons of our machines left:\n" + "\n".join(left))
@@ -434,6 +462,7 @@ def main():
               "\t  keeps the literals raw, level 2, the default, codes them\n"
               "\t  too.\n\n")
     kc = must(kc, "\t\t!ZRAM_BACKEND_842\n", "\t\t!ZRAM_BACKEND_842 && !ZRAM_BACKEND_SEQLZ\n")
+    # without help, as the other ZRAM_DEF_COMP_* entries: checkpatch's CONFIG_DESCRIPTION stays
     kc = must(kc, "config ZRAM_DEF_COMP_842\n\tbool \"842\"\n\tdepends on ZRAM_BACKEND_842\n\n",
               "config ZRAM_DEF_COMP_842\n\tbool \"842\"\n\tdepends on ZRAM_BACKEND_842\n\n"
               "config ZRAM_DEF_COMP_SEQLZ\n\tbool \"seqlz\"\n\tdepends on ZRAM_BACKEND_SEQLZ\n\n")
@@ -449,6 +478,12 @@ def main():
               "#if IS_ENABLED(CONFIG_ZRAM_BACKEND_842)\n\t&backend_842,\n#endif\n"
               "#if IS_ENABLED(CONFIG_ZRAM_BACKEND_SEQLZ)\n\t&backend_seqlz,\n#endif\n")
     (z / "zcomp.c").write_text(zc)
+    # between its neighbours, so that an entry added there fails here instead of breaking the order
+    patch(tree / "MAINTAINERS", "F:\tdrivers/iio/chemical/sps30_serial.c\n\nSERIAL DEVICE BUS\n",
+          "F:\tdrivers/iio/chemical/sps30_serial.c\n\n" + MAINTAINERS_ENTRY + "\nSERIAL DEVICE BUS\n",
+          "F:\tlib/seqlz/")
+    patch(tree / ZRAM_RST, "the value the lower the compression ratio).\n\n",
+          "the value the lower the compression ratio).\n\n" + ZRAM_DOC, "CONFIG_ZRAM_BACKEND_SEQLZ")
     for path in out:
         print(path)
 
