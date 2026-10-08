@@ -27,6 +27,8 @@ WIDTH = 80
 EXPORTED = ["seqlz_tables_size", "seqlz_all_symbols", "seqlz_tables_init", "seqlz_find", "seqlz_encode",
             "seqlz_compress", "seqlz_decode"]
 
+# where the kernel's copy points for the format, the one reference to this repository it keeps
+SPEC_URL = "https://github.com/martinus/quetschn/blob/main/docs/format.md"
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
                        r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b")
@@ -34,7 +36,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
     ("docs/format.md is the specification. docs/explored-designs.md has the measurements behind each "
-     "choice, by the headings quoted below.", ""),
+     "choice, by the headings quoted below.", f"The format is specified in {SPEC_URL}."),
     (" The why of each choice below, with the numbers, is in docs/explored-designs.md.", ""),
     (" The numbers are in docs/explored-designs.md.", ""),
     (" (docs/format.md, Offsets)", ""),
@@ -49,15 +51,13 @@ HEADING = re.compile(r" ?\(\"[^\"]+\"(?:,? [^)]*)?\)")
 PAGE_BITS_BLOCK = re.compile(r"(/\*[^*]*?(?:\*[^/][^*]*?)*?\*/\n)?#ifndef QUETSCHN_PAGE_BITS\n#define QUETSCHN_PAGE_BITS 12[^\n]*\n#endif\n")
 
 TABLE_HEADERS = {
-    "seqlz_default_tables.c": "The code lengths compiled in, part of the format: one set for 4 KiB pages,\n"
-                              "one for 16 KiB pages, trained on pages of desktops and phones.",
+    "seqlz_default_tables.c": "The code lengths compiled in, part of the format, trained on pages of\n"
+                              "desktops and phones.",
     "seqlz_lit_sets.c": "The literal tables of pages with coded literals, one chosen per page, part of\n"
-                        "the format: 8 for 4 KiB pages, 8 for 16 KiB pages, by k-means over the literal\n"
-                        "histograms of the training pages. The most used table first.",
+                        "the format: 8, by k-means over the literal histograms of the training pages.\n"
+                        "The most used table first.",
     "seqlz_default_tables_4k.inc": "The code lengths for 4 KiB pages, included by seqlz_default_tables.c.",
-    "seqlz_default_tables_16k.inc": "The code lengths for 16 KiB pages, included by seqlz_default_tables.c.",
     "seqlz_lit_sets_4k.inc": "The literal tables for 4 KiB pages, included by seqlz_lit_sets.c.",
-    "seqlz_lit_sets_16k.inc": "The literal tables for 16 KiB pages, included by seqlz_lit_sets.c.",
 }
 
 
@@ -207,7 +207,7 @@ def port_header():
     t = must(t, '#include "seqlz_compat.h"\n', "#include <asm/page.h>\n#include <linux/minmax.h>\n#include <linux/types.h>\n")
     t = common(t)
     t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
-             "#if PAGE_SHIFT != 12 && PAGE_SHIFT != 14\n#error \"seqlz has tables for 4 KiB and 16 KiB pages only\"\n#endif\n"
+             "#if PAGE_SHIFT != 12\n#error \"seqlz is for 4 KiB pages only\"\n#endif\n"
              "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n")
     return t
 
@@ -244,8 +244,9 @@ def port_tables(name, inc_base, export):
     t = spdx(t, True)
     t = top_comment(t, TABLE_HEADERS[name])
     t = must(t, '#include "seqlz.h"\n', "#include <linux/export.h>\n#include <linux/seqlz.h>\n")
-    t = must(t, "#if QUETSCHN_PAGE_BITS != 12\n", "#if PAGE_SHIFT != 12\n")
-    t = must(t, f'"{inc_base}_16k.inc"', f'"{inc_base}_16k.h"').replace(f'"{inc_base}_4k.inc"', f'"{inc_base}_4k.h"')
+    # 4 KiB pages only: the format for 16 KiB pages is not fixed yet (format.md, Status)
+    t = must(t, f'#if QUETSCHN_PAGE_BITS != 12\n#include "{inc_base}_16k.inc"\n#else\n'
+                f'#include "{inc_base}_4k.inc"\n#endif\n', f'#include "{inc_base}_4k.h"\n')
     t = common(t)
     if export:
         t = t.rstrip("\n") + f"\nEXPORT_SYMBOL_GPL({export});\n"
@@ -286,13 +287,12 @@ def main():
         "drivers/block/zram/backend_seqlz.c": (HERE / "backend_seqlz.c").read_text(),
         "drivers/block/zram/backend_seqlz.h": (HERE / "backend_seqlz.h").read_text(),
     }
-    for inc in ["seqlz_default_tables_4k.inc", "seqlz_default_tables_16k.inc", "seqlz_lit_sets_4k.inc",
-                "seqlz_lit_sets_16k.inc"]:
+    for inc in ["seqlz_default_tables_4k.inc", "seqlz_lit_sets_4k.inc"]:
         out["lib/seqlz/" + inc.replace(".inc", ".h")] = port_inc(inc)
     left = []
     for path, text in out.items():
         for n, line in enumerate(text.split("\n"), 1):
-            if FORBIDDEN.search(line):
+            if FORBIDDEN.search(line.replace(SPEC_URL, "")):
                 left.append(f"{path}:{n}: {line.strip()}")
     if left:
         sys.exit("references to this repository left:\n" + "\n".join(left))
@@ -302,9 +302,9 @@ def main():
 
     patch(tree / "lib/Kconfig", "config LZ4_DECOMPRESS\n\ttristate\n\n",
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"
-          "\t  seqlz compresses and decompresses one memory page at a time,\n"
-          "\t  4 KiB or 16 KiB. It is an LZ format whose sequences are\n"
-          "\t  Huffman coded with fixed tables, for zram. Selected by\n"
+          "\t  seqlz compresses and decompresses one memory page of 4 KiB\n"
+          "\t  at a time. It is an LZ format whose sequences are Huffman\n"
+          "\t  coded with fixed tables, for zram. Selected by\n"
           "\t  ZRAM_BACKEND_SEQLZ.\n\n", "config SEQLZ\n")
     patch(tree / "lib/Makefile", "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\n",
           "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\nobj-$(CONFIG_SEQLZ) += seqlz/\n", "CONFIG_SEQLZ")
@@ -316,7 +316,7 @@ def main():
               "config ZRAM_BACKEND_SEQLZ\n"
               "\tbool \"seqlz compression support\"\n"
               "\tdepends on ZRAM\n"
-              "\tdepends on PAGE_SIZE_4KB || PAGE_SIZE_16KB\n"
+              "\tdepends on PAGE_SIZE_4KB\n"
               "\tselect SEQLZ\n"
               "\thelp\n"
               "\t  seqlz is an LZ codec for memory pages whose sequences are\n"

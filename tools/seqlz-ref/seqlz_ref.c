@@ -66,6 +66,18 @@ static int bit(struct bits* b, unsigned int* v) {
     return 0;
 }
 
+/* "The end of a page": fewer than 8 bits left, and they are 0; 0 if so, else -1 */
+static int ends_here(struct bits* b) {
+    unsigned int v;
+
+    if (b->nbits - b->pos >= 8U)
+        return -1;
+    while (b->pos < b->nbits)
+        if (bit(b, &v) || v != 0)
+            return -1;
+    return 0;
+}
+
 /* read(n): the next n bits as a number, the first one the most significant */
 static int read_n(struct bits* b, unsigned int n, unsigned int* v) {
     unsigned int k, x;
@@ -169,6 +181,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
                     return -1;
                 lits[k] = (unsigned char)v;
             }
+            if (ends_here(&s))
+                return -1;
             start += sizes[j];
         }
         b = (struct bits){src + start, 8U * (len - start), 0};
@@ -217,6 +231,6 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         for (k = 0; k < ml; k++, size++)
             out[size] = out[size - off];
     }
-    /* "at the stop: used == n"; that no bit after B was used, every read checked */
-    return used == n ? 0 : -1;
+    /* "at the stop: used == n", B ends here; that no bit after B was used, every read checked */
+    return used == n && ends_here(&b) == 0 ? 0 : -1;
 }

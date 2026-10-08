@@ -1261,14 +1261,24 @@ static noinline __aligned(64) const u8 *decode_literals(
 		u64 bb[SEQLZ_LIT_STREAMS] = { b0, b1, b2, b3, b4, b5, b6, b7 };
 
 		/*
-		 * Each stream must end within its size: the bytes it moved
-		 * past, plus the bits used of the next one, the 1's position. A
-		 * stream that read into the next one fails here.
+		 * Each stream must end in its last byte: the bits used, the
+		 * bytes it moved past plus the 1's position, are 0 to 7 fewer
+		 * than its size, and the bits after its last code are 0. Those
+		 * are read from the page, not from the 64 bits: when the
+		 * stream's last 8 bytes are in them, its last bit is where the
+		 * 1 is. A stream that read into the next one fails here, and so
+		 * does one with bytes after its codes, also one without
+		 * literals that has a size.
 		 */
-		for (k = 0; k < SEQLZ_LIT_STREAMS; k++)
-			if (8L * (ip[k] - start[k]) + __builtin_ctzll(bb[k]) >
-			    8L * sz[k])
+		for (k = 0; k < SEQLZ_LIT_STREAMS; k++) {
+			long left = 8L * sz[k] - (8L * (ip[k] - start[k]) +
+						  __builtin_ctzll(bb[k]));
+
+			if (left < 0 || left > 7 ||
+			    (left > 0 &&
+			     (start[k][sz[k] - 1U] & ((1U << left) - 1U))))
 				return NULL;
+		}
 	}
 	return q + total;
 }
@@ -1548,7 +1558,14 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		tok = next_token(&br, &t->token);
 		skip = 0;
 	}
-	if (d != d_end || lit != lit_end || br.count < 0)
+	/*
+	 * The page must end where its bits end: every byte read, fewer than 8
+	 * bits left in the last one, and those 0, as the compressor writes
+	 * them. zram has no checksum, so this is what tells a damaged page.
+	 */
+	if (d != d_end || lit != lit_end || br.count < 0 || br.p != br.end ||
+	    br.count >= 8 ||
+	    (br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))))
 		return -EINVAL;
 	return 0;
 }
