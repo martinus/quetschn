@@ -81,13 +81,22 @@ jobs:
   # and UBSan. The long runs are fuzz/afl.sh. An input that fails is kept as an artifact.
   fuzz:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: 4k, cmake: ''}
+          # the decoder's loop for in-order cores, which arm64 kernels take on A53, A55, A510 and A520
+          - {name: 4k-in-order, cmake: '-DCMAKE_C_FLAGS=-DSEQLZ_IN_ORDER=1'}
+          - {name: 16k, cmake: '-DQUETSCHN_PAGE_BITS=14'}
+    name: fuzz (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v7
-      - run: fuzz/smoke.sh 60 build-fuzz
+      - run: fuzz/smoke.sh 60 build-fuzz ${{ matrix.cmake }}
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fuzz-crashes
+          name: fuzz-crashes-${{ matrix.name }}
           path: build-fuzz/crashes
 
   # The same compressed bytes on every CPU, and every page decodes again: on big-endian s390x under
@@ -122,17 +131,26 @@ jobs:
       - run: tools/seqlz-ref/check.sh
       - run: tools/check-links.py
 
-  # The one required check. A job whose dependency failed is skipped, and a skipped required check
-  # counts as passed, so this needs if: always() and has to look at every result itself.
   # The codec as the kernel would have it, tools/kernel-port/: written into the tree of KERNEL_COMMIT,
-  # built with W=1 without a warning, kernel-doc without one. checkpatch's findings are printed, they
-  # do not fail the job.
+  # the codec, its KUnit tests and zram built with W=1 without a warning, kernel-doc without one, on
+  # x86-64 with gcc, and with clang on arm64, 32-bit arm and big-endian s390, all with 4 KiB pages, the
+  # only ones the kernel's seqlz has. checkpatch's findings are printed, they do not fail the job. On
+  # x86-64 the KUnit tests also run, in UML with KASAN and UBSan.
   kernel-port:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: x86_64, make: '', kunit: true}
+          - {name: arm64, make: 'ARCH=arm64 LLVM=1'}
+          - {name: arm, make: 'ARCH=arm LLVM=1'}
+          - {name: s390, make: 'ARCH=s390 LLVM=1'}
+    name: kernel-port (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v7
       - name: tools to build a kernel
-        run: sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev
+        run: sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev ${{ matrix.make && 'clang lld llvm' || '' }}
       - name: fetch the kernel tree
         run: |
           git init -q kernel && cd kernel
@@ -140,8 +158,13 @@ jobs:
           git fetch -q --depth 1 origin ${{ env.KERNEL_COMMIT }}
           git checkout -q FETCH_HEAD
       - name: port, build and check
-        run: tools/kernel-port/check.sh kernel
+        run: tools/kernel-port/check.sh kernel ${{ matrix.make }}
+      - name: KUnit tests
+        if: matrix.kunit
+        run: tools/kernel-port/kunit.sh kernel --kconfig_add CONFIG_KASAN=y --kconfig_add CONFIG_UBSAN=y
 
+  # The one required check. A job whose dependency failed is skipped, and a skipped required check
+  # counts as passed, so this needs if: always() and has to look at every result itself.
   ci-ok:
     if: always()
     needs: [format, test, fuzz, same-bytes, docs, kernel-port]

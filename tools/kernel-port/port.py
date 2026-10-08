@@ -8,8 +8,12 @@ src/ stays the one source of the codec. This writes from it:
   lib/seqlz/seqlz_codec.c, page_lz.h    from src/seqlz.c and src/page_lz.h, and the interface's
                                         functions from tools/kernel-port/seqlz_api.c, with the tables
                                         built once
-  lib/seqlz/seqlz_*tables*.c and .h     from the tables in src/, the .inc files as .h
-  lib/seqlz/Makefile, lib/Kconfig, lib/Makefile: the module seqlz, CONFIG_SEQLZ
+  lib/seqlz/seqlz_default_tables.c, seqlz_lit_sets.c: the tables of src/, the .inc files of 4 KiB
+                                        pages in them
+  lib/seqlz/tests/seqlz_kunit.c         the KUnit tests, tools/kernel-port/seqlz_kunit.c, with the
+                                        tables' SHA-256 and the worked example from docs/format.md
+  lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Makefile: the module seqlz, CONFIG_SEQLZ, and
+                                        CONFIG_SEQLZ_KUNIT_TEST
   drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c
 On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT instead of
 QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
@@ -64,8 +68,6 @@ TABLE_HEADERS = {
     "seqlz_lit_sets.c": "The literal tables of pages with coded literals, one chosen per page, part of\n"
                         "the format: 8, by k-means over the literal histograms of the training pages.\n"
                         "The most used table first.",
-    "seqlz_default_tables_4k.inc": "The code lengths for 4 KiB pages, included by seqlz_default_tables.c.",
-    "seqlz_lit_sets_4k.inc": "The literal tables for 4 KiB pages, included by seqlz_lit_sets.c.",
 }
 
 
@@ -280,23 +282,39 @@ def port_codec():
     return t
 
 
-def port_tables(name, inc_base):
+def port_tables(name, inc_base, symbol):
     t = (SRC / name).read_text()
     t = spdx(t, True)
     t = top_comment(t, TABLE_HEADERS[name])
-    t = must(t, '#include "seqlz.h"\n', '#include "seqlz.h"\n')
-    # 4 KiB pages only: the format for 16 KiB pages is not fixed yet (format.md, Status)
+    # the KUnit tests check the tables against their SHA-256 and make pages with them
+    t = must(t, '#include "seqlz.h"\n', '#include <kunit/visibility.h>\n#include <linux/export.h>\n\n'
+             '#include "seqlz.h"\n')
+    # 4 KiB pages only: the format for 16 KiB pages is not fixed yet (format.md, Status). The .inc file
+    # without its SPDX line and comment, so that the export follows the table, as checkpatch wants it
+    inc = (SRC / f"{inc_base}_4k.inc").read_text()
+    inc = re.sub(r"\A//[^\n]*\n/\*.*?\*/\n", "", inc, flags=re.S)
+    assert inc.startswith("const "), inc[:80]
     t = must(t, f'#if QUETSCHN_PAGE_BITS != 12\n#include "{inc_base}_16k.inc"\n#else\n'
-                f'#include "{inc_base}_4k.inc"\n#endif\n', f'#include "{inc_base}_4k.h"\n')
+                f'#include "{inc_base}_4k.inc"\n#endif\n', f"{inc}EXPORT_SYMBOL_IF_KUNIT({symbol});\n")
     t = common(t)
     return t
 
 
-def port_inc(name):
-    t = (SRC / name).read_text()
-    t = spdx(t, False)  # a header, so the SPDX line is a /* */ comment
-    t = top_comment(t, TABLE_HEADERS[name])
-    return common(t)
+def port_kunit():
+    """the KUnit tests, with what they check against from docs/format.md: the tables' SHA-256 and the
+    bytes of the worked example"""
+    t = (HERE / "seqlz_kunit.c").read_text()
+    spec = (REPO / "docs" / "format.md").read_text()
+    for key, sha in re.findall(r"^\| `(\w+_4k)` \| `([0-9a-f]{64})` \|", spec, re.MULTILINE):
+        t = must(t, f'"@{key}@"', f'"{sha}"')
+    m = re.search(r"The (\d+) bytes `([0-9a-f ]+)` are a 4 KiB page of `ab`", spec)
+    assert m, "no example in docs/format.md"
+    example = ["0x" + b for b in m.group(2).split()]
+    assert len(example) == int(m.group(1)), m.group(0)
+    lines = [", ".join(example[k:k + 8]) for k in range(0, len(example), 8)]
+    t = must(t, "\t@EXAMPLE@\n", "".join(f"\t{l},\n" for l in lines))
+    assert "@" not in t, "a value of docs/format.md not found"
+    return t
 
 
 def patch(path, a, b, marker):
@@ -317,17 +335,19 @@ def main():
         "lib/seqlz/seqlz.h": port_header(),
         "lib/seqlz/page_lz.h": port_page_lz(),
         "lib/seqlz/seqlz_codec.c": port_codec(),
-        "lib/seqlz/seqlz_default_tables.c": port_tables("seqlz_default_tables.c", "seqlz_default_tables"),
-        "lib/seqlz/seqlz_lit_sets.c": port_tables("seqlz_lit_sets.c", "seqlz_lit_sets"),
+        "lib/seqlz/seqlz_default_tables.c": port_tables("seqlz_default_tables.c", "seqlz_default_tables",
+                                                        "seqlz_default_own"),
+        "lib/seqlz/seqlz_lit_sets.c": port_tables("seqlz_lit_sets.c", "seqlz_lit_sets", "seqlz_lit_sets"),
+        "lib/seqlz/tests/seqlz_kunit.c": port_kunit(),
         "lib/seqlz/Makefile": "# SPDX-License-Identifier: GPL-2.0-only OR MIT\n"
                               "ccflags-y += -O3\n\n"
                               "obj-$(CONFIG_SEQLZ) += seqlz.o\n"
-                              "seqlz-y := seqlz_codec.o seqlz_default_tables.o seqlz_lit_sets.o\n",
+                              "seqlz-y := seqlz_codec.o seqlz_default_tables.o seqlz_lit_sets.o\n\n"
+                              "obj-$(CONFIG_SEQLZ_KUNIT_TEST) += tests/seqlz_kunit.o\n",
+        "lib/seqlz/.kunitconfig": "CONFIG_KUNIT=y\nCONFIG_SEQLZ_KUNIT_TEST=y\n",
         "drivers/block/zram/backend_seqlz.c": (HERE / "backend_seqlz.c").read_text(),
         "drivers/block/zram/backend_seqlz.h": (HERE / "backend_seqlz.h").read_text(),
     }
-    for inc in ["seqlz_default_tables_4k.inc", "seqlz_lit_sets_4k.inc"]:
-        out["lib/seqlz/" + inc.replace(".inc", ".h")] = port_inc(inc)
     left = []
     for path, text in out.items():
         for n, line in enumerate(text.split("\n"), 1):
@@ -344,7 +364,18 @@ def main():
           "\t  seqlz compresses and decompresses one memory page of 4 KiB\n"
           "\t  at a time. It is an LZ format whose sequences are Huffman\n"
           "\t  coded with fixed tables, for zram. Selected by\n"
-          "\t  ZRAM_BACKEND_SEQLZ.\n\n", "config SEQLZ\n")
+          "\t  ZRAM_BACKEND_SEQLZ.\n\n"
+          "config SEQLZ_KUNIT_TEST\n"
+          "\ttristate \"KUnit tests for seqlz\" if !KUNIT_ALL_TESTS\n"
+          "\tdepends on KUNIT && PAGE_SIZE_4KB\n"
+          "\tdefault KUNIT_ALL_TESTS\n"
+          "\tselect SEQLZ\n"
+          "\tselect CRYPTO_LIB_SHA256\n"
+          "\thelp\n"
+          "\t  KUnit tests for seqlz: its tables against their SHA-256,\n"
+          "\t  pages that are compressed and decompressed again, and pages\n"
+          "\t  that are damaged or invalid by one rule of the format.\n\n"
+          "\t  If unsure, say N.\n\n", "config SEQLZ\n")
     patch(tree / "lib/Makefile", "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\n",
           "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\nobj-$(CONFIG_SEQLZ) += seqlz/\n", "CONFIG_SEQLZ")
     z = tree / "drivers/block/zram"

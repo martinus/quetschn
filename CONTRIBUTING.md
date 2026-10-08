@@ -125,6 +125,7 @@ starts with its SPDX line:
 ```
 
 CI has one required check, `ci-ok`. It needs these to pass: the format check, the tests with gcc and
-clang on x86-64 and arm64, the fuzz smoke run, the same compressed bytes on x86-64, 32-bit x86 and
-big-endian s390x, and the docs: `tools/seqlz-ref/check.sh` and `tools/check-links.py`, both quick to
-run before a push.
+clang on x86-64 and arm64, the fuzz smoke run with 4 KiB pages, with the decoder's loop for in-order
+cores and with 16 KiB pages, the kernel port built for x86-64, arm64, 32-bit arm and s390 with its KUnit
+tests, the same compressed bytes on x86-64, 32-bit x86 and big-endian s390x, and the docs:
+`tools/seqlz-ref/check.sh` and `tools/check-links.py`, both quick to run before a push.
