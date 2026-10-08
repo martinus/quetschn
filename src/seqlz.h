@@ -411,6 +411,56 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 			    struct seqlz_state *st, const void *src, void *dst,
 			    unsigned int dst_cap, bool coded);
 
+/*
+ * Levels 3 and 4 find the sequences with a hash chain, the matches priced by
+ * the bits the tables give them, see seqlz.c. Their state has 2048 heads of
+ * the chain, and one link per position of the page: 12 KiB. With the
+ * decoder's scratch that is 16 400 bytes per CPU, below lz4's 16 416. With
+ * 4096 heads pages were 0.1% to 0.2% smaller. For 16 KiB pages 48 KiB.
+ */
+#define SEQLZ_HC_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 11U : 13U)
+
+/* the chain of levels 3 and 4, one per CPU, head[] cleared for each page */
+struct seqlz_hc_state {
+	u16 head[1U << SEQLZ_HC_HASH_BITS];
+	u16 chain[SEQLZ_PAGE];
+};
+
+/**
+ * seqlz_compress_hc() - Compress one page at level 3 or 4
+ * @t: tables with a code for every symbol, see seqlz_all_symbols()
+ * @st: the matcher's state, one per CPU
+ * @src: the page, SEQLZ_PAGE bytes
+ * @dst: where the compressed page goes
+ * @dst_cap: the bytes at @dst
+ * @deep: level 4, which searches deeper and takes longer, else level 3
+ *
+ * The same format as seqlz_compress() with coded literals, read by the same
+ * decoder; only the sequences differ. @dst as for seqlz_compress().
+ *
+ * Return: the length of the compressed page, or 0 if it does not fit into
+ * @dst_cap bytes or @t lacks a code.
+ */
+unsigned int seqlz_compress_hc(const struct seqlz_tables *t,
+			       struct seqlz_hc_state *st, const void *src,
+			       void *dst, unsigned int dst_cap, bool deep);
+
+/**
+ * seqlz_find_hc() - The sequences of a page, as levels 3 and 4 find them
+ * @t: the tables, which price the matches
+ * @st: the matcher's state
+ * @src: the page, SEQLZ_PAGE bytes
+ * @seq: room for SEQLZ_MAX_SEQUENCES sequences
+ * @deep: level 4, else level 3
+ *
+ * For tests and tools, as seqlz_find().
+ *
+ * Return: the number of sequences.
+ */
+unsigned int seqlz_find_hc(const struct seqlz_tables *t,
+			   struct seqlz_hc_state *st, const void *src,
+			   struct seqlz_sequence *seq, bool deep);
+
 /* the code lengths compiled in, see seqlz_default_tables.c */
 extern const struct seqlz_lengths seqlz_default_own;
 

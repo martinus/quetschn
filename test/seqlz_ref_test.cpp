@@ -94,10 +94,14 @@ std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
     return p;
 }
 
+// lit 0 and 1 are levels 1 and 2, raw and coded literals; 3 and 4 are levels 3 and 4
 std::vector<unsigned char> compress(seqlz_tables const* t, std::vector<unsigned char> const& page, int lit) {
     auto st = std::make_unique<seqlz_state>();
+    auto hc = std::make_unique<seqlz_hc_state>();
     auto c = std::vector<unsigned char>(2 * SEQLZ_PAGE);
-    auto const len = seqlz_compress(t, st.get(), page.data(), c.data(), static_cast<unsigned>(c.size()), lit);
+    auto const len = lit >= 3
+                         ? seqlz_compress_hc(t, hc.get(), page.data(), c.data(), static_cast<unsigned>(c.size()), lit == 4)
+                         : seqlz_compress(t, st.get(), page.data(), c.data(), static_cast<unsigned>(c.size()), lit);
     REQUIRE(len > 0);
     c.resize(len);
     return c;
@@ -206,6 +210,7 @@ TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
 #endif
 
 TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders, raw and coded literals") {
+    // at all four levels: levels 3 and 4 write the same format
     auto const t = fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(41);
@@ -213,7 +218,7 @@ TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders,
     for (int round = 0; round < 300; ++round) {
         CAPTURE(round);
         auto const page = make_page(rng, round);
-        for (int lit = 0; lit < 2; ++lit) {
+        for (int lit : {0, 1, 3, 4}) {
             auto const c = compress(t.get(), page, lit);
             coded += (c[1] & 0x80) != 0;
             REQUIRE(check_same(t.get(), r.get(), c) == page);

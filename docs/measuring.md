@@ -72,7 +72,10 @@ on such a page is the kernel's part. `KARGS` adds to the kernel command line, an
 `zram.zram_prefetch=8` gives seqlz the prefetch that its backend has. `LLVM=1` builds the kernel with
 clang, as Android does. `run.sh` works on trees with zram's contexts split into compression and
 decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`), and on trees whose zram
-reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`.
+reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`. seqlz's backends in
+the VM are `seqlz` and `seqlz-lit`, levels 1 and 2, and `seqlz-hc`, level 3, or 4 as `seqlz-hc:4`; on
+the phone, `tools/zram-phone/`, they are `seqlz-<name>`, `seqlz-<name>-lit`, `seqlz-<name>-hc` and
+`seqlz-<name>-hc4`. In the harness levels 3 and 4 are `seqlz-hc` and `seqlz-hc:4`.
 
 ```sh
 ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log

@@ -657,6 +657,28 @@ found without the table.
 
 </details>
 
+### Levels 3 and 4: older positions, and the bits each match costs
+
+The details above end with what the table misses: older places with the same bytes. Levels 3 and 4,
+[`seqlz_compress_hc()`](../src/seqlz.c), search for them. They write the same format, so the decoder
+does not know which level wrote a page.
+
+* **A chain instead of one slot.** 2048 heads hold the newest position for each hash, and one link per
+  position of the page points to the position before it with the same hash. Level 3 follows the chain
+  4 steps, level 4 16 steps. Heads and links are 12 KiB, with the decoder's 4 KiB for the literals
+  below `lz4`'s 16 KiB.
+* **The match that saves the most bits, not the longest.** The tables are fixed, so the bits of every
+  choice are known before the page is written: a match saves its length in literals, about 6.5 bits
+  each, and costs its token, its offset and its length value. 8 bytes at the repeat offset cost fewer
+  bits than 9 bytes 900 bytes back, so the shorter match wins.
+* **One lazy step.** Before a match is taken, the position after it is searched too, and a match there
+  that saves more bits wins; the byte in between becomes a literal. Level 4 takes two steps.
+
+On the four dumps level 3 stores pages 2.7% to 4.3% smaller than level 2, writes them in 1.8 to 1.9
+times the time, and reads them a bit faster, because they have fewer and longer sequences. Level 4 is
+another 1.2% to 1.7% smaller and takes 1.5 to 1.8 times as long as level 3 to write
+([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-kept)).
+
 ## The decoder: one table lookup per sequence
 
 ```mermaid
@@ -753,8 +775,9 @@ On the second dump `zstd` 3 stores pages 10% smaller than `seqlz-fast-lit`, on t
 things make the difference, each measured:
 
 * **Better matches.** `zstd` 3 searches more. The matches of `lz4hc`, `lz4`'s slow and thorough
-  compressor, coded by `seqlz` take 3% and 7% fewer bytes than `seqlz`'s greedy matcher, but a matcher
-  that searches that much takes more time than zram's writes can spend.
+  compressor, coded by `seqlz` take 3% and 7% fewer bytes than `seqlz`'s greedy matcher. Levels 3 and
+  4 get about as much, 2.7% to 5.9%, for about twice and 3 times level 2's write time, see
+  [above](#levels-3-and-4-older-positions-and-the-bits-each-match-costs).
 * **Its own literal table per page.** Coding the literals is worth 2.3 and 4.7 points to `zstd` 3.
   A page's own table instead of the best of 8 fixed ones would save `seqlz` 0.3 and 4.6 points more,
   for 13% to 15% slower writes.

@@ -5,15 +5,15 @@
  * RESULT, then powers the VM off. From the kernel command line:
  *   quetschn.corpus=<file>     a corpus' .pages, a path on the host
  *   quetschn.mmstat=1          also phase 1
- *   quetschn.level=1|2         seqlz's level for the swap
+ *   quetschn.level=1 to 4      seqlz's level for the swap
  *   quetschn.minutes=<n>       how long the swap is stressed, 0 for no phase 2
  *   quetschn.selftests=1       phase 3, the kernel's selftests of zram, which
  *                              stress.sh puts into /selftests; they run in a
  *                              chroot of the host, for its shell and tools
  *
- * 1. The pages of the corpus written to a new zram device with lz4, seqlz at
- *    level 1 and at level 2: mm_stat right after, then every page read back
- *    and compared.
+ * 1. The pages of the corpus written to a new zram device with lz4, and with
+ *    seqlz at each of its levels 1 to 4: mm_stat right after, then every page
+ *    read back and compared.
  * 2. zram as swap with seqlz, under memory pressure: one worker per CPU fills
  *    its part of 1.5 times the free memory with corpus pages, each with its
  *    worker, index and generation in its first 16 bytes. Then until the time
@@ -412,6 +412,8 @@ int main(void)
 			write_all(corpus, 0, "lz4", 0);
 			write_all(corpus, 1, "seqlz", 1);
 			write_all(corpus, 2, "seqlz", 2);
+			write_all(corpus, 4, "seqlz", 3);
+			write_all(corpus, 5, "seqlz", 4);
 		}
 		if (atol(arg("minutes", "10")) > 0)
 			thrash(corpus, 3, level, atol(arg("minutes", "10")));

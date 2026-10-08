@@ -74,6 +74,11 @@ struct seqlz_tables {
 	struct lit_table lit[SEQLZ_LIT_SETS];
 	u64 lit_cost[256][LIT_COST_WORDS];
 	struct value_table ll, ml;
+	/*
+	 * the bits of each token, the escape's 12 bits after its code included,
+	 * the price of a token for levels 3 and 4
+	 */
+	u8 token_bits[SEQLZ_TOKEN_SYMBOLS];
 	bool all_symbols; /* see seqlz_all_symbols() */
 };
 
@@ -298,6 +303,12 @@ int seqlz_tables_init(struct seqlz_tables *t,
 		for (k = 0; k < 256 * SEQLZ_LIT_SETS; k++)
 			all &= seqlz_lit_sets[k / 256][k % 256] != 0;
 		t->all_symbols = all;
+		for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
+			t->token_bits[k] =
+				lengths->token[k] ?
+					lengths->token[k] :
+					(u8)(lengths->token[SEQLZ_ESCAPE] +
+					     SEQLZ_ESCAPE_BITS);
 	}
 	return 0;
 }
@@ -911,6 +922,337 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 	unsigned int len = compress_page(t, st, src, dst, dst_cap);
 
 	return len == 0 || !coded ? len : code_literals(t, dst, dst_cap, len);
+}
+
+/* ---- levels 3 and 4: a hash chain, the matches priced by the tables ---- */
+
+/*
+ * The matcher of levels 3 and 4 looks at more places than match_page() and
+ * takes the match that saves the most bits, by the code lengths of the tables.
+ * The tables are fixed, so the price of each choice is known before the page
+ * is written. Same format, same decoder as levels 1 and 2.
+ *
+ * Every position of the page goes into a hash chain: head[] has the newest
+ * position for each hash of 5 bytes, chain[] for each position the one before
+ * it with the same hash. At a position where the repeated offset or the newest
+ * position of the chain has the same 4 bytes, the search goes down the chain,
+ * 4 steps at level 3 and 16 at level 4. Then the lazy steps, one at level 3
+ * and two at level 4: if a match one position on saves more bits, that one is
+ * taken instead.
+ *
+ * A match saves its length in literals, at HC_LIT_PRICE each, and costs its
+ * token, the offset's bits and its length value. A price from 6 to 7.5 bits
+ * gave pages within 0.1% of each other, 5 bits made them 0.2% to 0.5% larger.
+ * A price per page, from what the literal tables cost its bytes, gave pages
+ * within 0.1% of this one.
+ */
+#define HC_LIT_PRICE 52U /* in 1/8 bits, 6.5 bits */
+
+/* the parameters of levels 3 and 4 */
+struct hc_level {
+	unsigned int depth; /* how many positions of the chain are tried */
+	unsigned int lazy; /* how many lazy steps at most */
+	/* a match this long ends the search and the lazy steps */
+	unsigned int good;
+	bool all; /* every position inside a match goes into the chain */
+	/* the search also starts where the second position of the chain matches */
+	bool second;
+};
+
+/* the bits of a length value: its symbol's code and its extra bits */
+static __always_inline unsigned int len_value_bits(const struct value_table *t,
+						   unsigned int v)
+{
+	unsigned int extra,
+		s = seqlz_len_symbol(v, &extra) & (ENC_LEN_SYMBOLS - 1U);
+
+	return (t->enc[s] >> 16 & 15U) + extra;
+}
+
+/* the hash of the 5 bytes at p, as hash5() in page_lz.h */
+static __always_inline unsigned int hc_hash(const u8 *p)
+{
+	return (unsigned int)(((get_unaligned_le64(p) << 24) *
+			       889523592379ULL) >>
+			      (64U - SEQLZ_HC_HASH_BITS));
+}
+
+/* puts pos into the chain, and returns the position the chain had before */
+static __always_inline unsigned int hc_insert(struct seqlz_hc_state *st,
+					      const u8 *src, unsigned int pos)
+{
+	unsigned int h = hc_hash(src + pos), before = st->head[h];
+
+	st->chain[pos & (SEQLZ_PAGE - 1U)] = (u16)before;
+	st->head[h] = (u16)pos;
+	return before;
+}
+
+struct hc_match {
+	int gain; /* the bits saved against literals, in 1/8 bits */
+	unsigned int len, off;
+};
+
+/*
+ * The match at pos that saves the most bits: the repeated offset, then
+ * l->depth positions of the chain from cand on. ll is the literals before pos,
+ * last the repeated offset. A match of the chain is counted only if it can be
+ * longer than min_len and the longest so far: its first 4 bytes and the 4 up
+ * to that length match. A shorter one with a cheaper offset is lost, rarely.
+ * m->len is 0 if no match saves bits.
+ */
+static __always_inline void hc_search(const struct seqlz_tables *t,
+				      const struct seqlz_hc_state *st,
+				      const u8 *src, const struct hc_level *l,
+				      struct hc_match *m, unsigned int pos,
+				      unsigned int cand, unsigned int ll,
+				      unsigned int last, unsigned int min_len)
+{
+	const u8 *end = src + SEQLZ_PAGE;
+	u32 cur = get_unaligned_le32(src + pos), tail;
+	unsigned int d, best, raw, cls, len, bits;
+	/* the literal length value is the same for every match at pos */
+	int base =
+		ll >= SEQLZ_LL_CAP ?
+			-(int)(8U * len_value_bits(&t->ll, ll - SEQLZ_LL_CAP)) :
+			0;
+
+	m->gain = 0;
+	m->len = 0;
+	m->off = 0;
+	if (get_unaligned_le32(src + pos - last) == cur) {
+		len = 4U + count(src + pos + 4, src + pos - last + 4, end);
+		bits = t->token_bits[seqlz_token(ll, len, 0) &
+				     (SEQLZ_TOKEN_SYMBOLS - 1U)];
+		if (len - 4U >= SEQLZ_ML_CAP)
+			bits += len_value_bits(&t->ml, len - 4U - SEQLZ_ML_CAP);
+		if (base + (int)(len * HC_LIT_PRICE - 8U * bits) > 0) {
+			m->gain = base + (int)(len * HC_LIT_PRICE - 8U * bits);
+			m->len = len;
+			m->off = last;
+			if (len >= l->good)
+				return;
+		}
+	}
+	best = m->len > min_len ? m->len : min_len;
+	if (best < 3)
+		best = 3;
+	if (pos + best >= SEQLZ_PAGE)
+		return;
+	tail = get_unaligned_le32(src + pos + best - 3);
+	for (d = l->depth; d; d--) {
+		/* one branch for all three, which come in no order */
+		unsigned int head_hit = get_unaligned_le32(src + cand) == cur,
+			     tail_hit = get_unaligned_le32(src + cand + best -
+							   3) == tail,
+			     new_off = pos - cand != last;
+
+		if (head_hit & tail_hit & new_off) {
+			int gain;
+
+			len = 4U + count(src + pos + 4, src + cand + 4, end);
+			cls = seqlz_off_class(pos - cand, last, &raw);
+			bits = t->token_bits[seqlz_token(ll, len, cls) &
+					     (SEQLZ_TOKEN_SYMBOLS - 1U)] +
+			       raw;
+			if (len - 4U >= SEQLZ_ML_CAP)
+				bits += len_value_bits(&t->ml,
+						       len - 4U - SEQLZ_ML_CAP);
+			gain = base + (int)(len * HC_LIT_PRICE - 8U * bits);
+			if (gain > m->gain) {
+				m->gain = gain;
+				m->len = len;
+				m->off = pos - cand;
+			}
+			if (len >= l->good)
+				return;
+			if (len > best) {
+				best = len;
+				if (pos + best >= SEQLZ_PAGE)
+					return;
+				tail = get_unaligned_le32(src + pos + best - 3);
+			}
+		}
+		if (cand == 0)
+			break;
+		cand = st->chain[cand & (SEQLZ_PAGE - 1U)];
+	}
+}
+
+/* finds the sequences of a page, and calls emit() for each, as match_page() */
+static __always_inline void
+hc_match_page(const struct seqlz_tables *t, struct seqlz_hc_state *st,
+	      const u8 *src, const struct hc_level *l, emit_fn emit, void *ctx)
+{
+	/* every hash reads 8 bytes */
+	const unsigned int limit = SEQLZ_PAGE - 8U;
+	unsigned int pos = 1, anchor = 0, last = 1, cand, steps, end, p;
+	struct hc_match m, n;
+
+	/*
+	 * Only head[] is cleared. chain[] is read only at positions that went
+	 * into it for this page, and at position 0, the value of an empty head,
+	 * where a chain ends.
+	 */
+	memset(st->head, 0, sizeof(st->head));
+	st->chain[0] = 0;
+	while (pos < limit) {
+		/*
+		 * The positions where neither the repeated offset nor the
+		 * newest position with the same hash have the same 4 bytes, in
+		 * a loop of their own, as in match_page(). One branch for both.
+		 */
+		for (;;) {
+			u32 cur = get_unaligned_le32(src + pos);
+			unsigned int rep_hit, cand_hit;
+
+			cand = hc_insert(st, src, pos);
+			rep_hit = get_unaligned_le32(src + pos - last) == cur;
+			cand_hit = get_unaligned_le32(src + cand) == cur;
+			if (rep_hit | cand_hit)
+				break;
+			/*
+			 * At level 4 also the position before it in the
+			 * chain: with 2048 heads, the newest position with
+			 * the same hash is often one of other bytes.
+			 */
+			if (l->second) {
+				const u8 *second =
+					src +
+					st->chain[cand & (SEQLZ_PAGE - 1U)];
+
+				if (get_unaligned_le32(second) == cur)
+					break;
+			}
+			if (++pos >= limit)
+				goto done;
+		}
+		hc_search(t, st, src, l, &m, pos, cand, pos - anchor, last, 0);
+		if (m.len == 0) {
+			pos++;
+			continue;
+		}
+		/*
+		 * The lazy steps. A match one position on has to be longer to
+		 * win, so it is counted only from there.
+		 */
+		p = pos + 1;
+		for (steps = l->lazy;
+		     steps && m.len < l->good && pos + 1 < limit; steps--) {
+			unsigned int next = pos + 1;
+			u32 cur = get_unaligned_le32(src + next);
+
+			cand = hc_insert(st, src, next);
+			p = next + 1;
+			(void)cur;
+			hc_search(t, st, src, l, &n, next, cand, next - anchor,
+				  last, m.len - 1);
+			if (n.gain <= m.gain)
+				break;
+			m = n;
+			pos = next;
+		}
+		/*
+		 * The match may have started before pos: extend it backwards
+		 * into the literals.
+		 */
+		{
+			unsigned int from = pos - m.off;
+
+			while (pos > anchor && from > 0 &&
+			       src[pos - 1] == src[from - 1]) {
+				pos--;
+				from--;
+				m.len++;
+			}
+		}
+		emit(ctx, src + anchor, pos - anchor, m.len, m.off);
+		last = m.off;
+		end = pos + m.len < limit ? pos + m.len : limit;
+		/*
+		 * The positions inside the match, from p on, the ones the lazy
+		 * steps did not insert: all of them at level 4, the last 2 at
+		 * level 3. All of them made pages 0.2% to 0.9% smaller, and the
+		 * first 8 took level 3 8% more time.
+		 */
+		if (!l->all && p + 2 < end)
+			p = end - 2;
+		for (; p < end; p++)
+			hc_insert(st, src, p);
+		pos += m.len;
+		anchor = pos;
+	}
+done:
+	emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);
+}
+
+/*
+ * Level 3: 4 positions of the chain, one lazy step, the last 2 positions of a
+ * match into the chain. Level 4: 16 positions, two lazy steps, every position.
+ */
+static const struct hc_level hc_level3 = { .depth = 4,
+					   .lazy = 1,
+					   .good = 64,
+					   .all = false,
+					   .second = false };
+static const struct hc_level hc_level4 = { .depth = 16,
+					   .lazy = 2,
+					   .good = 256,
+					   .all = true,
+					   .second = true };
+
+static __always_inline unsigned int
+compress_page_hc(const struct seqlz_tables *t, struct seqlz_hc_state *st,
+		 const u8 *src, void *dst, unsigned int dst_cap,
+		 const struct hc_level *l)
+{
+	struct encoder e;
+	unsigned int len;
+
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)
+		return 0;
+	encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
+	hc_match_page(t, st, src, l, encode_emit, &e);
+	len = encoder_finish(&e, dst, dst_cap);
+	return len == 0 ? 0 : code_literals(t, dst, dst_cap, len);
+}
+
+/* one copy of the matcher for each level, with its parameters as constants */
+static noinline unsigned int compress_level3(const struct seqlz_tables *t,
+					     struct seqlz_hc_state *st,
+					     const u8 *src, void *dst,
+					     unsigned int dst_cap)
+{
+	return compress_page_hc(t, st, src, dst, dst_cap, &hc_level3);
+}
+
+static noinline unsigned int compress_level4(const struct seqlz_tables *t,
+					     struct seqlz_hc_state *st,
+					     const u8 *src, void *dst,
+					     unsigned int dst_cap)
+{
+	return compress_page_hc(t, st, src, dst, dst_cap, &hc_level4);
+}
+
+unsigned int seqlz_compress_hc(const struct seqlz_tables *t,
+			       struct seqlz_hc_state *st, const void *src,
+			       void *dst, unsigned int dst_cap, bool deep)
+{
+	return deep ? compress_level4(t, st, src, dst, dst_cap) :
+		      compress_level3(t, st, src, dst, dst_cap);
+}
+
+/* ---- the matcher of levels 3 and 4, for seqlz_find_hc() ---- */
+
+unsigned int seqlz_find_hc(const struct seqlz_tables *t,
+			   struct seqlz_hc_state *st, const void *src,
+			   struct seqlz_sequence *seq, bool deep)
+{
+	struct find_ctx f = { .seq = seq };
+
+	hc_match_page(t, st, src, deep ? &hc_level4 : &hc_level3, find_emit,
+		      &f);
+	return f.n;
 }
 
 /* ---- decoder ---- */

@@ -22,6 +22,11 @@ with 2 MiB of other data read before each fault. Swap-out is all pages of a mapp
 call, and there it is 20% and 24% slower. In the mean it is slower than `lz4` in every column, so the
 case for it is memory, at a small cost in time.
 
+Levels 3 and 4 of the same format search longer for matches. Level 3 stores pages 2.7% to 4.3% smaller
+than `seqlz-fast-lit` on four dumps, as small as `zstd` 3 on two of them, and writes them in about twice
+the time, less than `zstd` 3 needs, with the same reads
+([explored-designs.md](docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-kept)).
+
 <details>
 <summary>The same on the PC and on the phone, memory against time</summary>
 
@@ -39,6 +44,7 @@ As of 8th October 2026. The details, and what comes next, are in [the plan, §9]
 
 - [x] Benchmark harness, page collectors, zram dumps of a desktop and of a phone
 - [x] The codec, [`seqlz-fast-lit`](docs/seqlz.md), and every alternative that was measured
+- [x] Levels 3 and 4: a deeper matcher for the same format, smaller pages for more time to write
 - [x] [The format](docs/format.md), two reference decoders written from it, fuzzing, the worst case measured
 - [x] Measured in a kernel: a VM on x86-64, and the Mi 9T's own kernel on arm64
 - [ ] Ask the zram maintainers whether they want a new backend at all, and in which form

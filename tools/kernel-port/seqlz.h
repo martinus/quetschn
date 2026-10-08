@@ -12,20 +12,31 @@
 
 /* the work memory of seqlz_compress(): the matcher's table of positions */
 #define SEQLZ_MEM_COMPRESS 8192
+/* at levels 3 and 4: the heads of a hash chain and a link per position */
+#define SEQLZ_MEM_COMPRESS_HC 12288
 /* the work memory of seqlz_decompress(): the decoded literals of a page */
 #define SEQLZ_MEM_DECOMPRESS (PAGE_SIZE + 16)
 
-/* the literals as they are, or Huffman coded where that saves enough */
+/*
+ * Levels 1 and 2 keep the literals as they are, or Huffman code them where
+ * that saves enough. Levels 3 and 4 code them too, and search longer for the
+ * matches that save the most bits: smaller pages, compressed in about 2 and 3
+ * times the time of level 2, decompressed as fast.
+ */
 #define SEQLZ_LEVEL_RAW 1
 #define SEQLZ_LEVEL_CODED 2
+#define SEQLZ_LEVEL_HC 3
+#define SEQLZ_LEVEL_HC_DEEP 4
 
 /**
  * seqlz_compress() - Compress one page
  * @src: the page, PAGE_SIZE bytes
  * @dst: where the compressed page goes
  * @dst_len: the bytes at @dst; every page fits into 2 * PAGE_SIZE
- * @wrkmem: SEQLZ_MEM_COMPRESS bytes, as kmalloc() aligns them
- * @level: SEQLZ_LEVEL_RAW or SEQLZ_LEVEL_CODED
+ * @wrkmem: SEQLZ_MEM_COMPRESS bytes, SEQLZ_MEM_COMPRESS_HC at levels 3 and 4,
+ *          as kmalloc() aligns them
+ * @level: SEQLZ_LEVEL_RAW, SEQLZ_LEVEL_CODED, SEQLZ_LEVEL_HC or
+ *         SEQLZ_LEVEL_HC_DEEP
  *
  * Context: Any context. It does not sleep and allocates nothing.
  *

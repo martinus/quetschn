@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz_endian: generated pages through seqlz_compress() and seqlz_decode(), raw and coded, and a hash
- * of all the compressed bytes. The format is little endian, so the hash must be the same on every CPU:
- * CI runs this on x86-64 and, under qemu, on big-endian s390x, and compares the two lines. Plain C
+ * seqlz_endian: generated pages through seqlz_compress() and seqlz_decode(), raw and coded, and through
+ * seqlz_compress_hc() at levels 3 and 4, and a hash of all the compressed bytes. The format is little endian, so the hash must
+ * be the same on every CPU: CI runs this on x86-64 and, under qemu, on big-endian s390x, and compares the two lines. Plain C
  * without the test framework, so that it builds in seconds under qemu.
  */
 #include <stdio.h>
@@ -87,17 +87,19 @@ static void make_page(unsigned char* p, unsigned int k) {
 int main(void) {
     static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
+    static struct seqlz_hc_state hc;
     struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned long long hash = 0xcbf29ce484222325ULL;
     unsigned int k, i, coded_pages = 0, failed = 0;
-    int coded;
+    int level;
 
     if (!t || seqlz_tables_init(t, &seqlz_default_own))
         return 2;
     for (k = 0; k < 600; k++) {
         make_page(page, k);
-        for (coded = 0; coded < 2; coded++) {
-            unsigned int n = seqlz_compress(t, &st, page, dst, sizeof dst, coded);
+        for (level = 1; level <= 4; level++) {
+            unsigned int n = level <= 2 ? seqlz_compress(t, &st, page, dst, sizeof dst, level == 2)
+                                        : seqlz_compress_hc(t, &hc, page, dst, sizeof dst, level == 4);
 
             if (!n || seqlz_decode(t, dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
                 failed++;

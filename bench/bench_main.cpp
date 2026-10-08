@@ -48,6 +48,7 @@ auto const all_codecs = std::to_array<quetschn_codec const*>({
     &quetschn_codec_zstd,
     &quetschn_codec_seqlz_fast,
     &quetschn_codec_seqlz_fast_lit,
+    &quetschn_codec_seqlz_hc,
 });
 auto const* const program = "quetschn-bench-interleaved";
 #else

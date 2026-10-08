@@ -1363,3 +1363,256 @@ TEST_CASE("seqlz: a page without matches but with literals that code well gets t
         CHECK(out == random);
     }
 }
+
+// ---- levels 3 and 4 ----
+
+namespace {
+
+// where each sequence's match starts, by the literals and matches before it
+std::vector<unsigned> match_starts(seqlz_sequence const* seq, unsigned n) {
+    auto starts = std::vector<unsigned>();
+    auto pos = 0U;
+    for (unsigned i = 0; i < n; ++i) {
+        pos += seq[i].literals;
+        starts.push_back(pos);
+        pos += seq[i].match;
+    }
+    return starts;
+}
+
+// the sequence whose match starts at pos, or nullptr
+seqlz_sequence const* match_at(std::vector<seqlz_sequence> const& seq, unsigned n, unsigned pos) {
+    auto const starts = match_starts(seq.data(), n);
+    for (unsigned i = 0; i + 1 < n; ++i) {
+        if (starts[i] == pos) {
+            return &seq[i];
+        }
+    }
+    return nullptr;
+}
+
+std::vector<unsigned char> random_bytes(std::mt19937_64& rng, std::size_t n) {
+    auto bytes = std::vector<unsigned char>(n);
+    for (auto& b : bytes) {
+        b = static_cast<unsigned char>(rng());
+    }
+    return bytes;
+}
+
+// a page of words from a vocabulary, separated by spaces: many matches, and the first one found is
+// often not the cheapest
+std::vector<unsigned char> words_page(std::mt19937_64& rng, unsigned vocabulary) {
+    auto words = std::vector<std::vector<unsigned char>>();
+    for (unsigned k = 0; k < vocabulary; ++k) {
+        auto w = std::vector<unsigned char>(3 + rng() % 8);
+        for (auto& b : w) {
+            b = static_cast<unsigned char>('a' + rng() % 26);
+        }
+        words.push_back(w);
+    }
+    auto page = std::vector<unsigned char>();
+    while (page.size() < page_size) {
+        auto const& w = words[rng() % words.size()];
+        page.insert(page.end(), w.begin(), w.end());
+        page.push_back(' ');
+    }
+    page.resize(page_size);
+    return page;
+}
+
+} // namespace
+
+TEST_CASE("seqlz levels 3 and 4: pages come back, with a state shared over many pages") {
+    // The same bytes as seqlz_encode() with coded literals for seqlz_find_hc()'s sequences, which the
+    // decoder takes back, also in the pages after other pages: chain[] is never cleared.
+    auto const t = default_tables(seqlz_default_own);
+    auto a = std::make_unique<seqlz_hc_state>();
+    auto b = std::make_unique<seqlz_hc_state>();
+    auto rng = std::mt19937_64(131);
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(page_size);
+    for (int round = 0; round < 400; ++round) {
+        CAPTURE(round);
+        auto const deep = round % 2 == 1;
+        auto const bytes = round % 5 == 4 ? words_page(rng, 40) : random_seqlz_page(rng, round % 4).bytes;
+        auto const n = seqlz_find_hc(t.get(), a.get(), bytes.data(), seq.data(), deep);
+        auto const lits = literals_of(bytes, seq.data(), n);
+        auto expected = std::vector<unsigned char>(2 * page_size);
+        auto const elen = seqlz_encode(
+            t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), expected.data(), 2 * page_size, 1);
+        auto got = std::vector<unsigned char>(2 * page_size);
+        auto const glen = seqlz_compress_hc(t.get(), b.get(), bytes.data(), got.data(), 2 * page_size, deep);
+        REQUIRE(elen > 0);
+        REQUIRE(glen == elen);
+        REQUIRE(std::equal(got.begin(), got.begin() + glen, expected.begin()));
+        auto exact = std::vector<unsigned char>(got.begin(), got.begin() + glen);
+        REQUIRE(seqlz_decode(t.get(), exact.data(), glen, out.data(), scratch.data()) == 0);
+        CHECK(out == bytes);
+    }
+}
+
+TEST_CASE("seqlz level 3: the chain finds an older position with a longer match") {
+    // 7 bytes at 100, 300 and 500, and again at p. Only the copy at 100 goes on as p does, for 28 bytes
+    // more. The newest position with the same hash, which level 2 takes, is 500, also one position on,
+    // for the lazy step; level 3 goes down the chain.
+    auto const t = default_tables(seqlz_default_own);
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto rng = std::mt19937_64(137);
+    for (unsigned p = 1000; p < 1016; ++p) {
+        CAPTURE(p);
+        auto bytes = random_bytes(rng, page_size);
+        std::copy_n(bytes.begin() + 100, 35, bytes.begin() + p);
+        for (unsigned at : {300U, 500U}) {
+            std::copy_n(bytes.begin() + 100, 7, bytes.begin() + at);
+            bytes[at + 7] = static_cast<unsigned char>(bytes[107] + 1);
+        }
+        bytes[p - 1] = static_cast<unsigned char>(bytes[99] + 1);
+        bytes[p + 35] = static_cast<unsigned char>(bytes[135] + 1);
+        auto const n = seqlz_find_hc(t.get(), hc.get(), bytes.data(), seq.data(), false);
+        auto const* s = match_at(seq, n, p);
+        REQUIRE(s != nullptr);
+        CHECK(s->match == 35);
+        CHECK(s->offset == p - 100);
+    }
+}
+
+TEST_CASE("seqlz level 3: a lazy step takes the longer match one position on") {
+    // At p, X and 6 bytes of B match at 100; from p + 1 on, 20 bytes of B match at 300. Level 2 would take
+    // the first match it finds, of 7 bytes. Level 3 makes p a literal and takes the 20 bytes.
+    auto const t = default_tables(seqlz_default_own);
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto rng = std::mt19937_64(139);
+    for (unsigned p = 1000; p < 1016; ++p) {
+        CAPTURE(p);
+        auto bytes = random_bytes(rng, page_size);
+        // B is at 300, X B[0..5] at 100, X B[0..19] at p
+        std::copy_n(bytes.begin() + 300, 6, bytes.begin() + 101);
+        bytes[107] = static_cast<unsigned char>(bytes[306] + 1);
+        bytes[p] = bytes[100];
+        std::copy_n(bytes.begin() + 300, 20, bytes.begin() + p + 1);
+        bytes[p - 1] = static_cast<unsigned char>(bytes[99] + 1);
+        bytes[299] = static_cast<unsigned char>(bytes[100] + 1);
+        bytes[p + 21] = static_cast<unsigned char>(bytes[320] + 1);
+        auto const n = seqlz_find_hc(t.get(), hc.get(), bytes.data(), seq.data(), false);
+        CHECK(match_at(seq, n, p) == nullptr);
+        auto const* s = match_at(seq, n, p + 1);
+        REQUIRE(s != nullptr);
+        CHECK(s->match == 20);
+        CHECK(s->offset == p + 1 - 300);
+    }
+}
+
+TEST_CASE("seqlz level 3: the repeated offset wins over a match one byte longer that costs more bits") {
+    // W, 9 bytes at 700. 8 bytes of it at 1000, 1300 and p = 1600, so that the repeated offset at p is 300,
+    // and all 9 at p, which only the copy at 700 has, 900 bytes back. The repeated offset sends no bits of
+    // its offset, 900 sends 12: 8 bytes at offset 300 cost fewer bits than 9 at offset 900.
+    auto const t = default_tables(seqlz_default_own);
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto rng = std::mt19937_64(149);
+    for (int round = 0; round < 16; ++round) {
+        CAPTURE(round);
+        auto bytes = random_bytes(rng, page_size);
+        auto const w = 700U, p = 1600U;
+        for (unsigned at : {1000U, 1300U, p}) {
+            std::copy_n(bytes.begin() + w, 8, bytes.begin() + at);
+            bytes[at - 1] = static_cast<unsigned char>(bytes[w - 1] + 1);
+            bytes[at + 8] = static_cast<unsigned char>(bytes[w + 8] + 1);
+        }
+        bytes[1299] = static_cast<unsigned char>(bytes[999] + 2);
+        bytes[p - 1] = static_cast<unsigned char>(bytes[1299] + 1);
+        bytes[p + 8] = bytes[w + 8];
+        bytes[p + 9] = static_cast<unsigned char>(bytes[w + 9] + 1);
+        auto const n = seqlz_find_hc(t.get(), hc.get(), bytes.data(), seq.data(), false);
+        auto const* s = match_at(seq, n, 1300);
+        REQUIRE(s != nullptr);
+        REQUIRE(s->offset == 300);
+        s = match_at(seq, n, p);
+        REQUIRE(s != nullptr);
+        CHECK(s->match == 8);
+        CHECK(s->offset == 300);
+    }
+}
+
+TEST_CASE("seqlz levels 3 and 4: smaller pages of words than level 2") {
+    auto const t = default_tables(seqlz_default_own);
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(151);
+    auto c = std::vector<unsigned char>(2 * page_size);
+    auto sum = std::array<unsigned, 3>{};
+    for (int round = 0; round < 50; ++round) {
+        auto const page = words_page(rng, 60);
+        sum[0] += seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, 1);
+        sum[1] += seqlz_compress_hc(t.get(), hc.get(), page.data(), c.data(), 2 * page_size, false);
+        sum[2] += seqlz_compress_hc(t.get(), hc.get(), page.data(), c.data(), 2 * page_size, true);
+    }
+    MESSAGE("level 2: ", sum[0], ", level 3: ", sum[1], ", level 4: ", sum[2]);
+    CHECK(sum[1] < sum[0] - sum[0] / 50);
+    CHECK(sum[2] < sum[1] - sum[1] / 200);
+}
+
+TEST_CASE("seqlz levels 3 and 4: no position of an earlier page, nothing read behind the page") {
+    // Page b repeats nothing of its own, only 8 bytes of page a, so it has no match. Its last bytes are
+    // the last of the memory, a page without access follows.
+    auto const ps = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto const span = (SEQLZ_PAGE + ps - 1) / ps * ps;
+    auto* const mem =
+        static_cast<unsigned char*>(mmap(nullptr, span + ps, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    REQUIRE(mem != MAP_FAILED);
+    REQUIRE(mprotect(mem + span, ps, PROT_NONE) == 0);
+    unsigned char* const page = mem + span - SEQLZ_PAGE;
+    auto const t = default_tables(seqlz_default_own);
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto c = std::vector<unsigned char>(2 * SEQLZ_PAGE);
+    auto rng = std::mt19937_64(157);
+    for (int round = 0; round < 20; ++round) {
+        CAPTURE(round);
+        auto const deep = round % 2 == 1;
+        auto const a = random_bytes(rng, page_size);
+        std::copy(a.begin(), a.end(), page);
+        REQUIRE(seqlz_find_hc(t.get(), hc.get(), page, seq.data(), deep) == 1);
+        auto b = random_bytes(rng, page_size);
+        std::copy_n(a.begin() + 500, 8, b.begin() + 1000);
+        std::copy(b.begin(), b.end(), page);
+        CHECK(seqlz_find_hc(t.get(), hc.get(), page, seq.data(), deep) == 1);
+        CHECK(seqlz_compress_hc(t.get(), hc.get(), page, c.data(), static_cast<unsigned>(c.size()), deep) > 0);
+    }
+    munmap(mem, span + ps);
+}
+
+TEST_CASE("seqlz levels 3 and 4: compress into a dst of any size, an error where the page does not fit") {
+    auto const t = default_tables();
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto rng = std::mt19937_64(163);
+    auto pages = std::vector<std::vector<unsigned char>>{random_bytes(rng, page_size), words_page(rng, 200)};
+    for (auto const& page : pages) {
+        for (int deep = 0; deep < 2; ++deep) {
+            auto two = std::vector<unsigned char>(2 * page_size);
+            auto const len2 =
+                seqlz_compress_hc(t.get(), hc.get(), page.data(), two.data(), static_cast<unsigned>(two.size()), deep);
+            REQUIRE(len2 > 0);
+            auto any_fit = false;
+            // each size in an allocation of its own, so that ASan sees a write past it
+            for (unsigned cap = 0; cap <= page_size + 64; ++cap) {
+                auto d = std::vector<unsigned char>(cap);
+                auto const len = seqlz_compress_hc(t.get(), hc.get(), page.data(), d.data(), cap, deep);
+                if (len == 0) {
+                    continue;
+                }
+                any_fit = true;
+                REQUIRE(len <= cap);
+                auto out = std::vector<unsigned char>(page_size);
+                auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+                REQUIRE(seqlz_decode(t.get(), d.data(), len, out.data(), scratch.data()) == 0);
+                REQUIRE(out == page);
+            }
+            // as for level 2: a page fits into its length and 32 bytes more, random bytes into 64 more
+            CHECK(any_fit == (len2 + 32 <= page_size + 64));
+        }
+    }
+}

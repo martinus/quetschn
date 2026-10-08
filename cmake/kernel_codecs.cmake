@@ -127,7 +127,7 @@ quetschn_kernel_codec(quetschn_kernel_zstd lib/zstd ""
 quetschn_kernel_codec(quetschn_kernel_seqlz lib/lz4 -O3 ${QUETSCHN_SEQLZ_SOURCES} src/zram_seqlz.c)
 target_include_directories(quetschn_kernel_seqlz PRIVATE "${CMAKE_SOURCE_DIR}/src")
 
-foreach(codec lz4 lz4hc lzo lzo_rle zstd seqlz_fast seqlz_fast_lit)
+foreach(codec lz4 lz4hc lzo lzo_rle zstd seqlz_fast seqlz_fast_lit seqlz_hc)
     string(REPLACE "_" "-" name ${codec})
     if(codec MATCHES "^lz4")
         set(lib quetschn_kernel_lz4)

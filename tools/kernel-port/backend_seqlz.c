@@ -14,12 +14,22 @@
 #include "backend_seqlz.h"
 
 #ifndef ZCOMP_RW_SPLIT
-/* the work memory of compression and of decompression, per CPU */
+/*
+ * the work memory of decompression and of compression, per CPU; the latter's
+ * size depends on the level
+ */
 struct seqlz_ctx {
-	u8 cmem[SEQLZ_MEM_COMPRESS];
 	u8 dmem[SEQLZ_MEM_DECOMPRESS];
+	u8 cmem[];
 };
 #endif
+
+/* levels 3 and 4 need a hash chain, levels 1 and 2 a table */
+static size_t seqlz_cmem_size(const struct zcomp_params *params)
+{
+	return params->level >= SEQLZ_LEVEL_HC ? SEQLZ_MEM_COMPRESS_HC :
+						 SEQLZ_MEM_COMPRESS;
+}
 
 static void seqlz_release_params(struct zcomp_params *params)
 {
@@ -28,7 +38,8 @@ static void seqlz_release_params(struct zcomp_params *params)
 /*
  * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
  * them where that saves at least 1/16 of them: smaller pages for more time.
- * The tables are the library's, built once.
+ * Levels 3 and 4 search longer for matches, smaller pages for more time to
+ * compress, the same to decompress. The tables are the library's, built once.
  */
 static int seqlz_setup_params(struct zcomp_params *params)
 {
@@ -38,8 +49,8 @@ static int seqlz_setup_params(struct zcomp_params *params)
 	}
 	if (params->level == ZCOMP_PARAM_NOT_SET)
 		params->level = SEQLZ_LEVEL_CODED;
-	if (params->level != SEQLZ_LEVEL_RAW &&
-	    params->level != SEQLZ_LEVEL_CODED) {
+	if (params->level < SEQLZ_LEVEL_RAW ||
+	    params->level > SEQLZ_LEVEL_HC_DEEP) {
 		pr_err("compression level %d is not supported\n",
 		       params->level);
 		return -EINVAL;
@@ -51,7 +62,7 @@ static int seqlz_setup_params(struct zcomp_params *params)
 static int seqlz_create_cctx(struct zcomp_params *params,
 			     struct zcomp_ctx *ctx)
 {
-	ctx->context = kvzalloc(SEQLZ_MEM_COMPRESS, GFP_KERNEL);
+	ctx->context = kvzalloc(seqlz_cmem_size(params), GFP_KERNEL);
 	return ctx->context ? 0 : -ENOMEM;
 }
 
@@ -67,7 +78,7 @@ static int seqlz_create_dctx(struct zcomp_params *params,
 #else
 static int seqlz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	struct seqlz_ctx *c = kvzalloc_obj(*c);
+	struct seqlz_ctx *c = kvzalloc_flex(*c, cmem, seqlz_cmem_size(params));
 
 	if (!c)
 		return -ENOMEM;

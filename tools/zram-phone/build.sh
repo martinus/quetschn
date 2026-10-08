@@ -1,9 +1,10 @@
 #!/bin/bash
 # build.sh <name> <src dir> <out dir>: the codec in <src dir> (a copy of src/) as a module for the Mi 9T's
-# Linux 4.14, <out dir>/quetschn_<name>.ko, registering the crypto compressors seqlz-<name> and
-# seqlz-<name>-lit for zram. Built as the phone's kernel is, with NDK r21e's clang 9, the codec with -O3
-# as lib/lz4, every function aligned to 64 bytes so that a change in one does not move the others. The
-# module's symbol versions get the phone's CRCs (patch_versions.py), else 4.14 refuses it.
+# Linux 4.14, <out dir>/quetschn_<name>.ko, registering the crypto compressors seqlz-<name>,
+# seqlz-<name>-lit, seqlz-<name>-hc and seqlz-<name>-hc4 (levels 1 to 4) for zram. Built as the phone's
+# kernel is, with NDK r21e's clang 9, the codec with -O3 as lib/lz4, every function aligned to 64 bytes
+# so that a change in one does not move the others. The module's symbol versions get the phone's CRCs
+# (patch_versions.py), else 4.14 refuses it.
 #
 # Needs, in $MI9T_KERNEL (default ~/opt/mi9t-kernel):
 #   src/            phoenix-r-oss of MiCode/Xiaomi_Kernel_OpenSource, 4.14.180 for the same SoC family
@@ -23,6 +24,7 @@ cp "$src"/seqlz.c "$src"/seqlz.h "$src"/page_lz.h "$src"/seqlz_compat.h "$src"/s
     "$src"/seqlz_default_tables_*.inc "$src"/seqlz_lit_sets.c "$src"/seqlz_lit_sets_*.inc "$out"/
 sed -e "s/\"seqlz-fast-lit\"/\"seqlz-$name-lit\"/; s/\"seqlz-fast\"/\"seqlz-$name\"/" \
     -e "s/\"seqlz-fast-lit-generic\"/\"seqlz-$name-lit-generic\"/; s/\"seqlz-fast-generic\"/\"seqlz-$name-generic\"/" \
+    -e "s/\"seqlz-fast-hc\(4\?\)\(-generic\)\?\"/\"seqlz-$name-hc\1\2\"/" \
     "$here/glue.c" >"$out/glue.c"
 printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\nCFLAGS_seqlz.o += -O3\nccflags-y += -falign-functions=64\n' \
     "$name" "$name" >"$out/Kbuild"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * KUnit tests for seqlz: the tables against the hashes the specification
- * gives, its worked example, round trips of generated pages at both levels,
+ * gives, its worked example, round trips of generated pages at all levels,
  * damaged pages, and pages made here from the specification's rules, each
  * valid or invalid by one rule.
  */
@@ -57,7 +57,7 @@ static void seqlz_test_tables(struct kunit *test)
 /* buffers for one test, freed by KUnit */
 struct bufs {
 	u8 *page, *c, *out;
-	void *cmem, *dmem;
+	void *cmem, *hcmem, *dmem;
 };
 
 static void get_bufs(struct kunit *test, struct bufs *b)
@@ -66,11 +66,13 @@ static void get_bufs(struct kunit *test, struct bufs *b)
 	b->c = kunit_kmalloc(test, 2 * PAGE_SIZE, GFP_KERNEL);
 	b->out = kunit_kmalloc(test, PAGE_SIZE, GFP_KERNEL);
 	b->cmem = kunit_kmalloc(test, SEQLZ_MEM_COMPRESS, GFP_KERNEL);
+	b->hcmem = kunit_kmalloc(test, SEQLZ_MEM_COMPRESS_HC, GFP_KERNEL);
 	b->dmem = kunit_kmalloc(test, SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, b->page);
 	KUNIT_ASSERT_NOT_NULL(test, b->c);
 	KUNIT_ASSERT_NOT_NULL(test, b->out);
 	KUNIT_ASSERT_NOT_NULL(test, b->cmem);
+	KUNIT_ASSERT_NOT_NULL(test, b->hcmem);
 	KUNIT_ASSERT_NOT_NULL(test, b->dmem);
 }
 
@@ -114,7 +116,7 @@ static void seqlz_test_example(struct kunit *test)
 			-EINVAL);
 }
 
-/* pages of several kinds, so that every offset class and both levels occur */
+/* pages of several kinds, so that every offset class and all levels occur */
 static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 {
 	static const char *const words[] = { "the ", "page ",   "swap ",
@@ -183,16 +185,21 @@ static void seqlz_test_round_trip(struct kunit *test)
 	struct rnd_state rng;
 	struct bufs b;
 	int round, level, len, coded = 0;
+	/* the bytes of all pages at each level */
+	long sum[SEQLZ_LEVEL_HC_DEEP + 1] = { 0 };
+	void *mem;
 
 	get_bufs(test, &b);
 	prandom_seed_state(&rng, 41);
 	for (round = 0; round < 210; round++) {
 		make_page(&rng, round, b.page);
-		for (level = SEQLZ_LEVEL_RAW; level <= SEQLZ_LEVEL_CODED;
+		for (level = SEQLZ_LEVEL_RAW; level <= SEQLZ_LEVEL_HC_DEEP;
 		     level++) {
-			len = seqlz_compress(b.page, b.c, 2 * PAGE_SIZE,
-					     b.cmem, level);
+			mem = level >= SEQLZ_LEVEL_HC ? b.hcmem : b.cmem;
+			len = seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, mem,
+					     level);
 			KUNIT_ASSERT_GT(test, len, 0);
+			sum[level] += len;
 			coded += !!(b.c[1] & 0x80);
 			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
 					0);
@@ -222,7 +229,7 @@ static void seqlz_test_round_trip(struct kunit *test)
 			memset(b.c, 0x5a, 2 * PAGE_SIZE);
 			KUNIT_ASSERT_EQ(test,
 					seqlz_compress(b.page, b.c, len - 1,
-						       b.cmem, level),
+						       mem, level),
 					-E2BIG);
 			KUNIT_ASSERT_NULL(test,
 					  memchr_inv(b.c + len - 1, 0x5a,
@@ -231,11 +238,14 @@ static void seqlz_test_round_trip(struct kunit *test)
 	}
 	/* the pages have to give both layouts */
 	KUNIT_EXPECT_GE(test, coded, 20);
+	/* each level stores the pages in less memory than the one before */
+	KUNIT_EXPECT_LT(test, sum[SEQLZ_LEVEL_HC], sum[SEQLZ_LEVEL_CODED]);
+	KUNIT_EXPECT_LT(test, sum[SEQLZ_LEVEL_HC_DEEP], sum[SEQLZ_LEVEL_HC]);
 	KUNIT_EXPECT_EQ(test,
 			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem, 0),
 			-EINVAL);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem, 3),
+			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.hcmem, 5),
 			-EINVAL);
 }
 

@@ -11,10 +11,20 @@ int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 {
 	unsigned int len;
 
-	if (level != SEQLZ_LEVEL_RAW && level != SEQLZ_LEVEL_CODED)
+	switch (level) {
+	case SEQLZ_LEVEL_RAW:
+	case SEQLZ_LEVEL_CODED:
+		len = seqlz_compress_page(&tables, wrkmem, src, dst, dst_len,
+					  level == SEQLZ_LEVEL_CODED);
+		break;
+	case SEQLZ_LEVEL_HC:
+	case SEQLZ_LEVEL_HC_DEEP:
+		len = seqlz_compress_hc(&tables, wrkmem, src, dst, dst_len,
+					level == SEQLZ_LEVEL_HC_DEEP);
+		break;
+	default:
 		return -EINVAL;
-	len = seqlz_compress_page(&tables, wrkmem, src, dst, dst_len,
-				  level == SEQLZ_LEVEL_CODED);
+	}
 	return len ? (int)len : -E2BIG;
 }
 EXPORT_SYMBOL_GPL(seqlz_compress);
@@ -30,6 +40,7 @@ EXPORT_SYMBOL_GPL(seqlz_decompress);
 static int __init seqlz_init(void)
 {
 	BUILD_BUG_ON(sizeof(struct seqlz_state) != SEQLZ_MEM_COMPRESS);
+	BUILD_BUG_ON(sizeof(struct seqlz_hc_state) != SEQLZ_MEM_COMPRESS_HC);
 	BUILD_BUG_ON(SEQLZ_MEM_DECOMPRESS != SEQLZ_SCRATCH);
 	/* the lengths are fixed, so this fails only if they are broken */
 	if (seqlz_tables_init(&tables, &seqlz_default_own) ||

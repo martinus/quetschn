@@ -105,6 +105,14 @@ with `zstd` it pays only where the CPU time of an idle machine counts for less, 
 of a recompressed page 2.3 µs slower. `seqlz-opt` is removed
 ([explored-designs.md, "Recompression, measured, not pursued"](explored-designs.md#recompression-measured-not-pursued)).
 
+**Levels 3 and 4 (#139) take the lower end where `zstd` 3's literals are not much better.** They are
+the same format with a matcher that searches a hash chain and prices each match by the tables. In the
+same VM with the swap times, on the first desktop dump the hull goes from `seqlz-fast-lit` to level 3 at
+4.2 bytes per µs and to level 4 at 4.1, and `zstd` 3 is off it; on a phone dump level 3 follows at 8.3,
+then `zstd` 3 at 2.1. On the dumps of 24th and 28th September `zstd` 3 stays next after
+`seqlz-fast-lit`, at 10.2 and 15.1 bytes per µs, because it codes the literals with a table of each
+page's own ([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-kept)).
+
 **The time in the score is the codec's alone**, which is what the codecs differ in. A task waits for
 the whole page fault: on the PC 1.9 µs of it are the kernel's for every codec, and `lz4`'s
 decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 µs of 4.1 µs. So a codec
@@ -325,6 +333,7 @@ decompression only the scratch for the coded literals
 | page size | compression context: hash table | decompression context: literal scratch | sum |
 | --- | ---: | ---: | ---: |
 | 4 KiB | 8192 B | 4112 B | 12 304 B |
+| 4 KiB, levels 3 and 4 | 12 288 B: 2048 heads and the chain | 4112 B | 16 400 B |
 | 16 KiB | 16 384 B | 16 400 B | 32 784 B |
 
 `seqlz-fast` needs no decompression context. The harness (`bench/kernel_codecs/zram_codec.h`) and the
@@ -933,6 +942,10 @@ As of 8th October 2026:
   of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
   per CPU, above C5.
 - **Phase 7: the question to the maintainers is drafted** (R3, R11), and not sent.
+- **Levels 3 and 4** (#139): the same format and decoder, a matcher with a hash chain priced by the
+  tables. Level 3 stores 2.7% to 4.3% less than level 2 on four dumps, as much as `zstd` 3 on two of
+  them, writes in about twice level 2's time, less than `zstd` 3's, and reads as fast as level 2. In the
+  kernel port, the harness, the VM and the phone's module.
 
 Next, in this order:
 

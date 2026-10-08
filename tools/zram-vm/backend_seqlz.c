@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /* seqlz (src/seqlz.h) as zram backends, for the VM test of run.sh: seqlz with raw literals
  * (seqlz-fast) and seqlz-lit with coded ones (seqlz-fast-lit), the tables compiled in, a hash table per
- * CPU. */
+ * CPU; seqlz-hc, levels 3 and 4 (seqlz-hc:4), with the hash chain instead. */
 #include <linux/kernel.h>
 
 /* zram-prefetch.patch */
@@ -17,9 +17,12 @@ extern int zram_prefetch;
 extern void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
 			    unsigned int size);
 
-/* the hash table, and the scratch for seqlz-fast-lit's literals */
+/* the hash table or seqlz-hc's chain, and the scratch for coded literals */
 struct sz_ctx {
-	struct seqlz_state st;
+	union {
+		struct seqlz_state st;
+		struct seqlz_hc_state hc;
+	};
 	unsigned char scratch[SEQLZ_SCRATCH];
 };
 
@@ -95,6 +98,16 @@ static int sz_setup_params(struct zcomp_params *params)
 	return 0;
 }
 
+/* seqlz-hc: level 3 by default, or 4 */
+static int sz_hc_setup_params(struct zcomp_params *params)
+{
+	if (params->level == ZCOMP_PARAM_NOT_SET)
+		params->level = 3;
+	if (params->level != 3 && params->level != 4)
+		return -EINVAL;
+	return sz_setup_params(params);
+}
+
 static void sz_release_params(struct zcomp_params *params)
 {
 	kfree(params->drv_data);
@@ -160,6 +173,20 @@ static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, s
 	return 0;
 }
 
+static int sz_hc_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
+{
+	unsigned int len;
+
+	if (req->src_len != SEQLZ_PAGE)
+		return -EINVAL;
+	len = seqlz_compress_hc(params->drv_data, &((struct sz_ctx *)ctx->context)->hc, req->src, req->dst,
+				req->dst_len, params->level == 4);
+	if (!len)
+		return -EINVAL;
+	req->dst_len = len;
+	return 0;
+}
+
 static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
 	/* EXPERIMENT: the compressed data requested first, here instead of in zram_drv.c, every cache
@@ -190,4 +217,14 @@ const struct zcomp_ops backend_seqlz_lit = {
 	.setup_params	= sz_setup_params,
 	.release_params	= sz_release_params,
 	.name		= "seqlz-lit",
+};
+
+/* levels 3 and 4: the same format, the matcher with the hash chain */
+const struct zcomp_ops backend_seqlz_hc = {
+	.compress	= sz_hc_compress,
+	.decompress	= sz_decompress,
+	SZ_CTX_OPS,
+	.setup_params	= sz_hc_setup_params,
+	.release_params	= sz_release_params,
+	.name		= "seqlz-hc",
 };

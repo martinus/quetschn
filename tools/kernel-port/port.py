@@ -38,7 +38,7 @@ SRC = REPO / "src"
 WIDTH = 80
 
 # what only the harness and the tests of src/ use, left out of the kernel's copy
-HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
+HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_find_hc\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
                           r"\bseqlz_tables_size\b")
 
 # the two references to this repository the kernel's copy keeps: where it points for the format, and the
@@ -116,7 +116,9 @@ ZRAM_RST = "Documentation/admin-guide/blockdev/zram.rst"
 ZRAM_DOC = """seqlz (CONFIG_ZRAM_BACKEND_SEQLZ) is for 4 KiB pages only. It supports
 `level`, but no dictionary. Level 1 stores the literals, the bytes that are
 not copied from earlier in the page, as they are. Level 2, the default,
-Huffman codes them where that saves space, which takes more time::
+Huffman codes them where that saves space, which takes more time. Levels 3
+and 4 search longer for matches: smaller pages, compressed in about 2 and 3
+times the time of level 2, decompressed as fast::
 
 	echo "algo=seqlz level=1" > /sys/block/zram0/algorithm_params
 
@@ -305,6 +307,7 @@ def port_header():
     t = cut(t, r"/\*\*\n \* seqlz_encode\(\) -.*?;\n\n")
     t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the page \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
+    t = cut(t, r"\n/\*\*\n \* seqlz_find_hc\(\) -.*?;\n")
     t = rename_compress(t, ";")
     t = common(t)
     t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
@@ -336,6 +339,7 @@ def port_codec():
     t = must(t, "\treturn SEQLZ_IN_ORDER;\n", "\treturn 0;\n")
     # what only the harness uses: seqlz_find(), seqlz_encode() and their helpers
     t = cut(t, r"/\* ---- the matcher of page_lz\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
+    t = cut(t, r"/\* ---- the matcher of levels 3 and 4, for seqlz_find_hc\(\) ---- \*/\n.*?(?=/\* ---- decoder ---- \*/)")
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
                r"static unsigned int encode_raw\(.*?\n\}\n\n")
     t = cut(t, r"unsigned int seqlz_encode\(.*?\n\}\n\n")
@@ -496,7 +500,8 @@ def main():
               "\t  compiled in. It stores pages in less memory than lz4, and\n"
               "\t  takes more time to compress and decompress them. Level 1\n"
               "\t  keeps the literals raw, level 2, the default, codes them\n"
-              "\t  too.\n\n")
+              "\t  too. Levels 3 and 4 search longer for matches, for smaller\n"
+              "\t  pages and more time to compress them.\n\n")
     kc = must(kc, "\t\t!ZRAM_BACKEND_842\n", "\t\t!ZRAM_BACKEND_842 && !ZRAM_BACKEND_SEQLZ\n")
     # without help, as the other ZRAM_DEF_COMP_* entries: checkpatch's CONFIG_DESCRIPTION stays
     kc = must(kc, "config ZRAM_DEF_COMP_842\n\tbool \"842\"\n\tdepends on ZRAM_BACKEND_842\n\n",

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * seqlz as a zram backend calls it, for the benchmarks: "seqlz-fast" with raw
- * literals, "seqlz-fast-lit" with the literals Huffman coded where that pays.
+ * literals, "seqlz-fast-lit" with the literals Huffman coded where that pays,
+ * levels 1 and 2, and "seqlz-hc", levels 3 and 4, with a deeper matcher.
  * The tables are fixed, part of the format (docs/format.md), so zram's
  * dictionary is ignored, as lzo ignores it.
  */
@@ -143,5 +144,54 @@ const struct quetschn_codec quetschn_codec_seqlz_fast_lit = {
 	.create_dctx = create_dctx,
 	.destroy_dctx = destroy,
 	.compress = fast_lit_compress,
+	.decompress = fast_lit_decompress,
+};
+
+/*
+ * seqlz-hc: levels 3, the default, and 4, the matcher with a hash chain. The
+ * same format and decoder as seqlz-fast-lit, with its decompression context.
+ */
+static int hc_setup(struct quetschn_params *p)
+{
+	if (p->level == QUETSCHN_LEVEL_DEFAULT)
+		p->level = 3;
+	if (p->level != 3 && p->level != 4)
+		return -1;
+	return setup(p);
+}
+
+static int create_hc_cctx(struct quetschn_params *p, struct quetschn_stream *s)
+{
+	(void)p;
+	s->context =
+		quetschn_zalloc(sizeof(struct seqlz_hc_state), &s->allocated);
+	return s->context ? 0 : -1;
+}
+
+static int hc_compress(struct quetschn_params *p, struct quetschn_stream *s,
+		       const void *src, unsigned int src_len, void *dst,
+		       unsigned int *dst_len)
+{
+	unsigned int len;
+
+	if (src_len != SEQLZ_PAGE)
+		return -1;
+	len = seqlz_compress_hc(p->drv_data, s->context, src, dst, *dst_len,
+				p->level == 4);
+	if (!len)
+		return -1;
+	*dst_len = len;
+	return 0;
+}
+
+const struct quetschn_codec quetschn_codec_seqlz_hc = {
+	.name = "seqlz-hc",
+	.setup_params = hc_setup,
+	.release_params = release,
+	.create_cctx = create_hc_cctx,
+	.destroy_cctx = destroy,
+	.create_dctx = create_dctx,
+	.destroy_dctx = destroy,
+	.compress = hc_compress,
 	.decompress = fast_lit_decompress,
 };
