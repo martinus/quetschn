@@ -128,6 +128,8 @@ std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& pre
                 d.c.pages -= added;
                 d.c.write_ns = (d.out.n * d.out.mean + same * d.out_same.mean) / corpus;
                 d.c.read_ns = (d.in.n * d.in.mean + same * d.in_same.mean) / corpus;
+                d.c.write_kernel_ns = d.out_same.mean;
+                d.c.read_kernel_ns = d.in_same.mean;
                 d.write = d.read = true;
             }
         }
@@ -197,6 +199,17 @@ std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& 
         }
     }
     return out;
+}
+
+codec_cost what_if(codec_cost const& c, double factor) {
+    auto name = std::ostringstream();
+    name << c.name << " x" << factor;
+    auto r = c;
+    r.name = name.str();
+    r.write_ns = c.write_kernel_ns + factor * (c.write_ns - c.write_kernel_ns);
+    r.read_ns = c.read_kernel_ns + factor * (c.read_ns - c.read_kernel_ns);
+    r.recompress_ns = factor * c.recompress_ns;
+    return r;
 }
 
 double us_per_page(codec_cost const& c, score_weights const& w) {
