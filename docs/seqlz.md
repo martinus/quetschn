@@ -591,17 +591,21 @@ finds, without checking whether one that starts a byte later would be longer.
 2. On a match it extends it backwards, because the bytes just before the found position may match
    too, and forwards, and hands the sequence to the encoder right away. Matcher and encoder are one
    loop.
-3. The encoder's output buffer is zram's and two pages long. The literals go to its start, after the header;
-   the sequences' bits are written behind room for a page of literals, and moved down behind the
-   literals at the end. The bits are collected in a 64-bit variable and written to memory once per
-   sequence, twice when it has an `ll` value.
+3. The encoder's output buffer is zram's and two pages long. The literals go to its start, after the
+   header; the sequences' bits are written backwards from its end, toward the literals, and copied the
+   right way round behind the literals at the end. The bits are collected in a 64-bit variable and
+   written to memory once per sequence, twice when it has an `ll` value.
 4. At the end it picks the literal table and writes the 8 streams if they save 1/16, see [the
    literals](#the-literals-one-table-per-page-in-8-streams).
 
-Two pages are always enough: a sequence takes at most 28 bits for its token and offset, an escaped
-token and a 12-bit offset, and covers at least 4 bytes of the page, so the bits of a page never take
-more than about 3600 bytes. Behind the header, a page of literals and 16 bytes of room for the
-decoder's 16-byte copies, there are 4078.
+Two pages are always enough: a sequence takes at most 28 bits for its token and offset, an escaped token
+and a 12-bit offset, and covers at least 4 bytes of the page, so the bits of a page never take more than
+about 3600 bytes, and next to a page of literals there are 4094. A smaller buffer works too: before each
+sequence the encoder checks that its literals and 32 bytes more are free between the two ends, and a
+page that does not fit is an error, as for the other compressors. With a buffer of exactly one page, as
+zswap gives, pages take 1.7% to 2.9% more memory on three dumps, because coding the literals needs the
+raw and the coded ones in the buffer at the same time
+([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-kept)).
 
 ### The table of positions is a cache, not a map
 

@@ -2,7 +2,8 @@
 /*
  * Any page through seqlz_compress() and seqlz_decode(), with raw and with coded literals: the page must
  * come back, the compressed page must fit the two pages zram gives the compressor, and it must be the
- * same bytes as seqlz_encode() writes for seqlz_find()'s sequences, as seqlz.h says.
+ * same bytes as seqlz_encode() writes for seqlz_find()'s sequences, as seqlz.h says. Into a dst of one
+ * page, and of a size the input picks, the page must come back too, or not fit.
  *
  * The first input byte picks how the rest becomes a page: repeated until the page is full, which gives
  * the matcher something to find, or followed by zeros.
@@ -42,6 +43,19 @@ static void roundtrip(const unsigned char* page, unsigned int n, unsigned int n_
         abort();
 }
 
+/* into an allocation of exactly cap bytes, for ASan: the page comes back, or it did not fit */
+static void small_dst(const unsigned char* page, unsigned int cap, int coded) {
+    unsigned char* d = malloc(cap ? cap : 1);
+    unsigned int len;
+
+    if (!d)
+        abort();
+    len = seqlz_compress(tables, &state, page, d, cap, coded);
+    if (len > cap || (len && (memcpy(dst, d, len), !decodes_to(page, len, scratch))))
+        abort();
+    free(d);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     unsigned char* page;
     unsigned int n, k, pos = 0, n_lit = 0;
@@ -77,6 +91,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         abort();
     roundtrip(page, n, n_lit, 0);
     roundtrip(page, n, n_lit, 1);
+    small_dst(page, SEQLZ_PAGE, 1);
+    small_dst(page, (unsigned int)(size * 2654435761U % (SEQLZ_PAGE + 64U)), data[0] & 2);
     free(page);
     return 0;
 }

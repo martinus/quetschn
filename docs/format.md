@@ -336,8 +336,9 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
   them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the
   size of the header; with it, a page has to save enough to be worth decoding its literals.
 
-The compressed page is at most `2 * PAGE` bytes, which is the buffer zram gives the compressor. zram
-stores a page that does not compress well enough as it is, so that page never reaches the decoder.
+The compressed page fits the buffer the compressor is given, or the compressor fails. zram gives it two
+pages, which every page fits, and stores a page that does not compress well enough as it is, so that
+page never reaches the decoder.
 
 ## No version in the page
 
