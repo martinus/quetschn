@@ -8,29 +8,23 @@
 
 #include "backend_seqlz.h"
 
-/*
- * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
- * them where that saves at least 1/16 of them: smaller pages for more time.
- */
-#define SEQLZ_LEVEL_RAW 1
-#define SEQLZ_LEVEL_CODED 2
-
-/* the matcher's hash table, and the scratch the literals are decoded into */
+/* the work memory of compression and of decompression, per CPU */
 struct seqlz_ctx {
-	struct seqlz_state st;
-	u8 scratch[SEQLZ_SCRATCH];
+	u8 cmem[SEQLZ_MEM_COMPRESS];
+	u8 dmem[SEQLZ_MEM_DECOMPRESS];
 };
 
 static void seqlz_release_params(struct zcomp_params *params)
 {
-	kvfree(params->drv_data);
-	params->drv_data = NULL;
 }
 
+/*
+ * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
+ * them where that saves at least 1/16 of them: smaller pages for more time.
+ * The tables are the library's, built once.
+ */
 static int seqlz_setup_params(struct zcomp_params *params)
 {
-	struct seqlz_tables *t;
-
 	if (params->dict_sz) {
 		pr_err("dictionary is not supported\n");
 		return -EOPNOTSUPP;
@@ -41,18 +35,8 @@ static int seqlz_setup_params(struct zcomp_params *params)
 	    params->level != SEQLZ_LEVEL_CODED) {
 		pr_err("compression level %d is not supported\n",
 		       params->level);
-		return -EOPNOTSUPP;
-	}
-
-	t = kvzalloc(seqlz_tables_size(), GFP_KERNEL);
-	if (!t)
-		return -ENOMEM;
-	/* the encoder needs a code for every symbol */
-	if (seqlz_tables_init(t, &seqlz_default_own) || !seqlz_all_symbols(t)) {
-		kvfree(t);
 		return -EINVAL;
 	}
-	params->drv_data = t;
 	return 0;
 }
 
@@ -75,15 +59,15 @@ static int seqlz_zcomp_compress(struct zcomp_params *params,
 				struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
 	struct seqlz_ctx *c = ctx->context;
-	unsigned int len;
+	int ret;
 
-	if (req->src_len != SEQLZ_PAGE)
+	if (req->src_len != PAGE_SIZE)
 		return -EINVAL;
-	len = seqlz_compress(params->drv_data, &c->st, req->src, req->dst,
-			     req->dst_len, params->level == SEQLZ_LEVEL_CODED);
-	if (!len)
-		return -EINVAL;
-	req->dst_len = len;
+	ret = seqlz_compress(req->src, req->dst, req->dst_len, c->cmem,
+			     params->level);
+	if (ret < 0)
+		return ret;
+	req->dst_len = ret;
 	return 0;
 }
 
@@ -93,13 +77,12 @@ static int seqlz_zcomp_decompress(struct zcomp_params *params,
 	struct seqlz_ctx *c = ctx->context;
 	int ret;
 
-	if (req->dst_len < SEQLZ_PAGE)
+	if (req->dst_len < PAGE_SIZE)
 		return -EINVAL;
-	ret = seqlz_decode(params->drv_data, req->src, req->src_len, req->dst,
-			   c->scratch);
+	ret = seqlz_decompress(req->src, req->src_len, req->dst, c->dmem);
 	if (ret)
 		return ret;
-	req->dst_len = SEQLZ_PAGE;
+	req->dst_len = PAGE_SIZE;
 	return 0;
 }
 
