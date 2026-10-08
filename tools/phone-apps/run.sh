@@ -2,7 +2,8 @@
 # run.sh: the app switching workload on a rooted Android phone over adb, zram0 on each algorithm in
 # turn, a reboot before every run. The phone needs setup.sh, swapbench.sh, hog (hog.c built with the
 # NDK's clang, --target=aarch64-linux-android30 -static) and the compressor modules in
-# /data/local/tmp/quetschn, the lock screen off, and Magisk's su allowed for the shell.
+# /data/local/tmp/quetschn, the lock screen off, Magisk's su allowed for the shell, and the Play Store's
+# auto update off, so that every run has the same app versions (each run writes them to versions.txt).
 #
 #   ALGOS="lzo lz4 seqlz-fast"  the algorithms, each repetition starts at another one
 #   REPS="1 2 3"                the repetitions

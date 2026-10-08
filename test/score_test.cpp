@@ -13,6 +13,7 @@
 using quetschn::best_for_some_lambda;
 using quetschn::codec_cost;
 using quetschn::read_bench_results;
+using quetschn::read_vm_boots;
 using quetschn::read_vm_results;
 using quetschn::score_weights;
 using quetschn::us_per_page;
@@ -117,6 +118,31 @@ TEST_CASE("score: MODE=swap, the corpus's pages without the same-filled ones the
     auto const line = log.find("RESULT lz4       swap-in, flushed, same-filled");
     auto incomplete = std::istringstream(log.substr(0, line) + log.substr(log.find('\n', line) + 1));
     CHECK_THROWS_AS((void)read_vm_results(incomplete, ""), std::runtime_error);
+}
+
+TEST_CASE("score: a run with BOOTS=n, the means over the boots") {
+    auto const log = std::string(swap_log);
+    auto second = log;
+    second.replace(second.find("mean 6436"), 9, "mean 6536");
+    // run.sh prints the compiler before the first boot
+    auto in = std::istringstream("KERNEL CONFIG_CC_VERSION_TEXT=\"gcc\"\nBOOT 1 of 2: ALGOS=lz4\n" + log +
+                                 "BOOT 2 of 2: ALGOS=lz4\n" + second);
+    auto const c = read_vm_boots(in, "");
+    REQUIRE(c.size() == 1);
+    // the swap-out of the 19738 compressed pages is 100 ns slower in the second boot: 50 ns in the mean
+    CHECK(c[0].write_ns == doctest::Approx((19738.0 * 6486.0 + 262.0 * 2485.0) / 20000.0));
+    CHECK(c[0].read_ns == doctest::Approx((19738.0 * 3239.0 + 262.0 * 1803.0) / 20000.0));
+    CHECK(c[0].bytes_per_page == doctest::Approx(29007872.0 / 20001.0));
+    // without BOOT lines one boot, as read_vm_results()
+    auto one = std::istringstream(log);
+    CHECK(read_vm_boots(one, "")[0].write_ns == doctest::Approx((19738.0 * 6436.0 + 262.0 * 2485.0) / 20000.0));
+    // a codec that a later boot does not have
+    auto other = log;
+    while (other.find("RESULT lz4 ") != std::string::npos) {
+        other.replace(other.find("RESULT lz4 "), 11, "RESULT lzo ");
+    }
+    auto missing = std::istringstream("BOOT 1 of 2\n" + log + "BOOT 2 of 2\n" + other);
+    CHECK_THROWS_AS((void)read_vm_boots(missing, ""), std::runtime_error);
 }
 
 TEST_CASE("score: a codec made faster keeps its bytes and the kernel's part of the time") {

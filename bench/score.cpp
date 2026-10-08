@@ -141,6 +141,63 @@ std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& pre
     return out;
 }
 
+std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefix) {
+    auto boots = std::vector<std::string>(1);
+    auto line = std::string();
+    while (std::getline(in, line)) {
+        if (line.rfind("BOOT ", 0) == 0) {
+            if (!boots.back().empty()) {
+                boots.emplace_back();
+            }
+            continue;
+        }
+        boots.back() += line + "\n";
+    }
+    auto sum = std::vector<codec_cost>();
+    auto n_boots = 0;
+    for (auto const& text : boots) {
+        auto boot_in = std::istringstream(text);
+        auto const b = read_vm_results(boot_in, prefix);
+        // the lines before the first BOOT, e.g. run.sh's KERNEL line, are no boot
+        if (b.empty()) {
+            continue;
+        }
+        ++n_boots;
+        if (sum.empty()) {
+            sum = b;
+            continue;
+        }
+        for (auto& s : sum) {
+            auto const it = std::find_if(b.begin(), b.end(), [&](codec_cost const& c) {
+                return c.name == s.name;
+            });
+            if (it == b.end()) {
+                throw std::runtime_error(s.name + " is missing in a boot");
+            }
+            s.pages += it->pages;
+            s.bytes_per_page += it->bytes_per_page;
+            s.write_ns += it->write_ns;
+            s.read_ns += it->read_ns;
+            s.recompress_ns += it->recompress_ns;
+            s.write_kernel_ns += it->write_kernel_ns;
+            s.read_kernel_ns += it->read_kernel_ns;
+        }
+    }
+    if (n_boots > 1) {
+        auto const n = static_cast<double>(n_boots);
+        for (auto& s : sum) {
+            s.pages /= n;
+            s.bytes_per_page /= n;
+            s.write_ns /= n;
+            s.read_ns /= n;
+            s.recompress_ns /= n;
+            s.write_kernel_ns /= n;
+            s.read_kernel_ns /= n;
+        }
+    }
+    return sum;
+}
+
 std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& prefix) {
     auto out = std::vector<codec_cost>();
     auto complete = std::vector<int>();

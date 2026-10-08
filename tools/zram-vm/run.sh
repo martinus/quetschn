@@ -7,11 +7,14 @@
 # corpus to /dev/zram0 and reads them back with O_DIRECT. The corpus pages go into the initramfs: it is
 # written with mode 600 and deleted at the end, like the corpus it contains private data. MODE=swap
 # measures zram as swap instead, the whole page fault of a swap-out and a swap-in (init.c). KARGS adds
-# to the kernel command line, e.g. KARGS=zram.zram_prefetch=8 for the backends' own prefetch.
+# to the kernel command line, e.g. KARGS=zram.zram_prefetch=8 for the backends' own prefetch. BOOTS=n
+# boots the kernel n times, the order of ALGOS rotated by one per boot, each boot's lines after a line
+# "BOOT k of n", and prints the range of every mean over the boots at the end; one boot can be off by
+# 18%. quetschn-score takes the mean over the boots.
 
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-lit] [LLVM=1] [MODE=swap] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
+[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-lit] [LLVM=1] [MODE=swap] [BOOTS=3] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
 # ALGOS: zram's names of the backends, a level after a colon, e.g. zstd:-1 or zstd:9
 # LLVM=1 builds the kernel with clang, as Android does, instead of gcc
 kmake=(make ${LLVM:+LLVM=$LLVM})
@@ -48,7 +51,25 @@ cp "$corpus.pages" "$work/root/pages"
 chmod 600 "$work/initramfs.cpio"
 
 # CPU 2, as the other benchmarks; set a fixed frequency yourself
-taskset -c 2 qemu-system-x86_64 -enable-kvm -cpu host -smp 1 -m 2G -kernel "$work/build/arch/x86/boot/bzImage" \
-    -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=8 quetschn.algos=${ALGOS:-lz4} quetschn.mode=${MODE:-read} zswap.enabled=0 ${KARGS:-}" \
-    -nographic -no-reboot |
-    grep -a RESULT
+boots=${BOOTS:-1}
+algos=${ALGOS:-lz4}
+for ((k = 1; k <= boots; k++)); do
+    [[ $boots -eq 1 ]] || echo "BOOT $k of $boots: ALGOS=$algos"
+    taskset -c 2 qemu-system-x86_64 -enable-kvm -cpu host -smp 1 -m 2G -kernel "$work/build/arch/x86/boot/bzImage" \
+        -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=8 quetschn.algos=$algos quetschn.mode=${MODE:-read} zswap.enabled=0 ${KARGS:-}" \
+        -nographic -no-reboot |
+        grep -a RESULT | tee -a "$work/boots.log"
+    # the first codec goes last, so that each one is in every place once in as many boots as codecs
+    if [[ $algos == *,* ]]; then algos=${algos#*,},${algos%%,*}; fi
+done
+[[ $boots -eq 1 ]] || python3 - "$work/boots.log" <<'EOF'
+import re, sys
+# every "mean <x> ns" of a codec and what was measured, over the boots: the range, in us
+seen = {}
+for line in open(sys.argv[1], errors="replace"):
+    m = re.search(r"RESULT (\S+)\s+(.*?)\s*(?:n\s+\d+)?:.* mean (\d+) ns", line)
+    if m:
+        seen.setdefault((m[1], re.sub(r"\s+", " ", m[2])), []).append(int(m[3]) / 1000)
+for (codec, what), v in seen.items():
+    print(f"RANGE {codec:15s} {what:40s} {min(v):8.2f} to {max(v):8.2f} us, {max(v) - min(v):.2f} over {len(v)} boots")
+EOF

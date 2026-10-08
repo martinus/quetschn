@@ -10,9 +10,14 @@ snap() {
     echo "mm_stat $(cat /sys/block/zram0/mm_stat)"; echo "io_stat $(cat /sys/block/zram0/io_stat)"
     for p in $(ps -A -o PID,NAME | awk '$2 ~ /kswapd0/ {print $1}'); do echo "kswapd $(cut -d' ' -f14,15 /proc/$p/stat)"; done
     echo "battery_temp $(dumpsys battery | grep temperature | tr -dc 0-9)"
+    # what moves launch times besides the codec: the memory's clocks and the temperatures
+    echo "devfreq $(for d in /sys/class/devfreq/soc:qcom,cpu*; do printf '%s=%s ' ${d##*qcom,} $(cat $d/cur_freq); done)"
+    echo "temps $(for z in /sys/class/thermal/thermal_zone*; do case $(cat $z/type) in cpu-0-max-step|cpu-1-max-step|ddr-usr|xo_therm) printf '%s=%s ' $(cat $z/type) $(cat $z/temp);; esac; done)"
     grep -E "^(MemFree|MemAvailable|Cached|SwapFree):" /proc/meminfo; } >> $out/stats.txt
 }
 logcat -b events -c
+# the same app versions in every run, or the launch times compare different apps
+for a in $APPS; do echo "$a $(dumpsys package $a | grep -m1 versionName | cut -d= -f2)"; done > $out/versions.txt
 snap start
 : > $out/launches.txt
 r=1

@@ -23,8 +23,9 @@ void usage() {
                  "usage: quetschn-score [--reads-per-write <r>] [--recompress-weight <b>] [--lambda <bytes per us>]\n"
                  "                      [--what-if <codec>:<factor>] ... <run.log>[:<prefix>] ...\n"
                  "\n"
-                 "Each log is the output of tools/zram-vm/run.sh or of quetschn-bench-* with timing, all from the\n"
-                 "same corpus; <prefix> goes in front of its codec names, to tell runs apart. Time per page written =\n"
+                 "Each log is the output of tools/zram-vm/run.sh, with BOOTS=n the mean over the boots, or of\n"
+                 "quetschn-bench-* with timing, all from the same corpus; <prefix> goes in front of its codec\n"
+                 "names, to tell runs apart. Time per page written =\n"
                  "write + r * cold read + b * recompression, the means over the pages; in a bench log write is\n"
                  "compress and read is decompress cold, in a log of MODE=swap the swap-out with one call per page\n"
                  "and the swap-in with the compressed data flushed. --reads-per-write default 0.34,\n"
@@ -87,7 +88,7 @@ int main(int argc, char** argv) {
                 text << file.rdbuf();
                 auto in = std::istringstream(text.str());
                 auto const vm = text.str().find("RESULT ") != std::string::npos;
-                for (auto& c : vm ? quetschn::read_vm_results(in, prefix) : quetschn::read_bench_results(in, prefix)) {
+                for (auto& c : vm ? quetschn::read_vm_boots(in, prefix) : quetschn::read_bench_results(in, prefix)) {
                     codecs.push_back(std::move(c));
                 }
             }

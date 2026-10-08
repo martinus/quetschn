@@ -103,7 +103,9 @@ and ["The decoder in a fault, found"](explored-designs.md#the-decoder-in-a-fault
 
 > [!TIP]
 > A single boot can be off: `zstd` came out 18% slower in one boot with nothing changed. Compare
-> codecs within one boot, and repeat a boot before you trust a difference of a few percent.
+> codecs within one boot, and use `BOOTS=3` before you trust a difference of a few percent: the kernel
+> is built once and booted 3 times, the order of `ALGOS` rotated by one per boot, and the end of the
+> output has the range of every mean over the boots. `quetschn-score` takes the mean over the boots.
 
 ## In userspace
 
@@ -190,6 +192,38 @@ alignment, a change in one function moves the ones behind it, and on the phone's
 alone moved reads by 130 ns. `tools/phone-apps/` is the app launch test: 25 apps, switched in turn,
 with the same RAM given to zram for every codec.
 
+For zram in the phone's own kernel, `tools/zram-phone/` builds the codec as a module for the Mi 9T's
+Linux 4.14 and runs `zramphone` on it, each codec alone in its own process, in turns:
+
+```sh
+tools/zram-phone/build.sh a <src copy A> out/a     # out/a/quetschn_a.ko: seqlz-a and seqlz-a-lit
+tools/zram-phone/build.sh b <src copy B> out/b
+BUS=1 tools/zram-phone/run.sh corpus/phone.pages out/run out/a/quetschn_a.ko out/b/quetschn_b.ko
+```
+
+`run.sh` fixes the cores' clocks, logs the clocks and five temperatures before and after every run,
+sets everything back at the end and deletes the pages. Its table is the mean and the range over the
+rounds. What it does against noise, measured with one module 3 rounds each
+([explored-designs.md](explored-designs.md#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed)):
+
+- **One codec per process.** All codecs in one process moved times by up to 1 µs; alone, the writes of
+  3 rounds spread by 0.07 to 0.56 µs on the A55 and 0.11 to 0.19 µs on the A76.
+- **`BUS=1` fixes the memory's clocks**, the devfreq devices of the L3, the LLCC and the DDR, at their
+  highest frequency. On the A55 the writes then spread by 0.04 to 0.11 µs and the cold reads by 0.6 to
+  1.5 µs instead of 1.2 to 1.7. The A55's cold reads also get much faster, 25.5 instead of 43.5 µs for
+  `lz4`: with one busy core the memory's governors keep its clocks low. So `BUS=1` is for choosing
+  between variants of seqlz, not for numbers against `lz4`.
+- **`STOP=1` stops Android** while timing. It made no difference beyond `BUS=1`, and the phone has no UI
+  meanwhile.
+- **Two copies of the same code** under two names show the noise of code placement: 0.07 µs in the
+  writes on the A55, 0.16 to 0.22 µs on the A76, up to 0.5 µs in the cold reads. A difference between
+  variants below theirs does not count.
+- **`COOL=45`**, the default, waits before every run until both clusters are below 45 C. With `BUS=1`
+  a long run heated them to 69 C and the kernel held the A76 at 1843 MHz; the summary leaves out a run
+  whose core was not at its clock.
+- **`COUNTS=1`** adds the kernel instructions per page from `simpleperf`, which do not depend on where
+  the code is.
+
 The pages are as private on the phone as anywhere else: delete them from `/data/local/tmp` afterwards.
 
 ## Rules that came from getting it wrong
@@ -215,8 +249,8 @@ Each of these cost a wrong result first. The measurements behind them are in
   between its own: two copies of the same code differed by 0.44 µs, a change looked 0.6 to 1.0 µs slower
   on writes that was the same speed alone, within 0.1 µs between two runs
   ([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)).
-  Run `zramphone pages 1 <codec>` once per codec, in turns, for an A/B; all codecs in one process
-  only for differences of several µs.
+  `tools/zram-phone/run.sh` runs each codec alone, in turns; all codecs in one process only for
+  differences of several µs.
 - **Compressions apart from decompressions.** `lz4hc` touches 256 KiB when it compresses, and moved the
   next codec's cold reads by 300 ns. Every repetition times all compressions first, then all
   decompressions.

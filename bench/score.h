@@ -31,6 +31,11 @@ struct codec_cost {
 // numbers, e.g. a log from before the means.
 [[nodiscard]] std::vector<codec_cost> read_vm_results(std::istream& in, std::string const& prefix);
 
+// read_vm_results() of a run with BOOTS=n: the lines after each "BOOT k of n" are one boot, and a codec's
+// bytes and times are the means over the boots, in the order of the first boot. Without BOOT lines the
+// same as read_vm_results(). Throws std::runtime_error when a boot lacks a codec of the first one.
+[[nodiscard]] std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefix);
+
 // The codecs of the output of quetschn-bench-* with timing, same-filled pages excluded, in the order
 // they appear. Throws std::runtime_error when a codec lacks its cost or the mean of compress or of
 // decompress cold.

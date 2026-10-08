@@ -36,6 +36,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [How the numbers are measured](#how-the-numbers-are-measured)
 - [The harness on the PC: a codec's times depend on the other codecs in the run, not found why](#the-harness-on-the-pc-a-codecs-times-depend-on-the-other-codecs-in-the-run-not-found-why)
+- [Less noise on the phone: one codec per process and the memory's clocks fixed](#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed)
 - [The first runs with dictionaries, Phases 0 to 2](#the-first-runs-with-dictionaries-phases-0-to-2)
 - [Baselines](#baselines)
 - [`lz4` with a dictionary](#lz4-with-a-dictionary)
@@ -2371,6 +2372,67 @@ predictors rather than the caches, not measured. Until it is found, the harness 
 times only within one codec, e.g. an A/B of two builds of the same codec; between codecs the kernel
 VM and zramphone in the phone's kernel gave orders that hold. The phone's harness tables above did not
 show such a reversal, but may have the same effect.
+
+## Less noise on the phone: one codec per process and the memory's clocks fixed
+
+*#130 listed what moved the Mi 9T's numbers: the A55's times by up to 3.6 µs between rounds, two copies
+of the same code by 0.66 µs on the A76. Most of it was the setup.* With every codec alone in its own
+zramphone process, the writes of 3 rounds spread by at most 0.56 µs on the A55 and 0.19 µs on the A76.
+With the memory's clocks fixed as well, by at most 0.11 and 0.06 µs. Stopping Android added nothing.
+Code: `tools/zram-phone/`, `run.sh` and `summary.py`.
+
+zramphone in the phone's 4.14 kernel, 20 000 pages of the second phone dump, the A55 at 1.80 GHz and the
+A76 at 2.21 GHz, one module of `main` before #129 (`ma`) and `lz4`, 3 rounds, each codec alone, in turns.
+The range over the rounds, max minus min, of the means in µs, write / warm read / cold read:
+
+| setting | A55, `lz4` | A55, `seqlz-fast-lit` | A76, `lz4` | A76, `seqlz-fast-lit` |
+| --- | --- | --- | --- | --- |
+| core clocks fixed | 0.07 / 0.11 / 1.65 | 0.35 / 0.54 / 1.51 | 0.15 / 0.08 / 0.47 | 0.19 / 0.09 / 0.36 |
+| and `BUS=1` | 0.11 / 0.01 / 0.55 | 0.04 / 0.09 / 0.61 | 0.03 / 0.05 / 0.31 | 0.03 / 0.04 / 0.11 |
+| and `STOP=1` | 0.09 / 0.06 / 0.91 | 0.12 / 0.03 / 0.65 | 0.03 / 0.02 / 0.52 | 0.07 / 0.02 / 0.19 |
+
+**`BUS=1`** puts the memory's devfreq devices on `performance`, which holds them at their highest
+frequency: the L3 of each cluster at 1459 MHz, the LLCC and the DDR bandwidth votes at their top. Before,
+their governors (`mem_latency`, `bw_hwmon`, `compute`) moved them with the load; between two runs the
+big cluster's L3 sat at 300 MHz. It also changes the A55's numbers, not only their spread: its cold
+reads take 25.5 instead of 43.5 µs for `lz4` and 32.9 instead of 56.6 µs for `seqlz-fast-lit`, its writes
+24.2 instead of 26.4 µs for `lz4`. With one busy core on the small cluster, the governors keep the
+memory slow. The A76 barely changes. So `BUS=1` is for choosing between variants of seqlz; the numbers
+against `lz4` that a user would see are the ones without it.
+
+**`STOP=1`** stops Android with `stop` and starts it again at the end. Beyond `BUS=1` the ranges stayed
+the same, some smaller, some larger. Not kept as a default: the phone has no UI meanwhile.
+
+**Heat.** With `BUS=1`, 42 runs in a row heated the clusters from 40 to 69 C, and the kernel's thermal
+limit held the A76 at 1843 MHz instead of 2208 MHz for 6 runs, which made them 1 to 2 µs slower.
+`run.sh` now waits before every run until both clusters are below `COOL`, 45 C by default, and
+`summary.py` leaves out a run whose core was not at its clock before or after it.
+
+**Code placement.** Two copies of the same code under two names, `ma` and `mb`, show what the place of
+a module costs. `BUS=1`, `COOL=45`, the clusters at 36 to 44 C, 3 rounds, together with #129 (`nb`), means in
+µs:
+
+| | `ma` | `mb` | `nb` |
+| --- | ---: | ---: | ---: |
+| A55, `seqlz-fast` write / cold read | 28.85 / 30.05 | 28.92 / 29.66 | 29.00 / 29.79 |
+| A55, `seqlz-fast-lit` write / cold read | 31.79 / 32.64 | 31.72 / 32.12 | 32.08 / 32.57 |
+| A76, `seqlz-fast` write / cold read | 11.05 / 6.89 | 10.83 / 7.07 | 10.92 / 7.40 |
+| A76, `seqlz-fast-lit` write / cold read | 11.98 / 7.65 | 11.82 / 7.82 | 11.91 / 7.80 |
+
+The copies differ by 0.07 µs in the writes on the A55 and by 0.16 to 0.22 µs on the A76, and by 0.17
+to 0.52 µs in the cold reads. A difference between two variants below that does not count. #129 is
+within it on the A76, and 0.3 µs slower on the A55 for `seqlz-fast-lit`, about the copies' difference in
+the cold reads but four times theirs in the writes.
+
+**Counts.** `COUNTS=1` adds the kernel instructions of each run from `simpleperf`, writes and reads of
+all pages together. They move by at most 15 per page on the A76 and 600 on the A55 between two rounds,
+out of 335 000. #129 executes 3800 more per page, 1.1%, which the times alone could not tell from the
+noise: on the A76 its writes take 0.05 µs longer, on the in-order A55 0.17 µs, 0.6%. That is the check
+before every sequence and the copy of the bitstream at the end.
+
+Not done from #130: the app test's spread. In "Apps on the phone" the cold launches of one codec went
+from 2 to 18 per run while the mean launch time moved by 24%, so they do not spread less; `mem_used` and
+`pswpin` per run are in the logs and from now on the clocks and temperatures too.
 
 ## How tight the bits are: ANS would give 0.3% at most, the offsets have 2%, 16 literal tables 0.1% to 2%
 
