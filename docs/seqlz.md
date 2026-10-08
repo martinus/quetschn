@@ -64,6 +64,7 @@ The code is in [`src/seqlz.c`](../src/seqlz.c), [`src/seqlz.h`](../src/seqlz.h) 
 * [The decoder](#the-decoder-one-table-lookup-per-sequence)
 * [Why it is nearly as fast as lz4](#why-it-is-nearly-as-fast-as-lz4)
 * [Why zstd still stores pages smaller](#why-zstd-still-stores-pages-smaller)
+* [Next to lz4, lzo, lzo-rle and zstd](#next-to-lz4-lzo-lzo-rle-and-zstd-the-same-idea-written-down-differently)
 * [What is not known yet](#what-is-not-known-yet)
 * [The choices, with their numbers](#the-choices-with-their-numbers)
 * [Glossary](#glossary)
@@ -762,6 +763,104 @@ things make the difference, each measured:
 > sequences 25.8%, and with coded literals as well 23.6%. **Coding the sequences is the largest step**,
 > and that is what `seqlz` is built on. See
 > [explored-designs.md](explored-designs.md#where-the-ratio-of-zstd-comes-from).
+
+## Next to lz4, lzo, lzo-rle and zstd: the same idea, written down differently
+
+All five codecs zram can run here do the same thing at the core: they cut a page into sequences of
+literals and a match, "copy `ml` bytes from `offset` back". They differ in two places. The encoder
+searches more or less hard for matches, and the format writes the three numbers of a sequence down in
+whole bytes or in bits. `lz4`, `lzo` and `lzo-rle` write bytes and have no tables at all. `zstd` and
+`seqlz` write bits with Huffman-like codes: `zstd` builds its tables from the data and sends them along,
+`seqlz`'s are fixed and part of the format. The facts below are from the kernel's sources, `lib/lz4/`,
+`lib/lzo/` with
+[Documentation/staging/lzo.rst](https://docs.kernel.org/staging/lzo.html), and `lib/zstd/`, at
+`986c24e0fe44`, for a 4 KiB page.
+
+### Finding the matches
+
+| | `lz4` | `lzo`, `lzo-rle` | `zstd` 3 | `seqlz` |
+| --- | --- | --- | --- | --- |
+| hash table | 8192 positions of 2 bytes | 8192 positions of 2 bytes | two: one on 8 bytes, one on 4 | 4096 positions of 2 bytes |
+| bytes hashed | 4 | 4 | 8 and 4 | 5 |
+| candidates per position | 1 | 1 | the repeat offset, then the 8-byte table, then the 4-byte one | the repeat offset and 1 from the table |
+| shortest match | 4 | 4 | 4 | 4 |
+| extends a match backwards | yes | no | yes | yes |
+| skips ahead without matches | yes, a step longer every 64 misses | yes, 1 + 1/32 of the literals since the last match | yes | no |
+
+All of them are greedy: they take a match when they find one and do not look whether a byte later
+starts a longer one. `zstd` 3 is the one that searches more. It looks for a long match on 8 bytes
+first and falls back to 4. When it finds a short match, it also checks whether a long one starts one
+byte later. `lz4` and `lzo` look at one candidate. `seqlz` looks at two, and one of them, the repeat
+offset, costs no table lookup, and 18% to 25% of the matches have it.
+
+`lz4`, `lzo` and `zstd` skip ahead over data without matches, faster the longer they find none. That
+saves time on data that does not compress. `seqlz` did the same until the step needed more work in its
+loop than it saved: without it, pages that compress are written 5% faster, and pages that zram stores
+uncompressed take 2.3 µs longer
+([explored-designs.md](explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
+
+`lzo-rle`'s encoder adds one thing. Before it hashes, it checks for 4 zero bytes, and if they are
+there, it measures the whole run of zeros, 8 bytes at a time.
+
+### Writing a sequence down
+
+| | `lz4` | `lzo` | `lzo-rle` | `zstd` 3 | `seqlz` |
+| --- | --- | --- | --- | --- | --- |
+| unit | bytes | bytes | bytes | bits | bits |
+| `ll` and `ml` | 4 bits each in a token byte, then bytes of 255 | in the instruction byte; up to 3 literals in the 2 low bits of the instruction before | as `lzo` | a code each, from tables in the page | together in one token, Huffman coded with a fixed table |
+| offset | always 2 bytes | 1 byte after the instruction below 2 KiB with a match up to 8 bytes, else 2 | as `lzo` | a code for its number of bits, then the bits; 3 repeat offsets | its class in the token, then 0 to 12 plain bits; 1 repeat offset, multiples of 8 divided by 8 |
+| literals | as they are, between the sequences | as they are, between the sequences | as they are, between the sequences | Huffman, a table for the page in the page, 1 stream or 4 | in a block of their own, as they are or Huffman with 1 of 8 fixed tables, 8 streams |
+| runs of zeros | a match at offset 1 | a match at offset 1 | one instruction of 4 bytes for 4 to 2051 zeros | a match at offset 1 | a match at the repeat offset, 1 at the start of a page |
+| header and end | none | 3 bytes at the end | 2 bytes at the start, 3 at the end | about 10 bytes of frame and block header | 2 bytes, 8 to 15 with coded literals |
+
+The sequence of [one sequence](#one-sequence-a-token-and-the-offset), 2 literals and 7 bytes from 16
+bytes back, in each format, without the 2 literal bytes:
+
+* **`lz4`**: the token byte with 2 and 7 − 4, then 2 bytes of offset. 24 bits.
+* **`lzo` and `lzo-rle`**: the 2 literals are counted in the 2 low bits of the instruction before.
+  The match is 5 to 8 bytes long and closer than 2 KiB, so it is one instruction byte, `1 L L D D D S
+  S`, with the length and 3 bits of the offset, and one more byte with the rest of the offset. 16
+  bits.
+* **`zstd`**: three codes, for the literal length 2, the match length 7 and the offset's 4 bits, and
+  the 4 bits of the offset. How many bits the codes take depends on the tables of the page, which come
+  first. A frequent code can take less than 1 bit, because `zstd`'s codes for sequences are not
+  Huffman codes but FSE, which can spend a fraction of a bit on a symbol.
+* **`seqlz`**: one token with a 9-bit code, then the offset 16 / 8 = 2 in 5 bits. 14 bits.
+
+`lzo` is cheaper than `lz4` for a short match nearby, 2 bytes against 3, because its instruction
+byte has a layout for each range of distances and lengths, and it counts up to 3 literals in bits
+that are there anyway. As far as I can say, that is where `lzo` and `lzo-rle` win their bytes against
+`lz4`: on the first dump `lzo-rle` stores a page in 1361 bytes, `lz4` in 1450. The zero runs make
+`lzo-rle` faster, not smaller, because a run of zeros was one match before too. In userspace on the
+same pages `lzo-rle` compresses in 2.90 µs against 3.85 for `lzo`, and stores 1326 bytes against
+1307 ([explored-designs.md](explored-designs.md#the-designs-by-the-score), the table "In
+userspace the hull is the same").
+
+### Tables, and what the decoder does per sequence
+
+| | `lz4` | `lzo`, `lzo-rle` | `zstd` 3 | `seqlz` |
+| --- | --- | --- | --- | --- |
+| tables | none | none | built for each page from the description in it, or predefined ones | fixed, built once per zram device |
+| per sequence | read the token, copy the literals, read 2 bytes of offset, copy the match | a branch on the top bits of the instruction, then the same | 3 FSE states step from one bitstream, read backwards, then copy | 1 table lookup for the token, the offset bits, copy |
+| literals | copied with the sequence | copied with the sequence | Huffman decoded first, in 1 or 4 streams | Huffman decoded first, in 8 streams, if coded |
+| work memory per CPU | 16 440 B, 16 384 of them the hash table | 16 384 B | 186 112 B | 12 304 B |
+| memory per zram device | none | none | 91 496 B, a dictionary without content | 43 280 B, the decoded tables |
+
+The byte formats are what makes `lz4` and `lzo` fast to decode: no bit is read, every length and
+offset is a byte or two at a known place. `zstd` decodes its tables from the page before the first
+sequence, and then each sequence steps three FSE states, for `ll`, `ml` and the offset. `seqlz` has
+no tables to read from the page, and does one lookup per sequence: the token holds all three. That is
+how [it is nearly as fast as lz4](#why-it-is-nearly-as-fast-as-lz4) and still codes its sequences in
+bits. The memory is what the harness allocates as zram does, `quetschn-bench-<codec> --no-timing`;
+`zstd`'s per device is the dictionary it creates even without one, which Sergey Senozhatsky's series
+of October 2026 removes in its patch 3 (#103).
+
+What `zstd` gets for its work is [smaller pages](#why-zstd-still-stores-pages-smaller): tables that fit
+the page, three repeat offsets, and better matches. What `seqlz` loses with fixed tables is measured in
+[the choices](#the-choices-with-their-numbers): 0.3 and 4.6 points for the literals. Picking one of 4
+token tables per page was measured too, together with the literal table, and was not kept: 2.6% and
+6.6% smaller pages for 43% slower writes
+([explored-designs.md](explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
 
 ## What is not known yet
 
