@@ -5,6 +5,7 @@
 #include <bit>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 namespace quetschn {
 
@@ -85,6 +86,19 @@ zsmalloc_model::zsmalloc_model(zsmalloc_config const& cfg)
     for (auto& pos : m_class_of_index) {
         pos = m_classes.size() - 1 - pos;
     }
+}
+
+std::size_t zsmalloc_model::fresh_pool_bytes(std::span<std::size_t const> comp_lens) const {
+    auto objects = std::vector<std::size_t>(m_classes.size());
+    for (auto len : comp_lens) {
+        ++objects[static_cast<std::size_t>(&class_for(len) - m_classes.data())];
+    }
+    auto bytes = std::size_t{0};
+    for (std::size_t k = 0; k < m_classes.size(); ++k) {
+        auto const& c = m_classes[k];
+        bytes += (objects[k] + c.objs_per_zspage - 1) / c.objs_per_zspage * c.pages_per_zspage * m_cfg.page_size;
+    }
+    return bytes;
 }
 
 std::size_t zsmalloc_model::huge_class_size() const {

@@ -428,6 +428,14 @@ int main(int argc, char** argv) {
                         s.total_cost,
                         s.pages == 0 ? 0.0 : 100.0 * s.total_cost / s.total_uncompressed,
                         s.pages == 0 ? 0.0 : s.total_cost / static_cast<double>(s.pages));
+            {
+                auto lens = std::vector<std::size_t>();
+                for (auto const& p : r.pages) {
+                    lens.push_back(p.comp_len);
+                }
+                std::printf("zsmalloc new device    %zu bytes, mem_used_total after writing these pages to a new zram\n",
+                            model.fresh_pool_bytes(lens));
+            }
             std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
             std::printf("memory per CPU         %zu bytes\n", r.stream_bytes);
             std::printf("memory per device      %zu bytes (dictionary %s, %zu bytes)\n",

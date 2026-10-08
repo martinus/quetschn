@@ -163,6 +163,27 @@ TEST_CASE("zsmalloc: cost includes the zspage tail waste") {
     CHECK(model.cost(3624) == doctest::Approx(32768.0 / 9.0));
 }
 
+TEST_CASE("zsmalloc: a new pool takes whole zspages per class, the last one partly filled") {
+    auto model = zsmalloc_model();
+    CHECK(model.fresh_pool_bytes({}) == 0);
+
+    // 100 bytes: slot 112, 256 per zspage of 7 pages. One object takes a whole zspage, 256 one, 257 two.
+    auto lens = std::vector<std::size_t>(1, 100);
+    CHECK(model.fresh_pool_bytes(lens) == 7 * 4096);
+    lens.assign(256, 100);
+    CHECK(model.fresh_pool_bytes(lens) == 7 * 4096);
+    CHECK(model.fresh_pool_bytes(lens) == static_cast<std::size_t>(256 * model.cost(100)));
+    lens.push_back(100);
+    CHECK(model.fresh_pool_bytes(lens) == 2 * 7 * 4096);
+
+    // classes add up: 9 objects of 3624 bytes fill one zspage of 8 pages, a page that zram stores
+    // uncompressed is one page of its own
+    lens.assign(9, 3624);
+    lens.push_back(4096);
+    lens.push_back(100);
+    CHECK(model.fresh_pool_bytes(lens) == 8 * 4096 + 4096 + 7 * 4096);
+}
+
 TEST_CASE("zsmalloc: pages at the watermark are stored as a whole page") {
     auto model = zsmalloc_model();
     auto const huge = model.huge_class_size();
