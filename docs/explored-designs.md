@@ -1045,7 +1045,11 @@ the 8 fixed literal tables needs 3400 to 4400; `zstd` codes them with a table of
 per page, priced at the literals' entropy and 64 bytes for its lengths, would save 47 bytes per page
 there, 43 on the second phone dump, 31 and 28 on the first ones. That is a change of the format, and
 it was measured with `seqlz-opt` before:
-[seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept).
+[seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept). The other thing `zstd` has
+and seqlz has not, three repeated offsets instead of one, is worth less: of level 3's matches 3.5% to
+7.4% have the offset before the last one, and 2.1% to 4.0% the one before that, and their offset bits
+are 4.8 to 7.3 and 2.9 to 4.6 bytes per page on the samples of desktop 1, desktop 2 and phone 2, before
+what more token symbols would cost.
 
 **The writes' p99 (C2).** Level 3's p99 is about twice level 2's, 16.9 to 18.9 µs against 8.3 to
 9.6, below `zstd` 3's 21.0 to 22.5, and its slowest page took 23 to 25 µs, `zstd` 3's 25 to 27. The
