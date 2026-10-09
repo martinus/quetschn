@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * Any list of sequences through seqlz_encode(), as they come, also ones that are not a page: matches
- * shorter than 4, offset 0 or past the position, lengths that do not add up. seqlz_encode() must not
- * write past the two pages of dst, and a page it accepts must decode to the page its sequences make.
- * The other targets only reach seqlz_encode() with the matcher's sequences, which are always valid.
+ * Any list of sequences through seqlz_encode() or seqlz_encode_own(), as they come, also ones that are
+ * not a page: matches shorter than 4, offset 0 or past the position, lengths that do not add up. They
+ * must not write past the two pages of dst, and a page they accept must decode to the page its
+ * sequences make. The other targets only reach them with the matcher's sequences, which are always
+ * valid.
  *
- * Byte 0: bit 0 lets the last sequence's literals fill the page, bit 1 codes the literals. Then 4
+ * Byte 0: bit 0 lets the last sequence's literals fill the page, bit 1 codes the literals, bit 2 codes
+ * them as levels 3 and 4 do, with a table of the page's own where that pays. Then 4
  * bytes per sequence: the literals, the match, and two bytes for the offset, each taken as it is.
  */
 #include <stdint.h>
@@ -18,6 +20,7 @@
 
 static struct seqlz_tables* tables;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
+static struct seqlz_hc_state own_state;
 static unsigned char literals[SEQLZ_PAGE], page[SEQLZ_PAGE];
 /* each an allocation of its own exact size, for ASan */
 static unsigned char *dst, *out, *scratch;
@@ -57,7 +60,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         literals[k] = (unsigned char)(k * 0x9e3779b1U >> 24);
 
     /* raw literals, a fixed table, or also one of the page's own */
-    len = seqlz_encode(tables, seq, n, literals, n_lit, dst, DST_CAP, (data[0] >> 1) % 3U);
+    len = data[0] & 4 ? seqlz_encode_own(tables, seq, n, literals, n_lit, dst, DST_CAP, &own_state)
+                      : seqlz_encode(tables, seq, n, literals, n_lit, dst, DST_CAP, data[0] & 2);
     if (len == 0)
         return 0;
     if (len > DST_CAP || sum != SEQLZ_PAGE)

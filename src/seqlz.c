@@ -1203,16 +1203,27 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 unsigned int seqlz_encode(const struct seqlz_tables *t,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
-			  void *dst, unsigned int dst_cap, unsigned int coded)
+			  void *dst, unsigned int dst_cap, bool coded)
 {
-	struct own_work own;
 	unsigned int len =
 		encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
 
-	return len == 0 || !coded ?
-		       len :
-		       code_literals(t, dst, dst_cap, len,
-				     coded >= SEQLZ_CODED_OWN ? &own : NULL);
+	return len == 0 || !coded ? len :
+				    code_literals(t, dst, dst_cap, len, NULL);
+}
+
+unsigned int seqlz_encode_own(const struct seqlz_tables *t,
+			      const struct seqlz_sequence *seq, unsigned int n,
+			      const u8 *literals, unsigned int n_literals,
+			      void *dst, unsigned int dst_cap,
+			      struct seqlz_hc_state *st)
+{
+	unsigned int len =
+		encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
+
+	return len == 0 ? 0 :
+			  code_literals(t, dst, dst_cap, len,
+					(struct own_work *)st);
 }
 
 static unsigned int compress_page(const struct seqlz_tables *t,

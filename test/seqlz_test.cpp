@@ -1440,14 +1440,9 @@ TEST_CASE("seqlz levels 3 and 4: pages come back, with a state shared over many 
         auto const n = seqlz_find_hc(t.get(), a.get(), bytes.data(), seq.data(), deep);
         auto const lits = literals_of(bytes, seq.data(), n);
         auto expected = std::vector<unsigned char>(2 * page_size);
-        auto const elen = seqlz_encode(t.get(),
-                                       seq.data(),
-                                       n,
-                                       lits.data(),
-                                       static_cast<unsigned>(lits.size()),
-                                       expected.data(),
-                                       2 * page_size,
-                                       SEQLZ_CODED_OWN);
+        // the matcher's state is the work memory of the literal table, as in seqlz_compress_hc()
+        auto const elen = seqlz_encode_own(
+            t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), expected.data(), 2 * page_size, a.get());
         auto got = std::vector<unsigned char>(2 * page_size);
         auto const glen = seqlz_compress_hc(t.get(), b.get(), bytes.data(), got.data(), 2 * page_size, deep);
         REQUIRE(elen > 0);
@@ -1621,5 +1616,38 @@ TEST_CASE("seqlz levels 3 and 4: compress into a dst of any size, an error where
             // as for level 2: a page fits into its length and 32 bytes more, random bytes into 64 more
             CHECK(any_fit == (len2 + 32 <= page_size + 64));
         }
+    }
+}
+
+TEST_CASE("seqlz levels 3 and 4: literals of few different bytes get a table of the page's own") {
+    // 12 bytes, each twice as frequent as the next, in random order: few repeats of 5 bytes, and no
+    // fixed table has short codes for exactly these bytes
+    auto const t = default_tables(seqlz_default_own);
+    auto hc = std::make_unique<seqlz_hc_state>();
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(173);
+    auto c = std::vector<unsigned char>(2 * page_size);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto out = std::vector<unsigned char>(page_size);
+    for (int round = 0; round < 20; ++round) {
+        CAPTURE(round);
+        auto alphabet = std::array<unsigned char, 12>{};
+        for (auto& a : alphabet) {
+            a = static_cast<unsigned char>(rng());
+        }
+        auto page = std::vector<unsigned char>(page_size);
+        for (auto& b : page) {
+            auto const x = rng() | 1U << 11;
+            b = alphabet[static_cast<unsigned>(std::countr_zero(x))];
+        }
+        auto const fixed = seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, 1);
+        auto const len = seqlz_compress_hc(t.get(), hc.get(), page.data(), c.data(), 2 * page_size, round % 2);
+        REQUIRE(len > 0);
+        CHECK(lits_coded(c));
+        CHECK((c[2] >> SEQLZ_LIT_OWN_AT & 1U) == 1U);
+        CHECK(len < fixed - fixed / 10);
+        auto exact = std::vector<unsigned char>(c.begin(), c.begin() + len);
+        REQUIRE(seqlz_decode(t.get(), exact.data(), len, out.data(), scratch.data()) == 0);
+        CHECK(out == page);
     }
 }

@@ -308,9 +308,6 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * memory of its own.
  */
 #define SEQLZ_LIT_OWN_NEXT 9U
-/* the values of seqlz_encode()'s coded */
-#define SEQLZ_CODED_FIXED 1U
-#define SEQLZ_CODED_OWN 2U
 /* a page's own table only where it saves this many bytes, see code_literals() */
 #ifndef SEQLZ_LIT_OWN_MIN
 #define SEQLZ_LIT_OWN_MIN 16U
@@ -345,10 +342,7 @@ extern const u8 seqlz_lit_own_lengths[SEQLZ_LIT_OWN_SYMBOLS];
  * @n_literals: how many
  * @dst: where the compressed page goes
  * @dst_cap: the bytes at @dst
- * @coded: 0 for raw literals, else Huffman coded where that saves enough:
- *          SEQLZ_CODED_FIXED with one of the fixed tables, as seqlz_compress(),
- *          SEQLZ_CODED_OWN also with a table of the page's own, as
- *          seqlz_compress_hc()
+ * @coded: whether to Huffman code the literals where that saves enough
  *
  * For tests and tools, which make their own sequences; zram uses
  * seqlz_compress().
@@ -364,7 +358,7 @@ extern const u8 seqlz_lit_own_lengths[SEQLZ_LIT_OWN_SYMBOLS];
 unsigned int seqlz_encode(const struct seqlz_tables *t,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
-			  void *dst, unsigned int dst_cap, unsigned int coded);
+			  void *dst, unsigned int dst_cap, bool coded);
 
 /**
  * seqlz_decode() - Decompress one page
@@ -477,6 +471,30 @@ struct seqlz_hc_state {
 unsigned int seqlz_compress_hc(const struct seqlz_tables *t,
 			       struct seqlz_hc_state *st, const void *src,
 			       void *dst, unsigned int dst_cap, bool deep);
+
+/**
+ * seqlz_encode_own() - Write a compressed page from given sequences, the
+ * literals coded as levels 3 and 4 code them
+ * @t: tables with a code for every symbol, see seqlz_all_symbols()
+ * @seq: the sequences, the last one with match 0
+ * @n: how many
+ * @literals: the literals of all sequences, one after the other
+ * @n_literals: how many
+ * @dst: where the compressed page goes
+ * @dst_cap: the bytes at @dst
+ * @st: work memory for a table of the page's own
+ *
+ * As seqlz_encode() with coded literals, but also with a table of the page's
+ * own where that saves enough, see SEQLZ_LIT_OWN_NEXT. For tests and tools: the
+ * same bytes as seqlz_compress_hc() for the sequences of seqlz_find_hc().
+ *
+ * Return: as seqlz_encode().
+ */
+unsigned int seqlz_encode_own(const struct seqlz_tables *t,
+			      const struct seqlz_sequence *seq, unsigned int n,
+			      const u8 *literals, unsigned int n_literals,
+			      void *dst, unsigned int dst_cap,
+			      struct seqlz_hc_state *st);
 
 /**
  * seqlz_find_hc() - The sequences of a page, as levels 3 and 4 find them

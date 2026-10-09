@@ -58,7 +58,7 @@ static void roundtrip_hc(const unsigned char* page, unsigned int cap, int deep) 
 
     if (len == 0 || len > DST_CAP || !decodes_to(page, len, scratch))
         abort();
-    if (seqlz_encode(tables, seq, n, literals, n_lit, again, DST_CAP, SEQLZ_CODED_OWN) != len || memcmp(again, dst, len) != 0)
+    if (seqlz_encode_own(tables, seq, n, literals, n_lit, again, DST_CAP, &hc_state) != len || memcmp(again, dst, len) != 0)
         abort();
     d = malloc(cap ? cap : 1);
     if (!d)

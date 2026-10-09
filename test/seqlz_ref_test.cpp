@@ -210,22 +210,24 @@ TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
 #endif
 
 TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders, raw and coded literals") {
-    // at all four levels: levels 3 and 4 write the same format
+    // at all four levels: levels 3 and 4 write the same format, and tables of the page's own
     auto const t = fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(41);
-    auto coded = 0;
+    auto coded = 0, own = 0;
     for (int round = 0; round < 300; ++round) {
         CAPTURE(round);
         auto const page = make_page(rng, round);
         for (int lit : {0, 1, 3, 4}) {
             auto const c = compress(t.get(), page, lit);
             coded += (c[1] & 0x80) != 0;
+            own += (c[1] & 0x80) != 0 && (c[2] & 0x40) != 0;
             REQUIRE(check_same(t.get(), r.get(), c) == page);
         }
     }
-    // the pages have to exercise both layouts
+    // the pages have to exercise both layouts, and both kinds of literal tables
     CHECK(coded > 30);
+    CHECK(own > 30);
 }
 
 TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike") {
@@ -234,7 +236,8 @@ TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike
     auto rng = std::mt19937_64(43);
     for (int round = 0; round < 1000; ++round) {
         CAPTURE(round);
-        auto const page = compress(t.get(), make_page(rng, round), round % 2);
+        // raw and coded literals, and level 3, which can have a table of the page's own
+        auto const page = compress(t.get(), make_page(rng, round), round % 3 == 2 ? 3 : round % 3);
         // each damage on its own copy of the page
         auto c = page;
         for (int f = 0; f < 1 + round % 3; ++f) { // bits flipped
@@ -476,5 +479,159 @@ TEST_CASE("seqlz_ref: coded literals need byte 2's top bits zero and every code 
         }
         CHECK(seqlz_ref_decode(r.get(), bad.data(), bad.size(), out.data()) == -1);
         check_same(t.get(), r.get(), bad);
+    }
+}
+
+namespace {
+
+// A page of PAGE literals, all in one sequence, coded with a table of the page's own: entries are its
+// (code length, byte) in the order of D, with 0 for the step to the next length, written as
+// docs/format.md says, whether they are valid or not. The literals' codes are the canonical codes of the
+// entries, as far as they make a code; codes is where they go.
+std::vector<unsigned char> own_page(seqlz_ref const& r,
+                                    std::vector<std::pair<unsigned, int>> const& entries,
+                                    std::vector<unsigned char> const& lits,
+                                    unsigned char t_extra = 0,
+                                    unsigned* padding = nullptr) {
+    // OWN, "A table of the page's own", as a code of the reference decoder
+    auto d = bit_writer{};
+    for (auto const& [l, b] : entries) {
+        if (l == 0) {
+            d.symbol(r.own, 9);
+            continue;
+        }
+        (void)l;
+        auto const delta = static_cast<unsigned>(b);
+        auto const k = static_cast<unsigned>(std::bit_width(delta)) - 1U;
+        d.symbol(r.own, k);
+        d.put(delta - (1U << k), k);
+    }
+    if (padding != nullptr) {
+        *padding = static_cast<unsigned>(8 * d.bytes.size()) - d.n;
+    }
+    // the canonical codes: by length, within a length in the order of the entries
+    auto code = std::array<std::pair<unsigned, unsigned>, 256>{}; // length, code
+    auto next = 0U, len = 1U;
+    auto prev = -1;
+    for (auto const& [l, b] : entries) {
+        if (l == 0) {
+            next <<= 1;
+            ++len;
+            prev = -1;
+            continue;
+        }
+        prev += b;
+        if (prev >= 0 && prev < 256) {
+            code[static_cast<unsigned>(prev)] = {len, next++};
+        }
+    }
+    auto streams = std::array<bit_writer, 8>{};
+    for (std::size_t k = 0; k < lits.size(); ++k) {
+        auto const [l, c] = code[lits[k]];
+        streams[k % 8].put(c, l);
+    }
+    auto biggest = 0U;
+    for (auto const& s : streams) {
+        biggest = std::max(biggest, static_cast<unsigned>(s.bytes.size()));
+    }
+    auto const w = std::max(5U, static_cast<unsigned>(std::bit_width(biggest)));
+    auto page = std::vector<unsigned char>{static_cast<unsigned char>(lits.size()),
+                                           static_cast<unsigned char>(0x80U | lits.size() >> 8),
+                                           static_cast<unsigned char>(0x40U | (w - 5U) << 3 | t_extra)};
+    auto sizes = bit_writer{}; // w bits each, lowest bit first: written by hand
+    auto s_bits = std::vector<unsigned char>(w, 0);
+    for (unsigned j = 0; j < 8; ++j) {
+        for (unsigned i = 0; i < w; ++i) {
+            auto const q = j * w + i;
+            if ((streams[j].bytes.size() >> i) & 1U) {
+                s_bits[q / 8] = static_cast<unsigned char>(s_bits[q / 8] | 1U << (q % 8));
+            }
+        }
+    }
+    (void)sizes;
+    page.insert(page.end(), s_bits.begin(), s_bits.end());
+    page.insert(page.end(), d.bytes.begin(), d.bytes.end());
+    for (auto const& s : streams) {
+        page.insert(page.end(), s.bytes.begin(), s.bytes.end());
+    }
+    // the sequences: one, with all literals, as one_sequence() writes it
+    auto b = bit_writer{};
+    b.token(r.tok, 15);
+    auto const v = static_cast<unsigned>(lits.size()) - 15U;
+    auto const hb = static_cast<unsigned int>(std::bit_width(v)) - 1U;
+    b.symbol(r.ll, 12 + hb);
+    b.put(v - (1U << hb), hb);
+    page.insert(page.end(), b.bytes.begin(), b.bytes.end());
+    return page;
+}
+
+} // namespace
+
+TEST_CASE("seqlz_ref: a table of the page's own, valid, and invalid by each of the rules of D") {
+    auto const t = fast_tables();
+    auto const r = make_ref();
+    auto out = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto rng = std::mt19937_64(171);
+    auto lits = std::vector<unsigned char>(SEQLZ_PAGE);
+    for (auto& b : lits) {
+        b = static_cast<unsigned char>("abcd"[rng() % 4]);
+    }
+    // a 1, b 2, c and d 3: 512 + 256 + 128 + 128 entries. Distances: a from -1, the others from the byte
+    // before of their length
+    auto const valid = std::vector<std::pair<unsigned, int>>{{1, 'a' + 1}, {0, 0}, {2, 'b' + 1}, {0, 0}, {3, 'c' + 1}, {3, 1}};
+    auto padding = 0U;
+    auto const good = own_page(*r, valid, lits, 0, &padding);
+    REQUIRE(seqlz_ref_decode(r.get(), good.data(), good.size(), out.data()) == 0);
+    CHECK(std::equal(out.begin(), out.end(), lits.begin()));
+    CHECK(check_same(t.get(), r.get(), good) == lits);
+
+    auto const invalid = [&](std::vector<unsigned char> const& page) {
+        CHECK(seqlz_ref_decode(r.get(), page.data(), page.size(), out.data()) == -1);
+        check_same(t.get(), r.get(), page);
+    };
+    // The next two tables break one rule each and are still complete codes; the literals are only bytes
+    // they have, so that a decoder without the rule would decode them.
+    auto abc = lits;
+    for (auto& b : abc) {
+        b = b == 'd' ? 'c' : b;
+    }
+    // a byte twice: a with length 1 and 3, then c
+    invalid(own_page(*r, {{1, 'a' + 1}, {0, 0}, {2, 'b' + 1}, {0, 0}, {3, 'a' + 1}, {3, 'c' - 'a'}}, abc));
+    // a byte above 255: 99 + 200, which is 43 in 8 bits, a byte without a code yet
+    invalid(own_page(*r, {{1, 'a' + 1}, {0, 0}, {2, 'b' + 1}, {0, 0}, {3, 'c' + 1}, {3, 200}}, abc));
+    // a length above 10: ten steps after a
+    auto too_long = std::vector<std::pair<unsigned, int>>{{1, 'a' + 1}};
+    for (int k = 0; k < 10; ++k) {
+        too_long.push_back({0, 0});
+    }
+    too_long.push_back({11, 1});
+    invalid(own_page(*r, too_long, lits));
+    // the flag of an own table with a table number, and bit 7
+    invalid(own_page(*r, valid, lits, 1));
+    invalid(own_page(*r, valid, lits, 0x80));
+    // D cut short: the page ends inside it
+    {
+        auto const w = 5U + ((good[2] >> 3) & 7U);
+        auto cut = good;
+        cut.resize(3 + w + 1);
+        invalid(cut);
+    }
+    // a bit after D set, where D does not end at a byte
+    if (padding > 0) {
+        auto const w = 5U + ((good[2] >> 3) & 7U);
+        // D's last byte: D is the bytes after the sizes up to the streams, its length from the valid entries
+        auto d = bit_writer{};
+        for (auto const& [l, b] : valid) {
+            if (l == 0) {
+                d.symbol(r->own, 9);
+            } else {
+                auto const k = static_cast<unsigned>(std::bit_width(static_cast<unsigned>(b))) - 1U;
+                d.symbol(r->own, k);
+                d.put(static_cast<unsigned>(b) - (1U << k), k);
+            }
+        }
+        auto bad = good;
+        bad[3 + w + d.bytes.size() - 1] = static_cast<unsigned char>(bad[3 + w + d.bytes.size() - 1] | 1U);
+        invalid(bad);
     }
 }
