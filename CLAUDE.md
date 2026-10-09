@@ -38,7 +38,8 @@ bench/               C++20 harness, zsmalloc cost model, table training (seqlz_t
                      tables are built from in seqlz_counts_*.txt),
                      kernel_codecs/ (zram's lz4/lzo/zstd glue, built from a kernel tree)
 test/                doctest, one binary quetschn_test; test/seqlz_endian.c is CI's same-bytes check
-fuzz/                libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs)
+fuzz/                libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs); .clusterfuzzlite/ builds
+                     them for ClusterFuzzLite
 tools/               see tools/README.md; seqlz-ref/ = reference decoders written from docs/format.md
                      alone (never copy from src/ into them), zram-vm/ = kernel VM, zram-phone/ = zram
                      in the Mi 9T's kernel, swap-fault/, phone-apps/, android-emu/ (emulator corpus, 4
@@ -67,15 +68,18 @@ cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 115 cases, ct
 # 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 95 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
+fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
 gcc -O2 -Isrc -o le test/seqlz_endian.c src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
 python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decoder, checks table hashes
 ```
 
 - CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, gcc 16 KiB
-  release+sanitize (no kernel tree), fuzz 60 s per target (4 KiB, `-DSEQLZ_IN_ORDER=1`, 16 KiB), `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
+  release+sanitize (no kernel tree), fuzz 60 s per target (4 KiB, `-DSEQLZ_IN_ORDER=1`, 16 KiB, MSan), `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
   (`tools/seqlz-ref/check.sh`, `tools/check-links.py`), `kernel-port` (`tools/kernel-port/check.sh` for x86-64, arm64, arm, s390; `kunit.sh` in UML on x86-64); `ci-ok` is the one required check (branch
   protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
   its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.
+  `.github/workflows/cflite.yml` is ClusterFuzzLite: daily, an hour each with ASan, UBSan and MSan, and
+  10 minutes with ASan on PRs that touch `src/` or `fuzz/`; not in `ci-ok`.
 - `src/` is in the kernel's style, `src/.clang-format`: tabs, 80 columns, `u8 *p`. clang-format does not
   reflow comments there; wrap them by hand to 80 columns in the kernel's block form. The `.inc` tables
   are not in the format check: after training, `clang-format -i src/*.inc`.

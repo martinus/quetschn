@@ -11,6 +11,7 @@
 
 #include "seqlz.h"
 #include "seqlz_ref.h"
+#include "unwritten.h"
 
 static struct seqlz_tables* tables;
 static struct seqlz_ref ref;
@@ -43,6 +44,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     memcpy(src, data, size);
     memset(fast, 0xa5, SEQLZ_PAGE);
     memset(slow, 0x5a, SEQLZ_PAGE);
+    unwritten(fast, SEQLZ_PAGE);
+    unwritten(slow, SEQLZ_PAGE);
+    unwritten(scratch, SEQLZ_SCRATCH);
 
     r_fast = seqlz_decode(tables, src, (unsigned int)size, fast, scratch);
     r_ref = seqlz_ref_decode(&ref, src, size, slow);

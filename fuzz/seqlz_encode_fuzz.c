@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "seqlz.h"
+#include "unwritten.h"
 
 #define DST_CAP (2U * SEQLZ_PAGE)
 
@@ -56,6 +57,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     for (k = 0; k < n_lit; k++)
         literals[k] = (unsigned char)(k * 0x9e3779b1U >> 24);
 
+    unwritten(dst, DST_CAP);
+    unwritten(scratch, SEQLZ_SCRATCH);
     len = seqlz_encode(tables, seq, n, literals, n_lit, dst, DST_CAP, data[0] & 2);
     if (len == 0)
         return 0;
@@ -74,6 +77,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             page[pos] = page[pos - seq[k].offset];
     }
     memset(out, 0xa5, SEQLZ_PAGE);
+    unwritten(out, SEQLZ_PAGE);
     if (pos != SEQLZ_PAGE || seqlz_decode(tables, dst, len, out, scratch) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0)
         abort();
     return 0;

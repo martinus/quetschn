@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: MIT OR GPL-2.0-only
+# Continuous fuzzing with ClusterFuzzLite, the fuzz targets of fuzz/ as .clusterfuzzlite/build.sh builds
+# them. Once a day, an hour per sanitizer, with the corpus of the runs before, which ClusterFuzzLite
+# keeps as an artifact of this workflow. On a PR that changes the codec or the targets, 10 minutes with
+# ASan, from that corpus. Not part of ci-ok: a crash shows as a failed run and as an artifact, the
+# input that caused it.
+name: ClusterFuzzLite
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'fuzz/**'
+      - 'tools/seqlz-ref/seqlz_ref.[ch]'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/cflite.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# actions: read for the corpus, an artifact of earlier runs
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: ${{ github.event_name == 'pull_request' && fromJSON('["address"]') || fromJSON('["address", "undefined", "memory"]') }}
+    name: fuzz (${{ matrix.sanitizer }})
+    steps:
+      - uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: c
+          sanitizer: ${{ matrix.sanitizer }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: ${{ github.event_name == 'pull_request' && 600 || 3600 }}
+          mode: ${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }}
+          sanitizer: ${{ matrix.sanitizer }}

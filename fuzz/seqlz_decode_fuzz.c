@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "seqlz.h"
+#include "unwritten.h"
 
 static struct seqlz_tables* tables;
 static unsigned char *with, *without, *scratch;
@@ -44,6 +45,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     memset(with, 0xa5, SEQLZ_PAGE);
     memset(without, 0x5a, SEQLZ_PAGE);
     memset(scratch, 0x3c, SEQLZ_SCRATCH);
+    unwritten(with, SEQLZ_PAGE);
+    unwritten(without, SEQLZ_PAGE);
+    unwritten(scratch, SEQLZ_SCRATCH);
 
     r_with = seqlz_decode(tables, src, (unsigned int)size, with, scratch);
     r_without = seqlz_decode(tables, src, (unsigned int)size, without, NULL);

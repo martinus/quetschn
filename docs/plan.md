@@ -760,12 +760,17 @@ This phase exists because of §2.2: everything Biggers asked for, before the fir
     terminate, for truncated, damaged and adversarial input;
   - [x] the roundtrip of any page;
   - [x] the fast decoder against the reference decoder;
-  - [ ] continuous fuzzing in CI with ClusterFuzzLite. OSS-Fuzz only takes projects with many users or
-    importance for critical infrastructure, so a new codec will likely be turned down before it has
-    users. Apply anyway, and again once there are users. *"We run under OSS-Fuzz"* would be a strong,
-    checkable answer to objection 3, but the plan does not depend on it.
+  - [x] continuous fuzzing in CI with ClusterFuzzLite, since 9th October 2026
+    (`.github/workflows/cflite.yml`): once a day an hour each with ASan, UBSan and MSan, from the corpus
+    of the runs before, and 10 minutes with ASan on a PR that changes the codec. OSS-Fuzz only takes
+    projects with many users or importance for critical infrastructure, so a new codec will likely be
+    turned down before it has users. Apply anyway, and again once there are users. *"We run under
+    OSS-Fuzz"* would be a strong, checkable answer to objection 3, but the plan does not depend on it.
 - [x] ASan and UBSan in CI, big-endian in CI.
-- [ ] MSan.
+- [x] MSan, since 9th October 2026: the fuzz targets, in CI and in ClusterFuzzLite. They mark the
+  page, the scratch and the matcher's table as unwritten before every input, so a read of a byte the
+  codec did not write for that input is reported. Not the doctest binary: libstdc++ is not built with
+  MSan, and the first report is in its `std::map`, before any test runs.
 - [x] A bound on the worst-case runtime, stated and measured: at most `PAGE / 4 + 1` sequences, and the
   slowest pages found cost 1.14 times the p99 of real pages to compress and 1.59 times to decode
   ([explored-designs.md, "The worst case"](explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
@@ -928,8 +933,8 @@ As of 9th October 2026:
   tables of 6th October, 1.5 billion with libFuzzer on the new ones, no difference found. ASan and UBSan
   in CI, big-endian on s390x in CI. The worst case is measured: against its own p99,
   `seqlz-fast-lit`'s slowest pages cost 1.14 times to compress and 1.59 times to decode, the least of
-  it, `lz4`, `lzo-rle` and `zstd`. The tests run with 16 KiB pages too, in CI. Open: MSan, continuous
-  fuzzing (ClusterFuzzLite), and an AFL++ run on the new tables (AFL++ is not installed any more).
+  it, `lz4`, `lzo-rle` and `zstd`. The tests run with 16 KiB pages too, in CI. MSan on the fuzz targets
+  and continuous fuzzing with ClusterFuzzLite since 9th October. Open: an AFL++ run on the new tables.
 - **Phase 5: done, the gate passed.** `tools/kernel-port/` writes `lib/seqlz/`, a minimal
   `include/linux/seqlz.h`, the zram backend and KUnit tests into a kernel tree; CI builds it for
   x86-64, arm64, arm and s390 and runs the KUnit tests. `stress.sh` swapped 34.9 million pages through
@@ -971,4 +976,4 @@ Next, in this order:
    zram splits them, is open (§3.3).
 5. Phase 5 again if the maintainers want another form than a zram backend, e.g. an acomp algorithm:
    `lib/seqlz/` stays, the glue changes, and `stress.sh` runs again.
-6. MSan, continuous fuzzing, and AFL++ again for the gate of Phase 4.
+6. AFL++ again for the gate of Phase 4, on the current codec.

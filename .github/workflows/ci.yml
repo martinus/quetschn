@@ -78,7 +78,8 @@ jobs:
           grep -E 'assertions: +[1-9][0-9]* \| +[1-9][0-9]* passed \| +0 failed' test.log
 
   # The decoder on any input and the roundtrip of any page, a minute each, at the same time, with ASan
-  # and UBSan. The long runs are fuzz/afl.sh. An input that fails is kept as an artifact.
+  # and UBSan, and once with MSan instead, which sees a read of a byte the codec did not write. The long
+  # runs are fuzz/afl.sh. An input that fails is kept as an artifact.
   fuzz:
     runs-on: ubuntu-latest
     strategy:
@@ -89,6 +90,7 @@ jobs:
           # the decoder's loop for in-order cores, which arm64 kernels take on A53, A55, A510 and A520
           - {name: 4k-in-order, cmake: '-DCMAKE_C_FLAGS=-DSEQLZ_IN_ORDER=1'}
           - {name: 16k, cmake: '-DQUETSCHN_PAGE_BITS=14'}
+          - {name: 4k-msan, cmake: '-DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON'}
     name: fuzz (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v7
