@@ -80,6 +80,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built](#a-literal-table-per-half-or-quarter-of-the-literals-002-to-005-points-not-built)
 - [The token's table by the offset before it: 3 and 12 bytes per page, not kept](#the-tokens-table-by-the-offset-before-it-3-and-12-bytes-per-page-not-kept)
 - [Per page: its own literal table and one of 4 token tables, measured, not kept](#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)
+- [A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
 - [Pages without matches but with literals that code well: coded now](#pages-without-matches-but-with-literals-that-code-well-coded-now)
 - [Coded literals only where they save 51 bytes: 2.7 µs per page written less on the A55, kept](#coded-literals-only-where-they-save-51-bytes-27-µs-per-page-written-less-on-the-a55-kept)
 - [seqlz-fast-lit by the score: no budget, offsets in steps of 8](#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)
@@ -88,6 +89,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 **seqlz: the matcher**
 
+- [Levels 3 and 4: a hash chain priced by the tables, as small as `zstd` 3 on two of four dumps and faster to write and read, not kept](#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)
 - [The matcher without its step: writes 1% to 3% faster, kept](#the-matcher-without-its-step-writes-1-to-3-faster-kept)
 - [The matcher without its step against the other codecs: 0.02 to 0.05 us per page less](#the-matcher-without-its-step-against-the-other-codecs-002-to-005-us-per-page-less)
 - [The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept](#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)
@@ -927,6 +929,336 @@ builds from (#103).
 
 Not measured: a reader and a writer on the same CPU, the case the series is for. Patch 09's commit
 message has fio numbers for it, with `zstd` at level 12.
+
+## Levels 3 and 4: a hash chain priced by the tables, as small as `zstd` 3 on two of four dumps and faster to write and read, not kept
+
+*`seqlz_compress_hc()`, the same format and decoder as `seqlz-fast-lit`, finds the sequences with a
+hash chain and takes the match that saves the most bits by the fixed tables, with one lazy step. On
+the full dumps, level 3 stores 2.7% to 4.3% less than level 2, as much as `zstd` 3 on the first
+desktop dump and 0.6% less on the first phone dump. It writes a page in 1.8 to 1.9 times the time of
+level 2 and in 23% to 31% less time than `zstd` 3, and reads it 0.08 to 0.14 µs faster than level 2,
+in less than half of `zstd`'s time. Level 4 searches deeper, 1.2% to 1.7% less than level 3, for 1.5
+to 1.8 times its write time. With the swap times of the kernel VM level 3 follows level 2 on the hull
+at 4.2 and 8.3 bytes per µs on two of four dumps, and `zstd` 3 drops off one of them; on the other two
+`zstd` 3 is 3.5% and 5.5% smaller, because it codes the literals with a table of the page's own. Not
+kept: level 3 pays only where a µs of writing is worth less than 4 to 8 bytes, and that is
+`zstd`'s place, not the one of a codec that has to stay close to `lz4`.* Code: the branch `seqlz-hc`,
+#143, closed without merging: `seqlz_compress_hc()` and `hc_match_page()` in its `src/seqlz.c`,
+`seqlz-hc` in its harness (`src/zram_seqlz.c`), levels 3 and 4 in its `tools/kernel-port/`,
+`tools/zram-vm/` and `tools/zram-phone/`. Issue #139.
+
+**The matcher.** Every position of the page goes into a hash chain: `head[]` has the newest position
+for each hash of 5 bytes, 2048 of them, `chain[]` for each position the one before with the same hash.
+At a position where the repeated offset or the newest position of the chain has the same 4 bytes, the
+search goes 4 steps down the chain, 16 at level 4. A match saves its length in literals at 6.5 bits
+each and costs its token, its offset's bits and its length value, by the code lengths of the tables.
+The one with the most bits saved wins, so the repeated offset beats a match one byte longer 300 bytes
+back. Then one lazy step, two at level 4: a match one position on that saves more bits is taken
+instead. Level 3 puts the last 2 positions of a match into the chain, level 4 all of them. The work
+memory is 2048 heads and one link per position, 12 288 bytes; with the decoder's scratch 16 400 bytes
+per CPU, below `lz4`'s 16 416 (C5), whichever context C5 limits (plan.md §3.3).
+
+**How it got there.** `seqlz-hc` as a prototype in the harness, every parameter at run time, sizes on
+the 20 000-page samples of four dumps (bytes per page in the zsmalloc model): desktop 1 is the first
+desktop dump, of 23rd September, desktop 2 the one of 28th September, phone 1 and 2 the Mi 9T's dumps
+of 3rd and 4th October; the time in TSC ticks per page from a loop over the 2000 pages of
+the first desktop dump's small sample, without the kernel's flags:
+
+| variant | desktop 1 | desktop 2 | phone 1 | phone 2 | ticks per page |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| level 2 | 999.5 | 1237.2 | 708.4 | 899.0 | 21 100 |
+| first prototype: depth 8, one lazy step, 4096 heads | 954.2 | | | | |
+| depth 4, no lazy step | 972.7 | 1193.3 | 692.0 | 878.7 | |
+| depth 4, one lazy step | 960.3 | 1172.6 | 682.0 | 867.8 | |
+| depth 8, one lazy step | 957.9 | 1168.3 | 680.3 | 865.5 | |
+| depth 8, two lazy steps | 957.2 | 1167.4 | 679.7 | 865.0 | |
+| level 3: depth 4, one lazy step, 2048 heads, the last 2 positions of a match | 967.1 | 1186.1 | 684.9 | 872.7 | 39 500 |
+| level 4: depth 16, two lazy steps, every position | 954.2 | 1163.5 | 677.8 | 862.9 | 68 300 |
+
+The rows without ticks put every position of a match into the chain and have 4096 heads. The first
+prototype compressed a page in 24.5 µs in the harness, level 2 in 5.0 and `zstd` 3 in 12.1. What
+mattered for the time, in the order it was found:
+
+* **The candidates' matches counted in full.** The first prototype called `count()` 1855 times per page
+  and compared 19 700 bytes, on pages this repetitive most positions of a chain match. Counting a
+  candidate only where its first 4 bytes and the 4 up to the best length so far match, as `lz4hc`
+  does, cut that to 479 calls for 0.1% of memory. A match one byte longer with a dearer offset can
+  still win, a shorter one with a cheaper offset is lost.
+* **The positions without a match.** The search ran at every position: the base loop at depth 1, no
+  lazy step, took 2.6 times level 2's cycles for the same matches. Now a loop like `match_page()`'s
+  puts each position into the chain and searches only where the repeated offset or the newest position
+  with the same hash have the same 4 bytes, 0.2% more memory.
+* **The lazy step for longer matches.** The lazy step counts a match one position on only if it is
+  longer than the current one less 1: 0.8 to 1 µs per page less, the same bytes. Without the lazy step
+  for matches of 24 bytes and more, pages were 0.1% to 0.3% larger; it stops at 64.
+* **The positions inside a match.** All of them into the chain: 0.2% to 0.9% smaller than only the
+  last 2; the first 8 of them got most of it, for 8% more time. Level 3 has the last 2, level 4 all.
+* **2048 heads instead of 4096**, so that compression and decompression fit C5 together: 0.1% to 0.2%
+  more memory. With 2048 heads the newest position of a hash is often one of other bytes, and the
+  search did not start. Level 4 also starts where the second position of the chain matches, 0.25% to
+  0.3% less memory for 3% to 4% more time; at level 3 the same bytes cost 7% more time. Searching at
+  every position at level 4: 0.1% less for 29% more time.
+* **No gain:** literal prices from 6 to 7.5 bits, within 0.1% of each other; hashing 4 positions of a
+  match from one load; the price of the literal length value out of the loop over candidates; a
+  literal price per page, from what the best literal table costs the page's bytes, within 0.1% of the
+  constant one.
+
+**PC, userspace.** `tools/quick-bench.sh`, sizes on the whole dumps, times on their 20 000-page
+samples, CPU 2 at 4.5 GHz, boost off, gcc 16.2.1 with the kernel's flags, the tables of 7 October.
+Σ zsmalloc cost against the pages' size:
+
+| codec | desktop 1 | desktop 2 | phone 1 | phone 2 |
+| --- | ---: | ---: | ---: | ---: |
+| `lz4` | 34.5% | 39.6% | 25.8% | 30.5% |
+| `seqlz-fast-lit`, level 2 | 24.4% | 30.3% | 17.2% | 21.9% |
+| level 3 | 23.6% | 29.0% | 16.7% | 21.3% |
+| level 4 | 23.3% | 28.5% | 16.5% | 21.0% |
+| `zstd` 3 | 23.6% | 27.3% | 16.8% | 20.9% |
+
+Means and p99 per page on the samples, µs, the median of 5 processes for the cold read:
+
+| codec | write, mean / p99 | cold read, mean / p99 | µs per page written |
+| --- | --- | --- | --- |
+| desktop 1: level 2 | 4.89 / 9.62 | 1.64 / 3.14 | 5.45 |
+| level 3 | 9.10 / 18.90 | 1.51 / 3.08 | 9.61 |
+| level 4 | 15.44 / 35.47 | 1.46 / 3.04 | 15.94 |
+| `zstd` 3 | 11.92 / 22.45 | 3.60 / 6.80 | 13.14 |
+| desktop 2: level 2 | 5.52 / 9.57 | 1.80 / 3.04 | 6.13 |
+| level 3 | 9.78 / 18.26 | 1.66 / 2.95 | 10.34 |
+| level 4 | 15.09 / 29.30 | 1.60 / 2.84 | 15.64 |
+| `zstd` 3 | 12.65 / 22.36 | 3.77 / 6.38 | 13.93 |
+| phone 1: level 2 | 3.50 / 8.33 | 1.31 / 2.87 | 3.95 |
+| level 3 | 6.51 / 16.93 | 1.23 / 2.84 | 6.93 |
+| level 4 | 11.92 / 30.99 | 1.23 / 2.78 | 12.33 |
+| `zstd` 3 | 9.38 / 21.12 | 2.87 / 6.22 | 10.36 |
+| phone 2: level 2 | 4.00 / 8.91 | 1.41 / 2.98 | 4.48 |
+| level 3 | 7.25 / 17.41 | 1.31 / 2.92 | 7.69 |
+| level 4 | 12.65 / 30.45 | 1.28 / 2.90 | 13.08 |
+| `zstd` 3 | 10.43 / 21.04 | 3.19 / 6.40 | 11.51 |
+
+The hull of `quetschn-score`, `r = 0.34`, bytes per µs: level 2 to level 3 at 7.8, 7.9 and 8.2 on
+desktop 1 and both phone dumps, then level 4 at 2.0 and 1.3, or `zstd` 3 at 3.1 on the second phone
+dump. On the second desktop dump level 3 is not on it: `zstd` 3 is 119 bytes per page below level 2
+for 7.8 µs, 15.3 bytes per µs, and level 3 gets 51 bytes for 4.2 µs.
+
+**Where `zstd` 3 is smaller: the literals.** On the second desktop dump's sample, level 3 needs 68
+bytes per page more than `zstd` 3, most of it on pages that level 3 stores in 1.5 to 3.5 KiB: 120 to 500
+bytes more each. Their literals have an order-0 entropy of about 2300 bytes per page, and the best of
+the 8 fixed literal tables needs 3400 to 4400; `zstd` codes them with a table of the page's own. A table
+per page, priced at the literals' entropy and 64 bytes for its lengths, would save 47 bytes per page
+there, 43 on the second phone dump, 31 and 28 on the first ones. That is a change of the format, and
+it was measured with `seqlz-opt` before:
+[seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept),
+and for level 3 after it: [A literal table of the page's own at levels 3 and 4](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept). The other thing `zstd` has
+and seqlz has not, three repeated offsets instead of one, is worth less: of level 3's matches 3.5% to
+7.4% have the offset before the last one, and 2.1% to 4.0% the one before that, and their offset bits
+are 4.8 to 7.3 and 2.9 to 4.6 bytes per page on the samples of desktop 1, desktop 2 and phone 2, before
+what more token symbols would cost.
+
+**The writes' p99 (C2).** Level 3's p99 is about twice level 2's, 16.9 to 18.9 µs against 8.3 to
+9.6, below `zstd` 3's 21.0 to 22.5, and its slowest page took 23 to 25 µs, `zstd` 3's 25 to 27. The
+slowest 1% of the first desktop dump's sample are no outliers of the matcher: 20.2 µs on average, 2.5
+times level 2 on the same pages and as long as `zstd` 3 on them, pages of 1.8 KiB on average with many
+matches. The time per page against level 2 is highest for pages of 0.5 to 2 KiB, 1.9 times, and 1.0
+for pages stored raw.
+
+**In the kernel.** VM of `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, `MODE=swap`, the
+backend's prefetch, 20 000 pages per dump, CPU 2 at 4.5 GHz, boost off, 3 boots per dump with the
+order rotated, the means over the boots; bytes per page of zram's `mem_used_total`, the swap-out with
+one call per page and the swap-in with the compressed data flushed, µs, `r = 0.34`:
+
+| codec | bytes per page | swap-out | swap-in | µs per page written |
+| --- | ---: | ---: | ---: | ---: |
+| first desktop dump: `lz4` | 1450.3 | 6.41 | 3.24 | 7.52 |
+| level 2 | 1037.5 | 7.37 | 3.74 | 8.64 |
+| level 3 | 1019.0 | 11.79 | 3.71 | 13.06 |
+| level 4 | 992.4 | 18.23 | 3.69 | 19.48 |
+| `zstd` 3 | 1012.3 | 14.63 | 6.44 | 16.82 |
+| dump of 24th September: `lz4` | 1754.4 | 6.99 | 3.29 | 8.10 |
+| level 2 | 1284.4 | 8.20 | 3.98 | 9.55 |
+| level 3 | 1240.8 | 13.09 | 3.97 | 14.44 |
+| level 4 | 1227.7 | 19.13 | 3.94 | 20.47 |
+| `zstd` 3 | 1197.4 | 15.78 | 6.72 | 18.06 |
+| dump of 28th September: `lz4` | 1667.6 | 6.85 | 3.22 | 7.95 |
+| level 2 | 1291.6 | 8.02 | 4.04 | 9.39 |
+| level 3 | 1237.3 | 12.61 | 4.05 | 13.99 |
+| level 4 | 1215.2 | 17.95 | 4.00 | 19.31 |
+| `zstd` 3 | 1168.9 | 15.26 | 6.61 | 17.51 |
+| second phone dump: `lz4` | 1291.2 | 5.84 | 3.12 | 6.90 |
+| level 2 | 944.5 | 6.58 | 3.51 | 7.77 |
+| level 3 | 915.4 | 10.11 | 3.48 | 11.29 |
+| level 4 | 909.5 | 15.63 | 3.47 | 16.81 |
+| `zstd` 3 | 906.8 | 13.43 | 6.04 | 15.48 |
+
+Each mean moved by at most 0.51 µs between the boots, `zstd` 3's swap-out, the others' by 0.41 or
+less. In the kernel level 3 writes a page 3.5 to 4.9 µs slower than level 2, 2.7 to 3.3 µs faster than
+`zstd` 3, and swaps it in as fast as level 2, 2.6 to 2.8 µs faster than `zstd` 3. The hull of
+`quetschn-score`: on the first desktop dump level 2, level 3 at 4.2 bytes per µs, level 4 at 4.1, and
+`zstd` 3 off it, larger than level 4 and only 6.7 bytes smaller than level 3 for 3.8 µs more; on the
+phone dump level 2, level 3 at 8.3, `zstd` 3 at 2.1. On the dumps of 24th and 28th September `zstd` 3
+follows level 2 directly, at 10.2 and 15.1 bytes per µs, where level 3 has 8.9 and 11.8.
+
+**On the phone, in its own kernel.** Mi 9T, `tools/zram-phone/run.sh`, each codec alone in its own
+process, 3 rounds, the A55 at 1804.8 MHz and the A76 at 2208 MHz, `COOL=45`, the memory's clocks not
+fixed, 19 752 pages of the second phone dump without the same-filled ones; zram's `mem_used_total` per
+page, and the means over the rounds in µs, the cold read after 2 MiB of other data:
+
+| codec | bytes per page | A55 write | A55 warm / cold read | A76 write | A76 warm / cold read |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1304.8 | 26.84 | 9.72 / 45.69 | 9.95 | 3.75 / 6.35 |
+| level 2 | 937.3 | 35.39 | 13.59 / 57.19 | 12.16 | 4.35 / 8.04 |
+| level 3 | 911.6 | 65.09 | 13.23 / 57.80 | 22.59 | 4.28 / 7.85 |
+| level 4 | 902.7 | 114.99 | 13.18 / 57.52 | 40.22 | 4.22 / 7.76 |
+| `zstd` | 899.0 | 124.31 | 41.18 / 97.86 | 33.90 | 15.50 / 21.60 |
+
+The rounds of a write differ by at most 0.5 µs, `zstd`'s by 4.4. Level 3 writes in 1.84 times level
+2's time on the A55 and 1.86 times on the A76, half of `zstd`'s on the A55 and two thirds on the A76,
+and reads as fast as level 2, 3.1 and 3.6 times as fast as `zstd` warm, 1.7 and 2.8 times cold. The
+phone's `zstd` module, at its default level, stores 1.4% less than level 3, level 4 0.4% more than `zstd`. The score with `r = 0.34`, from level 2 on: on the
+A76 level 3 at 2.5 bytes per µs, then `zstd` at 0.8, and level 4 off the hull; on the A55 level 3 at
+0.86, level 4 at 0.18, then `zstd` at 0.16. On the little core every step after level 2 is dear,
+because its writes take 3 times as long as on the big core.
+
+Tests: pages of all kinds come back at both levels, with a state shared over pages, and are the bytes
+`seqlz_encode()` writes for `seqlz_find_hc()`'s sequences; the spec decoder decodes them; a page of
+another page's bytes has no match; nothing is read behind the page; any `dst` size. Three tests of the
+choices, each failing under its mutation: an older position of the chain with a longer match (depth 1),
+a longer match one position on (no lazy step), the repeated offset against a match one byte longer at a
+dearer offset (prices by length). Pages of words: level 3 at least 2% smaller than level 2, level 4 at
+least 0.5% smaller than level 3, failing with level 4's parameters set to level 3's. The roundtrip fuzz
+target compresses at levels 3 and 4 too, 30 s per target without a finding, and the same-bytes test of
+CI has them. KUnit runs all four levels and checks that each is smaller than the one before, which
+fails with level 3 written as level 2. `tools/kernel-port/stress.sh` with levels 3 and 4, 3 minutes
+each under KASAN, lockdep and UBSan: 11.2 million pages swapped out, none different, no report, the zram
+selftests passed, and `mm_stat` of 20 000 pages of the first desktop dump the model's to the byte.
+
+Not measured: level 3 with 16 KiB pages, where the chain needs 48 KiB per CPU.
+
+**Why not kept.** Level 2 gets 300 to 400 bytes per µs against `lz4` on the hull, level 3 another 4 to
+8 against level 2, and on two of four dumps in the VM it is not on the hull at all. Level 4 is on it on
+one dump. Who values memory that much more than time uses `zstd` 3, which is smaller on two of the dumps
+and slower on all of them. The levels need no change of the format or the decoder, but 850 lines in the
+codec, its tests and the kernel port, 12 KiB of work memory per CPU, and two more levels for the patch
+to explain and to test. `seqlz-fast-lit` stays at levels 1 and 2. The measurements hold for the branch
+as long as the format and the tables do not change.
+
+## A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept
+
+*Levels 3 and 4 coded a page's literals with a Huffman table of the page's own where that and its
+description saved at least 16 bytes against the best of the 8 fixed tables. In the kernel VM level 3
+stored 2.5% to 3.4% less than with the fixed tables alone: less than `zstd` 3 on the first desktop
+dump and the second phone dump, as much on the dump of 24th September and 2.3% more on the one of
+28th September. It took 2.4 to 2.6 µs more per swap-out and 0.11 to 0.19 µs more per swap-in, and a
+faster encoder got about half of the write time back on the PC later. Not kept, because it is a second
+way to code the literals: a table description with its own rules for an invalid one, a parser of untrusted
+input in the decoder and in both reference decoders, about 900 lines with the tests, for one level.*
+Code: the branch `seqlz-own-lit`, `own_code()`, `own_lengths()`, `code_literals()` and `own_table()`
+in its `src/seqlz.c`, the format in its `docs/format.md`, "A table of the page's own". Issue #139,
+after [levels 3 and 4](#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept).
+
+**Why it was measured again.** Where `zstd` 3 was still smaller than level 3, the literals were the
+difference: on the pages it won by most, their order-0 entropy was about 2300 bytes and the best fixed
+table needed 3400 to 4400. [seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept)
+had not kept a table per page, because its decoder built the table in a scratch 3.3 KB larger, which
+does not fit C5 next to level 3's hash chain, and cold reads got 0.8 to 1 µs slower at p99. This time
+the decoder needs no memory of its own.
+
+**The format.** Byte 2 of coded literals got a flag, bit 6; with it, a description of the table follows
+the stream sizes. It lists the bytes by code length from 1 to 10, within a length by value, each as its
+distance to the byte before, with a fixed code of 10 symbols of at most 6 bits, and it ends where the
+code is complete. That is the order of the canonical codes, so a decoder writes each byte's entries of
+the decode table of 1024 entries while it reads the description, and it writes them into the page it
+decodes into, which is free until the literals are decoded. Offline, on the code lengths of the pages
+that gain, 20 000-page samples of three dumps, bytes saved per page after the description, every way
+coded with codes of at most 6 bits:
+
+| how the 256 lengths are sent | desktop 1 | desktop 2 | phone 2 |
+| --- | ---: | ---: | ---: |
+| each byte's length, by the length the best fixed table gives it | 24.4 | 43.0 | 32.9 |
+| in the order of the fixed table's lengths, runs of absent bytes, one code per fixed length | 30.4 | 58.7 | 37.1 |
+| byte order, runs of absent bytes, one code | 28.0 | 52.7 | 35.3 |
+| by length, within a length by byte, as distances, one code (built) | 26.6 | 51.1 | 34.2 |
+
+The one built costs 1 to 2.4 bytes per page more than byte order with runs, and is the one a decoder
+turns into a table without a second pass. It took 2450 TSC ticks per table on the second phone dump's
+pages, 163 symbols each on average, after 2773 in the first version. On the PC, cold decodes of the
+pages that went from a fixed table to their own were between 0.8% faster and 6.5% slower on three
+dumps.
+
+**The encoder.** Level 3 in TSC ticks per page on the PC, the 20 000-page samples of the first desktop
+dump and the second phone dump, the best of 5 loops over all pages, CPU 2 at 4.5 GHz, boost off, gcc
+16.2.1 with the kernel's flags; compressed bytes per page, not the zsmalloc model:
+
+| variant | desktop 1 ticks | phone 2 ticks | desktop 1 bytes | phone 2 bytes |
+| --- | ---: | ---: | ---: | ---: |
+| fixed tables only | 38 500 | 31 100 | 929.7 | 838.4 |
+| own table, a Huffman code of at most 10 bits | 47 800 | 40 400 | 910.2 | 817.5 |
+| lengths without sorting | 46 800 | 39 400 | 910.4 | 817.7 |
+| and an entropy check first | 43 000 | 35 600 | 910.4 | 817.7 |
+
+* **The Huffman code** was Moffat and Katajainen's in-place algorithm on the bytes sorted by
+  frequency, halving the weights where a code got longer than 10 bits. With the histogram, the
+  canonical codes, the description and the streams' sizes it was 9300 ticks per page; `perf stat`
+  showed about 23 000 instructions more per page than the fixed tables, and 47 more mispredictions.
+* **Lengths without sorting.** Each byte gets the shortest length `l` with `freq * 2^l >= literals`,
+  at most 10 bits, then the code is made complete in the order of how much a byte gains from a code one
+  bit shorter, from 16 buckets. Offline that costs 0.02% of the literals' bits against the Huffman
+  code, 0.2 bytes per page. It saved only 1000 ticks: the loops over the bytes cost about as much as the
+  sort did.
+* **The entropy check.** The code was built on 95% of the pages and won on 25%. The literals' entropy,
+  from a table of 32 logarithms, and 0.45 bytes of description per byte with a code say before the code
+  is built whether it can save 16 bytes against the fixed table and stay below the bytes where the
+  literals stay raw. Offline that builds the code on 21% to 27% of the pages it was built on before, for 0.01
+  to 0.02 bytes per page; measured the same bytes, 3800 ticks less.
+* **No gain:** the histogram counted by the matcher, while it copies the literals, 1270 and 250 ticks
+  more; counted in the fixed tables' pass over the literals, 350 to 450 more; four histograms instead
+  of two, within the noise. The fixed tables' cost cannot replace the histogram either: pages gain
+  from their own table where the fixed ones fit badly, and building the histogram only where they fit
+  well loses 2.7 and 5.1 bytes per page. The streams' sizes from the bits written instead of a pass of
+  their own would save 370 ticks at most.
+
+That leaves 4500 ticks per page more than the fixed tables, 12% and 15% more per write: the histogram
+alone costs 1600, the fixed tables' cost pass 800.
+
+**Kernel VM.** `tools/zram-vm/run.sh MODE=swap BOOTS=3`, the 20 000-page samples, the means of 3 boots
+in µs; an encoder like the second row's above. `zstd` 3 is zram's default:
+
+| dump | fixed: bytes / swap-out / swap-in | own: bytes / swap-out / swap-in | `zstd` 3: bytes / swap-out / swap-in |
+| --- | --- | --- | --- |
+| desktop 1 | 1019.0 / 11.85 / 3.70 | 987.3 / 14.28 / 3.81 | 1012.3 / 14.63 / 6.43 |
+| 24th September | 1240.8 / 13.15 / 3.95 | 1200.3 / 15.78 / 4.11 | 1197.4 / 15.84 / 6.72 |
+| 28th September | 1237.3 / 12.62 / 4.04 | 1195.6 / 15.08 / 4.23 | 1168.9 / 15.27 / 6.63 |
+| phone 2 | 915.4 / 10.13 / 3.46 | 892.1 / 12.58 / 3.58 | 906.8 / 13.32 / 6.03 |
+
+The boots of a codec differ by at most 0.27 µs. With the score's `r = 0.34`, level 3 with its own tables
+follows `seqlz-fast-lit` on the hull of three dumps, at 7.3, 11.1 and 8.7 bytes per µs, and level 3 with
+the fixed tables is on none of them; on the dump of 28th September `zstd` 3 stays next.
+
+**Phone.** The Mi 9T, zram in its own kernel, `tools/zram-phone/run.sh`, the second phone dump, 19 752
+pages, means in µs, the cold read after 2 MiB of other data; "own or fixed" is what was built, "own
+only" every coded page with its own table:
+
+| level 3 | bytes per page | A55 write | A55 warm / cold read | A76 write | A76 warm / cold read |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fixed tables | 911.6 | 65.0 | 13.31 / 57.2 | 22.6 | 4.20 / 7.91 |
+| own or fixed | 889.4 | 83.9 | 14.15 / 56.3 | 29.2 | 4.58 / 8.25 |
+| own only | 894.8 | 84.7 | 14.46 / 59.1 | 29.6 | 4.65 / 8.51 |
+| `zstd` | 899.0 | 123.7 | 41.1 / 103.9 | 34.2 | 15.4 / 21.3 |
+
+On the A55 the writes took 29% more, before the entropy check; cold reads are the same, the fixed
+table also has to come from memory. "Own only" is 5.4 bytes per page larger and slower to read, so the
+fixed tables cannot go: they are also what decides fastest whether coding the literals pays at all.
+
+**Level 2 with its own tables**, on the PC only, with the entropy check: 2.0% and 2.4% fewer bytes for
+21% and 25% more time per write, 961.1 to 941.4 and 863.9 to 843.1 bytes per page for 20 400 to 24 800
+and 16 900 to 21 200 ticks. Level 2 has to stay close to `lz4`, so this was not tried in the VM.
+
+**Why not kept.** 2.5% to 3.4% at level 3 bring it to `zstd` 3's size on three of four dumps, which is
+what level 3 is for. The price is the format: a flag, a description with its own code and its rules for
+an invalid one, a decoder path that builds a table from untrusted input, and the same in both reference
+decoders, for a level that is not kept either. `seqlz-fast-lit` stays with one of 8 fixed literal
+tables per page. If the format ever gets a second way to code the literals anyway, the branch is the
+place to start, but only the PC measured the encoder with the entropy check.
 
 ## The first runs with dictionaries, Phases 0 to 2
 
@@ -5901,7 +6233,8 @@ one multiply).
 * **A better matcher for seqlz-fast**: `lz4hc` level 3's matches still give 3% to 7% fewer bytes,
   but it must not get slower. What is left of the gap is the search for older and longer matches,
   and every way to search more measured so far costs more than it saves; see "The matcher without
-  its step".
+  its step". Levels 3 and 4 search more, 2.7% to 5.9% less for about twice and 3 times the write
+  time, and are not kept, see "Levels 3 and 4".
 * **C5 with 16 KiB pages**: `seqlz-fast-lit` needs 32 816 bytes per CPU, `lz4` 16 440. Decoding the
   literals into the page fixes it and was built, but made cold reads on 4 KiB pages slower in the
   kernel, for a reason not found; see "16 KiB pages, tuned". To decide with a kernel on 16 KiB pages.
