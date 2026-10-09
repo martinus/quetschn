@@ -3,9 +3,9 @@
 #define SEQLZ_PAGE_LZ_H
 
 /*
- * The parts of seqlz that are plain LZ: the matcher, which finds the sequences
- * of a page, and the decoder's copies of literals and matches. All of it is
- * static inline, so that it ends up inside the loops of seqlz.c.
+ * The part of seqlz that is plain LZ: the matcher, which finds the sequences
+ * of a page. All of it is static inline, so that it ends up inside the loops of
+ * seqlz.c.
  */
 
 #include "seqlz_compat.h"
@@ -246,134 +246,6 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 		}
 	}
 	emit(ctx, src + anchor, PAGE_LZ_PAGE - anchor, 0, 0);
-}
-
-/*
- * The copies below are __builtin_memcpy() of 8 bytes, as lib/lz4's
- * LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang did not inline the kernel's
- * memcpy() in the Mi 9T's 4.14, and every copy of 8 bytes was a call.
- */
-
-/*
- * Copies the nl literals of a sequence from lit to d; the caller has checked
- * that they fit. It copies 16 bytes at a time, also past nl, as long as 16
- * bytes fit in the page and in the input: what it writes past nl, the next
- * sequence overwrites. Only near the end of the page or of the input does it
- * copy byte by byte, at most 15 bytes.
- */
-static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
-					  const u8 *s_end, unsigned int nl)
-{
-	unsigned int k = 0;
-
-	/*
-	 * Most sequences have fewer than 16 literals, so the first 16 bytes are
-	 * one copy without a loop, which could mispredict.
-	 */
-	if ((unsigned int)(d_end - d) >= 16U &&
-	    (unsigned int)(s_end - lit) >= 16U) {
-		u64 a, b;
-
-		__builtin_memcpy(&a, lit, 8);
-		__builtin_memcpy(&b, lit + 8, 8);
-		__builtin_memcpy(d, &a, 8);
-		__builtin_memcpy(d + 8, &b, 8);
-		k = 16;
-	}
-	while (k < nl && (unsigned int)(d_end - d) >= k + 16U &&
-	       (unsigned int)(s_end - lit) >= k + 16U) {
-		u64 a, b;
-
-		__builtin_memcpy(&a, lit + k, 8);
-		__builtin_memcpy(&b, lit + k + 8, 8);
-		__builtin_memcpy(d + k, &a, 8);
-		__builtin_memcpy(d + k + 8, &b, 8);
-		k += 16;
-	}
-	for (; k < nl; k++)
-		d[k] = lit[k];
-}
-
-/*
- * For an offset below 8, the largest multiple of it up to 8: how far a copy of
- * 8 bytes of a repeated pattern can go on, see copy_match().
- */
-static const u8 page_lz_step_for[8] = { 0, 8, 8, 6, 8, 5, 6, 7 };
-
-/*
- * Copies a match of len bytes that starts off bytes before d; the caller has
- * checked that it fits and that off points into the page. Like the literals, 8
- * bytes at a time as long as 8 bytes fit in the page, also past len; only the
- * last 7 bytes of a page are copied one by one. Copying byte by byte up to the
- * end of the page made the slowest pages 10 times slower than lz4.
- *
- * An offset below 8 overlaps the bytes it writes: off = 1 repeats one byte,
- * off = 2 two bytes, and so on. Then the off bytes before d are repeated to 8
- * bytes in a register, with shifts, and stored. The same 8 bytes fit again
- * every step bytes, a multiple of off, so the rest are stores of that register
- * only. Writing the first bytes one by one made each load wait for the stores
- * before it, and the loop over them mispredicted its end.
- */
-static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
-				       unsigned int len)
-{
-	unsigned int step = off >= 8 ? 8U : page_lz_step_for[off & 7U],
-		     back = off >= 8 ? off : step, k = 0;
-
-	if (off < 8) {
-		if ((unsigned int)(d_end - d) >= 8U) {
-			u64 w, pat;
-			unsigned int bits = 8U * off;
-
-			/*
-			 * reads d - off up to d - off + 7, which is below
-			 * d + 8 <= d_end: inside the page
-			 */
-			w = get_unaligned_le64(d - off);
-			pat = w & ((1ULL << bits) - 1ULL);
-			pat |= pat << bits;
-			pat |= (pat << ((2U * bits) & 63U)) &
-			       (0ULL - (u64)(2U * bits < 64U));
-			pat |= (pat << ((4U * bits) & 63U)) &
-			       (0ULL - (u64)(4U * bits < 64U));
-			put_unaligned_le64(pat, d);
-			/* the same 8 bytes every step bytes, stores only */
-			for (k = step;
-			     k < len && (unsigned int)(d_end - d) >= k + 8U;
-			     k += step)
-				put_unaligned_le64(pat, d + k);
-			back = 0;
-		} else {
-			back = 0; /* less than 8 bytes left: byte by byte */
-		}
-	} else if ((unsigned int)(d_end - d) >= 16U) {
-		/*
-		 * 79% of the matches are at most 16 bytes, so 16 bytes are
-		 * copied without a loop. With off >= 8 the second copy reads
-		 * bytes the first one wrote or that were there before, so the
-		 * order is right. 32 bytes, enough for 91% of the matches, made
-		 * the median page faster and the slowest ones slower: those
-		 * have many short matches, and copied 32 bytes for each.
-		 */
-		u64 a, b;
-
-		__builtin_memcpy(&a, d - off, 8);
-		__builtin_memcpy(d, &a, 8);
-		__builtin_memcpy(&b, d + 8 - off, 8);
-		__builtin_memcpy(d + 8, &b, 8);
-		k = 16;
-	}
-	if (back != 0) {
-		while (k < len && (unsigned int)(d_end - d) >= k + 8U) {
-			u64 w;
-
-			__builtin_memcpy(&w, d + k - back, 8);
-			__builtin_memcpy(d + k, &w, 8);
-			k += step;
-		}
-	}
-	for (; k < len; k++)
-		d[k] = *(d + k - off);
 }
 
 #endif

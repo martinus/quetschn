@@ -856,7 +856,7 @@ backend.
 ```text
 src/                        the codec, freestanding C
   seqlz.c, seqlz.h            encoder, decoder, the tables built from the code lengths
-  page_lz.h                   the matcher, and the copies of the decoder
+  page_lz.h                   the matcher
   seqlz_*tables*              the trained tables, part of the format
   zram_seqlz.c                seqlz as a zram backend calls it, for the harness
 bench/                      the harness: per-page timing, zsmalloc's cost model, table training

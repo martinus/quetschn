@@ -106,6 +106,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [A kernel built with clang dropped the decoder's prefetches: fixed, p99 back at gcc's](#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)
 - [The kernel's prefetch() on x86-64, fixed in the kernel: a patch gives clang its prefetches back](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)
 - [The macros of seqlz.c as inline functions: the same time in the VM, on the phone no more than where a module lands, kept](#the-macros-of-seqlzc-as-inline-functions-the-same-time-in-the-vm-on-the-phone-no-more-than-where-a-module-lands-kept)
+- [The kernel copy's long functions split into inline helpers: the same time in the VM and on the phone, kept](#the-kernel-copys-long-functions-split-into-inline-helpers-the-same-time-in-the-vm-and-on-the-phone-kept)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -4970,6 +4971,74 @@ within the 2 µs its rounds move. A first run without `mc` gave 14.55 against 14
 So the functions cost nothing that these runs can show. The order of the modules was not swapped; a run
 with the functions loaded first would show the place directly. With the functions, checkpatch has no
 `MACRO_ARG_REUSE` left in `tools/kernel-port/`.
+
+## The kernel copy's long functions split into inline helpers: the same time in the VM and on the phone, kept
+
+*#127 lists what a reviewer of the kernel copy would stumble over. Most of it was done before: no
+reasons of the Mi 9T's 4.14, Fedora or our VM in the kernel copy (`port.py` rewrites them), the
+builtins explained, the tables in `.c` files, `Context:` in the kernel-doc, `-EINVAL` for a level the
+backend does not have. Now also: no object defined in a header, one helper for a repeated pattern
+instead of two ways to build it, and the three long functions shorter, with `__always_inline`
+helpers. The same bytes; in the kernel VM and on the Mi 9T the same time within the noise.* Code:
+`src/seqlz.c`.
+
+**What changed.**
+
+* `copy_literals()`, `copy_match()` and the table of steps for offsets below 8 moved from `page_lz.h`
+  into `seqlz.c`, next to the decoder, their only user. `page_lz.h` is the matcher only, and has no
+  `static const` data any more. Alone, this gave the same machine code with gcc, clang and the
+  phone's clang 9.
+* `repeat_pattern()`: the off bytes before d repeated to 8 bytes, with a multiply. `copy_match()` built
+  them with shifts and the fast path with the multiply; both take the helper now.
+* `decode_page()`, 266 lines, is 173: the fast path's match copy is `copy_match_fast()`, its next
+  token and refill `next_token_fast()`. `code_literals()`, 182 lines, is 62: the cost of each table is
+  `lit_cost()`, the stream writer `lit_streams()`, the stream sizes `lit_sizes()`.
+  `decode_literals()`, 181 lines, is 151: the stream sizes are `lit_stream_sizes()`, the check that
+  each stream ends in its last byte `lit_stream_ends()`. Its 8 streams stay written out, 8 accumulators by
+  name: as arrays in a helper, whether the compilers keep them in registers would decide the time of
+  the hottest loop.
+* `decode_literals()` keeps `__aligned(64)`, and its comment says why: a change in front of it does not
+  move its loops.
+
+**The machine code.** gcc and clang for x86-64 with the kernel's flags and NDK r21e's clang 9 for
+arm64, disassembled, addresses taken out, compared function by function with `main`: 26 of 37 the
+same, the others other registers and stack slots, `seqlz_decode()` 19 instructions fewer with gcc, 66
+fewer with clang. Restructuring once cost 0.2 to 0.8 µs that way, see
+[The bitstream copied once](#the-bitstream-copied-once-behind-the-literals-raw-or-coded-writes-up-to-03-µs-slower-in-the-vm-and-08-µs-on-the-a55-not-kept),
+so it was measured.
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, `MODE=swap`, the backend's
+prefetch, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, boost off. Per dump `main`, this, this,
+`main`, each a kernel with 3 boots, so 6 boots per side. Means in µs, `main` / this:
+
+| dump | `seqlz-fast-lit` swap-out | `seqlz-fast` swap-out | `seqlz-fast-lit` swap-in | `seqlz-fast` swap-in |
+| --- | --- | --- | --- | --- |
+| first desktop dump | 7.471 / 7.444 | 6.913 / 6.912 | 3.780 / 3.776 | 3.598 / 3.606 |
+| dump of 24th September | 8.304 / 8.267 | 7.502 / 7.517 | 4.034 / 4.041 | 3.738 / 3.740 |
+| phone, second dump | 6.609 / 6.657 | 6.181 / 6.203 | 3.531 / 3.538 | 3.386 / 3.399 |
+
+Within 0.05 µs everywhere, and the ranges over the boots overlap; `lz4` moves by 0.01 µs at most.
+`mm_stat` has the same bytes for every codec.
+
+**The Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, the second phone dump, 19 752 pages, functions
+aligned to 64 bytes: two copies of `main`, `ma` and `mb`, and this change, `nc`, 3 rounds, means in µs:
+
+| | `ma` | `mb` | `nc` |
+| --- | ---: | ---: | ---: |
+| A55, `seqlz-fast` write / warm read | 29.24 / 11.38 | 29.24 / 11.33 | 29.25 / 11.22 |
+| A55, `seqlz-fast-lit` write / warm read | 32.27 / 12.35 | 32.26 / 12.35 | 32.23 / 12.27 |
+| A76, `seqlz-fast` write / warm read | 11.32 / 4.01 | 11.34 / 3.97 | 11.31 / 4.01 |
+| A76, `seqlz-fast-lit` write / warm read | 12.23 / 4.43 | 12.31 / 4.36 | 12.24 / 4.43 |
+
+The writes are within 0.04 µs of the copies of `main`, which differ by up to 0.08 µs among
+themselves. The warm reads on the A55 are 0.08 to 0.16 µs faster, where the copies differ by up to
+0.05 µs: maybe a small gain, too close to the noise to claim. The cold reads spread by up to 3 µs
+between the rounds of one module there.
+
+Tests: the same output as `main` from the same-bytes program, also with `-m32` and the in-order path;
+all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
+wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
+KUnit 10 of 10.
 
 ## seqlz-fast-lit faster at the same memory: five tries, none kept
 
