@@ -35,13 +35,13 @@ every codec. How it was measured is in
 
 ## Where it stands
 
-As of 8th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
+As of 9th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
 
 - [x] Benchmark harness, page collectors, zram dumps of a desktop and of a phone
 - [x] The codec, [`seqlz-fast-lit`](docs/seqlz.md), and every alternative that was measured
 - [x] [The format](docs/format.md), two reference decoders written from it, fuzzing, the worst case measured
 - [x] Measured in a kernel: a VM on x86-64, and the Mi 9T's own kernel on arm64
-- [ ] Ask the zram maintainers whether they want a new backend at all, and in which form
+- [x] Ask the zram maintainers whether they want a new backend at all, and in which form: [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), no answer yet
 - [x] 16 KiB pages: tables trained on the pages of the Android 17 emulator
 - [ ] 16 KiB pages: work memory within `lz4`'s, and a phone with 16 KiB pages
 - [x] The kernel port: `lib/` and a zram backend, swap thrash under KASAN, the zram selftests
