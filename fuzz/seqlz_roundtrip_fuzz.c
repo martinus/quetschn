@@ -49,7 +49,8 @@ static unsigned int find(const unsigned char* page, int level, unsigned int* n_l
     return n;
 }
 
-/* levels 3 and 4: with coded literals, the same bytes as seqlz_encode() for seqlz_find_hc()'s sequences */
+/* levels 3 and 4: with coded literals, a table of the page's own included, the same bytes as seqlz_encode()
+ * for seqlz_find_hc()'s sequences */
 static void roundtrip_hc(const unsigned char* page, unsigned int cap, int deep) {
     unsigned int n_lit, n = find(page, deep ? 4 : 3, &n_lit),
                         len = seqlz_compress_hc(tables, &hc_state, page, dst, DST_CAP, deep);
@@ -57,7 +58,7 @@ static void roundtrip_hc(const unsigned char* page, unsigned int cap, int deep) 
 
     if (len == 0 || len > DST_CAP || !decodes_to(page, len, scratch))
         abort();
-    if (seqlz_encode(tables, seq, n, literals, n_lit, again, DST_CAP, 1) != len || memcmp(again, dst, len) != 0)
+    if (seqlz_encode(tables, seq, n, literals, n_lit, again, DST_CAP, SEQLZ_CODED_OWN) != len || memcmp(again, dst, len) != 0)
         abort();
     d = malloc(cap ? cap : 1);
     if (!d)

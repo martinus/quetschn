@@ -12,6 +12,9 @@
 #define MAX_CODE 15U /* longer than the codes of any table, see "The tables" */
 #define TOKENS 3072U /* "Tokens": 16 * 32 * 6, the escape is the symbol after them */
 
+/* "A table of the page's own": the code lengths of the code OWN, symbols 0 to 9 */
+static const unsigned char own_lengths[10] = {2, 2, 3, 3, 4, 4, 5, 6, 6, 4};
+
 /* "Prefix codes", rules 1 to 3; 0, or -1 if the lengths are no complete prefix code */
 static int make_code(struct seqlz_ref_code* c, const unsigned char* len, unsigned int n) {
     unsigned long space = 0;
@@ -49,7 +52,7 @@ int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsign
     for (k = 0; k < 8U; k++)
         if (make_code(&r->lit[k], t->lit[k], 256U))
             return -1;
-    return 0;
+    return make_code(&r->own, own_lengths, 10U);
 }
 
 /* bits read most significant bit first, at most nbits of them; reading more makes the page invalid */
@@ -123,6 +126,42 @@ static int value(struct bits* b, const struct seqlz_ref_code* c, unsigned int* v
     return 0;
 }
 
+/*
+ * "A table of the page's own": the code lengths of the 256 bytes from the description D, read from d, into
+ * len, and in *bytes the bytes D takes. 0, or -1 if D is not valid.
+ */
+static int own_table(const struct seqlz_ref* r, struct bits* d, unsigned char* lengths, size_t* bytes) {
+    unsigned int l = 1, filled = 0, s, x, v;
+    int prev = -1;
+
+    memset(lengths, 0, 256);
+    while (filled < 1024U) {
+        if (symbol(d, &r->own, &s))
+            return -1;
+        if (s == 9U) {
+            l++;
+            prev = -1;
+            if (l > 10U)
+                return -1;
+            continue;
+        }
+        if (read_n(d, s, &x))
+            return -1;
+        v = (unsigned int)(prev + (int)((1U << s) + x));
+        if (v > 255U || lengths[v] != 0 || filled + (1024U >> l) > 1024U)
+            return -1;
+        lengths[v] = (unsigned char)l;
+        filled += 1024U >> l;
+        prev = (int)v;
+    }
+    /* D ends at the next byte boundary, the bits up to it are 0 */
+    while (d->pos % 8U)
+        if (bit(d, &x) || x != 0)
+            return -1;
+    *bytes = d->pos / 8U;
+    return 0;
+}
+
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out) {
     unsigned char lits[1U << 14];
     const unsigned int P = r->page_bits, page = 1U << P;
@@ -146,13 +185,16 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         b = (struct bits){src + 2 + n, 8U * (len - 2U - n), 0};
     } else {
         unsigned int t, w, j, k;
-        size_t sizes[8], start, total = 0;
+        size_t sizes[8], start, total = 0, d_bytes = 0;
+        struct seqlz_ref_code own;
+        const struct seqlz_ref_code* code;
 
         if (len < 3U)
             return -1;
         t = src[2];
         w = 5U + ((t >> 3) & 7U);
-        if (len < 3U + w || t >> 6)
+        /* t >> 6 is o, the flag of a table of the page's own, t >> 7 must be 0 */
+        if (len < 3U + w || t >> 7 || ((t >> 6) && (t & 7U)))
             return -1;
         /* S is the 8 * w bits from byte 3 on, little endian, s[j] = (S >> (j * w)) & ((1 << w) - 1):
          * bit q of S is bit q mod 8 of byte 3 + q div 8. Bit by bit, as S has up to 96 bits. */
@@ -167,17 +209,27 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
             sizes[j] = x;
             total += x;
         }
-        if (3U + w + total > len)
+        code = &r->lit[t & 7U];
+        if (t >> 6) {
+            /* D from byte 3 + w on, within the page */
+            struct bits d = {src + 3 + w, 8U * (len - 3U - w), 0};
+            unsigned char lengths[256];
+
+            if (own_table(r, &d, lengths, &d_bytes) || make_code(&own, lengths, 256U))
+                return -1;
+            code = &own;
+        }
+        if (3U + w + d_bytes + total > len)
             return -1;
         /* "Coded literals": stream j holds the literals j, j + 8, ..., their codes within s[j] bytes */
-        start = 3U + w;
+        start = 3U + w + d_bytes;
         for (j = 0; j < 8U; j++) {
             struct bits s = {src + start, 8U * sizes[j], 0};
 
             for (k = j; k < n; k += 8U) {
                 unsigned int v;
 
-                if (symbol(&s, &r->lit[t & 7U], &v))
+                if (symbol(&s, code, &v))
                     return -1;
                 lits[k] = (unsigned char)v;
             }

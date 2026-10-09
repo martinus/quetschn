@@ -15,3 +15,13 @@
 #else
 #include "seqlz_lit_sets_4k.inc"
 #endif
+
+/*
+ * The code lengths of the symbols that describe a page's own literal table,
+ * see SEQLZ_LIT_OWN_NEXT: the distance classes 0 to 8, then the step to the
+ * next length. The same for every page size. From the counts of the symbols on
+ * the 20 000-page samples of two desktop dumps and a phone dump, at level 3,
+ * limited to SEQLZ_LIT_OWN_BITS bits.
+ */
+const u8 seqlz_lit_own_lengths[SEQLZ_LIT_OWN_SYMBOLS] = { 2, 2, 3, 3, 4,
+							  4, 5, 6, 6, 4 };

@@ -284,10 +284,40 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_SIZE_BITS_MAX 12U
 /*
  * Where the fields of byte 2 start: the table at bit 0, w - SEQLZ_SIZE_BITS_MIN
- * at bit 3, the two bits that must be zero at bit 6.
+ * at bit 3, the flag of a table of the page's own at bit 6, the bit that must
+ * be zero at bit 7.
  */
 #define SEQLZ_LIT_WIDTH_AT 3
-#define SEQLZ_LIT_ZERO_AT 6
+#define SEQLZ_LIT_OWN_AT 6
+#define SEQLZ_LIT_ZERO_AT 7
+/*
+ * A page can code its literals with a table of its own instead of one of the
+ * 8 fixed ones: then bit 6 of byte 2 is set, bits 0 to 2 are zero, and the
+ * table's code lengths follow the stream sizes, before the streams. They are
+ * the bytes that have a code, by code length from 1 to SEQLZ_LIT_BITS and
+ * within a length by value, which is the order of the canonical codes. Each is
+ * sent as its distance d to the byte before it of the same length, or to -1
+ * for the first: the symbol k of d's highest bit, followed by the k bits of d
+ * below it. Symbol SEQLZ_LIT_OWN_NEXT moves on to the next length. The table
+ * ends where its codes fill the code space; the bits after it up to the next
+ * byte are zero. The symbols have the fixed codes of seqlz_lit_own_lengths, at
+ * most SEQLZ_LIT_OWN_BITS bits, most significant bit first.
+ *
+ * The decoder builds the table in the page it decodes into: the literals are
+ * decoded before the first byte of the page is written, so the table needs no
+ * memory of its own.
+ */
+#define SEQLZ_LIT_OWN_NEXT 9U
+/* the values of seqlz_encode()'s coded */
+#define SEQLZ_CODED_FIXED 1U
+#define SEQLZ_CODED_OWN 2U
+/* a page's own table only where it saves this many bytes, see code_literals() */
+#ifndef SEQLZ_LIT_OWN_MIN
+#define SEQLZ_LIT_OWN_MIN 16U
+#endif
+#define SEQLZ_LIT_OWN_SYMBOLS 10U
+#define SEQLZ_LIT_OWN_BITS 6U
+extern const u8 seqlz_lit_own_lengths[SEQLZ_LIT_OWN_SYMBOLS];
 /*
  * The encoder codes a page's literals only where that saves 1/16 of them and
  * at least this many bytes. Decoding coded literals has a cost that does not
@@ -315,7 +345,10 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * @n_literals: how many
  * @dst: where the compressed page goes
  * @dst_cap: the bytes at @dst
- * @coded: whether to Huffman code the literals where that saves enough
+ * @coded: 0 for raw literals, else Huffman coded where that saves enough:
+ *          SEQLZ_CODED_FIXED with one of the fixed tables, as seqlz_compress(),
+ *          SEQLZ_CODED_OWN also with a table of the page's own, as
+ *          seqlz_compress_hc()
  *
  * For tests and tools, which make their own sequences; zram uses
  * seqlz_compress().
@@ -331,7 +364,7 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 unsigned int seqlz_encode(const struct seqlz_tables *t,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
-			  void *dst, unsigned int dst_cap, bool coded);
+			  void *dst, unsigned int dst_cap, unsigned int coded);
 
 /**
  * seqlz_decode() - Decompress one page

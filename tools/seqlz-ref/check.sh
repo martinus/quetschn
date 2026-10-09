@@ -3,7 +3,8 @@
 #
 # check.sh [dir]: docs/format.md against the code, for CI. seqlz_ref.py checks the SHA-256 of every
 # table in src/ against the one docs/format.md gives, for 4 KiB and for 16 KiB pages, and then decodes
-# pages that src/seqlz.c compressed, with raw and with coded literals: each must give the page back.
+# pages that src/seqlz.c compressed, with raw and with coded literals, and at level 3: each must give the
+# page back. At least one of them has a literal table of its own.
 # A retrain of the tables without new hashes in docs/format.md fails here, and so does a format change
 # that the spec does not describe. The pages are made up, never from a dump: tools/seqlz-worst/pages/,
 # and three written here. Needs cc and python3.
@@ -25,7 +26,8 @@ open(f"{out}/ab.page", "wb").write(b"ab" * 2048)
 open(f"{out}/pointers.page", "wb").write(b"".join(struct.pack("<Q", 0x7F1234560010 + 16 * i) for i in range(512)))
 open(f"{out}/text.page", "wb").write(text[:4096])
 EOF
-"$out/compress" "$out"/*.page >/dev/null
+own=$("$out/compress" "$out"/*.page | grep -c "own literal table" || true)
+[[ $own -gt 0 ]] || { echo "no page with a literal table of its own" >&2; exit 1; }
 
 # The 16 KiB tables: only their hashes. Loading them checks them, the empty file is no page.
 python3 "$here/seqlz_ref.py" --page-bits 14 /dev/null >/dev/null
@@ -34,7 +36,7 @@ pages=0
 wrong=0
 for p in "$out"/*.page; do
     want=$(sha256sum "$p" | cut -d' ' -f1)
-    for c in "$p.fast" "$p.lit"; do
+    for c in "$p.fast" "$p.lit" "$p.hc"; do
         got=$(python3 "$here/seqlz_ref.py" "$c" | cut -d' ' -f2-)
         if [[ "$got" != "valid $want" ]]; then
             echo "$(basename "$c"): $got, the page is $want" >&2
@@ -43,5 +45,5 @@ for p in "$out"/*.page; do
         pages=$((pages + 1))
     done
 done
-echo "the tables' hashes match docs/format.md, $wrong of $pages compressed pages decode wrong with seqlz_ref.py"
+echo "the tables' hashes match docs/format.md, $wrong of $pages compressed pages decode wrong with seqlz_ref.py, $own with a literal table of their own"
 [[ $wrong -eq 0 ]]

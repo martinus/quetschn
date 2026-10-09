@@ -102,6 +102,34 @@ class Bits:
         return codes[(length, code)]
 
 
+# "A table of the page's own": the code lengths of the code OWN, symbols 0 to 9
+OWN_LENGTHS = [2, 2, 3, 3, 4, 4, 5, 6, 6, 4]
+
+
+def own_table(page, start):
+    """"A table of the page's own": the code lengths of the 256 bytes from D at byte start, and the
+    bytes D takes"""
+    if start > len(page):
+        raise Invalid
+    d, lengths = Bits(page, start), [0] * 256
+    length, prev, filled = 1, -1, 0
+    while filled < 1024:
+        s = d.symbol(canonical(OWN_LENGTHS, 6))
+        if s == 9:
+            length, prev = length + 1, -1
+            if length > 10:
+                raise Invalid
+            continue
+        b = prev + (1 << s) + d.read(s)
+        if b > 255 or lengths[b] or filled + (1024 >> length) > 1024:
+            raise Invalid
+        lengths[b], filled, prev = length, filled + (1024 >> length), b
+    # D ends at the next byte boundary, the bits up to it are 0, all of it within the page
+    if d.read(-d.pos % 8) != 0 or d.pos > 8 * len(page):
+        raise Invalid
+    return lengths, d.pos // 8 - start
+
+
 def decode(page, tables, page_bits):
     tok_codes, ll_codes, ml_codes, lit_codes = tables
     size = 1 << page_bits
@@ -113,10 +141,15 @@ def decode(page, tables, page_bits):
     if h & 0x8000:
         t = page[2] if len(page) > 2 else 0
         w = 5 + (t >> 3 & 7)
-        if len(page) < 3 + w or t >> 6 or n > size:
+        # t >> 6 is o, the flag of a table of the page's own; t >> 7 must be 0
+        if len(page) < 3 + w or t >> 7 or (t >> 6 and t & 7) or n > size:
             raise Invalid
         sizes = int.from_bytes(page[3 : 3 + w], "little")
-        start = [3 + w]
+        codes, d_bytes = lit_codes[t & 7], 0
+        if t >> 6:
+            lengths, d_bytes = own_table(page, 3 + w)
+            codes = canonical(lengths, 10)
+        start = [3 + w + d_bytes]
         for j in range(8):
             start.append(start[-1] + (sizes >> (j * w) & ((1 << w) - 1)))
         if start[8] > len(page):
@@ -125,7 +158,7 @@ def decode(page, tables, page_bits):
         for j in range(8):
             r = Bits(page, start[j])
             for k in range(j, n, 8):
-                lits[k] = r.symbol(lit_codes[page[2] & 7])
+                lits[k] = r.symbol(codes)
             if not r.ends_here(8 * start[j + 1]):
                 raise Invalid
         bits = Bits(page[start[8] :])

@@ -28,6 +28,7 @@ struct seqlz_ref_code {
 struct seqlz_ref {
     unsigned int page_bits;
     struct seqlz_ref_code tok, ll, ml, lit[8];
+    struct seqlz_ref_code own; /* the code OWN of a page's own literal table, "A table of the page's own" */
 };
 
 /*

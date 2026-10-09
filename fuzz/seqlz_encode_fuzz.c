@@ -56,7 +56,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     for (k = 0; k < n_lit; k++)
         literals[k] = (unsigned char)(k * 0x9e3779b1U >> 24);
 
-    len = seqlz_encode(tables, seq, n, literals, n_lit, dst, DST_CAP, data[0] & 2);
+    /* raw literals, a fixed table, or also one of the page's own */
+    len = seqlz_encode(tables, seq, n, literals, n_lit, dst, DST_CAP, (data[0] >> 1) % 3U);
     if (len == 0)
         return 0;
     if (len > DST_CAP || sum != SEQLZ_PAGE)

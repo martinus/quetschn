@@ -1423,7 +1423,8 @@ std::vector<unsigned char> words_page(std::mt19937_64& rng, unsigned vocabulary)
 } // namespace
 
 TEST_CASE("seqlz levels 3 and 4: pages come back, with a state shared over many pages") {
-    // The same bytes as seqlz_encode() with coded literals for seqlz_find_hc()'s sequences, which the
+    // The same bytes as seqlz_encode() with coded literals, a table of the page's own included, for
+    // seqlz_find_hc()'s sequences, which the
     // decoder takes back, also in the pages after other pages: chain[] is never cleared.
     auto const t = default_tables(seqlz_default_own);
     auto a = std::make_unique<seqlz_hc_state>();
@@ -1439,8 +1440,14 @@ TEST_CASE("seqlz levels 3 and 4: pages come back, with a state shared over many 
         auto const n = seqlz_find_hc(t.get(), a.get(), bytes.data(), seq.data(), deep);
         auto const lits = literals_of(bytes, seq.data(), n);
         auto expected = std::vector<unsigned char>(2 * page_size);
-        auto const elen = seqlz_encode(
-            t.get(), seq.data(), n, lits.data(), static_cast<unsigned>(lits.size()), expected.data(), 2 * page_size, 1);
+        auto const elen = seqlz_encode(t.get(),
+                                       seq.data(),
+                                       n,
+                                       lits.data(),
+                                       static_cast<unsigned>(lits.size()),
+                                       expected.data(),
+                                       2 * page_size,
+                                       SEQLZ_CODED_OWN);
         auto got = std::vector<unsigned char>(2 * page_size);
         auto const glen = seqlz_compress_hc(t.get(), b.get(), bytes.data(), got.data(), 2 * page_size, deep);
         REQUIRE(elen > 0);

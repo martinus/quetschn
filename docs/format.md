@@ -8,7 +8,9 @@ not part of the format; the measurements behind them are in
 in [seqlz.md](seqlz.md).
 
 `seqlz-fast` and `seqlz-fast-lit` are the same format: `seqlz-fast` always stores the literals as they
-are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both.
+are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both, and the pages of
+levels 3 and 4 too, which search longer for matches and can code the literals with a table of the
+page's own.
 
 `tools/seqlz-ref/seqlz_ref.py` and `tools/seqlz-ref/seqlz_ref.c` are decoders written from this
 file, slow on purpose, and checked against `seqlz_decode()`, see
@@ -27,7 +29,9 @@ The tables of 6th October were trained again before anyone used them, on swapped
 ([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 On 8th October a page became valid only if it ends where its bits end, see
 [The bitstream of the sequences](#the-bitstream-of-the-sequences) and [Coded literals](#coded-literals);
-the pages the compressor writes did not change.
+the pages the compressor writes did not change. On 9th October bit 6 of byte 2, which was 0, became the
+flag of a literal table of the page's own, see [A table of the page's own](#a-table-of-the-pages-own);
+pages without it decode as before.
 
 The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
 since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
@@ -94,28 +98,29 @@ layouts.
 | offset | size | content |
 | --- | --- | --- |
 | 0 | 2 | `h`, which is `0x8000 + n` |
-| 2 | 1 | `t`: `set = t & 7` is which of the 8 literal tables codes them, `w = 5 + ((t >> 3) & 7)` the bits of each stream size, `t >> 6` is 0 |
+| 2 | 1 | `t`: `set = t & 7` is which of the 8 literal tables codes them, `w = 5 + ((t >> 3) & 7)` the bits of each stream size, `o = (t >> 6) & 1` whether the page has a table of its own, `t >> 7` is 0 |
 | 3 | `w` | `s[0]` to `s[7]`, the size of each literal stream, `w` bits each |
-| `3 + w` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
-| `3 + w + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
+| `3 + w` | `e` | with `o = 1`: `D`, the page's own table, see [A table of the page's own](#a-table-of-the-pages-own); with `o = 0` nothing, `e = 0` |
+| `3 + w + e` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
+| `3 + w + e + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
 
 The `w` bytes from byte 3 on are one number `S` of `8 * w` bits, little endian, and
 `s[j] = (S >> (j * w)) & ((1 << w) - 1)`: 8 sizes of `w` bits fill exactly `w` bytes; `w` is 5 to 12.
 *Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most 640 bytes in a 4 KiB
 page and 2560 in a 16 KiB page; the largest stream of most pages is below 128 bytes, so 7 bits each
-do, and 2 bytes each made pages about 5 bytes larger on average. The two top bits of `t` are kept for
-later.
+do, and 2 bytes each made pages about 5 bytes larger on average. The top bit of `t` is kept for later.
 
 The coded literals are split into 8 **streams**: literal 0 goes to stream 0, literal 1 to stream 1, ...,
-literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + s[0] + ... + s[j-1]`, so
-`start[0] = 3 + w`. *Why:* in one stream each literal's code can only be found once the one before is
+literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + e + s[0] + ... + s[j-1]`,
+so `start[0] = 3 + w + e`. *Why:* in one stream each literal's code can only be found once the one before is
 decoded, a chain of table lookups; 8 streams are 8 chains, which a CPU works on side by side.
 
 A page is invalid if
 
 - `len < 2`, or `n > PAGE`;
 - with raw literals `2 + n > len`;
-- with coded literals `len < 3 + w`, `t >> 6` is not 0, or `3 + w + s[0] + ... + s[7] > len`.
+- with coded literals `len < 3 + w`, `t >> 7` is not 0, `o = 1` and `set` is not 0, `D` is not valid,
+  or `3 + w + e + s[0] + ... + s[7] > len`.
 
 ## Prefix codes
 
@@ -328,6 +333,50 @@ The codes of stream `j`'s literals must end in its last byte: they take at most 
 fewer than 8 less, and the bits after the last code are 0. A stream without literals has `s[j] = 0`.
 Else the page is invalid. A decoder may read past the end of a stream, as long as it checks this.
 
+### A table of the page's own
+
+With `o = 1` the literals are coded with a table of the page's own instead of literal table `set`.
+*Why:* some pages have literals that none of the 8 fixed tables fits, e.g. few different bytes, and a
+table of their own saves more than its description costs: 2% to 4% of the memory at level 3, see
+[explored-designs.md](explored-designs.md#a-literal-table-of-the-pages-own-built-in-the-page-it-decodes-into-kept).
+
+`D` is the table's code lengths: the bytes that have a code, by code length from 1 to 10, and within one
+length by value. That is the order of their canonical codes, see [Prefix codes](#prefix-codes). It is
+read from byte `3 + w` on, most significant bit first as `B`, as symbols of the code `OWN`: 10 symbols,
+whose code lengths are, symbol 0 first,
+
+`2 2 3 3 4 4 5 6 6 4`
+
+and whose codes follow from them as in [Prefix codes](#prefix-codes). Symbol `k` from 0 to 8 is the
+distance `d` of a byte to the one before it of the same length, or to -1 for the first: `k` is the
+position of `d`'s highest bit, and the `k` bits below it follow the symbol, `d = (1 << k) + read(k)`.
+Symbol 9 moves on to the next length. `L[b]` is the code length of byte `b`, 0 if it has none:
+
+```text
+l = 1, prev = -1, space = 0, L[0] to L[255] = 0
+while space < 1024:
+    k = symbol(OWN)
+    if k == 9:
+        l = l + 1, prev = -1
+        if l > 10: invalid
+    else:
+        b = prev + (1 << k) + read(k)
+        if b > 255 or L[b] != 0 or space + (1024 >> l) > 1024: invalid
+        L[b] = l, space = space + (1024 >> l), prev = b
+```
+
+`space` counts the code space taken, in 1024ths, so `D` ends where the codes fill it: the code is
+complete. The bits after the last symbol up to the next byte are 0, and `e` is the number of bytes up
+to there. `D` is invalid if it needs bits beyond `len`, or one of those bits is not 0. The streams are
+then read as in [Coded literals](#coded-literals), with the code of the lengths `L[]` instead of
+literal table `set`.
+
+*Why this order:* a decoder can write its decode table while it reads `D`, entry after entry: each
+code of length `l` is the next `2^(10 - l)` entries of a table of 1024, the table `seqlz_decode()`
+uses for the fixed tables too. It writes it into the page it decodes into, which is not written yet
+while the literals are decoded first, and needs no memory of its own. The distances cost 1 to 2.4 bytes
+per page more than a list of all 256 lengths with runs of zeros.
+
 ## Example
 
 The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
@@ -357,6 +406,11 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
   them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the
   size of the header; with it, a page has to save enough to be worth decoding its literals.
 
+`seqlz_compress_hc()`, levels 3 and 4, writes other matches, and a table of the page's own when the
+literals' Huffman code, limited to 10 bits, with `D` and its stream sizes takes at least 16 bytes less
+than the best fixed table; then `e + 51 + s[0] + ... + s[7] < n - n div 16` decides between coded and
+raw literals.
+
 The compressed page fits the buffer the compressor is given, or the compressor fails. zram gives it two
 pages, which every page fits, and stores a page that does not compress well enough as it is, so that
 page never reaches the decoder.
@@ -368,8 +422,8 @@ code, also the ones it wrote back to a backing device, and no page meets a newer
 the format needs a new kernel, not a new algorithm name in zram, which would be visible to users in
 `comp_algorithm` and in the Kconfig default. Two things would change that: another user of the codec
 that keeps pages longer, or zram's pages kept across a kexec by live update (`kernel/liveupdate/`),
-which zram does not do in 2026. The values of byte 2 with its top bits set are invalid now and free for
-a format that has to tell itself apart.
+which zram does not do in 2026. The values of byte 2 with its top bit set are invalid now and free for a
+format that has to tell itself apart.
 
 ## How this file was checked
 
@@ -382,5 +436,5 @@ every input it was given, valid and damaged pages of both page sizes; the number
 is valid or what it decodes to. `fuzz/smoke.sh` runs it for a minute in CI, `fuzz/afl.sh` for longer:
 on 6 October, 10 AFL++ instances for 2 hours, 1.7 billion inputs, found no difference.
 `test/seqlz_ref_test.cpp` checks the example above, the compressor's pages, damaged pages, and pages
-made by hand for the rules that damage rarely reaches: the top bits of `t`, a literal code outside its
-stream, the last sequence's class.
+made by hand for the rules that damage rarely reaches: the top bit of `t`, a literal code outside its
+stream, the last sequence's class, and the rules of `D`.
