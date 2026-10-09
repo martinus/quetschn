@@ -595,8 +595,24 @@ TEST_CASE("seqlz: compress into a dst of any size, an error where the page does 
                 CHECK(seqlz_compress(t.get(), st.get(), page.data(), d.data(), len2 + 32, 0) == len2);
                 CHECK(std::equal(d.begin(), d.begin() + len2, two.begin()));
             }
+            // the coded literals go over the raw ones: where the page fits with raw literals, it gets the
+            // same coded page as in two pages, also in exactly one page
+            if (coded && len2 + 32 <= page_size + 64) {
+                auto raw = std::vector<unsigned char>(2 * page_size);
+                auto const rlen = seqlz_compress(t.get(), st.get(), page.data(), raw.data(), 2 * page_size, 0);
+                for (auto const cap : {rlen + 32, std::max(rlen + 32, page_size)}) {
+                    CAPTURE(cap);
+                    auto d = std::vector<unsigned char>(cap);
+                    CHECK(seqlz_compress(t.get(), st.get(), page.data(), d.data(), cap, 1) == len2);
+                    CHECK(std::equal(d.begin(), d.begin() + len2, two.begin()));
+                }
+            }
         }
     }
+    // the text-like page is one whose literals are coded
+    auto two = std::vector<unsigned char>(2 * page_size);
+    REQUIRE(seqlz_compress(t.get(), st.get(), text.data(), two.data(), 2 * page_size, 1) > 0);
+    CHECK(lits_coded(two));
 }
 
 TEST_CASE("seqlz: seqlz_encode() rejects sequences that do not make a page, before writing") {

@@ -603,10 +603,11 @@ Two pages are always enough: a sequence takes at most 28 bits for its token and 
 and a 12-bit offset, and covers at least 4 bytes of the page, so the bits of a page never take more than
 about 3600 bytes, and next to a page of literals there are 4094. A smaller buffer works too: before each
 sequence the encoder checks that its literals and 32 bytes more are free between the two ends, and a
-page that does not fit is an error, as for the other compressors. With a buffer of exactly one page, as
-zswap gives, pages take 1.7% to 2.9% more memory on three dumps, because coding the literals needs the
-raw and the coded ones in the buffer at the same time
-([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)).
+page that does not fit is an error, as for the other compressors. Coding the literals needs no room
+beyond that: the raw literals are copied into the matcher's table, which is free by then, and the coded
+ones written over their old place. With a buffer of exactly one page, as zswap gives, pages take 0.1% to
+0.5% more memory on four dumps: a page whose raw form does not fit fails, also where its coded form
+would ([explored-designs.md](explored-designs.md#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept)).
 
 ### The table of positions is a cache, not a map
 

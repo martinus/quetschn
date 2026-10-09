@@ -688,13 +688,14 @@ static __always_inline unsigned int lit_bits(u64 even[][LIT_COST_WORDS],
  * byte, and coding them wherever they save anything at all saved less than
  * 0.1% more memory. Returns the new length, or len if the literals stay raw.
  *
- * It works in the dst_cap bytes of d: the raw literals and the bitstream move
- * to the end, the coded literals are written from the front, and the bitstream
- * moves down behind them at the end. If dst_cap has no room for both, the
- * literals stay raw; in zram's two pages there always is.
+ * The coded literals are written over the raw ones in d, so they are read from
+ * a copy: raw if the caller has one, else spare, at least a page, which they
+ * are copied into once it is clear they get coded. The bitstream stays behind
+ * the raw literals until it moves down behind the coded ones at the end. So d
+ * needs no room beyond len, and the page is coded in any dst it fits into raw.
  */
 static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
-				  unsigned int dst_cap, unsigned int len)
+				  unsigned int len, const u8 *raw, u8 *spare)
 {
 	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
 	const u64 lanes = 0x00ff00ff00ff00ffULL;
@@ -767,16 +768,15 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
 		return len;
 	/*
-	 * The coded literals are written from the front of d while the raw ones
-	 * are still read from the end, and a write may go 16 bytes too far. The
-	 * writes must never reach the literals not read yet. In zram's two
-	 * pages, saving 1/16 makes sure of that already; in a smaller dst this
-	 * check keeps the literals raw.
+	 * The streams end at d + header + coded, which is before the bitstream
+	 * at d + SEQLZ_HEADER + n_literals: coded is at least SEQLZ_LIT_CODED_MIN
+	 * bytes below n_literals, see the static_assert below.
 	 */
-	if (header + coded + 16U > dst_cap - body)
-		return len;
-	literals = d + dst_cap - body;
-	memmove(d + dst_cap - body, d + SEQLZ_HEADER, body);
+	if (!raw) {
+		memcpy(spare, literals, n_literals);
+		raw = spare;
+	}
+	literals = raw;
 	q[0] = d + header;
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		q[j + 1] = q[j] + sizes[j];
@@ -876,9 +876,15 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	}
 	/* the bitstream, down to right after the coded literals */
 	coded += header;
-	memmove(d + coded, literals + n_literals, body - n_literals);
+	memmove(d + coded, d + SEQLZ_HEADER + n_literals, body - n_literals);
 	return coded + body - n_literals;
 }
+
+static_assert(SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MAX) <=
+		      SEQLZ_HEADER + SEQLZ_LIT_CODED_MIN,
+	      "code_literals() writes the coded literals before the bitstream");
+static_assert(sizeof(struct seqlz_state) >= SEQLZ_PAGE,
+	      "the matcher's state holds a page of raw literals");
 
 unsigned int seqlz_encode(const struct seqlz_tables *t,
 			  const struct seqlz_sequence *seq, unsigned int n,
@@ -888,7 +894,8 @@ unsigned int seqlz_encode(const struct seqlz_tables *t,
 	unsigned int len =
 		encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
 
-	return len == 0 || !coded ? len : code_literals(t, dst, dst_cap, len);
+	return len == 0 || !coded ? len :
+				    code_literals(t, dst, len, literals, NULL);
 }
 
 static unsigned int compress_page(const struct seqlz_tables *t,
@@ -910,7 +917,10 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 {
 	unsigned int len = compress_page(t, st, src, dst, dst_cap);
 
-	return len == 0 || !coded ? len : code_literals(t, dst, dst_cap, len);
+	/* the matcher's table is free now and holds the raw literals */
+	return len == 0 || !coded ?
+		       len :
+		       code_literals(t, dst, len, NULL, (u8 *)st->table);
 }
 
 /* ---- decoder ---- */
