@@ -80,6 +80,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built](#a-literal-table-per-half-or-quarter-of-the-literals-002-to-005-points-not-built)
 - [The token's table by the offset before it: 3 and 12 bytes per page, not kept](#the-tokens-table-by-the-offset-before-it-3-and-12-bytes-per-page-not-kept)
 - [Per page: its own literal table and one of 4 token tables, measured, not kept](#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)
+- [A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
 - [Pages without matches but with literals that code well: coded now](#pages-without-matches-but-with-literals-that-code-well-coded-now)
 - [Coded literals only where they save 51 bytes: 2.7 µs per page written less on the A55, kept](#coded-literals-only-where-they-save-51-bytes-27-µs-per-page-written-less-on-the-a55-kept)
 - [seqlz-fast-lit by the score: no budget, offsets in steps of 8](#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)
@@ -1045,7 +1046,8 @@ the 8 fixed literal tables needs 3400 to 4400; `zstd` codes them with a table of
 per page, priced at the literals' entropy and 64 bytes for its lengths, would save 47 bytes per page
 there, 43 on the second phone dump, 31 and 28 on the first ones. That is a change of the format, and
 it was measured with `seqlz-opt` before:
-[seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept). The other thing `zstd` has
+[seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept),
+and for level 3 after it: [A literal table of the page's own at levels 3 and 4](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept). The other thing `zstd` has
 and seqlz has not, three repeated offsets instead of one, is worth less: of level 3's matches 3.5% to
 7.4% have the offset before the last one, and 2.1% to 4.0% the one before that, and their offset bits
 are 4.8 to 7.3 and 2.9 to 4.6 bytes per page on the samples of desktop 1, desktop 2 and phone 2, before
@@ -1129,6 +1131,124 @@ each under KASAN, lockdep and UBSan: 11.2 million pages swapped out, none differ
 selftests passed, and `mm_stat` of 20 000 pages of the first desktop dump the model's to the byte.
 
 Not measured: level 3 with 16 KiB pages, where the chain needs 48 KiB per CPU.
+
+## A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept
+
+*Levels 3 and 4 coded a page's literals with a Huffman table of the page's own where that and its
+description saved at least 16 bytes against the best of the 8 fixed tables. In the kernel VM level 3
+stored 2.5% to 3.4% less than with the fixed tables alone: less than `zstd` 3 on the first desktop
+dump and the second phone dump, as much on the dump of 24th September and 2.3% more on the one of
+28th September. It took 2.4 to 2.6 µs more per swap-out and 0.11 to 0.19 µs more per swap-in, and a
+faster encoder got about half of the write time back on the PC later. Not kept, because it is a second
+way to code the literals: a table description with its own rules for an invalid one, a parser of untrusted
+input in the decoder and in both reference decoders, about 900 lines with the tests, for one level.*
+Code: the branch `seqlz-own-lit`, `own_code()`, `own_lengths()`, `code_literals()` and `own_table()`
+in its `src/seqlz.c`, the format in its `docs/format.md`, "A table of the page's own". Issue #139,
+after [levels 3 and 4](#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-kept).
+
+**Why it was measured again.** Where `zstd` 3 was still smaller than level 3, the literals were the
+difference: on the pages it won by most, their order-0 entropy was about 2300 bytes and the best fixed
+table needed 3400 to 4400. [seqlz-opt with a literal table per page](#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept)
+had not kept a table per page, because its decoder built the table in a scratch 3.3 KB larger, which
+does not fit C5 next to level 3's hash chain, and cold reads got 0.8 to 1 µs slower at p99. This time
+the decoder needs no memory of its own.
+
+**The format.** Byte 2 of coded literals got a flag, bit 6; with it, a description of the table follows
+the stream sizes. It lists the bytes by code length from 1 to 10, within a length by value, each as its
+distance to the byte before, with a fixed code of 10 symbols of at most 6 bits, and it ends where the
+code is complete. That is the order of the canonical codes, so a decoder writes each byte's entries of
+the decode table of 1024 entries while it reads the description, and it writes them into the page it
+decodes into, which is free until the literals are decoded. Offline, on the code lengths of the pages
+that gain, 20 000-page samples of three dumps, bytes saved per page after the description, every way
+coded with codes of at most 6 bits:
+
+| how the 256 lengths are sent | desktop 1 | desktop 2 | phone 2 |
+| --- | ---: | ---: | ---: |
+| each byte's length, by the length the best fixed table gives it | 24.4 | 43.0 | 32.9 |
+| in the order of the fixed table's lengths, runs of absent bytes, one code per fixed length | 30.4 | 58.7 | 37.1 |
+| byte order, runs of absent bytes, one code | 28.0 | 52.7 | 35.3 |
+| by length, within a length by byte, as distances, one code (built) | 26.6 | 51.1 | 34.2 |
+
+The one built costs 1 to 2.4 bytes per page more than byte order with runs, and is the one a decoder
+turns into a table without a second pass. It took 2450 TSC ticks per table on the second phone dump's
+pages, 163 symbols each on average, after 2773 in the first version. On the PC, cold decodes of the
+pages that went from a fixed table to their own were between 0.8% faster and 6.5% slower on three
+dumps.
+
+**The encoder.** Level 3 in TSC ticks per page on the PC, the 20 000-page samples of the first desktop
+dump and the second phone dump, the best of 5 loops over all pages, CPU 2 at 4.5 GHz, boost off, gcc
+16.2.1 with the kernel's flags; compressed bytes per page, not the zsmalloc model:
+
+| variant | desktop 1 ticks | phone 2 ticks | desktop 1 bytes | phone 2 bytes |
+| --- | ---: | ---: | ---: | ---: |
+| fixed tables only | 38 500 | 31 100 | 929.7 | 838.4 |
+| own table, a Huffman code of at most 10 bits | 47 800 | 40 400 | 910.2 | 817.5 |
+| lengths without sorting | 46 800 | 39 400 | 910.4 | 817.7 |
+| and an entropy check first | 43 000 | 35 600 | 910.4 | 817.7 |
+
+* **The Huffman code** was Moffat and Katajainen's in-place algorithm on the bytes sorted by
+  frequency, halving the weights where a code got longer than 10 bits. With the histogram, the
+  canonical codes, the description and the streams' sizes it was 9300 ticks per page; `perf stat`
+  showed about 23 000 instructions more per page than the fixed tables, and 47 more mispredictions.
+* **Lengths without sorting.** Each byte gets the shortest length `l` with `freq * 2^l >= literals`,
+  at most 10 bits, then the code is made complete in the order of how much a byte gains from a code one
+  bit shorter, from 16 buckets. Offline that costs 0.02% of the literals' bits against the Huffman
+  code, 0.2 bytes per page. It saved only 1000 ticks: the loops over the bytes cost about as much as the
+  sort did.
+* **The entropy check.** The code was built on 95% of the pages and won on 25%. The literals' entropy,
+  from a table of 32 logarithms, and 0.45 bytes of description per byte with a code say before the code
+  is built whether it can save 16 bytes against the fixed table and stay below the bytes where the
+  literals stay raw. Offline that builds the code on 21% to 27% of the pages it was built on before, for 0.01
+  to 0.02 bytes per page; measured the same bytes, 3800 ticks less.
+* **No gain:** the histogram counted by the matcher, while it copies the literals, 1270 and 250 ticks
+  more; counted in the fixed tables' pass over the literals, 350 to 450 more; four histograms instead
+  of two, within the noise. The fixed tables' cost cannot replace the histogram either: pages gain
+  from their own table where the fixed ones fit badly, and building the histogram only where they fit
+  well loses 2.7 and 5.1 bytes per page. The streams' sizes from the bits written instead of a pass of
+  their own would save 370 ticks at most.
+
+That leaves 4500 ticks per page more than the fixed tables, 12% and 15% more per write: the histogram
+alone costs 1600, the fixed tables' cost pass 800.
+
+**Kernel VM.** `tools/zram-vm/run.sh MODE=swap BOOTS=3`, the 20 000-page samples, the means of 3 boots
+in µs; an encoder like the second row's above. `zstd` 3 is zram's default:
+
+| dump | fixed: bytes / swap-out / swap-in | own: bytes / swap-out / swap-in | `zstd` 3: bytes / swap-out / swap-in |
+| --- | --- | --- | --- |
+| desktop 1 | 1019.0 / 11.85 / 3.70 | 987.3 / 14.28 / 3.81 | 1012.3 / 14.63 / 6.43 |
+| 24th September | 1240.8 / 13.15 / 3.95 | 1200.3 / 15.78 / 4.11 | 1197.4 / 15.84 / 6.72 |
+| 28th September | 1237.3 / 12.62 / 4.04 | 1195.6 / 15.08 / 4.23 | 1168.9 / 15.27 / 6.63 |
+| phone 2 | 915.4 / 10.13 / 3.46 | 892.1 / 12.58 / 3.58 | 906.8 / 13.32 / 6.03 |
+
+The boots of a codec differ by at most 0.27 µs. With the score's `r = 0.34`, level 3 with its own tables
+follows `seqlz-fast-lit` on the hull of three dumps, at 7.3, 11.1 and 8.7 bytes per µs, and level 3 with
+the fixed tables is on none of them; on the dump of 28th September `zstd` 3 stays next.
+
+**Phone.** The Mi 9T, zram in its own kernel, `tools/zram-phone/run.sh`, the second phone dump, 19 752
+pages, means in µs, the cold read after 2 MiB of other data; "own or fixed" is what was built, "own
+only" every coded page with its own table:
+
+| level 3 | bytes per page | A55 write | A55 warm / cold read | A76 write | A76 warm / cold read |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fixed tables | 911.6 | 65.0 | 13.31 / 57.2 | 22.6 | 4.20 / 7.91 |
+| own or fixed | 889.4 | 83.9 | 14.15 / 56.3 | 29.2 | 4.58 / 8.25 |
+| own only | 894.8 | 84.7 | 14.46 / 59.1 | 29.6 | 4.65 / 8.51 |
+| `zstd` | 899.0 | 123.7 | 41.1 / 103.9 | 34.2 | 15.4 / 21.3 |
+
+On the A55 the writes took 29% more, before the entropy check; cold reads are the same, the fixed
+table also has to come from memory. "Own only" is 5.4 bytes per page larger and slower to read, so the
+fixed tables cannot go: they are also what decides fastest whether coding the literals pays at all.
+
+**Level 2 with its own tables**, on the PC only, with the entropy check: 2.0% and 2.4% fewer bytes for
+21% and 25% more time per write, 961.1 to 941.4 and 863.9 to 843.1 bytes per page for 20 400 to 24 800
+and 16 900 to 21 200 ticks. Level 2 has to stay close to `lz4`, so this was not tried in the VM.
+
+**Why not kept.** 2.5% to 3.4% at level 3 bring it to `zstd` 3's size on three of four dumps, which is
+what level 3 is for. The price is the format: a flag, a description with its own code and its rules for
+an invalid one, a decoder path that builds a table from untrusted input, and the same in both reference
+decoders, for one level that most pages will not use. `seqlz-fast-lit` stays with one of 8 fixed literal
+tables per page. If the format ever gets a second way to code the literals anyway, the branch is the
+place to start, but only the PC measured the encoder with the entropy check.
 
 ## The first runs with dictionaries, Phases 0 to 2
 
@@ -6105,9 +6225,6 @@ one multiply).
   and every way to search more measured so far costs more than it saves; see "The matcher without
   its step". The search that does pay for its time is levels 3 and 4, which take about twice and 3
   times as long.
-* **A literal table per page for levels 3 and 4**, where `zstd` 3 is still smaller: 28 to 47 bytes per
-  page at most, by the entropy of the literals, see "Levels 3 and 4". It changes the format and the
-  decoder, which `seqlz-opt` with a literal table per page measured, and needs more scratch per CPU.
 * **C5 with 16 KiB pages**: `seqlz-fast-lit` needs 32 816 bytes per CPU, `lz4` 16 440. Decoding the
   literals into the page fixes it and was built, but made cold reads on 4 KiB pages slower in the
   kernel, for a reason not found; see "16 KiB pages, tuned". To decide with a kernel on 16 KiB pages.

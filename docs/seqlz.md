@@ -780,7 +780,8 @@ things make the difference, each measured:
   [above](#levels-3-and-4-older-positions-and-the-bits-each-match-costs).
 * **Its own literal table per page.** Coding the literals is worth 2.3 and 4.7 points to `zstd` 3.
   A page's own table instead of the best of 8 fixed ones would save `seqlz` 0.3 and 4.6 points more,
-  for 13% to 15% slower writes.
+  for 13% to 15% slower writes. At level 3 it was 2.5% to 3.4% in the kernel VM, not kept either, see
+  [explored-designs.md](explored-designs.md#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept).
 * **Adaptive sequence coding.** `zstd` codes literal length, match length and offset with separate
   tables, which it can pick or build for each chunk of data; decoding them takes three lookups per
   sequence. `seqlz`'s one fixed token table is what keeps its decoder fast.

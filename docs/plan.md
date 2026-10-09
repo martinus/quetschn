@@ -111,7 +111,9 @@ same VM with the swap times, on the first desktop dump the hull goes from `seqlz
 4.2 bytes per µs and to level 4 at 4.1, and `zstd` 3 is off it; on a phone dump level 3 follows at 8.3,
 then `zstd` 3 at 2.1. On the dumps of 24th and 28th September `zstd` 3 stays next after
 `seqlz-fast-lit`, at 10.2 and 15.1 bytes per µs, because it codes the literals with a table of each
-page's own ([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-kept)).
+page's own ([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-kept)). Level 3 with such a table was
+2.5% to 3.4% smaller and is not kept, for the second literal path it needs in the format
+([explored-designs.md](explored-designs.md#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)).
 
 **The time in the score is the codec's alone**, which is what the codecs differ in. A task waits for
 the whole page fault: on the PC 1.9 µs of it are the kernel's for every codec, and `lz4`'s
