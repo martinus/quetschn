@@ -370,9 +370,16 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 /* every sequence but the last covers at least 4 bytes of the page */
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
-/* the matcher's hash table, one per CPU, cleared for each page */
+/*
+ * The matcher's hash table, one per CPU, cleared for each page. Once the
+ * matcher is done it holds the raw literals while they are coded, see
+ * code_literals() in seqlz.c.
+ */
 struct seqlz_state {
-	u16 table[1U << SEQLZ_HASH_BITS];
+	union {
+		u16 table[1U << SEQLZ_HASH_BITS];
+		u8 literals[SEQLZ_PAGE];
+	};
 };
 
 /**
@@ -400,9 +407,10 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  *
  * Two pages, as zram's buffer has, are always enough, even for random data,
  * see the encoder in seqlz.c. A smaller @dst works too: a page that does not
- * fit is an error, which can happen up to 32 bytes before @dst_cap is full,
- * and the literals stay raw where coding them needs more room than @dst_cap
- * has. The same bytes as seqlz_encode() for the sequences of seqlz_find().
+ * fit is an error, which can happen up to 32 bytes before @dst_cap is full.
+ * The page is written with raw literals first, so it has to fit that way; the
+ * coded literals then go over the raw ones, which @st holds meanwhile. The same
+ * bytes as seqlz_encode() for the sequences of seqlz_find().
  *
  * Return: the length of the compressed page, or 0 if it does not fit into
  * @dst_cap bytes or @t lacks a code.
