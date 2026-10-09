@@ -732,9 +732,8 @@ static __always_inline unsigned int lit_bits(u64 even[][LIT_COST_WORDS],
  */
 struct own_work {
 	u32 freq[256]; /* how often each byte is a literal */
-	u32 w[256]; /* the weights, then the code lengths, see own_huffman() */
-	u8 sym[256]; /* the bytes with a code, by frequency */
-	u8 tmp[256];
+	u8 tmp[256]; /* the bytes with a code, by value */
+	u8 by[256]; /* the same, by how much a shorter code saves, see own_lengths() */
 	u8 len[256]; /* the code lengths */
 	u8 order[256]; /* the bytes by code length, then by value */
 	u32 enc[256]; /* code length | code << 8, as in struct lit_table */
@@ -751,72 +750,81 @@ static_assert(sizeof(struct own_work) <= sizeof(struct seqlz_state),
 	      "the matcher's state holds the work of a page's own table");
 
 /*
- * The Huffman code lengths of the n >= 2 bytes in w->sym, sorted by frequency,
- * into w->w[0..n), longest first, at most SEQLZ_LIT_BITS. Moffat and
- * Katajainen's in-place algorithm, three linear passes over the weights: the
- * inner nodes with their parents, their depths, the leaves' depths. A code that
- * is too long halves the weights and starts over.
+ * The code lengths of the n >= 2 bytes in w->tmp, of n_literals literals, into
+ * w->len: almost those of a Huffman code, without sorting the bytes by
+ * frequency. Each byte gets the shortest length l with freq * 2^l >= n_literals,
+ * at most SEQLZ_LIT_BITS, which leaves the code incomplete or, with lengths cut
+ * to SEQLZ_LIT_BITS, overfull. r = freq * 2^l / n_literals, from 1 to 2, says
+ * how much a byte would save with a code one bit shorter for the room that
+ * takes: the bytes go into 16 buckets by r, and in the order of r the code is
+ * made complete, overfull ones lengthen the bytes of the smallest r, then those
+ * of the largest r get shorter while there is room.
  */
-static void own_huffman(struct own_work *w, unsigned int n)
+static void own_lengths(struct own_work *w, unsigned int n,
+			unsigned int n_literals)
 {
-	u32 *const a = w->w;
-	unsigned int k, root, leaf, next, avbl, used, depth, shift = 0;
+	const u64 inv = (1ULL << 40) / n_literals;
+	const unsigned int full = 1U << SEQLZ_LIT_BITS;
+	unsigned int k, space = 0, at[17] = { 0 };
+	u8 r[256];
 
-	for (k = 0; k < n; k++)
-		a[k & 255U] = w->freq[w->sym[k & 255U]];
-	for (;;) {
-		a[0] += a[1];
-		root = 0;
-		leaf = 2;
-		for (next = 1; next < n - 1; next++) {
-			if (leaf >= n || a[root & 255U] < a[leaf & 255U]) {
-				a[next & 255U] = a[root & 255U];
-				a[root++ & 255U] = next;
-			} else {
-				a[next & 255U] = a[leaf++ & 255U];
-			}
-			if (leaf >= n ||
-			    (root < next && a[root & 255U] < a[leaf & 255U])) {
-				a[next & 255U] += a[root & 255U];
-				a[root++ & 255U] = next;
-			} else {
-				a[next & 255U] += a[leaf++ & 255U];
-			}
-		}
-		a[(n - 2) & 255U] = 0;
-		for (next = n - 2; next-- > 0;)
-			a[next & 255U] = a[a[next & 255U] & 255U] + 1U;
-		avbl = 1;
-		used = 0;
-		depth = 0;
-		root = n - 2;
-		next = n - 1;
-		while (avbl > 0) {
-			while (root < n && a[root & 255U] == depth) {
-				used++;
-				root--;
-			}
-			while (avbl > used) {
-				a[next-- & 255U] = depth;
-				avbl--;
-			}
-			avbl = 2 * used;
-			depth++;
-			used = 0;
-		}
-		if (a[0] <= SEQLZ_LIT_BITS)
-			return;
-		/*
-		 * Flatter weights, rounded up so that none becomes 0. The
-		 * shift only grows, so the loop ends: with all weights 1 the
-		 * code is at most 8 bits.
-		 */
-		shift += a[0] - SEQLZ_LIT_BITS;
-		for (k = 0; k < n; k++)
-			a[k & 255U] = (w->freq[w->sym[k & 255U]] +
-				       (1U << shift) - 1U) >>
-				      shift;
+	for (k = 0; k < n; k++) {
+		unsigned int b = w->tmp[k & 255U], f = w->freq[b],
+			     l = (unsigned int)(__builtin_clz(f) -
+						__builtin_clz(n_literals));
+		u64 q;
+
+		l += (f << l) < n_literals;
+		l += !l;
+		q = ((u64)f << l) * inv >> 36;
+		q = l > SEQLZ_LIT_BITS || q < 16U ? 16U : q > 31U ? 31U : q;
+		l = min(l, SEQLZ_LIT_BITS);
+		w->len[b] = (u8)l;
+		r[k & 255U] = (u8)(q - 16U);
+		at[q - 15U]++;
+		space += full >> l;
 	}
+	for (k = 1; k < 17; k++)
+		at[k] += at[k - 1];
+	for (k = 0; k < n; k++)
+		w->by[at[r[k & 255U]]++ & 255U] = w->tmp[k & 255U];
+	while (space > full)
+		for (k = 0; space > full && k < n; k++) {
+			unsigned int b = w->by[k & 255U], l = w->len[b];
+
+			if (l < SEQLZ_LIT_BITS) {
+				space -= full >> (l + 1U);
+				w->len[b] = (u8)(l + 1U);
+			}
+		}
+	/*
+	 * One round may leave room: a byte that just got shorter may now be the
+	 * longest. The room is a multiple of the longest code's, so another
+	 * round fills it.
+	 */
+	while (space < full)
+		for (k = n; k-- > 0;) {
+			unsigned int b = w->by[k & 255U], l = w->len[b];
+
+			if (l > 1U && space + (full >> l) <= full) {
+				space += full >> l;
+				w->len[b] = (u8)(l - 1U);
+			}
+		}
+}
+
+/* log2(1 + (i + 0.5) / 32) in 1/256 bits */
+static const u8 log2_frac[32] = { 6,   17,  28,  38,  49,  59,  68,  78,
+				  87,  96,  105, 113, 122, 130, 138, 146,
+				  154, 161, 169, 176, 183, 190, 197, 203,
+				  210, 216, 223, 229, 235, 241, 247, 253 };
+
+/* log2(f) in 1/256 bits, to about 1/50 bit, f > 0 */
+static __always_inline unsigned int log2_256(unsigned int f)
+{
+	unsigned int e = 31U - (unsigned int)__builtin_clz(f);
+
+	return e << 8 | log2_frac[(f << (31U - e)) >> 26 & 31U];
 }
 
 /* appends the n bits of v to the description in w->hdr */
@@ -843,9 +851,10 @@ static __always_inline void own_put(struct own_work *w, u64 *acc,
  * later steps go over them only, not over all 256.
  */
 static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
-			     const u8 *literals, unsigned int n_literals)
+			     const u8 *literals, unsigned int n_literals,
+			     unsigned int limit)
 {
-	unsigned int k, n = 0, lo[128] = { 0 }, count[16] = { 0 }, next[16],
+	unsigned int k, n = 0, count[16] = { 0 }, next[16],
 			at[16], l, top = 0, cnt = 0, prev, out = 0;
 	u64 acc = 0;
 	u16 *const h2 = w->freq2;
@@ -869,30 +878,29 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 	if (n < 2)
 		return 0;
 	/*
-	 * By frequency: a counting sort of the frequencies below 127, the
-	 * others in the last bucket, few, sorted by insertion.
+	 * Only where the literals' entropy and a description of about 0.45
+	 * bytes per byte with a code leave the code at least SEQLZ_LIT_OWN_MIN
+	 * bytes smaller than limit, the fixed table's, and small enough not to
+	 * stay raw, see code_literals(). On 75% of the pages they do not, and
+	 * that is known before the code is built.
 	 */
-	for (k = 0; k < n; k++)
-		lo[min(w->freq[w->tmp[k & 255U]], 127U)]++;
-	for (k = 0, l = 0; k < 128; k++) {
-		unsigned int c = lo[k];
+	{
+		unsigned int h = 0, est;
 
-		lo[k] = l;
-		l += c;
-	}
-	for (k = 0; k < n; k++)
-		w->sym[lo[min(w->freq[w->tmp[k & 255U]], 127U)]++ & 255U] =
-			w->tmp[k & 255U];
-	for (k = lo[126]; k < n; k++) {
-		unsigned int b = w->sym[k & 255U], f = w->freq[b], i = k;
+		for (k = 0; k < n; k++) {
+			u32 f = w->freq[w->tmp[k & 255U]];
 
-		for (; i > lo[126] && w->freq[w->sym[(i - 1) & 255U]] > f; i--)
-			w->sym[i & 255U] = w->sym[(i - 1) & 255U];
-		w->sym[i & 255U] = (u8)b;
+			h += f * log2_256(f);
+		}
+		h = n_literals * log2_256(n_literals) - h;
+		est = h / 2048U + n * 115U / 256U;
+		if (est + SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) +
+				    SEQLZ_LIT_OWN_MIN >
+			    limit ||
+		    est + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
+			return 0;
 	}
-	own_huffman(w, n);
-	for (k = 0; k < n; k++)
-		w->len[w->sym[k & 255U]] = (u8)w->w[k];
+	own_lengths(w, n, n_literals);
 
 	/* canonical codes, by length and then by byte, as build_lit() */
 	for (k = 0; k < n; k++)
@@ -1027,7 +1035,8 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	 * SEQLZ_LIT_OWN_MIN bytes less than the best fixed table.
 	 */
 	if (own && n_literals >= SEQLZ_LIT_OWN_MIN) {
-		unsigned int hdr = own_code(t, own, literals, n_literals),
+		unsigned int hdr = own_code(t, own, literals, n_literals,
+					    header + coded),
 			     ob[SEQLZ_LIT_STREAMS] = { 0 }, osum = 0, oall = 0,
 			     owidth;
 
