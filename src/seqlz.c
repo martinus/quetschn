@@ -1040,8 +1040,33 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 					   own->bits / 8U + SEQLZ_LIT_OWN_MIN >
 				   header + coded)
 			hdr = 0;
-		for (k = 0; hdr && k < n_literals; k++)
-			ob[k % SEQLZ_LIT_STREAMS] += own->len[literals[k]];
+		if (hdr) {
+			/* 8 literals a step, one sum per stream in a register */
+			const u8 *const ln = own->len;
+			unsigned int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0,
+				     b5 = 0, b6 = 0, b7 = 0;
+
+			for (k = 0; k + 8U <= n_literals; k += 8) {
+				b0 += ln[literals[k]];
+				b1 += ln[literals[k + 1]];
+				b2 += ln[literals[k + 2]];
+				b3 += ln[literals[k + 3]];
+				b4 += ln[literals[k + 4]];
+				b5 += ln[literals[k + 5]];
+				b6 += ln[literals[k + 6]];
+				b7 += ln[literals[k + 7]];
+			}
+			ob[0] = b0;
+			ob[1] = b1;
+			ob[2] = b2;
+			ob[3] = b3;
+			ob[4] = b4;
+			ob[5] = b5;
+			ob[6] = b6;
+			ob[7] = b7;
+			for (; k < n_literals; k++)
+				ob[k % SEQLZ_LIT_STREAMS] += ln[literals[k]];
+		}
 		for (j = 0; j < SEQLZ_LIT_STREAMS; j++) {
 			ob[j] = (ob[j] + 7U) / 8U;
 			osum += ob[j];
