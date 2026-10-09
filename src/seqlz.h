@@ -370,9 +370,16 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 /* every sequence but the last covers at least 4 bytes of the page */
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
-/* the matcher's hash table, one per CPU, cleared for each page */
+/*
+ * The matcher's hash table, one per CPU, cleared for each page. Once the
+ * matcher is done it holds the raw literals while they are coded, see
+ * code_literals() in seqlz.c.
+ */
 struct seqlz_state {
-	u16 table[1U << SEQLZ_HASH_BITS];
+	union {
+		u16 table[1U << SEQLZ_HASH_BITS];
+		u8 literals[SEQLZ_PAGE];
+	};
 };
 
 /**

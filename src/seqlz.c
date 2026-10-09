@@ -699,7 +699,8 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 {
 	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
 	const u64 lanes = 0x00ff00ff00ff00ffULL;
-	const unsigned int n_literals = load16(d), body = len - SEQLZ_HEADER;
+	const unsigned int n_literals = load16(d),
+			   bitstream = len - SEQLZ_HEADER - n_literals;
 	const u8 *literals = d + SEQLZ_HEADER;
 	unsigned int bits = ~0U, k, j, coded, set = 0, sizes[SEQLZ_LIT_STREAMS],
 		     all, width, header;
@@ -772,11 +773,7 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	 * at d + SEQLZ_HEADER + n_literals: coded is at least SEQLZ_LIT_CODED_MIN
 	 * bytes below n_literals, see the static_assert below.
 	 */
-	if (!raw) {
-		memcpy(spare, literals, n_literals);
-		raw = spare;
-	}
-	literals = raw;
+	literals = raw ? raw : memcpy(spare, literals, n_literals);
 	q[0] = d + header;
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		q[j + 1] = q[j] + sizes[j];
@@ -876,15 +873,15 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	}
 	/* the bitstream, down to right after the coded literals */
 	coded += header;
-	memmove(d + coded, d + SEQLZ_HEADER + n_literals, body - n_literals);
-	return coded + body - n_literals;
+	memmove(d + coded, d + SEQLZ_HEADER + n_literals, bitstream);
+	return coded + bitstream;
 }
 
 static_assert(SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MAX) <=
 		      SEQLZ_HEADER + SEQLZ_LIT_CODED_MIN,
 	      "code_literals() writes the coded literals before the bitstream");
-static_assert(sizeof(struct seqlz_state) >= SEQLZ_PAGE,
-	      "the matcher's state holds a page of raw literals");
+static_assert(sizeof(((struct seqlz_state *)0)->table) >= SEQLZ_PAGE,
+	      "the raw literals take no memory beyond the matcher's table");
 
 unsigned int seqlz_encode(const struct seqlz_tables *t,
 			  const struct seqlz_sequence *seq, unsigned int n,
@@ -917,10 +914,9 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 {
 	unsigned int len = compress_page(t, st, src, dst, dst_cap);
 
-	/* the matcher's table is free now and holds the raw literals */
 	return len == 0 || !coded ?
 		       len :
-		       code_literals(t, dst, len, NULL, (u8 *)st->table);
+		       code_literals(t, dst, len, NULL, st->literals);
 }
 
 /* ---- decoder ---- */
