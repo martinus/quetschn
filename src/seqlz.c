@@ -734,6 +734,7 @@ struct own_work {
 	u32 freq[256]; /* how often each byte is a literal */
 	u8 tmp[256]; /* the bytes with a code, by value */
 	u8 by[256]; /* the same, by how much a shorter code saves, see own_lengths() */
+	u8 r[256]; /* that, of each byte in tmp, 0 to 15 */
 	u8 len[256]; /* the code lengths */
 	u8 order[256]; /* the bytes by code length, then by value */
 	u32 enc[256]; /* code length | code << 8, as in struct lit_table */
@@ -766,7 +767,7 @@ static void own_lengths(struct own_work *w, unsigned int n,
 	const u64 inv = (1ULL << 40) / n_literals;
 	const unsigned int full = 1U << SEQLZ_LIT_BITS;
 	unsigned int k, space = 0, at[17] = { 0 };
-	u8 r[256];
+	u8 *const r = w->r;
 
 	for (k = 0; k < n; k++) {
 		unsigned int b = w->tmp[k & 255U], f = w->freq[b],
