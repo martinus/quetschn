@@ -7,10 +7,10 @@ first, and 16 KiB pages as a parameter from the start (§3.5). This document is 
 behind it, the phases with their gates, and where the project stands.
 
 > [!NOTE]
-> **Where it stands, 7th October 2026.** The codec, `seqlz-fast-lit`, its format and its fuzzing are
+> **Where it stands, 9th October 2026.** The codec, `seqlz-fast-lit`, its format and its fuzzing are
 > done. In the phone's own kernel it stores pages 28% smaller than `lz4`, and swaps them in 11% to
-> 13% slower warm and 17% to 25% slower cold. Next is a question to the zram maintainers, which is
-> drafted. The details
+> 13% slower warm and 17% to 25% slower cold. The question to the zram maintainers is
+> [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), the answer decides what comes next. The details
 > are in [§9](#9-where-the-project-stands-and-the-next-actions).
 
 Last verified against mainline `v7.3-rc1-324-g986c24e0fe44` (`986c24e0fe44`) on 22nd September
@@ -359,7 +359,7 @@ considered from the start (C4).
 
 This may change. In March 2026 Sergey Senozhatsky wrote that the zcomp API is to be deleted
 "sometime this year" in favour of the acomp crypto API
-([RFC v2 "zram: Allow zcomps to manage streams"](https://ratatoskr.run/lkml/2026/03/3448168/t)). At
+([his reply to RFC v2 "zram: Allow zcomps to manage streams"](https://lore.kernel.org/r/aa9tz-EIh7kOF3RM@google.com)). At
 `986c24e0fe44` the zcomp backends are still there. With acomp, a new codec comes as a crypto algorithm
 in `crypto/` plus the codec in `lib/`, and Herbert Xu's subsystem reviews it too (R11).
 
@@ -447,7 +447,7 @@ Each phase ends in an artifact and a gate. The durations are calendar weeks at 3
 | [4](#phase-4-reference-implementation-format-spec-fuzzing-20-weeks) | spec, reference decoders, fuzzing | mostly done |
 | [5](#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) | kernel port, validation in a VM | done, the gate passed on 8th October 2026 |
 | [6](#phase-6-arm64-validation-a-hard-gate-before-phase-7) | arm64 | half: one phone, 4 KiB pages |
-| [7](#phase-7-upstreaming-6-months-or-more-expect-v5) | upstreaming | the question to the maintainers is drafted |
+| [7](#phase-7-upstreaming-6-months-or-more-expect-v5) | upstreaming | the question to the maintainers is [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), 9th October 2026 |
 
 ### Phase 0: repository foundation (2 weeks)
 
@@ -624,7 +624,8 @@ Still to do:
 - [ ] **Post it to linux-mm**, without proposing a codec. Ask for criticism of the method, and ask
   directly whether the zram maintainers would consider a new backend at all, and which evidence they
   want. This is cheap, and it tests R3 about 18 months before a Phase 7 posting would. A clear "no"
-  sends the project to the fallback of R2 before more work on the codec. The question is drafted, see
+  sends the project to the fallback of R2 before more work on the codec. A question about seqlz
+  itself went to linux-mm on 9th October 2026 instead, [the thread](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), see
   [§9](#9-where-the-project-stands-and-the-next-actions).
 
 ### Phase 2b: decoder latency spike (2 weeks)
@@ -900,7 +901,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 | --- | --- | --- | --- |
 | R1 | **No arm64 hardware.** Phones are the users, and lzo-rle was merged on arm64 data first. | a known constraint | An old rooted phone with a big and a little core is used from Phase 2 on. Phase 6 adds a current phone with 16 KiB pages and is a hard gate. Do not submit without it. |
 | R2 | **Not enough headroom over `lz4` with a dictionary.** Nobody had measured it, and the project rested on it. | the gate of Phase 2: `zstd -1` needs 16.9% less than `lzo-rle` | Answered before any codec work. The fallback would have been the benchmark, and then *a targeted improvement of `lz4` or `lzo-rle` for page-sized inputs*. That is what lzo-rle was, and it is a much easier merge. |
-| R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Ask before the kernel port. The question to Sergey Senozhatsky and Minchan Kim is drafted (7th October 2026), with the phone's numbers, and not sent yet. A "no" sends the project to the fallback of R2. |
+| R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Ask before the kernel port. The question to Sergey Senozhatsky and Minchan Kim is [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/) (9th October 2026), with the phone's numbers, and not answered yet. A "no" sends the project to the fallback of R2. |
 | R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-fast-lit` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. On the Android 17 emulator they are within 0.6% of tables trained on its own pages, and its 16 KiB pages have tables of their own ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)). Open: a current phone. |
 | R5 | **The zram backend API changes.** The rewrite of 2024, the preemption series of 2025, parameter and naming changes in 2026. | `git log drivers/block/zram/`, and the split of zcomp into read and write streams posted in October 2026 (§3.2) | The codec has no kernel API dependency, `backend_quetschn.c` absorbs the changes. Rebase against mainline in CI. |
 | R6 | **A fuzzing bug or a sleep in atomic context burns the maintainers' goodwill.** | Biggers's objection, Minchan's panic | Phase 4, and the gate of Phase 5 with KASAN and `DEBUG_ATOMIC_SLEEP`, exist for this. Continuous fuzzing with ClusterFuzzLite before the submission, OSS-Fuzz if it takes the project. |
@@ -915,7 +916,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 
 ## 9. Where the project stands, and the next actions
 
-As of 8th October 2026:
+As of 9th October 2026:
 
 - **Phases 0 to 3: done.** The harness, the collectors, zram dumps of the desktop and of the Mi 9T,
   and the design: `seqlz-fast-lit` ([seqlz.md](seqlz.md)), with every alternative that was measured in
@@ -940,14 +941,16 @@ As of 8th October 2026:
   as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on the pages
   of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
   per CPU, above C5.
-- **Phase 7: the question to the maintainers is drafted** (R3, R11), and not sent.
+- **Phase 7: the question to the maintainers is sent** (R3, R11), on 9th October 2026 to linux-mm,
+  linux-block and linux-kernel, [the thread](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/). Not answered yet.
 - **Levels 3 and 4** (#139): a deeper matcher for the same format, 2.7% to 4.3% less for about twice
   the write time, measured and not kept.
 
 Next, in this order:
 
-1. Send the question to Sergey Senozhatsky and Minchan Kim: a new algorithm at all, and as a zram
-   backend or as an acomp algorithm (§3.4). The answer decides the form of Phase 5.
+1. The answer of Sergey Senozhatsky and Minchan Kim to [the question](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/): a new algorithm at
+   all, and as a zram backend or as an acomp algorithm (§3.4). The answer decides the form of
+   Phase 5.
 2. Fewer data-dependent branches in the decoder. In a fault it mispredicts about 110 branches per page
    that it gets right after a decode of the same page, which every benchmark before hid by decoding a
    page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). The refill without its branch on
