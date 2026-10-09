@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "seqlz.h"
+#include "unwritten.h"
 
 #define DST_CAP (2U * SEQLZ_PAGE)
 
@@ -28,17 +29,23 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 /* decodes into out, which holds other bytes before, so that a byte the decoder skips shows */
 static int decodes_to(const unsigned char* page, unsigned int len, void* scr) {
     memset(out, 0xa5, SEQLZ_PAGE);
+    unwritten(out, SEQLZ_PAGE);
+    unwritten(scratch, SEQLZ_SCRATCH);
     return seqlz_decode(tables, dst, len, out, scr) == 0 && memcmp(out, page, SEQLZ_PAGE) == 0;
 }
 
 static void roundtrip(const unsigned char* page, unsigned int n, unsigned int n_lit, int coded) {
-    unsigned int len = seqlz_compress(tables, &state, page, dst, DST_CAP, coded);
+    unsigned int len;
 
+    unwritten(&state, sizeof(state));
+    unwritten(dst, DST_CAP);
+    len = seqlz_compress(tables, &state, page, dst, DST_CAP, coded);
     if (len == 0 || len > DST_CAP || !decodes_to(page, len, scratch))
         abort();
     /* raw literals need no scratch */
     if (!coded && !decodes_to(page, len, 0))
         abort();
+    unwritten(again, DST_CAP);
     if (seqlz_encode(tables, seq, n, literals, n_lit, again, DST_CAP, coded) != len || memcmp(again, dst, len) != 0)
         abort();
 }
@@ -50,6 +57,7 @@ static void small_dst(const unsigned char* page, unsigned int cap, int coded) {
 
     if (!d)
         abort();
+    unwritten(&state, sizeof(state));
     len = seqlz_compress(tables, &state, page, d, cap, coded);
     if (len > cap || (len && (memcpy(dst, d, len), !decodes_to(page, len, scratch))))
         abort();
@@ -81,6 +89,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             page[k] = page[k - (size - 1)];
 
     /* the sequences and literals of the page, the same for raw and coded literals */
+    unwritten(&state, sizeof(state));
     n = seqlz_find(&state, page, seq);
     for (k = 0; k < n; k++) {
         memcpy(literals + n_lit, page + pos, seq[k].literals);

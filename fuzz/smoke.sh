@@ -1,7 +1,8 @@
 #!/bin/bash
 # smoke.sh [seconds] [build dir] [cmake args]: the four fuzz targets at the same time with libFuzzer, ASan and
 # UBSan for the given time, 60 s by default, from make_seeds.c's seeds. Inputs that fail end up in
-# <build dir>/crashes. For CI; the long runs are afl.sh. Needs clang.
+# <build dir>/crashes. For CI; the long runs are afl.sh. Needs clang. With -DQUETSCHN_SANITIZE=OFF
+# -DQUETSCHN_MSAN=ON as cmake args, MSan instead of ASan and UBSan.
 set -euo pipefail
 SECONDS_PER_TARGET=${1:-60}
 B=$(realpath -m "${2:-build-fuzz}")

@@ -18,6 +18,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(QUETSCHN_WERROR "Treat warnings as errors" OFF)
 option(QUETSCHN_SANITIZE "Build with ASan and UBSan" OFF)
+# MSan, clang only and not together with ASan. Everything that is linked must be built with it, so it is
+# for the fuzz targets of fuzz/, which are C: the C++ standard library is not built with it.
+option(QUETSCHN_MSAN "Build with MSan" OFF)
 
 add_library(quetschn_warnings INTERFACE)
 target_compile_options(quetschn_warnings INTERFACE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -27,6 +30,11 @@ endif()
 if(QUETSCHN_SANITIZE)
     target_compile_options(quetschn_warnings INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
     target_link_options(quetschn_warnings INTERFACE -fsanitize=address,undefined)
+endif()
+if(QUETSCHN_MSAN)
+    target_compile_options(quetschn_warnings INTERFACE -fsanitize=memory -fsanitize-memory-track-origins
+                                                       -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(quetschn_warnings INTERFACE -fsanitize=memory)
 endif()
 
 # Page corpus collectors, see docs/plan.md Phase 1. Linux only, they read /proc.
