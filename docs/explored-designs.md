@@ -96,6 +96,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, not kept](#the-matchers-table-with-the-bytes-its-loop-in-assembly-on-arm64-9-fewer-compress-cycles-on-the-a55-not-kept)
 - [The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster in the VM, kept](#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)
 - [Coded literals from the matcher's table: a buffer of one page costs 0.1% to 0.5% instead of 1.6% to 2.9%, kept](#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept)
+- [The bitstream copied once, behind the literals raw or coded: writes up to 0.3 µs slower in the VM and 0.8 µs on the A55, not kept](#the-bitstream-copied-once-behind-the-literals-raw-or-coded-writes-up-to-03-µs-slower-in-the-vm-and-08-µs-on-the-a55-not-kept)
 - [Memory for speed on the phone: no trade worth it, not kept](#memory-for-speed-on-the-phone-no-trade-worth-it-not-kept)
 - [seqlz-fast-lit faster at the same memory: five tries, none kept](#seqlz-fast-lit-faster-at-the-same-memory-five-tries-none-kept)
 
@@ -4614,6 +4615,64 @@ into, which breaks 10 test cases. The doctest of #129, every buffer size from 0 
 under ASan, and the roundtrip fuzz target, which compresses into one page, pass as they are.
 [seqlz, compressed](seqlz-compressed.html) draws both buffers to scale at every step, with what moves
 where.
+
+## The bitstream copied once, behind the literals raw or coded: writes up to 0.3 µs slower in the VM and 0.8 µs on the A55, not kept
+
+*On a page with coded literals the bitstream is copied twice: from the back of the buffer to right
+behind the raw literals, the right way round, and then down behind the coded ones. Built: the coded
+literals first, then the bitstream copied once, to where they end. The same bytes, and by estimate
+0.01 to 0.02 µs less per page on the PC. Measured, the writes got slower instead, `seqlz-fast` too,
+which codes no literals: gcc gave the matcher in `seqlz_compress()` other registers and other padding
+before its loops.* Code: the branch `seqlz-bitstream-once`, after
+[Coded literals from the matcher's table](#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept).
+
+**What it would save.** `encoder_finish()` split in two: `encoder_end()` writes the last bits and the
+u16, `encoder_place()` copies the bitstream from the back of the buffer to a given place. In between,
+`code_literals()` codes the literals and returns where they end, and `compress_page()` went into
+`seqlz_compress()`. The bitstream on the pages with coded literals, 20 000-page samples:
+
+| dump | pages with coded literals | bitstream on those |
+| --- | ---: | ---: |
+| first desktop dump | 31% | 441 B |
+| dump of 24th September | 47% | 575 B |
+| phone, second dump | 24% | 377 B |
+
+That is one copy of 400 to 600 bytes on a third of the pages, a few tens of ns each on the PC.
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `986c24e0fe44`, gcc 16.2.1, `MODE=swap`, the backend's
+prefetch, 20 000 pages per dump, CPU 2 at a fixed 4.5 GHz, boost off. Per dump `main`, this, this,
+`main`, each a kernel with 3 boots, so 6 boots per side. Swap-out means in µs, `main` / this:
+
+| dump | `seqlz-fast-lit` | `seqlz-fast` | `lz4` |
+| --- | --- | --- | --- |
+| first desktop dump | 7.477 / 7.643 | 6.908 / 7.057 | 6.499 / 6.535 |
+| dump of 24th September | 8.251 / 8.571 | 7.512 / 7.720 | 7.167 / 7.139 |
+| phone, second dump | 6.702 / 6.704 | 6.220 / 6.331 | 5.967 / 5.902 |
+
+`mm_stat` has the same bytes, and the swap-ins move by 0.05 µs at most. A small program of mine ran on
+another core for a few seconds during one of the change's kernels on the first dump; `lz4` there is
+0.04 µs slower, on the other two dumps it is faster.
+
+**The Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, the second phone dump, 19 752 pages, functions
+aligned to 64 bytes, two copies of `main` and the change, 3 rounds, write means in µs:
+
+| | `main`, copy A | `main`, copy B | this |
+| --- | ---: | ---: | ---: |
+| A55, `seqlz-fast` | 29.36 | 29.29 | 30.12 |
+| A55, `seqlz-fast-lit` | 32.20 | 32.23 | 32.98 |
+| A76, `seqlz-fast` | 11.26 | 11.27 | 11.45 |
+| A76, `seqlz-fast-lit` | 12.23 | 12.26 | 12.43 |
+
+The two copies of `main` are within 0.07 µs, the change is 0.8 µs slower on the A55 and 0.2 µs on the
+A76, in both codecs. With gcc and the kernel's flags, `seqlz_compress()` of the change has about 10
+instructions fewer around the matcher's loop, with other registers and other nops before the loops;
+which of that costs the time is not measured. A copy that saves 0.01 to 0.02 µs does not pay for any
+of it, so the order stays: the raw page first, then the coded literals over it.
+
+Not built, for the same reason: coding the literals into the matcher's table and copying them back,
+instead of copying the raw literals there. That copies the coded literals instead of the raw ones,
+215 to 392 bytes less on the pages with coded literals, about half of what the single copy of the
+bitstream saves.
 
 ## The token's table by the offset before it: 3 and 12 bytes per page, not kept
 
