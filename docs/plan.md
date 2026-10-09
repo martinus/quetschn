@@ -105,6 +105,14 @@ with `zstd` it pays only where the CPU time of an idle machine counts for less, 
 of a recompressed page 2.3 µs slower. `seqlz-opt` is removed
 ([explored-designs.md, "Recompression, measured, not pursued"](explored-designs.md#recompression-measured-not-pursued)).
 
+**Levels 3 and 4 (#139) were measured and are not kept.** The same format with a matcher that searches
+a hash chain and prices each match by the tables: level 3 stores 2.7% to 4.3% less than
+`seqlz-fast-lit` on four dumps, as much as `zstd` 3 on two of them, for about twice the write time. In
+the VM it follows `seqlz-fast-lit` on the hull at 4.2 and 8.3 bytes per µs on two dumps and is off it
+on the other two, also with a literal table of each page's own, which made it 2.5% to 3.4% smaller
+([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept),
+[and the own table](explored-designs.md#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)).
+
 **The time in the score is the codec's alone**, which is what the codecs differ in. A task waits for
 the whole page fault: on the PC 1.9 µs of it are the kernel's for every codec, and `lz4`'s
 decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 µs of 4.1 µs. So a codec
@@ -933,6 +941,8 @@ As of 8th October 2026:
   of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
   per CPU, above C5.
 - **Phase 7: the question to the maintainers is drafted** (R3, R11), and not sent.
+- **Levels 3 and 4** (#139): a deeper matcher for the same format, 2.7% to 4.3% less for about twice
+  the write time, measured and not kept.
 
 Next, in this order:
 
