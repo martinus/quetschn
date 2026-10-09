@@ -732,8 +732,7 @@ static __always_inline unsigned int lit_bits(u64 even[][LIT_COST_WORDS],
  */
 struct own_work {
 	u32 freq[256]; /* how often each byte is a literal */
-	/* the weights, then the code lengths, see own_huffman(); and a stop */
-	u32 w[512];
+	u32 w[256]; /* the weights, then the code lengths, see own_huffman() */
 	u8 sym[256]; /* the bytes with a code, by frequency */
 	u8 tmp[256];
 	u8 len[256]; /* the code lengths */
@@ -764,47 +763,41 @@ static void own_huffman(struct own_work *w, unsigned int n)
 	unsigned int k, root, leaf, next, avbl, used, depth, shift = 0;
 
 	for (k = 0; k < n; k++)
-		a[k] = w->freq[w->sym[k]];
+		a[k & 255U] = w->freq[w->sym[k & 255U]];
 	for (;;) {
 		a[0] += a[1];
 		root = 0;
 		leaf = 2;
-		/*
-		 * Without branches: which of the two queues has the lighter
-		 * node is no pattern a predictor learns. a[n] is a weight no
-		 * node reaches, for the end of the leaves.
-		 */
-		a[n & 511U] = ~0U;
 		for (next = 1; next < n - 1; next++) {
-			unsigned int in = a[root & 511U] < a[leaf & 511U],
-				     pick = in ? root : leaf;
-
-			a[next & 511U] = a[pick & 511U];
-			a[root & 511U] = in ? next : a[root & 511U];
-			root += in;
-			leaf += !in;
-			in = root < next && a[root & 511U] < a[leaf & 511U];
-			pick = in ? root : leaf;
-			a[next & 511U] += a[pick & 511U];
-			a[root & 511U] = in ? next : a[root & 511U];
-			root += in;
-			leaf += !in;
+			if (leaf >= n || a[root & 255U] < a[leaf & 255U]) {
+				a[next & 255U] = a[root & 255U];
+				a[root++ & 255U] = next;
+			} else {
+				a[next & 255U] = a[leaf++ & 255U];
+			}
+			if (leaf >= n ||
+			    (root < next && a[root & 255U] < a[leaf & 255U])) {
+				a[next & 255U] += a[root & 255U];
+				a[root++ & 255U] = next;
+			} else {
+				a[next & 255U] += a[leaf++ & 255U];
+			}
 		}
-		a[n - 2] = 0;
+		a[(n - 2) & 255U] = 0;
 		for (next = n - 2; next-- > 0;)
-			a[next] = a[a[next] & 511U] + 1U;
+			a[next & 255U] = a[a[next & 255U] & 255U] + 1U;
 		avbl = 1;
 		used = 0;
 		depth = 0;
 		root = n - 2;
 		next = n - 1;
 		while (avbl > 0) {
-			while (root < n && a[root] == depth) {
+			while (root < n && a[root & 255U] == depth) {
 				used++;
 				root--;
 			}
 			while (avbl > used) {
-				a[next--] = depth;
+				a[next-- & 255U] = depth;
 				avbl--;
 			}
 			avbl = 2 * used;
@@ -820,8 +813,9 @@ static void own_huffman(struct own_work *w, unsigned int n)
 		 */
 		shift += a[0] - SEQLZ_LIT_BITS;
 		for (k = 0; k < n; k++)
-			a[k] = (w->freq[w->sym[k]] + (1U << shift) - 1U) >>
-			       shift;
+			a[k & 255U] = (w->freq[w->sym[k & 255U]] +
+				       (1U << shift) - 1U) >>
+				      shift;
 	}
 }
 
@@ -866,9 +860,9 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 	if (k < n_literals)
 		w->freq[literals[k]]++;
 	for (k = 0; k < 256; k++) {
-		u32 f = w->freq[k] + h2[k];
+		u32 f = w->freq[k & 255U] + h2[k & 255U];
 
-		w->freq[k] = f;
+		w->freq[k & 255U] = f;
 		w->tmp[n & 255U] = (u8)k;
 		n += f != 0;
 	}
@@ -879,7 +873,7 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 	 * others in the last bucket, few, sorted by insertion.
 	 */
 	for (k = 0; k < n; k++)
-		lo[min(w->freq[w->tmp[k]], 127U)]++;
+		lo[min(w->freq[w->tmp[k & 255U]], 127U)]++;
 	for (k = 0, l = 0; k < 128; k++) {
 		unsigned int c = lo[k];
 
@@ -887,21 +881,22 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 		l += c;
 	}
 	for (k = 0; k < n; k++)
-		w->sym[lo[min(w->freq[w->tmp[k]], 127U)]++ & 255U] = w->tmp[k];
+		w->sym[lo[min(w->freq[w->tmp[k & 255U]], 127U)]++ & 255U] =
+			w->tmp[k & 255U];
 	for (k = lo[126]; k < n; k++) {
-		unsigned int b = w->sym[k], f = w->freq[b], i = k;
+		unsigned int b = w->sym[k & 255U], f = w->freq[b], i = k;
 
-		for (; i > lo[126] && w->freq[w->sym[i - 1]] > f; i--)
-			w->sym[i] = w->sym[i - 1];
-		w->sym[i] = (u8)b;
+		for (; i > lo[126] && w->freq[w->sym[(i - 1) & 255U]] > f; i--)
+			w->sym[i & 255U] = w->sym[(i - 1) & 255U];
+		w->sym[i & 255U] = (u8)b;
 	}
 	own_huffman(w, n);
 	for (k = 0; k < n; k++)
-		w->len[w->sym[k]] = (u8)w->w[k];
+		w->len[w->sym[k & 255U]] = (u8)w->w[k];
 
 	/* canonical codes, by length and then by byte, as build_lit() */
 	for (k = 0; k < n; k++)
-		count[w->len[w->tmp[k]] & 15U]++;
+		count[w->len[w->tmp[k & 255U]] & 15U]++;
 	for (l = 1, next[0] = 0, at[0] = 0; l < 16; l++) {
 		next[l] = (next[l - 1] + count[l - 1]) << 1;
 		at[l] = at[l - 1] + count[l - 1];
@@ -909,7 +904,7 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 	}
 	w->bits = 0;
 	for (k = 0; k < n; k++) {
-		unsigned int b = w->tmp[k];
+		unsigned int b = w->tmp[k & 255U];
 
 		l = w->len[b] & 15U;
 		w->bits += w->freq[b] * l;
@@ -920,15 +915,15 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 	/* the description: the bytes by length, each as its distance */
 	for (l = 1, k = 0; l <= top; l++) {
 		prev = ~0U;
-		for (; k < n && w->len[w->order[k]] == l; k++) {
-			unsigned int d = w->order[k] - prev,
+		for (; k < n && w->len[w->order[k & 255U]] == l; k++) {
+			unsigned int d = w->order[k & 255U] - prev,
 				     sym = 31U - (unsigned int)__builtin_clz(d),
 				     e = t->lit_own_enc[sym];
 
 			own_put(w, &acc, &cnt, &out,
 				(e & 0xffU) << sym | (d - (1U << sym)),
 				(e >> 8) + sym);
-			prev = w->order[k];
+			prev = w->order[k & 255U];
 		}
 		if (l < top) {
 			unsigned int e = t->lit_own_enc[SEQLZ_LIT_OWN_NEXT];
@@ -1031,13 +1026,6 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	 * A table of the page's own where it and its description take at least
 	 * SEQLZ_LIT_OWN_MIN bytes less than the best fixed table.
 	 */
-#ifdef SEQLZ_OWN_SWITCH
-	{
-		extern int seqlz_own_off;
-		if (seqlz_own_off)
-			own = NULL;
-	}
-#endif
 	if (own && n_literals >= SEQLZ_LIT_OWN_MIN) {
 		unsigned int hdr = own_code(t, own, literals, n_literals),
 			     ob[SEQLZ_LIT_STREAMS] = { 0 }, osum = 0, oall = 0,
@@ -1061,14 +1049,6 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 		}
 		owidth = 32U - (unsigned int)__builtin_clz(
 				       oall | 1U << (SEQLZ_SIZE_BITS_MIN - 1U));
-#ifdef OWN_LOG
-		{
-			extern void own_log(unsigned int, unsigned int,
-					    unsigned int, unsigned int);
-			own_log(n_literals, header + coded,
-				SEQLZ_LIT_HEADER(owidth) + hdr + osum, bits);
-		}
-#endif
 		if (hdr &&
 		    SEQLZ_LIT_HEADER(owidth) + hdr + osum + SEQLZ_LIT_OWN_MIN <=
 			    header + coded) {

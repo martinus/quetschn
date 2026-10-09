@@ -155,7 +155,7 @@ static int hc_setup(struct quetschn_params *p)
 {
 	if (p->level == QUETSCHN_LEVEL_DEFAULT)
 		p->level = 3;
-	if (p->level != 3 && p->level != 4 && p->level != 13 && p->level != 14)
+	if (p->level != 3 && p->level != 4)
 		return -1;
 	return setup(p);
 }
@@ -168,20 +168,16 @@ static int create_hc_cctx(struct quetschn_params *p, struct quetschn_stream *s)
 	return s->context ? 0 : -1;
 }
 
-int seqlz_own_off;
-
 static int hc_compress(struct quetschn_params *p, struct quetschn_stream *s,
 		       const void *src, unsigned int src_len, void *dst,
 		       unsigned int *dst_len)
 {
 	unsigned int len;
 
-	seqlz_own_off = p->level >= 13;
-
 	if (src_len != SEQLZ_PAGE)
 		return -1;
 	len = seqlz_compress_hc(p->drv_data, s->context, src, dst, *dst_len,
-				p->level % 10 == 4);
+				p->level == 4);
 	if (!len)
 		return -1;
 	*dst_len = len;

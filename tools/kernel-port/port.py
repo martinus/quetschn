@@ -38,7 +38,7 @@ SRC = REPO / "src"
 WIDTH = 80
 
 # what only the harness and the tests of src/ use, left out of the kernel's copy
-HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_find_hc\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
+HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_find_hc\b|\bseqlz_encode\b|\bseqlz_encode_own\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
                           r"\bseqlz_tables_size\b")
 
 # the two references to this repository the kernel's copy keeps: where it points for the format, and the
@@ -308,6 +308,7 @@ def port_header():
     t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the page \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
     t = cut(t, r"\n/\*\*\n \* seqlz_find_hc\(\) -.*?;\n")
+    t = cut(t, r"/\*\*\n \* seqlz_encode_own\(\) -.*?;\n\n")
     t = rename_compress(t, ";")
     t = common(t)
     t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
@@ -343,6 +344,7 @@ def port_codec():
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
                r"static unsigned int encode_raw\(.*?\n\}\n\n")
     t = cut(t, r"unsigned int seqlz_encode\(.*?\n\}\n\n")
+    t = cut(t, r"unsigned int seqlz_encode_own\(.*?\n\}\n\n")
     t = cut(t, r"size_t seqlz_tables_size\(void\)\n\{\n.*?\n\}\n\n")
     # seqlz_compress() is the interface's name now, with the work memory and a level
     t = rename_compress(t, "\n{")
