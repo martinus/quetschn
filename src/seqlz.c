@@ -815,7 +815,7 @@ static void own_lengths(struct own_work *w, unsigned int n,
 }
 
 /* log2(1 + (i + 0.5) / 32) in 1/256 bits */
-static const u8 log2_frac[32] = { 6,   17,  28,  38,  49,  59,  68,  78,
+static const u8 log2_frac[32] = { 6,   17,  28,	 38,  49,  59,	68,  78,
 				  87,  96,  105, 113, 122, 130, 138, 146,
 				  154, 161, 169, 176, 183, 190, 197, 203,
 				  210, 216, 223, 229, 235, 241, 247, 253 };
@@ -855,8 +855,8 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 			     const u8 *literals, unsigned int n_literals,
 			     unsigned int limit)
 {
-	unsigned int k, n = 0, count[16] = { 0 }, next[16],
-			at[16], l, top = 0, cnt = 0, prev, out = 0;
+	unsigned int k, n = 0, count[16] = { 0 }, next[16], at[16], l, top = 0,
+			cnt = 0, prev, out = 0;
 	u64 acc = 0;
 	u16 *const h2 = w->freq2;
 
