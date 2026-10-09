@@ -76,10 +76,11 @@ struct seqlz_tables {
 	u64 lit_cost[256][LIT_COST_WORDS];
 	/*
 	 * the codes of a page's own literal table's lengths: the decode table,
-	 * the symbol in bits 0 to 3 and the code's length from bit 4 on, and the
-	 * encoder's code | length << 8
+	 * the symbol in bits 0 to 3, the code's length in bits 4 to 7 and the
+	 * code's length and its extra bits from bit 8 on, and the encoder's
+	 * code | length << 8
 	 */
-	u8 lit_own_decode[1U << SEQLZ_LIT_OWN_BITS];
+	u16 lit_own_decode[1U << SEQLZ_LIT_OWN_BITS];
 	u16 lit_own_enc[SEQLZ_LIT_OWN_SYMBOLS];
 	struct value_table ll, ml;
 	/*
@@ -305,7 +306,12 @@ int seqlz_tables_init(struct seqlz_tables *t,
 				     k < (c + 1U) << (SEQLZ_LIT_OWN_BITS - l);
 				     k++)
 					t->lit_own_decode[k] =
-						(u8)(sym | l << 4);
+						(u16)(sym | l << 4 |
+						      (l +
+						       (sym < SEQLZ_LIT_OWN_NEXT ?
+								sym :
+								0U))
+							      << 8);
 			}
 		}
 		for (k = 0; k < 256U * SEQLZ_LIT_SETS; k++)
@@ -1752,68 +1758,89 @@ static __always_inline u64 lit_decode(u8 *out, u64 bits, const u16 *lt,
  * its 1 << SEQLZ_LIT_BITS decode entries to lt, in the order of the table:
  * code lengths from short to long, within a length by byte, which is also the
  * order of the bytes in the page. Each byte fills the next 1 << (SEQLZ_LIT_BITS
- * - l) entries, a whole number of 8-byte stores from l = 8 down. Returns the
- * byte after the table, or NULL if it is not valid: a byte above 255 or twice,
- * a length above SEQLZ_LIT_BITS, more codes than fit, bits that are not zero
- * after the last code, or fewer bytes than the table needs. At most 256 bytes
- * and SEQLZ_LIT_BITS lengths, so the loop ends for any input.
+ * - l) entries. Returns the byte after the table, or NULL if it is not valid: a
+ * byte above 255 or twice, a length above SEQLZ_LIT_BITS, bits that are not
+ * zero after the last code, or fewer bytes than the table needs. More codes
+ * than fit can't be: the table ends where it is full. At most 256 bytes and SEQLZ_LIT_BITS lengths, so the loop ends for
+ * any input.
+ *
+ * lt needs 8 bytes of room after the table: each byte's entries start with a
+ * store of 8 bytes, 4 entries, also for codes of 9 and 10 bits, whose entries
+ * the next bytes then overwrite. A branch on the length was slower: in large
+ * tables lengths change often. The bits are in a register, refilled when fewer
+ * than a symbol and its extra bits are left.
  */
 static const u8 *own_table(const struct seqlz_tables *t, const u8 *p,
 			   const u8 *end, u16 *lt)
 {
-	unsigned int fill = 0, len = 1, pos = 0, sym, n;
-	int prev = -1;
-	u64 seen[4] = { 0 };
+	const u8 *ip = p;
+	u16 *o = lt, *const lt_end = lt + (1U << SEQLZ_LIT_BITS);
+	u64 bits = 0, v;
+	unsigned int avail = 0, len = 1, run = (1U << SEQLZ_LIT_BITS) / 2U,
+		     prev = ~0U, used;
+	/*
+	 * Which bytes have a code, one byte each: a bit each made every check
+	 * wait for the store of the byte before, in the same word.
+	 */
+	u8 seen[256];
 
-	while (fill < 1U << SEQLZ_LIT_BITS) {
-		const u8 *at = p + (pos >> 3);
-		/* the next bits, zeros past the end */
-		u64 w = (end - at >= 8 ? get_unaligned_be64(at) :
-					 lit_load_tail(at, end))
-			<< (pos & 7U);
-		unsigned int
-			e = t->lit_own_decode[w >> (64U - SEQLZ_LIT_OWN_BITS)],
-			b, run;
-		u64 v;
-		u16 *o;
+	memset(seen, 0, sizeof(seen));
+	while (o < lt_end) {
+		unsigned int e, sym, b, bad;
+		u16 *q;
 
+		if (avail < SEQLZ_LIT_OWN_BITS + 8U) {
+			/* whole bytes, as many as fit below 64 bits */
+			unsigned int k = (63U - avail) >> 3;
+			u64 w = end - ip >= 8 ? get_unaligned_be64(ip) :
+						lit_load_tail(ip, end);
+
+			bits = (bits | w >> avail) &
+			       ~(~0ULL >> (avail + 8U * k));
+			ip += k;
+			avail += 8U * k;
+		}
+		/*
+		 * The code and its extra bits in one shift: the next lookup
+		 * waits only for that one. The extra bits come from before it.
+		 */
+		e = t->lit_own_decode[bits >> (64U - SEQLZ_LIT_OWN_BITS)];
 		sym = e & 15U;
-		n = e >> 4;
+		v = bits << (e >> 4 & 15U);
+		bits <<= e >> 8;
+		avail -= e >> 8;
 		if (sym == SEQLZ_LIT_OWN_NEXT) {
-			pos += n;
-			prev = -1;
 			if (++len > SEQLZ_LIT_BITS)
 				return NULL;
+			run >>= 1;
+			prev = ~0U;
 			continue;
 		}
 		/* d = 1 << sym and the sym bits after the code */
-		w <<= n;
-		b = (unsigned int)(prev + (int)(1U << sym) +
-				   (int)(sym ? w >> (64U - sym) : 0U));
-		pos += n + sym;
-		run = (1U << SEQLZ_LIT_BITS) >> len;
-		if (b > 255U || (seen[b >> 6] >> (b & 63U) & 1U) ||
-		    fill + run > 1U << SEQLZ_LIT_BITS)
+		b = prev + (1U << sym) +
+		    (unsigned int)((v >> (63U - sym)) >> 1);
+		/*
+		 * The entries fit: the runs are powers of 2 that never grow,
+		 * so every run before this one is a multiple of it, and so is
+		 * what is left of the table.
+		 */
+		bad = (b > 255U) | seen[b & 255U];
+		if (bad)
 			return NULL;
-		seen[b >> 6] |= 1ULL << (b & 63U);
-		prev = (int)b;
+		seen[b & 255U] = 1;
+		prev = b;
 		v = (u64)(len | b << 8) * 0x0001000100010001ULL;
-		o = lt + fill;
-		fill += run;
-		if (run >= 4U) {
-			for (; o < lt + fill; o += 4)
-				__builtin_memcpy(o, &v, 8);
-		} else {
-			*o = (u16)v;
-			if (run == 2U)
-				o[1] = (u16)v;
-		}
+		__builtin_memcpy(o, &v, 8);
+		for (q = o + 4; q < o + run; q += 4)
+			__builtin_memcpy(q, &v, 8);
+		o += run;
 	}
 	/* the table's bytes are in the page, the bits after it are zero */
-	if ((pos + 7U) / 8U > (unsigned long)(end - p) ||
-	    ((pos & 7U) && (p[pos >> 3] << (pos & 7U) & 0xffU)))
+	used = 8U * (unsigned int)(ip - p) - avail;
+	if ((used + 7U) / 8U > (unsigned long)(end - p) ||
+	    ((used & 7U) && bits >> (64U - (8U - (used & 7U)))))
 		return NULL;
-	return p + (pos + 7U) / 8U;
+	return p + (used + 7U) / 8U;
 }
 
 /*
