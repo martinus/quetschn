@@ -5,31 +5,10 @@
 /*
  * The part of seqlz that is plain LZ: the matcher, which finds the sequences
  * of a page. All of it is static inline, so that it ends up inside the loops of
- * seqlz.c.
+ * seqlz_compress.c.
  */
 
 #include "seqlz.h"
-
-/*
- * Prefetches every cache line of [p, p + size); size is a multiple of
- * PREFETCH_STEP. In a swap-in the decoder's tables are often no longer in
- * the cache: asking for all of their lines at once lets the misses overlap,
- * instead of one after the other as the decoder runs into them. 512 bytes per
- * iteration, 8 lines of 64 bytes: with one line per iteration, the loop took
- * more instructions than the prefetches.
- */
-#define PREFETCH_STEP 512U
-
-static inline void prefetch_lines(const void *p, unsigned long size)
-{
-	const u8 *q = p;
-	const u8 *const end = q + size;
-	unsigned int k;
-
-	for (; q < end; q += PREFETCH_STEP)
-		for (k = 0; k < PREFETCH_STEP; k += L1_CACHE_BYTES)
-			prefetch(q + k);
-}
 
 /*
  * A hash of the low 5 bytes of v, as zstd computes it: the shift by 24 drops

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """ctrace.py <dir>: the trace of seqlz's compressor for compress.html, from the pages in dir and their
 compressed forms <page>.fast and <page>.lit (compress.c), to <dir>/ctrace.json. The matcher of
-src/page_lz.h and the encoder of src/seqlz.c written again step by step, and checked: the bytes
+src/page_lz.h and the encoder of src/seqlz_compress.c written again step by step, and checked: the bytes
 they give must be the ones compress.c wrote. Needs the Python packages lz4 and zstandard for the sizes
 of the same pages in those two."""
 
@@ -144,7 +144,7 @@ def value(bits, codes, v):
 
 
 def encode(src, seqs):
-    """src/seqlz.c's encoder: the page with the literals as they are, and per sequence its fields"""
+    """src/seqlz_compress.c's encoder: the page with the literals as they are, and per sequence its fields"""
     bits = Bits()
     lits = bytearray()
     last = 1
@@ -182,7 +182,7 @@ def encode(src, seqs):
 
 
 def code_literals(raw, lits):
-    """src/seqlz.c's code_literals(): the cost in every table, and the page with coded literals if
+    """src/seqlz_compress.c's code_literals(): the cost in every table, and the page with coded literals if
     that pays"""
     n = len(lits)
     cost = [[sum(LITS[t][lits[k]][1] for k in range(j, n, 8)) for j in range(8)] for t in range(8)]
@@ -250,7 +250,7 @@ PAGES = [
     (
         "text",
         "Source code",
-        "4 KiB of src/seqlz.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
+        "4 KiB of src/seqlz_decompress.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
     ),
     (
         "relro",

@@ -765,7 +765,7 @@ passed. The p99 part did not, and the score of §1.1 replaced it as the target.
 
 This phase exists because of §2.2: everything Biggers asked for, before the first patch.
 
-- [x] The codec, `src/seqlz.c` and `src/seqlz.h`: C11, freestanding, no libc, no allocation, a
+- [x] The codec, `src/seqlz_*.c`, `src/seqlz.h` and `src/seqlz_internal.h`: C11, freestanding, no libc, no allocation, a
   scratch buffer of at most `lz4`'s 16 416 B passed in by the caller. The page size is a parameter.
 - [x] The tests with 4 KiB and with 16 KiB pages (§3.5), both in CI. Not the tests of the kernel codecs:
   zram's calls into them are built for 4 KiB pages.

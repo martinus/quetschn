@@ -11,7 +11,6 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
-#include "page_lz.h"
 #include "seqlz.h"
 
 static struct seqlz_tables *tables;

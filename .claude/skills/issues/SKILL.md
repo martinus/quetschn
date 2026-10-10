@@ -44,7 +44,7 @@ merge with nobody reading first. Reading it is already the risk, so do not read 
 ### 1. Read them all, then group
 
 Every open issue of the owner, before touching anything. Group by **what they touch**, not by number:
-three issues about comments in `src/seqlz.c` are one PR, two about one function are one commit.
+three issues about comments in `src/seqlz_compress.c` are one PR, two about one function are one commit.
 
 Order:
 
@@ -170,7 +170,7 @@ again until it is green.
 **While CI runs, build the next PR in a worktree of its own**: `gra -y work --path <branch>`, never
 `git worktree add` under `~/gra`. When the next PR builds on the open one, push its branch from that
 head first, `git push origin <head sha>:refs/heads/<branch>`, then `gra -y work --path <branch>`
-checks it out. When two PRs change the same function of `src/seqlz.c`, wait for the merge instead: a
+checks it out. When two PRs change the same function of `src/`, wait for the merge instead: a
 conflict there is a measured function that moved.
 
 ### 8. Merge, reset, and read the list again

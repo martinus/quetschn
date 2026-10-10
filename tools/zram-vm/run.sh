@@ -14,6 +14,8 @@
 # 18%. quetschn-score takes the mean over the boots. VARIANTS="name=dir[:cflags] ..." adds more builds of
 # seqlz as backends <name> and <name>-lit, from <dir>/src, e.g. another worktree, with cflags after its
 # -O3, e.g. VARIANTS="o2=.:-O2 le16=../other": variants compared within one boot, the codecs taking turns.
+# PORT=1 builds seqlz as tools/kernel-port/port.py writes it into the tree, the kernel's own copy, with
+# its backend seqlz and the level as zram's parameter, e.g. ALGOS=lz4,seqlz:2.
 # The kernel gets ../kernel-port/x86-prefetcht0.patch, which the series has: without it a clang build
 # drops prefetch() on x86-64.
 
@@ -41,52 +43,62 @@ fi
 # unless the tree has it already
 patch -d "$work/src" -p1 -R -s -f --dry-run <"$here/../kernel-port/x86-prefetcht0.patch" >/dev/null ||
     patch -d "$work/src" -p1 -s <"$here/../kernel-port/x86-prefetcht0.patch"
-# seqlz as zram backends, seqlz (raw literals) and seqlz-lit, with lz4's -O3
-z="$work/src/drivers/block/zram"
-cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/seqlz.c" "$here/../../src/seqlz.h" \
-    "$here/../../src/page_lz.h" "$here/../../src/seqlz_compat.h" "$here/../../src/seqlz_default_tables.c" \
-    "$here/../../src/seqlz_default_tables_4k.inc" "$here/../../src/seqlz_lit_sets.c" \
-    "$here/../../src/seqlz_lit_sets_4k.inc" "$z/"
-sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\tNULL|' "$z/zcomp.c"
-printf 'zram-y += backend_seqlz.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\n' >>"$z/Makefile"
-printf 'CFLAGS_seqlz.o += -O3\n' >>"$z/Makefile"
-for v in ${VARIANTS:-}; do
-    name=${v%%=*} rest=${v#*=} flags=
-    dir=${rest%%:*}
-    [[ $rest == *:* ]] && flags=${rest#*:}
-    d="$z/v_$name"
-    mkdir -p "$d"
-    cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$d/"
-    for f in seqlz.c seqlz.h page_lz.h seqlz_compat.h seqlz_default_tables.c seqlz_default_tables_4k.inc \
-        seqlz_lit_sets.c seqlz_lit_sets_4k.inc; do
-        cp "$dir/src/$f" "$d/"
-    done
-    sed -i "s/\.name\t\t= \"seqlz\"/.name\t\t= \"$name\"/; s/\.name\t\t= \"seqlz-lit\"/.name\t\t= \"$name-lit\"/" "$d/backend_seqlz.c"
-    grep -q "\"$name-lit\"" "$d/backend_seqlz.c" || { echo "variant $name: no backend name" >&2; exit 1; }
-    # the global symbols of this build, renamed so that the builds do not clash
-    for s in seqlz_compress seqlz_decode seqlz_tables_init seqlz_tables_size seqlz_all_symbols seqlz_find \
-        seqlz_encode seqlz_default_own seqlz_lit_sets backend_seqlz backend_seqlz_lit; do
-        echo "#define $s ${s}_v_$name"
-    done >"$d/rename.h"
-    objs="v_$name/backend_seqlz.o v_$name/seqlz.o v_$name/seqlz_default_tables.o v_$name/seqlz_lit_sets.o"
-    printf 'zram-y += %s\n' "$objs" >>"$z/Makefile"
+if [[ -n ${PORT:-} ]]; then
+    # the kernel's copy as port.py writes it, its backend seqlz with the levels as zram's parameter
+    [[ -z ${VARIANTS:-} ]] || { echo "PORT and VARIANTS do not go together" >&2; exit 2; }
+    python3 "$here/../kernel-port/port.py" "$work/src" >/dev/null
+    echo "KERNEL seqlz as tools/kernel-port/port.py writes it"
+else
+    # seqlz as zram backends, seqlz (raw literals) and seqlz-lit, with lz4's -O3
+    z="$work/src/drivers/block/zram"
+    # the codec's files, whether a src/ has it in one seqlz.c or split
+    codec_objs() { (cd "$1" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' '); }
+    cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/"seqlz*.c "$here/../../src/"*.h \
+        "$here/../../src/"*_4k.inc "$z/"
+    sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\tNULL|' "$z/zcomp.c"
+    objs=$(codec_objs "$here/../../src")
+    printf 'zram-y += backend_seqlz.o %s\n' "$objs" >>"$z/Makefile"
     for o in $objs; do
-        printf 'CFLAGS_%s += -include $(src)/v_%s/rename.h -I$(src)\n' "$o" "$name" >>"$z/Makefile"
+        printf 'CFLAGS_%s += -O3\n' "$o" >>"$z/Makefile"
     done
-    printf 'CFLAGS_v_%s/seqlz.o += -O3 %s\n' "$name" "$flags" >>"$z/Makefile"
-    sed -i "s|^#include \"backend_seqlz.h\"$|#include \"backend_seqlz.h\"\nextern const struct zcomp_ops backend_seqlz_v_$name, backend_seqlz_lit_v_$name;|; s|^\tNULL$|\t\&backend_seqlz_v_$name,\n\t\&backend_seqlz_lit_v_$name,\n\tNULL|" "$z/zcomp.c"
-    echo "VARIANT $name from $dir/src${flags:+, $flags}"
-done
-# zram's contexts split into compression and decompression, see backend_seqlz.c
-if grep -q 'struct zcomp_cstrm' "$z/zcomp.h"; then
-    printf 'CFLAGS_backend_seqlz.o += -DZCOMP_RW_SPLIT\n' >>"$z/Makefile"
     for v in ${VARIANTS:-}; do
-        printf 'CFLAGS_v_%s/backend_seqlz.o += -DZCOMP_RW_SPLIT\n' "${v%%=*}" >>"$z/Makefile"
+        name=${v%%=*} rest=${v#*=} flags=
+        dir=${rest%%:*}
+        [[ $rest == *:* ]] && flags=${rest#*:}
+        d="$z/v_$name"
+        mkdir -p "$d"
+        cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$d/"
+        cp "$dir/src/"seqlz*.c "$dir/src/"*.h "$dir/src/"*_4k.inc "$d/"
+        sed -i "s/\.name\t\t= \"seqlz\"/.name\t\t= \"$name\"/; s/\.name\t\t= \"seqlz-lit\"/.name\t\t= \"$name-lit\"/" "$d/backend_seqlz.c"
+        grep -q "\"$name-lit\"" "$d/backend_seqlz.c" || { echo "variant $name: no backend name" >&2; exit 1; }
+        # the global symbols of this build, renamed so that the builds do not clash
+        for s in seqlz_compress seqlz_decode seqlz_tables_init seqlz_tables_size seqlz_all_symbols seqlz_find \
+            seqlz_encode seqlz_default_own seqlz_lit_sets backend_seqlz backend_seqlz_lit; do
+            echo "#define $s ${s}_v_$name"
+        done >"$d/rename.h"
+        objs="v_$name/backend_seqlz.o $(codec_objs "$d" | sed "s#\([^ ][^ ]*\)#v_$name/\1#g")"
+        printf 'zram-y += %s\n' "$objs" >>"$z/Makefile"
+        for o in $objs; do
+            printf 'CFLAGS_%s += -include $(src)/v_%s/rename.h -I$(src)\n' "$o" "$name" >>"$z/Makefile"
+        done
+        for o in $(codec_objs "$d"); do
+            printf 'CFLAGS_v_%s/%s += -O3 %s\n' "$name" "$o" "$flags" >>"$z/Makefile"
+        done
+        sed -i "s|^#include \"backend_seqlz.h\"$|#include \"backend_seqlz.h\"\nextern const struct zcomp_ops backend_seqlz_v_$name, backend_seqlz_lit_v_$name;|; s|^\tNULL$|\t\&backend_seqlz_v_$name,\n\t\&backend_seqlz_lit_v_$name,\n\tNULL|" "$z/zcomp.c"
+        echo "VARIANT $name from $dir/src${flags:+, $flags}"
     done
-    echo "KERNEL zcomp with separate compression and decompression contexts"
+    # zram's contexts split into compression and decompression, see backend_seqlz.c
+    if grep -q 'struct zcomp_cstrm' "$z/zcomp.h"; then
+        printf 'CFLAGS_backend_seqlz.o += -DZCOMP_RW_SPLIT\n' >>"$z/Makefile"
+        for v in ${VARIANTS:-}; do
+            printf 'CFLAGS_v_%s/backend_seqlz.o += -DZCOMP_RW_SPLIT\n' "${v%%=*}" >>"$z/Makefile"
+        done
+        echo "KERNEL zcomp with separate compression and decompression contexts"
+    fi
 fi
 "${kmake[@]}" -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \
+    ${PORT:+--enable ZRAM_BACKEND_SEQLZ --enable SEQLZ} \
     --enable DEVTMPFS --enable BLK_DEV_INITRD --enable ZRAM_MULTI_COMP --enable ZRAM_TRACK_ENTRY_ACTIME
 "${kmake[@]}" -C "$work/src" O="$work/build" olddefconfig >/dev/null
 "${kmake[@]}" -C "$work/src" O="$work/build" -j"$(nproc)" bzImage >/dev/null

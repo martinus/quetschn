@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """seqlz_ref.py <compressed page>...: a decoder written from docs/format.md alone, slow on purpose, to check
-the spec against src/seqlz.c. Prints per file "invalid" or "valid <sha256 of the page>".
+the spec against src/. Prints per file "invalid" or "valid <sha256 of the page>".
 --page-bits 14 for 16 KiB pages. The tables are read from the files docs/format.md names, and checked
 against the SHA-256 docs/format.md gives for them."""
 
