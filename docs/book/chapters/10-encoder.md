@@ -19,7 +19,7 @@ code the literals with Huffman codes, which is [chapter 11](#ch-literals-enc).
 
 @listing src/seqlz_compress.c 1-37
 
-Line 1 is the licence line in the form the kernel wants for a `.c` file, with `//`. Line 6 includes
+Line 1 is the licence line, with `//` as in every `.c` file ([chapter 5](#ch-compat--top)). Line 6 includes
 `seqlz_internal.h` ([chapter 7](#ch-internal)) for the layout of `struct seqlz_tables`, which the
 encoder reads its codes from, and line 8 the matcher.
 
@@ -104,8 +104,9 @@ The obvious alternatives cost something. Two passes, the matcher into an array a
 were 6% slower ([chapter 9](#ch-matcher--emit)). Writing the bitstream into a second buffer needs more
 work memory per CPU. Until 8th October 2026 the encoder wrote the bitstream forwards, starting behind
 room for a page of literals, at `d + 2 + 4096`, and moved it down at the end; that needed a `dst` of two
-pages and refused anything smaller. zram gives two pages, zswap gives one, and `lz4`, `lzo` and `zstd`
-take any buffer and fail when the page does not fit (#122). The layout from both ends takes any `dst`,
+pages and refused anything smaller. zram gives two pages. zswap, the kernel's compressed cache in front
+of another swap device, gives one, and `lz4`, `lzo` and `zstd` take any buffer and fail when the page
+does not fit ([#122](https://github.com/martinus/quetschn/issues/122)). The layout from both ends takes any `dst`,
 writes the same bytes, and made writes in the kernel VM 0.16 to 0.24 µs faster per page; on the Mi 9T
 they stayed within 0.22 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept),
@@ -124,12 +125,8 @@ bytes are what one sequence can write beyond its literals, counted in bytes:
   flushes write no lower than `p - 7 - 8 = p - 15`.
 
 With `p - lit >= ll + 32`, the literals end at or below `p - 16`, and the bits start at or above `p - 15`:
-they never meet. The comment on lines 53 and 54 counts more loosely, with a move of up to 8 bytes per
-flush: the first flush writes the 8 bytes below `p` and moves `p` down by at most 8, the second writes
-the 8 bytes below that, so the bits reach `p - 16` at most, and 16 bytes of copies plus 16 of bits are
-the 32 of `ENC_ROOM`. Its words "move the bitstream down by at most 16 bytes, writing 8 bytes below
-it" add up to 32 only with that count; read as 16 and then 8 more, they would make 24, and 40 in all. The exact
-count, `p - 15`, leaves 1 byte spare. "It can happen up to `ENC_ROOM` bytes before dst is full" means that a page can fail
+they never meet. The comment on lines 53 and 54 counts more loosely than needed, 16 bytes of copies
+plus 16 of bits; the exact bound is `p - 15` above, which leaves 1 byte spare. "It can happen up to `ENC_ROOM` bytes before dst is full" means that a page can fail
 although its compressed form would have fit with up to 32 bytes to spare. Running the compressor on
 about 22 500 made-up pages, each into the smallest `dst` it would take, that smallest `dst` was at most
 31 bytes larger than the compressed page; the page of pointers from chapter 9 compresses to 817 bytes
@@ -199,19 +196,9 @@ corrupt the bits before them, and `n < 64 - cnt`, else bits fall out of the top 
 The comment states the second; every call below keeps both.
 
 **The masks.** `n & 63U` does nothing for any `n` the encoder uses, all of them below 64. It is there for
-the kernel's sanitizer.
-
-::: kernel UBSan and masked shifts
-Shifting a 64-bit value by 64 or more is undefined in C. The kernel can be built with
-`CONFIG_UBSAN_SHIFT` and `CONFIG_UBSAN_BOUNDS`, which many distributions enable: then the compiler adds a
-compare and a branch before every shift and every array index it cannot prove in range, to report a bug
-at run time. `n & 63U` is in range by construction, so the check disappears, at the cost of one AND that
-the CPU does in a cycle (x86-64 masks shift counts in hardware anyway, so there the AND often vanishes
-too). `seqlz_internal.h` gives the rule in its comment on lines 22 to 26 ([chapter 7](#ch-internal)).
-In the second round of compressor work, arrays of a power of 2 entries with masked indices and masked
-shifts gave 4.7% fewer instructions, 25 225 to 25 064 cycles per page
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
-:::
+the kernel's sanitizer: with `CONFIG_UBSAN_SHIFT` the compiler adds a check before every shift it cannot
+prove below 64, and the mask lets it drop the check for one AND ([chapter 3](#ch-cpu--ubsan); the rule is in `seqlz_internal.h`,
+[chapter 7](#ch-internal)).
 
 `enc_put_code()` appends a code and then extra bits, in one put. `entry` is an element of a
 `value_table`'s `enc[]`, which holds the code in its low 16 bits and the code's length in bits 16 to 19;
@@ -541,7 +528,8 @@ literal (line 307).
 31, so a length value follows, and `seqlz_len_symbol()` gives it 31 extra bits. That breaks the bit
 budget of the accumulator and the 31 bits per 4 bytes of the room proof. Before commit `256768e` the
 encoder checked only that the literals were there, and 1025 such sequences wrote past the two pages of
-`dst`; AddressSanitizer reported it in `enc_flush()` (#121). None of the fuzzers had found it, because each
+`dst`; AddressSanitizer, the compiler's check that stops a program at its first read or write outside
+an allocation, reported it in `enc_flush()` ([#121](https://github.com/martinus/quetschn/issues/121)). None of the fuzzers had found it, because each
 reached `seqlz_encode()` with valid sequences only. `fuzz/seqlz_encode_fuzz.c` gives it raw sequences now,
 and failed within seconds against the old encoder. `seqlz_compress()` was never affected: its matcher
 makes only valid sequences.
@@ -584,9 +572,8 @@ sequences, and the round trip fuzzer checks that for `seqlz_find()`'s sequences 
 
 The kernel's copy keeps only `compress_page()` and `seqlz_compress()`, the latter renamed to
 `seqlz_compress_page()`, because the kernel's interface function, which takes the level and the work
-memory, is called `seqlz_compress()`. It also drops the `!t->all_symbols` test from line 612: `tools/kernel-port/gen-seqlz-tables.py`
-checks the code lengths when it writes the kernel's tables, so tables built from them always have a
-code for every symbol (commit `4c42cc5`).
+memory, is called `seqlz_compress()`. It also drops the `!t->all_symbols` test from line 612, because
+the kernel's tables are checked when they are generated ([chapter 15](#ch-zram-glue--init)).
 
 ## The page of ab, bit by bit {#ch-encoder--example}
 

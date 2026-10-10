@@ -116,7 +116,7 @@ September 2026, `seqlz-fast` in the kernel VM, Ryzen 9 7950X at 4.5 GHz, cold an
 read first: p50 / p99 of a read went from 2811 / 4501 to 2610 / 4300 ns, warm from 2290 / 4049 to
 2129 / 3790 ns. The same change made a hot loop over 2000 pages slower, 6883 to 7115 cycles per page,
 with 39 more mispredictions per page: the check is a branch on data. The kernel's numbers decided
-([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+([explored-designs.md, "zram: prefetch the compressed data", the paragraph "A refill only when the bits might run out"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 The format of that time had raw offset bits of the same widths, but the bit order and the tables were
 different.
 :::
@@ -187,14 +187,12 @@ once: branch misses per page went from 130 to 101, cycles from about 6960 to abo
 every fast sequence instead took out the branch too, but its loads cost 500 cycles more on a page the
 predictor knows, and was not kept. In the kernel VM, `MODE=swap`, CPU 2 of the Ryzen 9 7950X at 4.5 GHz,
 3 boots each: `zcomp_decompress()` of `seqlz-fast-lit` took 1935 to 1941 ns instead of 2010 to 2011 with
-gcc, 1976 to 1983 instead of 2020 to 2040 with clang 22.1.8. On the Mi 9T the big Cortex-A76 decoded a
+gcc, 1976 to 1983 instead of 2020 to 2040 with clang 22.1.8. A second series of 3 boots, with the code
+as it was kept and gcc, gave 1936 to 1942 ns instead of 1995 to 2008. On the Mi 9T the big Cortex-A76 decoded a
 page seen once 3241 to 3272 ns instead of 3309 to 3340, and the little Cortex-A55 got slower, so at
 first it kept a loop of its own
 ([explored-designs.md, "The refill without its branch"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
-That second loop needed a list of in-order cores by their model numbers in the kernel's `lib/`, which
-nothing else there has. Since 10th October 2026 every core runs this one loop; it costs the A55 at most
-about 0.3 µs per warm read, 3%
-([explored-designs.md, "The kernel copy's choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
+Since 10th October 2026 every core runs this one loop ([chapter 17](#ch-decisions--one-loop-for-all-cores)).
 :::
 
 ## The fast path's three rooms {#ch-decode--rooms}
@@ -208,7 +206,7 @@ these three constants say how much.
   moves `d` on by at most 14 literals, then writes at most 40 bytes of match: at most 54 bytes from where
   it started. 64 is the round number above 54. The fast path of September 2026, which copied 16 or 32
   bytes of match, already needed 64 bytes
-  ([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+  ([explored-designs.md, "zram: prefetch the compressed data", the paragraph "A fast path in seqlz's decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 - **`FAST_LIT_ROOM`, 16 bytes of literals.** One `copy16()` reads 16 bytes at `lit`.
 - **`FAST_IN_ROOM`, 8 bytes of input.** The refill in `next_token_fast()` loads 8 bytes at `br.p`.
 
@@ -449,7 +447,7 @@ The first fast path, in September 2026, needed a check of `nl` that no test cove
 runs past the literals, and the slow path then computed `lit_end - lit` as a negative number, cast to
 unsigned, so every `nl` passed, and `copy_literals()` read behind the input. A test builds such a page
 since then
-([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+([explored-designs.md, "zram: prefetch the compressed data", the paragraph "A fast path in seqlz's decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 When the check was taken out of the fast path on purpose, on 3rd October 2026, the `lit > lit_end` on
 the slow path came with it; without that, AddressSanitizer reported a heap overflow in the existing test
 ([explored-designs.md, "seqlz's decoder for an in-order core"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)).
@@ -521,13 +519,10 @@ last `count` bits of the last byte of the input, `br.end[-1]`. `(1U << count) - 
 a shift by `64 - count`, which would be 64 for `count = 0`; the `count > 0 &&` skips the read when no bits
 are left. And `br.end[-1]` is in the input: with `count > 0` some byte was read.
 
-Why so strict: zram stores no checksum with a page. A damaged page that still decodes gives the process
-that swaps it in wrong memory without any error. The strict end is what catches damage that hits the
-bytes after the last code, and `lz4` also rejects input it did not use. It was added on 8th October 2026;
-in the kernel VM the swap-ins took the same time within 0.01 µs, and on the Mi 9T's A55 a warm read took
-0.07 to 0.10 µs more, for these checks and those at the end of each literal stream
-([explored-designs.md, "A page ends where its bits end"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)).
-The compressor always wrote pages that pass: it fills the last byte with zero bits.
+Why so strict, and what it costs, is in [chapter 4](#ch-format--end): zram stores no checksum, and these
+checks catch damage to the bytes after the last code. `lz4` also rejects input it did not use. The checks
+came on 8th October 2026; the compressor always wrote pages that pass, since it fills the last byte with
+zero bits.
 
 ## Why no input makes it read or write out of bounds {#ch-decode--safety}
 
@@ -581,29 +576,19 @@ input that is not valid, which ends earlier with `-EINVAL`. Each round does a bo
 plus copies that are bounded by the bytes they write, and `decode_literals()` is bounded by the 4096
 literals a page can have. The slowest valid page found for the decoder is made up: a match of 4 bytes at
 an offset below 8 in every sequence, every token escaped, 1022 sequences. It takes 107 099 instructions
-on arm64 and 71 468 cycles on the Mi 9T's A55, about 40 µs at 1.8 GHz. Against the p99 of real pages,
-the costliest pages found decode in 1.59 times that p99 with `seqlz-fast-lit`; the same search found 2.58
-times for `lz4`
+on arm64 and 71 468 cycles on the Mi 9T's A55, about 40 µs at 1.8 GHz. Counted in instructions, the
+costliest valid pages found take 1.59 times the p99 of real pages to decode with `seqlz-fast-lit`; the
+same search found 2.58 times for `lz4`. Timed on the A55, the slowest made-up page took 1.33 times the
+p99 of real pages, `lz4`'s slowest 1.57 times its own
 ([explored-designs.md, "The worst case"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
 
-**How it is checked.** An argument like the one above is easy to get wrong, so the repository tests it
-by running the decoder on input nobody wrote:
-
-- `fuzz/seqlz_decode_fuzz.c` gives `seqlz_decode()` any input up to 2 pages, with and without a scratch.
-  The input, the page and the scratch each get an allocation of exactly their size, so that
-  AddressSanitizer reports a read or write of one byte too far. A page that decodes without the scratch
-  must decode to the same bytes with one.
-- `fuzz/seqlz_diff_fuzz.c` gives the same input to `seqlz_decode()` and to `tools/seqlz-ref/seqlz_ref.c`,
-  a second decoder written from `docs/format.md` alone, slow on purpose. Both must call the same inputs
-  valid and decode them to the same page. A difference is a bug in one of them, or a sentence of the
-  format that is not clear. `tools/seqlz-ref/seqlz_ref.py` is a third one, in Python, which checks the
-  table hashes and the example.
-- CI runs every target for 60 s with AddressSanitizer and UndefinedBehaviorSanitizer, and with
-  MemorySanitizer, which finds reads of bytes nobody wrote. ClusterFuzzLite runs them for an hour each
-  day.
-- Before the format was declared ready, AFL++ ran 12 instances for 2 hours on 9th October 2026: 1.42
-  billion inputs on the decoder, 1.94 billion on the decoder against the reference, nothing found
-  ([plan.md, Phase 4](https://github.com/martinus/quetschn/blob/main/docs/plan.md#phase-4-reference-implementation-format-spec-fuzzing-20-weeks)).
+**How it is checked.** An argument like the one above is easy to get wrong, so the repository runs the
+decoder on input nobody wrote: fuzz targets under the compiler's sanitizers, and a second decoder written
+from `docs/format.md` alone that must agree with it ([chapter 15](#ch-zram-glue--fuzzing)). Before the
+format was declared ready, AFL++, a fuzzer that mutates inputs toward code they have not reached yet,
+ran 12 instances for 2 hours on 9th October 2026: 1.42 billion inputs on the decoder, 1.94 billion on
+the decoder against the reference, nothing found
+([plan.md, Phase 4](https://github.com/martinus/quetschn/blob/main/docs/plan.md#phase-4-reference-implementation-format-spec-fuzzing-20-weeks)).
 
 ## The example page, sequence by sequence {#ch-decode--example}
 

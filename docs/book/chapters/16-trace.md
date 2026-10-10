@@ -19,7 +19,7 @@ The 4096 bytes, in four parts:
 - **Bytes 0 to 63, a header.** `"TASKSLAB"`, then the record count 48 and the record size 32 as
   little-endian 32-bit integers, then zeros.
 - **Bytes 64 to 1599, 48 records of 32 bytes.** Each has a `next` pointer, a kernel address
-  `0xffff888104a3c040` plus 32 times some record number, so 8-aligned and with the same top 6 bytes in
+  `0xffff888104a3c040` plus 32 times another record's number, `(5i + 1) mod 48`, so 8-aligned and with the same top 6 bytes in
   every record; a pid, `1000 + 3 * i`; a state `i % 3` and a priority 120 as 16-bit integers; and a
   name of 16 bytes, one of 6 names in turn (`kworker/0:1`, `bash`, `systemd`, `sshd`, `kworker/1:2`,
   `cron`), padded with zeros.
@@ -496,6 +496,55 @@ bytes), computes each sequence's bits from the tables' `enc[]` arrays, compresse
 and with coded literals, and decodes it. It includes `seqlz_internal.h` to read the tables' codes, so
 it depends on the layout at commit `a2d57dd`.
 
+Its whole output comes first, with gcc 16.2.1 on x86-64; the compressed bytes are the same on every CPU,
+so the output is too:
+
+```text
+180 sequences
+  # |  pos |  ll |   ml |  off | cl | token | code | off | values | bits
+seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111110
+  0 |    0 |  14 |   50 |    1 |  0 |   510 | 16 e |   0 |      7 |   23
+seq 1: token code 1100000100, offset bits 01001101, ll value 12: symbol 12, code 111010
+  1 |   64 |  27 |    6 |   77 |  2 |  1071 | 10   |   8 |      6 |   24
+seq 2: token code 101100110, offset bits 00100
+  2 |   97 |   1 |    6 |   32 |  4 |  2081 |  9   |   5 |      0 |   14
+  3 |  104 |  12 |    6 |   25 |  2 |  1068 | 16 e |   8 |      0 |   24
+  4 |  122 |   0 |    6 |    2 |  1 |   544 |  9   |   4 |      0 |   13
+  5 |  128 |   1 |    7 |   32 |  4 |  2097 |  4   |   5 |      0 |    9
+  6 |  136 |  15 |    9 |   32 |  0 |    95 | 11   |   0 |      4 |   15
+  7 |  160 |   2 |    6 |   32 |  0 |    34 |  4   |   0 |      0 |    4
+  8 |  168 |   1 |    7 |   96 |  4 |  2097 |  4   |   5 |      0 |    9
+  9 |  176 |   3 |   10 |   29 |  2 |  1123 | 16 e |   8 |      0 |   24
+ 10 |  189 |   4 |    7 |   32 |  4 |  2100 | 11   |   5 |      0 |   16
+ 11 |  200 |   1 |    7 |   96 |  4 |  2097 |  4   |   5 |      0 |    9
+ 12 |  208 |   0 |    8 |  128 |  4 |  2112 |  5   |   5 |      0 |   10
+ 13 |  216 |   3 |    5 |  128 |  0 |    19 |  7   |   0 |      0 |    7
+...
+177 | 2224 |   1 |    7 | 1976 |  5 |  2609 |  6   |   9 |      0 |   15
+178 | 2232 |   0 | 1864 |    2 |  1 |  1008 |  7   |   4 |     16 |   27
+179 | 4096 |   0 |    0 |    0 |  - |     0 |  8   |   0 |      0 |    8
+literals 674, bitstream 2168 bits = 271 bytes
+matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
+raw literals: 947 bytes = 2 + 674 + 271
+literal table 0: 4089 bits, 515 bytes in 8 streams
+literal table 1: 5512 bits, 691 bytes in 8 streams
+literal table 2: 5975 bits, 751 bytes in 8 streams
+literal table 3: 4328 bits, 545 bytes in 8 streams
+literal table 4: 5538 bits, 694 bytes in 8 streams
+literal table 5: 6340 bits, 797 bytes in 8 streams
+literal table 6: 5896 bits, 740 bytes in 8 streams
+literal table 7: 6080 bits, 763 bytes in 8 streams
+fewest bits: table 0
+coded literals: 796 bytes, u16 0x82a2
+byte 2 = 0x10: table 0, w 7, header 10 bytes, sizes 66 59 65 64 64 65 66 66 = 515
+bitstream from byte 525, 271 bytes
+first 16 bytes: a2 82 10 c2 5d 10 08 0c 0a 85 ad 1f a3 bc 44 8c
+first 4 bytes of the bitstream: 31 fe fd 82
+round trip ok, 162 sequences on the fast path, 18 on the slow path
+```
+
+The program itself:
+
 ```c
 // trace.c: one made-up page through seqlz, with the numbers of each step
 #include <stdio.h>
@@ -757,53 +806,6 @@ sed -e 's/^#include "seqlz_internal.h"$/&\nunsigned int n_fast, n_slow;\n#define
 gcc -O2 -Wall -Wextra -I$R/src -o trace trace.c dec_counted.c \
     $R/src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
 ./trace
-```
-
-Its whole output, with gcc 16.2.1 on x86-64; the compressed bytes are the same on every CPU, so the
-output is too:
-
-```text
-180 sequences
-  # |  pos |  ll |   ml |  off | cl | token | code | off | values | bits
-seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111110
-  0 |    0 |  14 |   50 |    1 |  0 |   510 | 16 e |   0 |      7 |   23
-seq 1: token code 1100000100, offset bits 01001101, ll value 12: symbol 12, code 111010
-  1 |   64 |  27 |    6 |   77 |  2 |  1071 | 10   |   8 |      6 |   24
-seq 2: token code 101100110, offset bits 00100
-  2 |   97 |   1 |    6 |   32 |  4 |  2081 |  9   |   5 |      0 |   14
-  3 |  104 |  12 |    6 |   25 |  2 |  1068 | 16 e |   8 |      0 |   24
-  4 |  122 |   0 |    6 |    2 |  1 |   544 |  9   |   4 |      0 |   13
-  5 |  128 |   1 |    7 |   32 |  4 |  2097 |  4   |   5 |      0 |    9
-  6 |  136 |  15 |    9 |   32 |  0 |    95 | 11   |   0 |      4 |   15
-  7 |  160 |   2 |    6 |   32 |  0 |    34 |  4   |   0 |      0 |    4
-  8 |  168 |   1 |    7 |   96 |  4 |  2097 |  4   |   5 |      0 |    9
-  9 |  176 |   3 |   10 |   29 |  2 |  1123 | 16 e |   8 |      0 |   24
- 10 |  189 |   4 |    7 |   32 |  4 |  2100 | 11   |   5 |      0 |   16
- 11 |  200 |   1 |    7 |   96 |  4 |  2097 |  4   |   5 |      0 |    9
- 12 |  208 |   0 |    8 |  128 |  4 |  2112 |  5   |   5 |      0 |   10
- 13 |  216 |   3 |    5 |  128 |  0 |    19 |  7   |   0 |      0 |    7
-...
-177 | 2224 |   1 |    7 | 1976 |  5 |  2609 |  6   |   9 |      0 |   15
-178 | 2232 |   0 | 1864 |    2 |  1 |  1008 |  7   |   4 |     16 |   27
-179 | 4096 |   0 |    0 |    0 |  - |     0 |  8   |   0 |      0 |    8
-literals 674, bitstream 2168 bits = 271 bytes
-matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
-raw literals: 947 bytes = 2 + 674 + 271
-literal table 0: 4089 bits, 515 bytes in 8 streams
-literal table 1: 5512 bits, 691 bytes in 8 streams
-literal table 2: 5975 bits, 751 bytes in 8 streams
-literal table 3: 4328 bits, 545 bytes in 8 streams
-literal table 4: 5538 bits, 694 bytes in 8 streams
-literal table 5: 6340 bits, 797 bytes in 8 streams
-literal table 6: 5896 bits, 740 bytes in 8 streams
-literal table 7: 6080 bits, 763 bytes in 8 streams
-fewest bits: table 0
-coded literals: 796 bytes, u16 0x82a2
-byte 2 = 0x10: table 0, w 7, header 10 bytes, sizes 66 59 65 64 64 65 66 66 = 515
-bitstream from byte 525, 271 bytes
-first 16 bytes: a2 82 10 c2 5d 10 08 0c 0a 85 ad 1f a3 bc 44 8c
-first 4 bytes of the bitstream: 31 fe fd 82
-round trip ok, 162 sequences on the fast path, 18 on the slow path
 ```
 
 ::: try Change the page

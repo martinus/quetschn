@@ -20,11 +20,7 @@ tests and the fuzzers reach them only through `seqlz_decode()`.
 
 @listing src/seqlz_decompress.c 1-5
 
-Line 1 is the licence, as an SPDX tag, the form the kernel wants in the first line of every file. `MIT
-OR GPL-2.0-only` is a dual licence, as zstd has one: the GPL half for the kernel, the MIT half so that
-userspace and other kernels can use the code too
-([plan.md, "Project constraints"](https://github.com/martinus/quetschn/blob/main/docs/plan.md#project-constraints)).
-The comment names the one function that the rest of
+Line 1 is the licence ([chapter 5](#ch-compat--top)). The comment names the one function that the rest of
 the kernel can call; everything else in the file is `static`. `seqlz_internal.h` brings in `seqlz.h`,
 which brings in `seqlz_compat.h`: the format's constants ([chapter 6](#ch-header)), the layout of the
 tables and the token table's entries ([chapter 7](#ch-internal)), and the kernel's names for types and
@@ -37,19 +33,9 @@ comes, the decoder's tables may no longer be in the CPU's caches: the token tabl
 whatever ran in between used the cache for its own data. Then every first lookup into a line of the
 table is a cache miss, and the decoder waits for memory.
 
-::: cpu Cache lines, misses and prefetches
-Memory moves between RAM and the CPU's caches in **cache lines** of 64 bytes. A load from a line that
-is in no cache is a **miss** and takes about 100 ns, a few hundred cycles; a load from L1 takes about 1
-ns. A **prefetch** is an instruction that asks for a line without waiting for it: the program goes on,
-and the line arrives in the background. It never faults, also for a bad address, and it changes no
-result, only the time.
-
-An out-of-order core, such as a PC's or a phone's big Cortex-A76, keeps working past a load that missed
-and can have several misses in flight at once. An **in-order** core, such as the phone's little
-Cortex-A55, stops at the first instruction that needs the missing data. It takes its misses one after
-the other, at about 100 ns each. Prefetches issued back to back turn that row of misses into one
-wait for all of them. [Chapter 3](#ch-cpu) has more.
-:::
+A miss costs about 100 ns. The phone's little Cortex-A55 is an in-order core and takes its misses one
+after the other; prefetches issued back to back turn that row of misses into one wait
+([chapter 3](#ch-cpu--prefetch)).
 
 @listing src/seqlz_decompress.c 7-26
 
@@ -98,9 +84,9 @@ prefetch, the Cortex-A55 read cold pages 14.5 µs slower on average and 30 µs s
 lines of the two length tables were worth 2.8 µs to it. The A76 was 1.2 µs faster without any
 prefetch in that run
 ([explored-designs.md, "Six choices made on the PC", item 4](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#4-prefetching-the-tables-the-a55-needs-it-the-a76-is-faster-without)).
-For a while the decoder therefore prefetched the token table only on in-order cores, which it found
-by asking the CPU for its model number. The kernel's `lib/` does not do that anywhere, so on 10th
-October 2026 every core got the prefetch, and on the A76 the cost did not show again: cold reads in
+For a while the decoder therefore prefetched the token table only on in-order cores. Since 10th
+October 2026 every core gets the prefetch ([chapter 17](#ch-decisions--one-loop-for-all-cores)), and on
+the A76 the cost did not show again: cold reads in
 7.44 and 7.65 µs with it, 8.07 and 7.60 µs without, in two runs
 ([explored-designs.md, "The kernel copy's choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
 :::
@@ -152,12 +138,8 @@ undefined behaviour: `*(const u64 *)s` would be undefined when `s` is not a mult
 `d` and `s` here are anywhere in the page. The compiler knows what `__builtin_memcpy()` of 8 bytes means
 and writes one 8-byte load and one 8-byte store on x86-64 and arm64, which both load from any address.
 
-Why the builtin and not `memcpy()`: the kernel can be built with `CONFIG_FORTIFY_SOURCE`, which turns
-`memcpy()` into a function that checks its sizes, and not every compiler inlines that. The Mi 9T's 4.14
-kernel has it, and a module built with its clang had 63 calls to `memcpy()`, one for every copy of 8 or 16
-bytes in the codec (commit `48a7043`). `lib/lz4` and `lib/zstd` use `__builtin_memcpy()` for the same
-reason, in `LZ4_memcpy()` and `ZSTD_memcpy()`. The comment on line 37 says the same, with "see seqlz.h",
-where the top of the file lists all builtins the codec uses.
+Why the builtin and not `memcpy()`: with `CONFIG_FORTIFY_SOURCE`, `memcpy()` can become a call, which
+the top of `seqlz.h` explains ([chapter 6](#ch-header--summary)); the comment on line 37 points there.
 
 `__always_inline` is the kernel's spelling of `inline __attribute__((__always_inline__))`. Plain `inline`
 is a hint the compiler may ignore; this one it may not. A copy of 8 bytes that becomes a call costs more
@@ -189,7 +171,8 @@ bytes of one store, not parts of two. With offsets from 9 to 15, the second `cop
 which some come from the store just before and some from older memory, and then the load waits until
 the store reached the cache. `ls_bad_status2.stli_other`, a counter of the Ryzen 9 7950X, counted 359
 such loads per page for `seqlz-fast`'s decoder and 363 for `lz4`'s in September 2026
-([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+([explored-designs.md, "zram: prefetch the compressed data", the paragraph "A fast path in seqlz's
+decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 That is the price of correct overlapping copies. Offsets below 8 cannot use `copy8()` at all, and the
 copy they get below stores one register again and again, with no load after the first.
 :::

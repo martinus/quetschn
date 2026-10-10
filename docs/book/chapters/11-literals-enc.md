@@ -412,16 +412,11 @@ Smaller sizes can set more low bits in `all`, which changes nothing above its hi
 pages, where a stream has at most 2560 bytes. `header = SEQLZ_LIT_HEADER(width)` is `3 + width`: 2
 bytes of u16, byte 2, and `width` bytes that hold 8 sizes of `width` bits each, `8 * width` bits.
 
-::: why Sizes in w bits and not 2 bytes each
-Until 5th October 2026 every size had 2 bytes, a header of 19 bytes. Most streams are below 128
-bytes: on the two desktop dumps the largest stream of a page with coded literals was below 128 bytes
-on 85% and 69% of the pages. With `w` bits per size the header is mostly 9 to 11 bytes, and pages are
-5.2 and 5.5 bytes smaller on average on the two desktop dumps, zsmalloc cost in userspace. Widths of 3
-and 4 bits are left out: they would pay only on pages whose streams are all below 16 bytes, and such
-pages rarely pass the rule below. Source: [explored-designs.md, "Stream sizes in as many bits as the
-largest needs,
-kept"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept).
-:::
+Until 5th October 2026 every size had 2 bytes, a header of 19 bytes; what `w` bits save is in
+[chapter 4](#ch-format--layout). On the two desktop dumps the largest stream of a page with coded
+literals was below 128 bytes on 85% and 69% of the pages, so the header is now mostly 9 to 11 bytes.
+Widths of 3 and 4 bits would pay only on pages whose streams are all below 16 bytes, and such pages
+rarely pass the rule below.
 
 ## Coded only where it saves 1/16 of the literals and 51 bytes {#ch-literals-enc--rule}
 
@@ -848,10 +843,10 @@ Did it pass the rule? The pricing gave these bits per stream:
 
 Table 0 wins. Its sizes add up to `coded = 137`, and `137 + 51 = 188` is less than
 `201 - 201 / 16 = 189`. One byte more and this page would have kept its raw literals. It saves 58
-bytes, 28% of the page.
+bytes, 28% of the 209 bytes the page takes with raw literals.
 
 ::: try Compress a page of your own
-In a scratch directory, with the repository in `$R`:
+In a scratch directory, with the repository's path in `$R` (`R=/path/to/quetschn`):
 
 ```c
 #include <stdio.h>

@@ -21,10 +21,8 @@ where every other codec in zram hashes 4.
 
 @listing src/page_lz.h 1-11
 
-Line 1 is the licence, in the form the kernel wants for a header: a `/* */` comment, where a `.c`
-file has `//`. seqlz is `MIT OR GPL-2.0-only`: two licences to choose from, with the SPDX line in every
-file, as `zstd` does it (the kernel's `zstd` is `GPL-2.0+ OR BSD-3-Clause`). Lines 2, 3 and 183 are the
-include guard.
+Line 1 is the licence and lines 2, 3 and 183 are the include guard, as in every header of `src/`
+([chapter 5](#ch-compat)).
 
 The comment on lines 5 to 9 says why this is a header and not a `.c` file. Every function in it is
 `static inline`: it has no symbol of its own, and each file that includes it gets a private copy that
@@ -287,7 +285,7 @@ is what a hash chain does. `lz4`'s fast mode is greedy in the same way.
 One step of lazy matching, taking the next position's candidate if it is longer by 2 bytes or more, took
 24 808 instead of 20 400 compress cycles per page, 21% more, and `seqlz-fast` stayed at 27.0% of the
 page ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
-September 2026). Searching harder was built in full as levels 3 and 4: a hash chain, priced by the
+the paragraph "A hash of 5 bytes: C3 in the kernel", September 2026). Searching harder was built in full as levels 3 and 4: a hash chain, priced by the
 tables' code lengths, with one or two lazy steps. Level 3 stored pages 2.7% to 4.3% smaller than level
 2 for 1.8 to 1.9 times the time to write, and was not kept: "Who values memory that much more than time
 uses zstd 3"
@@ -297,8 +295,11 @@ uses zstd 3"
 **Two candidates.** At each position there are two places where the next 4 bytes might have been
 before. One is the **repeat offset**: the offset of the match before, which costs no lookup and which
 the format sends in 0 bits (offset class 0). On memory pages it repeats often, e.g. in an array of
-structs, where the same field comes back every 16 or 24 bytes; 18% to 25% of seqlz's matches use it
-([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#finding-the-matches)). The
+structs, where the same field comes back every 16 or 24 bytes. On the two desktop dumps of
+`docs/seqlz.md`, 18% to 25% of seqlz's matches use it
+([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#finding-the-matches));
+[chapter 2](#ch-compression)'s 30.55% is another count, the share of all sequences on the pages the
+tables were trained on. The
 other is the last position whose 5 bytes had the same hash, from the table.
 
 **Every position.** `lz4` and `lzo` skip ahead faster and faster when they find no match, which saves
@@ -503,21 +504,12 @@ same".
 Lines 143 to 148 are the miss: move to the next position, take over its 8 bytes and hash computed on
 lines 125 and 126, and load its table entry and the 4 bytes at its candidate.
 
-::: cpu An in-order core waits at every link of a chain
-A big core such as the Cortex-A76 or a Ryzen is **out of order**: when an instruction waits for a load,
-the core runs later instructions that do not depend on it. A small core such as the Cortex-A55, which
-phones use for most of their background work, is **in order**: it starts instructions in program
-order, at most two per cycle, and when one needs a value that is not there yet, everything behind it
-waits too. A load from the L1 cache takes a few cycles, a 64-bit multiplication a few more.
-
-Without a match, one position of the matcher is one chain: load 8 bytes, multiply for the hash, load
-the table entry at the hash, load 4 bytes at the entry, compare, branch. On the A55 every link waited for
-the one before, at 0.91 instructions per cycle. Moving work of the next iteration into this one, so that
-independent instructions sit between a load and its use, is called **software pipelining**. Here the
-loop starts the next position's 8-byte load and multiplication first; they do not depend on the
-compares, so an in-order core can issue them next to the compares, and the compares do not wait,
-because their operands were loaded during the iteration before.
-:::
+On an in-order core such as the phone's Cortex-A55, which waits at every load whose value is not
+there yet ([chapter 3](#ch-cpu--in-order)), a position without a match is one chain: load 8 bytes,
+multiply for the hash, load the table entry, load 4 bytes at it, compare, branch. There every link
+waited for the one before, at 0.91 instructions per cycle. Today's loop starts the next position's load
+and multiplication first, which is software pipelining, so the compares use operands loaded during the
+position before.
 
 The loop before commit `996248b` loaded and hashed at the top of each position and compared right away
 (its comment left out):

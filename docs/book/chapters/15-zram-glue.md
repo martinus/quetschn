@@ -90,9 +90,8 @@ codecs use it differently, as we will see.
 
 @listing src/zram_seqlz.c 1-9
 
-Line 1 is the licence line every file of the project starts with, `MIT OR GPL-2.0-only`: a dual
-licence, as `zstd` has one in the kernel (GPL or BSD there), so that the code can go into the kernel
-and into other projects alike. Lines 3 and 4 name the two codecs this file defines. Both write the
+Line 1 is the licence line every file of the project starts with ([chapter 5](#ch-compat--top)).
+Lines 3 and 4 name the two codecs this file defines. Both write the
 same format and both are read by the same decoder. They differ in one argument to
 `seqlz_compress()`: `seqlz-fast` keeps the literals raw, `seqlz-fast-lit` lets
 `code_literals()` ([chapter 11](#ch-literals-enc)) Huffman code them when that saves at least 1/16 of
@@ -102,11 +101,7 @@ harness names them as two codecs, so that it can compare them side by side with 
 Lines 5 and 6 are a design decision. zram can give a compressor a dictionary, a blob of bytes the
 administrator loads per device. `zstd` and `lz4` use it as a set of earlier data that matches may
 point into. For seqlz a dictionary could have carried other code tables, e.g. tables trained on one
-phone's pages. The project measured that: tables trained on one zram dump of the Mi 9T saved 0.3% and
-1.0% of zsmalloc memory on the other dump of the same phone, cost about 1% on a desktop dump, and saved
-only 1.1% to 1.7% even on the pages they were trained on
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
-So since commit `87a0ba4` the tables are part of the format, and the dictionary is ignored, the same
+phone's pages, and measured, those saved too little to pay ([chapter 8](#ch-codes--fixed)). So since commit `87a0ba4` the tables are part of the format, and the dictionary is ignored, the same
 way zram's `lzo` backend ignores one. The kernel's backend goes one step further and refuses a
 dictionary with an error, see [below](#ch-zram-glue--backend).
 
@@ -132,7 +127,7 @@ Line 17 allocates the tables. `seqlz_tables_size()` returns `sizeof(struct seqlz
 43 280 bytes for 4 KiB pages: the token table, 8 literal tables, the cost table `lit_cost` and two
 tables of length values, laid out in [chapter 7](#ch-internal). The glue cannot write `sizeof`
 itself, because it never sees the struct's definition; that is what the function is for.
-`quetschn_zalloc()` stands in for the kernel's `kvzalloc()`: it returns zeroed memory, aligned to a
+`quetschn_zalloc()` stands in for the kernel's `kvzalloc()` ([below](#ch-zram-glue--backend)): it returns zeroed memory, aligned to a
 page for blocks of a page or more, and it adds the size to `p->allocated`. So the harness reports
 43 280 bytes per device for seqlz. Line 18 turns a failed allocation into `-1`, the harness's error.
 
@@ -243,20 +238,15 @@ The first loop asks for every cache line of the compressed page from its second 
 asks for every line of the 4096-byte destination, with the second argument `1`, which means "for
 writing": the CPU may fetch the line in a state that lets it write without asking again.
 
-::: cpu A prefetch, and why all lines at once
-A load that misses every cache waits for memory, on the order of 100 ns on a desktop CPU, hundreds of cycles. A
-prefetch instruction asks for a cache line without waiting for it, and the program goes on. If the
-program asks for 13 lines one after the other with ordinary loads, it waits 13 times; if it asks for
-all 13 with prefetches first, the misses overlap and it waits about once. The CPU's own hardware
-prefetcher guesses the next lines from a pattern, e.g. a pointer walking forward, but seqlz reads a
-compressed page in several places at once: the literals from the front, the bitstream from behind
-them, and with coded literals 8 streams more. [Chapter 3](#ch-cpu) has more on caches.
-:::
+Prefetches issued together let the misses overlap, so the CPU waits about once instead of once per line
+([chapter 3](#ch-cpu--prefetch)). The CPU's own prefetcher guesses the next lines from a pattern, e.g. a
+pointer walking forward, but seqlz reads a compressed page in several places at once: the literals from
+the front, the bitstream from behind them, and with coded literals 8 streams more.
 
 The prefetch of the compressed data is the one that matters. In the kernel VM, with the compressed
 data flushed from the cache, it took `lz4`'s p99 read latency from 5600 to 3891 ns, and seqlz's from
 5450 to 4410 ns; the destination prefetch helped nothing there
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+([explored-designs.md, "zram: prefetch the compressed data", its first table](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 On the Mi 9T, adding the prefetch of the compressed data to the phone's module made warm reads on the
 little A55 core 2.3 µs faster, and prefetching the destination as well cost the big A76 core 2 µs on
 cold reads
@@ -441,7 +431,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 `HARNESS_ONLY` catches a harness function that is still named somewhere, e.g. in a comment.
 `CPU_MODEL` applies to `lib/` only: nothing in the library may depend on which CPU model it runs on.
 The decoder once had two loops, one for in-order cores chosen by the arm64 MIDR register, and the
-review of the kernel copy (#152) replaced them with one loop for all cores; this check keeps it that
+review of the kernel copy ([#152](https://github.com/martinus/quetschn/issues/152)) replaced them with one loop for all cores; this check keeps it that
 way. `FORBIDDEN` catches references a kernel reader cannot follow: the repository's documents and
 tools, issue numbers like `#152`, the names `seqlz-fast` and `quetschn`, and reasons that only hold
 for the project's machines, such as the Mi 9T's 4.14 kernel. The one URL allowed is the project's
@@ -805,12 +795,12 @@ and `kvzalloc()` took 16 KiB for it. As a union it is 8192 bytes, the larger mem
 `kmalloc-8k`: 8 KiB per CPU. For comparison, `lz4` asks `vmalloc()` for 16 416 bytes, which is 5 pages,
 20 480 bytes
 ([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
-Against `lz4`'s 20 KiB, that is 12 KiB less per CPU; on a phone with 8 cores, 96 KiB less memory,
+Against `lz4`'s 20 KiB, that is 12 KiB less per CPU; on the Mi 9T with its 8 cores, 96 KiB less memory,
 resident for good whether the phone swaps or not.
 
 ::: why The union is safe because of zram's mutex
 Compression and decompression share the bytes. That is safe for two reasons, both from the commit that
-made the change, `6063362` (#154). zram holds the stream's mutex for either operation, so they never
+made the change, `6063362` ([#154](https://github.com/martinus/quetschn/issues/154)). zram holds the stream's mutex for either operation, so they never
 run at the same time on one context. And neither keeps anything in the memory from one page to the
 next: the matcher clears its table at the start of every page, and the decoder writes its scratch
 before it reads it. The `BUILD_BUG_ON` keeps the union within `KMALLOC_MAX_CACHE_SIZE`: whoever turns
@@ -906,15 +896,12 @@ the tree, and `.name = "seqlz"`. `port.py` adds `&backend_seqlz` to the list of 
 ## prefetch() on x86-64: a patch to the kernel itself {#ch-zram-glue--prefetch-patch}
 
 The decoder prefetches its tables with the kernel's `prefetch()` before it decodes a page
-([chapter 12](#ch-dec-basics)). On x86-64, the kernel did not define `prefetch()` itself, so it fell
-back to `__builtin_prefetch()`. The kernel compiles x86-64 code with `-mno-sse`, and clang then drops
-`__builtin_prefetch()` without a warning, while gcc emits `prefetcht0`. So a kernel built with clang, as Android's kernels are, had no prefetches in
-the decoder at all.
-
-The rule of the kernel copy is that no inline assembly goes into `lib/`. A gap in the kernel is
-fixed in the kernel, with a patch of its own. That is `tools/kernel-port/x86-prefetcht0.patch`, a
-commit for `arch/x86/include/asm/processor.h` that defines `ARCH_HAS_PREFETCH` for 64-bit and
-implements `prefetch()` as one `prefetcht0` instruction in inline assembly:
+([chapter 12](#ch-dec-basics)). On x86-64 that was `__builtin_prefetch()`, which clang drops under the
+kernel's `-mno-sse`, so a kernel built with clang, as Android's kernels are, had no prefetches in the
+decoder; [chapter 5](#ch-compat--prefetch) tells the story and gives the patch's measurement. No inline
+assembly goes into `lib/`, so the fix is a patch to the kernel, `tools/kernel-port/x86-prefetcht0.patch`,
+a commit for `arch/x86/include/asm/processor.h` that defines `ARCH_HAS_PREFETCH` for 64-bit and
+implements `prefetch()` as one `prefetcht0` instruction:
 
 ```c
 #ifdef CONFIG_X86_64
@@ -929,11 +916,8 @@ static inline void prefetch(const void *x)
 #else
 ```
 
-The patch's commit message has the measurement: with a zram backend that prefetches the compressed
-data, clang 22.1.8, in a VM pinned to one CPU of a Ryzen 9 7950X at 4.5 GHz, 20 000 pages swapped out
-and faulted back in, three boots each, decompression took 2086 to 2155 ns per page without the patch
-and 1978 to 1988 ns with it; the whole swap-in 3887 to 3950 ns and 3761 to 3775 ns. `lz4`, which does
-not prefetch, swapped in the same with and without. The patch also says why it does not use the
+In the measurement of the patch's commit message, `lz4`, which does not prefetch, swapped in the same
+with and without it. The patch also says why it does not use the
 alternative that 32-bit x86 has: that one patches in `prefetchnta`, a non-temporal prefetch, on every
 CPU with SSE, which would change what gcc builds get. `port.py` applies the patch, unless the tree has
 it already, and `src/seqlz_compat.h` does the same outside the kernel ([chapter 5](#ch-compat)).
@@ -967,8 +951,8 @@ SPDX lines, `MAINTAINERS` not updated for a new file, spaces where tabs belong, 
 `--strict` adds the checks that maintainers of some subsystems ask for. Reviewers run it before they
 read a patch.
 
-**`scripts/kernel-doc`** extracts the `/** ... */` comments into documentation, and with `-Wall`
-warns about undocumented parameters and malformed sections.
+**`scripts/kernel-doc`** reads the comments of [the interface](#ch-zram-glue--interface), and with
+`-Wall` warns about undocumented parameters and malformed sections.
 :::
 
 CI's `kernel-port` job runs `check.sh` four times: x86-64 with gcc, and with clang (`LLVM=1`) for
@@ -1071,7 +1055,7 @@ AFL++, which can run the same entry point):
   The page must come back, fit into 2 pages, and be the same bytes as `seqlz_encode()` writes for
   `seqlz_find()`'s sequences.
 - `seqlz_encode_fuzz.c`: any list of sequences through `seqlz_encode()`, also lists that do not make a
-  page. It was added after an encoder overflow (#121) that none of the other targets reached, because
+  page. It was added after an encoder overflow ([#121](https://github.com/martinus/quetschn/issues/121)) that none of the other targets reached, because
   they only give the encoder the matcher's sequences, which are always valid.
 - `seqlz_diff_fuzz.c`: the decoder against a second decoder.
 
@@ -1091,16 +1075,15 @@ buffers as unwritten before each input). `fuzz/afl.sh` starts long AFL++ runs. O
 no difference found; on 9th October, with the encoder and decoder of commit `5342a9b`, 12 instances
 for 2 hours, 1.94 billion inputs, none either
 ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#how-this-file-was-checked)).
-Outside CI, ClusterFuzzLite runs the targets daily, an hour each with ASan, UBSan and MSan.
+Outside CI, ClusterFuzzLite, a GitHub workflow that fuzzes on a schedule, runs the targets daily, an
+hour each with AddressSanitizer, UndefinedBehaviorSanitizer and MemorySanitizer.
 
 ### The same bytes on a big-endian CPU
 
 The format is little endian: the u16 at the start of a page is stored low byte first, and so are the
 stream sizes. The code reads and writes such values with `get_unaligned_le16()` and its relatives,
-never by casting a pointer ([chapter 5](#ch-compat)). It was not always so. On 5th October 2026 the
-decoder's bit reader, the matcher's hash and byte count, and the pattern for offsets below 8 still
-loaded 4 and 8 bytes in the CPU's order, and on s390x, a big-endian CPU, every page failed to round
-trip: 4656 of 4656 under qemu (commit `91fa53e`).
+never by casting a pointer. Until commit `91fa53e` on 5th October 2026 they did not, and on the big-endian
+s390x every page failed to round trip ([chapter 5](#ch-compat--endian)).
 
 `test/seqlz_endian.c` is the check that this stays fixed. It generates 600 pages of six kinds
 (random bytes, a short pattern repeated, 8-byte numbers counting up, runs of a few byte values, words

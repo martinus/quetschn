@@ -134,7 +134,7 @@ bytes per µs more than `seqlz-fast-lit`; on the second dump 238 and 16. The cha
 score from 3 to 153 bytes per µs on the first dump and from 16 to 190 on the second. Below that range
 `zstd` is the better choice, above it `seqlz-fast`
 ([The numbers again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)).
-These numbers have the tables of #69, before they were trained again on 7th October 2026.
+These numbers have the tables seqlz had before 7th October 2026, when they were trained again.
 
 The read benchmark of that chart decodes every page several times, which trains the branch predictor on
 the page and flatters seqlz. With the times of a real swap-out and swap-in, each page compressed and
@@ -234,7 +234,7 @@ column, with the entry that has the numbers.
 
 | decision | instead of | gain | price | entry |
 | --- | --- | --- | --- | --- |
-| `ll`, `ml − 4` and the offset class in one token | a symbol each | 22% fewer decode cycles for the lengths, 7% more for the offset class | | [seqlz](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables) |
+| `ll`, `ml − 4` and the offset class in one token | a symbol each | 22% fewer decode cycles for the lengths, 7% fewer for the offset class | | [seqlz](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables) |
 | 4 bits of `ll`, 5 of `ml` in the token | 4 and 4 | a length value after 8.5% of the matches instead of 18.7%, 9180 instead of 9400 decode cycles | a larger token alphabet | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | one repeat offset | three, as `zstd` | 17% fewer decode cycles, 89 instead of 124 mispredictions per page | 26.6% instead of 26.4% | [third decoder round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow) |
 | two classes for multiples of 8 | plain offsets only | 24 and 1.9 bytes per page in the kernel | 0.20 µs per page written, over both dumps | [by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8) |
@@ -271,7 +271,8 @@ are multiples of 8 sent divided by 8, in 5 and 9 bits. The last two are the newe
 what memory pages hold: arrays of 8-byte values. Of the offsets from 16 to 255 that are not the repeat
 offset, 72% and 56% are multiples of 8; from 256 on, 62% and 41%. The low 3 bits of an offset carry 1.8
 and 2.4 bits of information, not 3. In the kernel the two classes saved 24 and 1.9 bytes per page, for 0.20 µs more per page
-written over both dumps: 65 bytes per µs, against 10 for the step from `seqlz-fast-lit` to `zstd` 3
+written over both dumps: 65 bytes per µs, against 10 for the step from `seqlz-fast-lit` to `zstd` 3 in
+the same boots, with the tables of then
 ([seqlz-fast-lit by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)). The
 decoder still does one table lookup per sequence, and one more shift. The price is in the format: the
 token alphabet grew from 2048 to 3072, so the escape needs 12 bits.
@@ -312,7 +313,7 @@ same token bits as halving the counts
 2048 codes are fewer than 3072 tokens. Only 576 tokens have a code of their own; the others share one
 code, the escape, followed by the token in 12 plain bits, 16 bits for a rare token. On the phone 10 bits
 were measured again: cold reads 2.0 and 2.3 µs faster on the A76 and 2.4 and 2.3 on the A55, for 4.8
-bytes per page
+bytes per page on the phone's pages
 ([Six choices made on the PC, item 1](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#1-the-token-table-in-10-bits-cold-reads-2-to-3-µs-faster-on-both-cores-for-3-to-6-bytes)).
 With the bit order below, and the token table then prefetched on in-order cores only, 10 bits gave the
 A76 nothing and the A55 2 to 2.6 µs of cold reads for the same 4.8 bytes
@@ -488,7 +489,8 @@ coded ones.
 ## The matcher {#ch-decisions--matcher}
 
 The matcher ([chapter 9](#ch-matcher)) is where the write time goes. "The matcher alone costs as much as
-all of `lz4`": in one round it was 17 300 cycles per page, `lz4` 17 100 for everything
+all of `lz4`": in the third round of compressor work it was 17 300 cycles per page, `lz4` 17 100 for
+everything
 ([The compressor, third round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-third-round-ideas-from-the-literature)). Even a free
 encoder would leave the compressor at `lz4`'s speed. So every decision here trades bytes against the
 work per position.
@@ -554,7 +556,7 @@ Checking the repeat offset first, at every position, was worth 0.5 points when `
 matcher. Offline on phone pages, checking it only up to 16 positions after a match cost 0.3%, and not
 checking it at all 3.7%
 ([Ratio from the parse and the tables on phone pages](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#ratio-from-the-parse-and-the-tables-on-phone-pages-measured-offline-not-built)).
-It costs no table lookup, and 18% to 25% of the matches have it.
+It costs no table lookup, and on the two desktop dumps 18% to 25% of the matches have it.
 
 ### No step, and a cleared table
 
@@ -562,7 +564,7 @@ It costs no table lookup, and 18% to 25% of the matches have it.
 not compress. seqlz did the same, with a step of `1 + (pos − anchor) >> 6`, until it was measured
 without: the step needs `anchor` in the loop over positions without a match, and that loop has no
 register to spare. Without it, pages that compress are 5% faster to write, and `seqlz-fast-lit` wrote
-0.21 and 0.25 µs faster per page in the VM, in boots with `lzo-rle` and `seqlz-fast-lit` alone; in
+0.21 and 0.25 µs faster per page in the VM, 3%, in boots with `lzo-rle` and `seqlz-fast-lit` alone; in
 boots with all four codecs 0.05 µs. Its write p99 went from 1.32 and 1.29 times `lz4`'s to 1.23 and
 1.19, against `lz4`'s p99 from older boots. The price is the
 pages zram stores raw: they take 2.3 µs longer, since every position is tried
@@ -659,7 +661,8 @@ seen
 A refill leaves at least 56 bits, and two fast sequences take at most 2 × (11 + 14) = 50. So a fast
 sequence now refills every second time without asking, and a branch that alternates is one any predictor
 gets right. In a swap-in on x86-64 that took `zcomp_decompress()` from 1995 to 2008 ns down to 1936 to
-1942 ns; on the A76 a page seen once decoded about 70 ns faster. Refilling on every fast sequence took
+1942 ns, in 3 boots of the code as it was kept, with gcc; an earlier series of 3 boots gave 2010 to 2011
+against 1935 to 1941 ns; on the A76 a page seen once decoded about 70 ns faster. Refilling on every fast sequence took
 out as many misses, but its loads ate the gain, and it cost 500 cycles more on a page the predictor
 knows
 ([The refill without its branch](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
@@ -887,17 +890,17 @@ decode more than one page per fault, and neither is built.
 the two desktop dumps by the stored bytes of `docs/seqlz.md`'s result table, 1012 against 1035 and 1197
 against 1331 bytes per page; the section of `docs/seqlz.md` on why `zstd` is smaller says 3% for the
 first dump.
-As Σ zsmalloc cost on four whole dumps, desktop 1, desktop 2, phone 1 and phone 2
+As Σ zsmalloc cost on four whole dumps, two of the desktop, named by their dates, and two of the phone
 ([Levels 3 and 4](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)):
 
-| codec | desktop 1 | desktop 2 | phone 1 | phone 2 |
+| codec | desktop, 23rd September | desktop, 28th September | phone 1 | phone 2 |
 | --- | --- | --- | --- | --- |
 | `lz4` | 34.5% | 39.6% | 25.8% | 30.5% |
 | `seqlz-fast-lit` | 24.4% | 30.3% | 17.2% | 21.9% |
 | `zstd` 3 | 23.6% | 27.3% | 16.8% | 20.9% |
 
-In this table desktop 1 is the dump of 23rd September and desktop 2 the one of 28th September 2026.
-Elsewhere in this chapter the second desktop dump is the one of 24th September.
+This table has the desktop dump of 28th September 2026. Elsewhere in this chapter the second desktop
+dump is the one of 24th September.
 
 Three things make the difference, each measured
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#why-zstd-still-stores-pages-smaller)):
@@ -964,6 +967,6 @@ The design rests on measurements of few machines, and seqlz.md says so
   ([lz4 in hardware, a what-if](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)).
 
 The merge argument the project ends up with is not the one it started with. The plan hoped for a decoder
-faster than `lz4`'s at p99. In a real swap-in it is 17% to 25% slower cold. What it has is memory: about 28%
+faster than `lz4`'s at p99. In a real swap-in it is 17% to 25% slower cold on the Mi 9T, and about 20% on the PC. What it has is memory: about 28%
 less than `lz4` for a small cost in time, measured in the kernel, with a decoder that is fuzzed, bounded
 and specified in a document two independent decoders were written from.
