@@ -27,7 +27,7 @@ static void seqlz_release_params(struct zcomp_params *params)
 
 /*
  * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
- * them where that saves at least 1/16 of them: smaller pages for more time.
+ * them where that saves enough: smaller pages for more time.
  * The tables are the library's, built once.
  */
 static int seqlz_setup_params(struct zcomp_params *params)

@@ -58,31 +58,27 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 REWRITES = [
     ("docs/format.md is the specification. docs/explored-designs.md has the measurements behind each "
      "choice, by the headings quoted below.", f"The format is specified in {SPEC_URL}."),
-    (" The why of each choice below, with the numbers, is in docs/explored-designs.md.", ""),
-    (" The numbers are in docs/explored-designs.md.", ""),
-    (" (docs/format.md, Offsets)", ""),
-    (" (#108)", ""),
-    ("(src/page_lz.h)", "(page_lz.h)"),
-    (", see src/seqlz_default_tables.c for the pages they are trained on", ""),
-    ("; 3 / 5 and 4 / 4 are in \"seqlz, third decoder round\".", "."),
-    (" (docs/explored-designs.md)", ""),
     (" The same bytes as seqlz_encode() for the sequences of seqlz_find().", ""),
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
     ("seqlz_compress()", "seqlz_compress_page()"),
-    # the reasons in general terms: mainline has no 4.14, no Fedora config and not our machines
-    ("no faster on the phone and made pages", "no faster on a Cortex-A76 and A55 and made pages"),
-    ("smaller and no faster on the phone", "smaller and no faster on a Cortex-A76 and A55"),
-    ("On the phone's pages, 51 instead of 19 bytes made pages 7.9 bytes larger and saved 2.7 us per page "
-     "written on the A55, 1.1 us on the A76; on the PC 11 bytes for 0.1 us",
-     "On pages of a phone, 51 instead of 19 bytes made pages 7.9 bytes larger and saved 2.7 us per page "
-     "written on a Cortex-A55, 1.1 us on a Cortex-A76; on pages of a desktop 11 bytes for 0.1 us"),
-    ("clang compiled seqlz_decode() and code_literals() with other registers, and in the kernel VM a page",
-     "clang gave seqlz_decode() and code_literals() other registers, and on x86-64 a page"),
-    ("as lib/lz4's LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang did not inline the kernel's memcpy() in "
-     "the Mi 9T's 4.14, and every copy of 8 bytes was a call.", "as lib/lz4's LZ4_memcpy(), see seqlz.h."),
-    ("Fedora builds its kernel with -fsanitize=bounds-strict and -fsanitize=shift, which add",
-     "CONFIG_UBSAN_BOUNDS and CONFIG_UBSAN_SHIFT, which distributions enable, add"),
+    # src/seqlz.c is lib/seqlz/seqlz_codec.c in the kernel
+    (" seqlz.c", " seqlz_codec.c"),
+    # the kernel's copy is for 4 KiB pages only, see port_header()
+    (" For 16 KiB pages it is 16 KiB, as lz4's table.", ""),
+    ("A page has at most 16 KiB of literals", "A page has at most 4 KiB of literals"),
+    ("at most 640 bytes in a 4 KiB page and 2560 in a 16 KiB page, so w is at most 12.",
+     "at most 640 bytes in a 4 KiB page, so w is at most 10 here; the format allows 12."),
+    ("; for 16 KiB pages 15 876 bytes", ""),
+    (", 60 for 16 KiB pages", ""),
+    ("20 or 22 bits more", "20 bits more"),
+    ("QUETSCHN_PAGE_BITS bits, 20 or 22;", "QUETSCHN_PAGE_BITS bits, 20;"),
+    ("How many bits of the offset follow the token, per class: 0, 4, 8, the page's bits, 5, the page's bits "
+     "- 3. One nibble per class in one constant, 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB, so that it "
+     "is a shift and a mask without a branch: computing class 3's from the page's bits made gcc branch on "
+     "the class.",
+     "How many bits of the offset follow the token, per class: 0, 4, 8, 12, 5 and 9. One nibble per class "
+     "in one constant, so that it is a shift and a mask without a branch."),
 ]
 # which cores run in order, in the kernel's terms
 IN_ORDER_CORE = """/*
@@ -184,8 +180,8 @@ def paragraphs(lines):
     return out
 
 
-# a short formula, e.g. "ml - 4 = 0", stays on one line
-FORMULA = re.compile(r"\b\w+(?: [-+*/=<>]=? \w+)+")
+# a short formula, e.g. "ml - 4 = 0", stays on one line, and so does a size, e.g. "4 KiB"
+FORMULA = re.compile(r"\b\w+(?: [-+*/=<>]=? \w+)+|\b\d+ KiB\b")
 
 
 def wrap(text, width):
@@ -213,6 +209,10 @@ def render(indent, paras, kerneldoc):
     return "\n".join(out)
 
 
+# how often each of REWRITES matched, over all files: one that matches nothing is stale, see main()
+rewrites_used = [0] * len(REWRITES)
+
+
 def fix_comments(text):
     """the rewrites inside comments; a comment that changed is wrapped again"""
 
@@ -225,7 +225,8 @@ def fix_comments(text):
         for p in paras:
             if p[0] in ("para", "item", "keep"):
                 t = p[1]
-                for a, b in REWRITES:
+                for k, (a, b) in enumerate(REWRITES):
+                    rewrites_used[k] += t.count(a)
                     t = t.replace(a, b)
                 t = HEADING.sub("", t)
                 t = t.replace("QUETSCHN_PAGE_BITS", "PAGE_SHIFT").replace(".inc", ".h")
@@ -306,6 +307,10 @@ def port_header():
     t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the page \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
     t = rename_compress(t, ";")
+    # 4 KiB pages only: the values of 16 KiB pages go, not only their comments
+    t = must(t, "#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
+    t = must(t, "#define SEQLZ_RAW_NIBBLES \\\n\t(0x50840U | QUETSCHN_PAGE_BITS << 12 | (QUETSCHN_PAGE_BITS - 3U) << 20)\n",
+             "#define SEQLZ_RAW_NIBBLES 0x95c840U\n")
     t = common(t)
     t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
              "#if PAGE_SHIFT != 12\n#error \"seqlz is for 4 KiB pages only\"\n#endif\n"
@@ -316,8 +321,8 @@ def port_header():
 def port_page_lz():
     t = (SRC / "page_lz.h").read_text()
     t = spdx(t, False)
-    t = must(t, '#include "seqlz_compat.h"\n', "#include <asm/page.h>\n#include <linux/string.h>\n"
-             "#include <linux/types.h>\n#include <linux/unaligned.h>\n")
+    t = must(t, '#include "seqlz.h"\n', "#include <linux/string.h>\n#include <linux/types.h>\n"
+             "#include <linux/unaligned.h>\n\n#include \"seqlz.h\"\n")
     return common(t)
 
 
@@ -457,6 +462,9 @@ def main():
                 left.append(f"{path}:{n}: {line.strip()}")
     if left:
         sys.exit("references to this repository or reasons of our machines left:\n" + "\n".join(left))
+    stale = [a for (a, _), n in zip(REWRITES, rewrites_used) if n == 0]
+    if stale:
+        sys.exit("REWRITES that match no comment any more:\n" + "\n".join(stale))
     for path, text in out.items():
         (tree / path).parent.mkdir(parents=True, exist_ok=True)
         (tree / path).write_text(text)
@@ -464,9 +472,8 @@ def main():
     patch(tree / "lib/Kconfig", "config LZ4_DECOMPRESS\n\ttristate\n\n",
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"
           "\t  seqlz compresses and decompresses one memory page of 4 KiB\n"
-          "\t  at a time. It is an LZ format whose sequences are Huffman\n"
-          "\t  coded with fixed tables, for zram. Selected by\n"
-          "\t  ZRAM_BACKEND_SEQLZ.\n\n"
+          "\t  at a time, for zram. It is an LZ format whose sequences are\n"
+          "\t  Huffman coded with fixed tables.\n\n"
           "config SEQLZ_KUNIT_TEST\n"
           "\ttristate \"KUnit tests for seqlz\" if !KUNIT_ALL_TESTS\n"
           "\tdepends on KUNIT && PAGE_SIZE_4KB\n"

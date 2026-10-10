@@ -8,21 +8,7 @@
  * seqlz.c.
  */
 
-#include "seqlz_compat.h"
-
-/* 12 for 4 KiB pages, 14 for 16 KiB, the same for the whole build */
-#ifndef QUETSCHN_PAGE_BITS
-#define QUETSCHN_PAGE_BITS 12
-#endif
-#define PAGE_LZ_PAGE (1U << QUETSCHN_PAGE_BITS)
-/*
- * The matcher's hash table has 1 << PAGE_LZ_HASH_BITS entries of 2 bytes, 8 KiB
- * for 4 KiB pages. With 2048 entries pages were 2.7 bytes larger and the
- * compressor no faster; with 8192 the A55 wrote a page 1.6 us slower ("Six
- * choices made on the PC, measured on the phone", 5). For 16 KiB pages it is
- * 16 KiB, as lz4's table.
- */
-#define PAGE_LZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
+#include "seqlz.h"
 
 /*
  * Asks the CPU to load a cache line, without waiting for it. The kernel builds
@@ -40,9 +26,8 @@
  * Prefetches every cache line of [p, p + size); size is a multiple of 512. In
  * a swap-in the decoder's tables are often no longer in the cache: asking for
  * all of their lines at once lets the misses overlap, instead of one after the
- * other as the decoder runs into them. 8 lines of 64 bytes per iteration: one
- * line per iteration took 4 instructions per line, 3% of a page's decode on
- * the Cortex-A55.
+ * other as the decoder runs into them. 8 lines of 64 bytes per iteration: with
+ * one line per iteration, the loop took more instructions than the prefetches.
  */
 static inline void prefetch_lines(const void *p, unsigned long size)
 {
@@ -64,8 +49,8 @@ static inline void prefetch_lines(const void *p, unsigned long size)
 /*
  * The u16 at the start of a page, byte by byte. get_unaligned_le16() and
  * put_unaligned_le16() would do the same, but with them clang compiled
- * seqlz_decode() and code_literals() with other registers, and in the kernel VM
- * a page was read 0.04 us and written 0.08 us slower.
+ * seqlz_decode() and code_literals() with other registers, and pages were read
+ * and written slower.
  */
 static inline void store16(u8 *p, unsigned int v)
 {
@@ -86,7 +71,7 @@ static inline unsigned int load16(const u8 *p)
 static inline unsigned int hash5(u64 v)
 {
 	return (unsigned int)(((v << 24) * 889523592379ULL) >>
-			      (64U - PAGE_LZ_HASH_BITS));
+			      (64U - SEQLZ_HASH_BITS));
 }
 
 /*
@@ -100,10 +85,10 @@ static inline unsigned int count(const u8 *p, const u8 *q, const u8 *end)
 	/*
 	 * The first 16 bytes are compared without a branch between the two
 	 * halves of 8: whether a match ends in the first 8 bytes is hard to
-	 * predict, 74% do and 24% are longer than 11 bytes. x is the first half
-	 * that differs, and its lowest set bit is in the first byte that
-	 * differs, the bytes are little endian. x is never 0 here, the top bit
-	 * set tells the compiler so: __builtin_ctzll() of 0 is undefined.
+	 * predict, most do and many are longer. x is the first half that
+	 * differs, and its lowest set bit is in the first byte that differs,
+	 * the bytes are little endian. x is never 0 here, the top bit set
+	 * tells the compiler so: __builtin_ctzll() of 0 is undefined.
 	 */
 	if (end - p >= 16) {
 		u64 x1 = get_unaligned_le64(p) ^ get_unaligned_le64(q),
@@ -146,14 +131,13 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * the first match it finds. One is the offset of the match before, which
  * repeats often. The other is the last position whose 5 bytes had the same
  * hash, from the hash table. Hashing 5 bytes instead of 4 finds fewer and
- * longer matches: 5% fewer cycles to compress, 0.6% more memory, and 10% less
- * time per write at p99 in the kernel. Matches of 4 bytes still come from the
- * repeated offset.
+ * longer matches: less time to compress for a little more memory. Matches of 4
+ * bytes still come from the repeated offset.
  *
  * Unlike lz4 it tries every position, also after a long stretch without a
  * match, where lz4 starts to skip. Skipping needed more state in the loop:
- * without it, pages that compress were written 5% faster and pages that do not
- * 2.3 us slower ("The matcher without its step").
+ * without it, pages that compress are written faster and pages that do not
+ * slower ("The matcher without its step").
  *
  * Each sequence goes to emit() as soon as it is found. With the encoder's
  * emit() inlined, finding and writing the sequences is one pass over the page.
@@ -166,7 +150,7 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 	 * table stores positions. The last 8 bytes are not tried, every try
 	 * reads 8 bytes.
 	 */
-	const unsigned int limit = PAGE_LZ_PAGE - 8U;
+	const unsigned int limit = SEQLZ_PAGE - 8U;
 	unsigned int pos = 1, anchor = 0, last = 1, h, cand;
 	/*
 	 * The repeated offset as a negative index, src + pos + back, so the
@@ -176,14 +160,14 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 	/*
 	 * The 8 bytes at pos, their hash, the table's entry and the 4 bytes
 	 * at that entry, each loaded one position ahead. Each of them needs
-	 * the one before, and the in-order Cortex-A55 waited for every load,
-	 * 3.4% of the compressor's cycles. The entry is still read after the
-	 * position before it was stored, so the matches are the same.
+	 * the one before, and an in-order core waited for every load. The
+	 * entry is still read after the position before it was stored, so the
+	 * matches are the same.
 	 */
 	u64 v;
 	u32 cand_bytes;
 
-	memset(table, 0, sizeof(u16) << PAGE_LZ_HASH_BITS);
+	memset(table, 0, sizeof(u16) << SEQLZ_HASH_BITS);
 	v = get_unaligned_le64(src + pos);
 	h = hash5(v);
 	cand = table[h];
@@ -224,8 +208,7 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 			pos--;
 			m--;
 		}
-		len = 4U +
-		      count(src + pos + 4, src + m + 4, src + PAGE_LZ_PAGE);
+		len = 4U + count(src + pos + 4, src + m + 4, src + SEQLZ_PAGE);
 		last = pos - m;
 		back = -(long)last;
 		emit(ctx, src + anchor, pos - anchor, len, last);
@@ -245,7 +228,7 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 			cand_bytes = get_unaligned_le32(src + cand);
 		}
 	}
-	emit(ctx, src + anchor, PAGE_LZ_PAGE - anchor, 0, 0);
+	emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);
 }
 
 #endif

@@ -108,6 +108,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The kernel's prefetch() on x86-64, fixed in the kernel: a patch gives clang its prefetches back](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)
 - [The macros of seqlz.c as inline functions: the same time in the VM, on the phone no more than where a module lands, kept](#the-macros-of-seqlzc-as-inline-functions-the-same-time-in-the-vm-on-the-phone-no-more-than-where-a-module-lands-kept)
 - [The kernel copy's long functions split into inline helpers: the same time in the VM and on the phone, kept](#the-kernel-copys-long-functions-split-into-inline-helpers-the-same-time-in-the-vm-and-on-the-phone-kept)
+- [Numbers that were only in the codec's comments, until 10th October 2026](#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5099,6 +5100,27 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## Numbers that were only in the codec's comments, until 10th October 2026
+
+The comments in `src/` said why a choice was made with the number of the measurement behind it, e.g.
+"With 9 bits a cold read took 80 ns longer". In the kernel copy a reviewer reads that as changelog
+material, and nobody can check it (#156). So the comments keep one line of why, and the numbers stay
+here. Most of them have an entry of their own already; these were only in a comment, with the commit
+that wrote them:
+
+| Choice | The number in the comment | Commit |
+| --- | --- | --- |
+| `copy_match()` copies 8 bytes at a time up to the last 7 bytes of the page | byte by byte up to the end made the slowest pages 10 times slower than `lz4` | `cf5dedb` |
+| `lit_streams()` writes 4 streams side by side | one stream after the other: 3.5 cycles per literal | `34080eb` |
+| `code_literals()` codes only where that saves more than 1/16 plus 51 bytes | coding wherever it saves anything saved less than 0.1% more memory | `34080eb` |
+| widths of 3 and 4 bits for the stream sizes are left out | only 0.1% to 3% of the pages would use them | `21b71c9` |
+| sizes of 2 bytes each instead of `w` bits | pages 5.2 and 5.5 bytes larger on two dumps | `0cc300e` |
+| `copy_match()` copies 16 bytes without a loop, not 32 | 79% of the matches are at most 16 bytes, 32 bytes cover 91% | `21b71c9` |
+| `__builtin_ctzll()` instead of `__ffs64()` | with `__ffs64()`, gcc compiled the literal coder and decoder in another shape | `61299db` |
+| `token_entry()` holds what the decoder needs | taking the token apart took 18 instructions per sequence | `5c769f5` |
+
+None of them was measured again; they hold for the code of the commit named.
 
 ## seqlz-fast-lit faster at the same memory: five tries, none kept
 

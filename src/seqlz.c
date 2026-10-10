@@ -3,10 +3,6 @@
 
 #include "page_lz.h"
 
-static_assert(PAGE_LZ_PAGE == SEQLZ_PAGE &&
-		      PAGE_LZ_HASH_BITS == SEQLZ_HASH_BITS,
-	      "page_lz.h and seqlz.h disagree");
-
 /*
  * A decode table is indexed by the next bits of the bitstream, as many as the
  * longest code has. A code of l bits fills every entry whose index starts with
@@ -17,11 +13,11 @@ static_assert(PAGE_LZ_PAGE == SEQLZ_PAGE &&
  * is the base plus the extra bits. The token table's entries are described at
  * token_entry().
  *
- * The encoder's tables have a power of 2 entries, and its indices and shift
- * counts are masked, e.g. with & 63U. Fedora builds its kernel with
- * -fsanitize=bounds-strict and -fsanitize=shift, which add a compare and a
- * branch to every index and shift that the compiler cannot prove in range;
- * with the mask it can.
+ * The encoder's shift counts are masked, e.g. with & 63U, and so is its index
+ * into the length values' enc[], which has a power of 2 entries for that.
+ * CONFIG_UBSAN_BOUNDS and CONFIG_UBSAN_SHIFT, which distributions enable, add
+ * a compare and a branch to every index and shift that the compiler cannot
+ * prove in range; with the mask it can.
  */
 #define ENC_LEN_SYMBOLS 32U
 static_assert(SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS,
@@ -118,8 +114,8 @@ static_assert(sizeof(((struct token_table *)0)->decode) % 512U == 0 &&
  *   bits 23..28: ml, at most 35
  *   bit  30:     a length value follows, for ll or ml
  *   bit  31:     the escape; then only bits 14..18 are set, to n
- * Taking the token apart in the decoder took 18 instructions per sequence, and
- * the Cortex-A55 runs at most two per cycle.
+ * Taking the token apart in the decoder cost many instructions per sequence,
+ * which in-order cores run at most two per cycle.
  */
 #define TOK_BACK_AT 6
 #define TOK_SHIFT_AT 12
@@ -726,8 +722,7 @@ static __always_inline void lit_cost(const struct seqlz_tables *t,
  * q[8] the end of the last. Literal k goes into stream k % 8, most significant
  * bit first, see decode_literals(). Four streams at a time, each with an
  * accumulator of its own, so that the four chains of shifts run side by side.
- * One stream after the other made each literal wait for the one before, 3.5
- * cycles per literal.
+ * One stream after the other made each literal wait for the one before.
  */
 static __always_inline void lit_streams(const u32 *enc, const u8 *literals,
 					unsigned int n_literals, u8 *const *q)
@@ -811,10 +806,10 @@ static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
 
 /*
  * Turns the page of len bytes in d, with raw literals as the encoder wrote it,
- * into one with Huffman coded literals, where that saves at least 1/16 of them
- * and SEQLZ_LIT_CODED_MIN bytes. Decoding coded literals costs time for every
- * byte, and coding them wherever they save anything at all saved less than
- * 0.1% more memory. Returns the new length, or len if the literals stay raw.
+ * into one with Huffman coded literals, where that saves more than 1/16 of them
+ * plus SEQLZ_LIT_CODED_MIN bytes. Decoding coded literals costs time for every
+ * byte, and coding them wherever they save anything at all saved almost no
+ * more memory. Returns the new length, or len if the literals stay raw.
  *
  * The coded literals are written over the raw ones in d, so they are read from
  * a copy: raw if the caller has one, else spare, at least a page, which they
@@ -863,9 +858,10 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
 		return len;
 	/*
-	 * The streams end at d + header + coded, which is before the bitstream
-	 * at d + SEQLZ_HEADER + n_literals: coded is at least SEQLZ_LIT_CODED_MIN
-	 * bytes below n_literals, see the static_assert below.
+	 * The streams end at d + header + coded, which is before the
+	 * bitstream at d + SEQLZ_HEADER + n_literals: coded is at least
+	 * SEQLZ_LIT_CODED_MIN bytes below n_literals, see the static_assert
+	 * below.
 	 */
 	literals = raw ? raw : memcpy(spare, literals, n_literals);
 	q[0] = d + header;
@@ -931,8 +927,7 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 
 /*
  * The copies below are __builtin_memcpy() of 8 bytes, as lib/lz4's
- * LZ4_memcpy(): with CONFIG_FORTIFY_SOURCE, clang did not inline the kernel's
- * memcpy() in the Mi 9T's 4.14, and every copy of 8 bytes was a call.
+ * LZ4_memcpy(), see seqlz.h.
  */
 
 /*
@@ -1007,14 +1002,14 @@ static __always_inline u64 repeat_pattern(const u8 *d, unsigned int off)
  * checked that it fits and that off points into the page. Like the literals, 8
  * bytes at a time as long as 8 bytes fit in the page, also past len; only the
  * last 7 bytes of a page are copied one by one. Copying byte by byte up to the
- * end of the page made the slowest pages 10 times slower than lz4.
+ * end of the page made the slowest pages many times slower than lz4.
  *
  * An offset below 8 overlaps the bytes it writes: off = 1 repeats one byte,
  * off = 2 two bytes, and so on. Then the off bytes before d are repeated to 8
- * bytes in a register, see repeat_pattern(), and stored. The same 8 bytes
- * fit again every step bytes, a multiple of off, so the rest are stores of that
- * register only. Writing the first bytes one by one made each load wait for the stores
- * before it, and the loop over them mispredicted its end.
+ * bytes in a register, see repeat_pattern(), and stored. The same 8 bytes fit
+ * again every step bytes, a multiple of off, so the rest are stores of that
+ * register only. Writing the first bytes one by one made each load wait for
+ * the stores before it, and the loop over them mispredicted its end.
  */
 static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 				       unsigned int len)
@@ -1042,12 +1037,12 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 		}
 	} else if ((unsigned int)(d_end - d) >= 16U) {
 		/*
-		 * 79% of the matches are at most 16 bytes, so 16 bytes are
-		 * copied without a loop. With off >= 8 the second copy reads
-		 * bytes the first one wrote or that were there before, so the
-		 * order is right. 32 bytes, enough for 91% of the matches, made
-		 * the median page faster and the slowest ones slower: those
-		 * have many short matches, and copied 32 bytes for each.
+		 * Most matches are at most 16 bytes, so 16 bytes are copied
+		 * without a loop. With off >= 8 the second copy reads bytes the
+		 * first one wrote or that were there before, so the order is
+		 * right. 32 bytes made the median page faster and the slowest
+		 * ones slower: those have many short matches, and copied 32
+		 * bytes for each.
 		 */
 		u64 a, b;
 
@@ -1297,9 +1292,9 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
  * Decodes the coded literals of a page into out, the scratch, see
  * SEQLZ_LIT_HEADER for the layout. Returns where the sequences' bitstream
  * starts, or NULL if the page is not valid. Not inlined: inside the loop over
- * the sequences its registers made pages with raw literals 12% slower too.
- * Aligned to a cache line, so that a change in front of it does not move its
- * loops: where a function lands alone moved reads on a Cortex-A55 by 130 ns.
+ * the sequences its registers made pages with raw literals slower too. Aligned
+ * to a cache line, so that a change in front of it does not move its loops:
+ * where they land alone moved the time of reads on in-order cores.
  */
 static noinline __aligned(64) const u8 *decode_literals(
 	const struct seqlz_tables *t, const u8 *s, unsigned int src_len,
