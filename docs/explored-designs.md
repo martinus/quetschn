@@ -37,6 +37,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [How the numbers are measured](#how-the-numbers-are-measured)
 - [The harness on the PC: a codec's times depend on the other codecs in the run, not found why](#the-harness-on-the-pc-a-codecs-times-depend-on-the-other-codecs-in-the-run-not-found-why)
 - [Less noise on the phone: one codec per process and the memory's clocks fixed](#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed)
+- [The app test's spread: zram's memory moves by 2 to 3% between runs, cold launches by 51 to 173%](#the-app-tests-spread-zrams-memory-moves-by-2-to-3-between-runs-cold-launches-by-51-to-173)
 - [zram's memory against the model: exact on a new device, Σ zsmalloc cost 0.35 to 0.47% below it](#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)
 - [The first runs with dictionaries, Phases 0 to 2](#the-first-runs-with-dictionaries-phases-0-to-2)
 - [Baselines](#baselines)
@@ -2851,9 +2852,68 @@ out of 335 000. #129 executes 3800 more per page, 1.1%, which the times alone co
 noise: on the A76 its writes take 0.05 µs longer, on the in-order A55 0.17 µs, 0.6%. That is the check
 before every sequence and the copy of the bitstream at the end.
 
-Not done from #130: the app test's spread. In "Apps on the phone" the cold launches of one codec went
-from 2 to 18 per run while the mean launch time moved by 24%, so they do not spread less; `mem_used` and
-`pswpin` per run are in the logs and from now on the clocks and temperatures too.
+The app test's spread, the last item of #130, is in
+[the next section](#the-app-tests-spread-zrams-memory-moves-by-2-to-3-between-runs-cold-launches-by-51-to-173).
+
+## The app test's spread: zram's memory moves by 2 to 3% between runs, cold launches by 51 to 173%
+
+*#130 asked if cold launches, `pswpin` and zram's memory spread less between runs than the launch
+times, and if so, to report them first. zram's memory and `pswpin` do, cold launches do not.* In 5
+series of `tools/phone-apps/` on the Mi 9T, 64 runs, zram's memory moved by 2.3 to 3.3% between runs of
+one codec and told the codecs apart in every series. Cold launches moved by 51 to 173%. Launch times
+moved by 3 to 11% and told the codecs apart only with 6 runs per codec. Two runs of 9th October were
+spoiled by the setup and not by the codec, `run.sh` now repeats such a run. Code:
+`tools/phone-apps/analyze.py` and `run.sh`.
+
+**How the spread is counted.** Per series and number: the standard deviation of a codec's runs around
+the codec's mean, pooled over the codecs, in % of the mean, and F, the variance between the codecs'
+means against the variance within, as in a one-way ANOVA. Chance alone gives an F above the last column
+in 1 of 20 series of that size. `analyze.py` prints both now. Each cell is spread / F, the runs after
+round 1, 2.5 GiB of disksize unless the same RAM is given:
+
+| series | codecs, runs each | zram's memory | kswapd CPU | `pswpin` | median launch | cold launches | F, 1 in 20 |
+| --- | --- | --- | --- | --- | --- | --- | ---: |
+| C, 4th October | 5, 3 | 2.3% / 189 | 5.4% / 34 | 2.1% / 8.6 | 5.9% / 0.9 | 51% / 4.9 | 3.5 |
+| D, 4th October, the same RAM | 5, 3 | 3.3% / 11 | 7.1% / 20 | 4.8% / 9.1 | 6.9% / 5.8 | 78% / 13 | 3.6 |
+| E, 5th October | `seqlz-fast` and `-lit`, 5 | 2.9% / 12.5 | 4.9% / 0.2 | 3.1% / 0.0 | 10.8% / 1.5 | 73% / 0.8 | 5.3 |
+| F, 9th October | `lz4`, `seqlz-fast-lit`, `zstd`, 3 | 2.3% / 209 | 4.9% / 67 | 2.7% / 3.8 | 5.8% / 1.7 | 76% / 9.8 | 6.9 |
+| G, the night after | the same, 6 | 3.3% / 321 | 3.5% / 265 | 1.6% / 75 | 3.5% / 12.9 | 173% / 4.3 | 3.7 |
+
+D has one run less, F two: they were spoiled, see below.
+
+**zram's memory** told the codecs apart in every series, also the two `seqlz` variants in E, and is what
+the test is for. **kswapd's CPU time** does where the codecs compress at a different cost: `zstd` took
+183 to 207 s per run, the others 124 to 160 s; between `seqlz-fast` and `seqlz-fast-lit` it is the same.
+**`pswpin`** spread least, 1.6 to 4.8%, but the codecs differ by little in it, so it counts only with
+more runs, as in G.
+
+**Launch times** need more runs. With 3 to 5 runs per codec, in C, E and F, none of the medians and means
+told the codecs apart; in D, where `lz4` lost apps, the mean of all launches did. With 6 runs in G all of
+them did: the median of all launches was 458 ms for `lz4`, 420 for `seqlz-fast-lit`, 461 for `zstd`. G
+also spread less than F, 2.7 to 3.7% instead of 4.3 to 7.6%; it ran at night and had no spoiled run, so
+the repeat in `run.sh` had no part in it. Why the night spread less is not known.
+
+**Cold launches** are counts of a few per run and move with anything that kills an app. In G, all runs
+clean, `lz4` had 2, 4, 1, 6, 13 and 0. They tell codecs apart only where one codec loses apps in most
+runs and another in none: in D `lz4` had 11 to 23 per run and `seqlz-fast`, `seqlz-fast-lit` and `zstd`
+none in 9 runs, in G `lz4` 26 in 6 runs against 3 and 0. Without the spoiled runs, `lz4` had 4 to 10
+per run with 2.5 GiB on 4th October and 0 to 13 on 9th October and the night after, so the data shows no
+shift between days, but two days are too few to rule one out.
+
+**Spoiled runs.** On 9th October two runs had 37 and 18 cold launches where the other runs of their
+codec had 0 to 8. In the one, Android's flag sync set the limit on cached processes from 96 back to 32
+twice in round 2, and Android killed down to 32 before `swapbench.sh` set it again; in the other, a
+YouTube launch hung for 30 s in round 2. A reset in round 1 is harmless, round 1 is not counted, and
+every run had one. Android 11 has no way to stop the sync: `device_config` has no command for it, and
+`am` none to set the limit. So `run.sh` repeats a spoiled run once and keeps it as
+`<rep>-<algo>-spoiled`, and `analyze.py` leaves a spoiled run out. Of the runs before, one in D was
+spoiled, by a hung launch; none in C, E and G.
+
+`analyze.py` now prints zram's memory, `pswpin` and kswapd's CPU time first. Launch times count with 6
+runs per codec, cold launches only as the sum of a series run in one day with the codecs in turns, never
+against another series. All of this is one phone with Android 11 and one set of 25 apps. Chrome opens
+BBC News and The Verge in round 1, whose pages change by the day; what that adds to the spread between
+days is not measured.
 
 ## How tight the bits are: ANS would give 0.3% at most, the offsets have 2%, 16 literal tables 0.1% to 2%
 

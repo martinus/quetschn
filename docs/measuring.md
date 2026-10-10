@@ -237,6 +237,20 @@ rounds. What it does against noise, measured with one module 3 rounds each
 - **`COUNTS=1`** adds the kernel instructions per page from `simpleperf`, which do not depend on where
   the code is.
 
+The app test, `tools/phone-apps/run.sh`, has rules of its own
+([explored-designs.md](explored-designs.md#the-app-tests-spread-zrams-memory-moves-by-2-to-3-between-runs-cold-launches-by-51-to-173)):
+
+- **zram's memory first.** It moved by 2 to 3% between runs of one codec and told the codecs apart in
+  every series; kswapd's CPU time and `pswpin` come next. `analyze.py` prints them first, and at the end
+  how much each number spreads between runs against between codecs.
+- **6 runs per codec for launch times.** With 3 to 5 they did not tell the codecs apart in 3 of 4 series.
+- **Cold launches only as the sum of a series**, run in one day with the codecs in turns, never against
+  another series. `lz4`'s runs went from 0 to 13 in one night, none of them spoiled.
+- **A spoiled run is repeated.** Android's flag sync can set the limit on cached processes back after
+  round 1, and a launch can hang on a dialog; both kill apps for reasons other than the codec. `run.sh`
+  repeats such a run once and keeps the spoiled one, `analyze.py` leaves it out. `END=05:55` starts no run
+  that would end later.
+
 The pages are as private on the phone as anywhere else: delete them from `/data/local/tmp` afterwards.
 
 ## Rules that came from getting it wrong

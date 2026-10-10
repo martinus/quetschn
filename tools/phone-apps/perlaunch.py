@@ -18,7 +18,8 @@ per_algo = defaultdict(list)
 print(f"{'run':22} {'n':>3} {'swpin med':>9} {'ms med':>6} {'us/page':>8} {'ms at 0':>7}")
 for run in sorted(os.listdir(d)):
     f = os.path.join(d, run, "launches.txt")
-    if not os.path.exists(f):
+    # run.sh keeps a spoiled run that it repeated under this name
+    if not os.path.exists(f) or run.endswith("-spoiled"):
         continue
     pts = []
     with open(f) as fh:

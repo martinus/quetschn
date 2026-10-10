@@ -444,7 +444,7 @@ Each phase ends in an artifact and a gate. The durations are calendar weeks at 3
 | [2](#phase-2-benchmark-harness-and-baseline-8-weeks) | harness and baseline | done, the gate passed, not published yet |
 | [2b](#phase-2b-decoder-latency-spike-2-weeks) | decoder latency spike | done on x86-64 |
 | [3](#phase-3-page-analysis-and-design-exploration-12-weeks) | design exploration | done: `seqlz-fast-lit` |
-| [4](#phase-4-reference-implementation-format-spec-fuzzing-20-weeks) | spec, reference decoders, fuzzing | mostly done |
+| [4](#phase-4-reference-implementation-format-spec-fuzzing-20-weeks) | spec, reference decoders, fuzzing | done on 9th October 2026 |
 | [5](#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) | kernel port, validation in a VM | done, the gate passed on 8th October 2026 |
 | [6](#phase-6-arm64-validation-a-hard-gate-before-phase-7) | arm64 | half: one phone, 4 KiB pages |
 | [7](#phase-7-upstreaming-6-months-or-more-expect-v5) | upstreaming | the question to the maintainers is [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), 9th October 2026 |
@@ -777,8 +777,10 @@ This phase exists because of §2.2: everything Biggers asked for, before the fir
 
 *Gate: 1e9 fuzz executions without a crash, spec and implementation agree on the whole corpus and the
 fuzz corpus, frame size and workspace within budget.* Met with 1.7 billion AFL++ inputs on the tables
-of 6th October and 1.5 billion libFuzzer inputs on the tables of 7th October. An AFL++ run on the new
-tables is still open.
+of 6th October and 1.5 billion libFuzzer inputs on the tables of 7th October. On 9th October AFL++ ran
+on the codec of `5342a9b`, the tables of 7th October with #145 and #147: 12 instances for 2 hours,
+3.65 billion inputs, 1.42 billion on the decoder, 1.94 billion on the decoder against the one in C
+and 298 million on the roundtrip, nothing found.
 
 ### Phase 5: kernel port and validation in a VM (16 weeks)
 
@@ -927,14 +929,15 @@ As of 9th October 2026:
   and the design: `seqlz-fast-lit` ([seqlz.md](seqlz.md)), with every alternative that was measured in
   [explored-designs.md](explored-designs.md). Not done from them: the scripted VM workloads, and
   publishing the comparison.
-- **Phase 4: mostly done.** [The format](format.md), and two reference decoders written from it. The
+- **Phase 4: done.** [The format](format.md), and two reference decoders written from it. The
   tables were trained again on 7th October, on swapped pages too. Fuzzing of the decoder, of the
   roundtrip, and of the decoder against the reference decoder in C: 1.7 billion inputs with AFL++ on the
-  tables of 6th October, 1.5 billion with libFuzzer on the new ones, no difference found. ASan and UBSan
+  tables of 6th October, 1.5 billion with libFuzzer on the new ones, and 3.65 billion with AFL++ on the
+  codec of 9th October, no difference found. ASan and UBSan
   in CI, big-endian on s390x in CI. The worst case is measured: against its own p99,
   `seqlz-fast-lit`'s slowest pages cost 1.14 times to compress and 1.59 times to decode, the least of
   it, `lz4`, `lzo-rle` and `zstd`. The tests run with 16 KiB pages too, in CI. MSan on the fuzz targets
-  and continuous fuzzing with ClusterFuzzLite since 9th October. Open: an AFL++ run on the new tables.
+  and continuous fuzzing with ClusterFuzzLite since 9th October.
 - **Phase 5: done, the gate passed.** `tools/kernel-port/` writes `lib/seqlz/`, a minimal
   `include/linux/seqlz.h`, the zram backend and KUnit tests into a kernel tree; CI builds it for
   x86-64, arm64, arm and s390 and runs the KUnit tests. `stress.sh` swapped 34.9 million pages through
@@ -976,4 +979,3 @@ Next, in this order:
    zram splits them, is open (§3.3).
 5. Phase 5 again if the maintainers want another form than a zram backend, e.g. an acomp algorithm:
    `lib/seqlz/` stays, the glue changes, and `stress.sh` runs again.
-6. AFL++ again for the gate of Phase 4, on the current codec.
