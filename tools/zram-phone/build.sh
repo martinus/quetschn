@@ -21,13 +21,16 @@ here=$(cd "$(dirname "$0")" && pwd)
 K=${MI9T_KERNEL:-$HOME/opt/mi9t-kernel}
 T=${NDK_R21E:-$HOME/opt/android-ndk-r21e}/toolchains
 rm -rf "$out"; mkdir -p "$out"
-cp "$src"/seqlz.c "$src"/seqlz.h "$src"/page_lz.h "$src"/seqlz_compat.h "$src"/seqlz_default_tables.c \
-    "$src"/seqlz_default_tables_*.inc "$src"/seqlz_lit_sets.c "$src"/seqlz_lit_sets_*.inc "$out"/
+# the codec's files, whether src/ has it in one seqlz.c or split
+cp "$src"/seqlz*.c "$src"/*.h "$src"/*.inc "$out"/
+objs=$(cd "$out" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' ')
 sed -e "s/\"seqlz-fast-lit\"/\"seqlz-$name-lit\"/; s/\"seqlz-fast\"/\"seqlz-$name\"/" \
     -e "s/\"seqlz-fast-lit-generic\"/\"seqlz-$name-lit-generic\"/; s/\"seqlz-fast-generic\"/\"seqlz-$name-generic\"/" \
     "$here/glue.c" >"$out/glue.c"
-printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\nCFLAGS_seqlz.o += %s\n' \
-    "$name" "$name" "${OPT:--O3}" >"$out/Kbuild"
+printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o %s\n' "$name" "$name" "$objs" >"$out/Kbuild"
+for o in $objs; do
+    printf 'CFLAGS_%s += %s\n' "$o" "${OPT:--O3}" >>"$out/Kbuild"
+done
 [[ ${ALIGN:-64} == 0 ]] || printf 'ccflags-y += -falign-functions=%s\n' "${ALIGN:-64}" >>"$out/Kbuild"
 export PATH=$T/llvm/prebuilt/linux-x86_64/bin:$T/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:$PATH
 make -C "$K/src" O="$K/out" ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- \

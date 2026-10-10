@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 #
 # run.sh <build dir> <pages file> [out dir]: which branches of seqlz's decoder mispredict on pages it
-# sees once. The build dir needs QUETSCHN_KERNEL_TREE: seqlz.c is compiled with its command from
+# sees once. The build dir needs QUETSCHN_KERNEL_TREE: the decoder, seqlz_decompress.c, is compiled with its command from
 # compile_commands.json, the kernel's flags, plus -g, which does not change the code. Then perf stat
 # per decode in the three modes of decode_once.c, and the mispredicted branches of mode 0 by source
 # line from AMD's or Intel's branch records (perf record -j any). x86-64; CPU 2, as the other benchmarks.
@@ -17,16 +17,16 @@ mkdir -p "$out"
 cmd=$(python3 - "$build/compile_commands.json" <<'PY'
 import json, sys
 for e in json.load(open(sys.argv[1])):
-    if "quetschn_kernel_seqlz" in e["command"] and e["file"].endswith("/src/seqlz.c"):
+    if "quetschn_kernel_seqlz" in e["command"] and e["file"].endswith("/src/seqlz_decompress.c"):
         print(e["command"])
         break
 else:
-    sys.exit("no kernel build of src/seqlz.c in compile_commands.json")
+    sys.exit("no kernel build of src/seqlz_decompress.c in compile_commands.json")
 PY
 )
-cmd=$(sed -E "s# -o [^ ]+# -o $out/seqlz.o#; s# -c [^ ]+# -c $repo/src/seqlz.c#" <<<"$cmd")
+cmd=$(sed -E "s# -o [^ ]+# -o $out/seqlz_decompress.o#; s# -c [^ ]+# -c $repo/src/seqlz_decompress.c#" <<<"$cmd")
 (cd "$build" && eval "$cmd -g")
-cc -O2 -g -I"$repo/src" -o "$out/decode_once" "$here/decode_once.c" "$out/seqlz.o" \
+cc -O2 -g -I"$repo/src" -o "$out/decode_once" "$here/decode_once.c" "$out/seqlz_decompress.o" \
     "$build/libquetschn_kernel_seqlz.a" "$build/libquetschn_kernel_runtime.a"
 
 for m in 2 0 1; do

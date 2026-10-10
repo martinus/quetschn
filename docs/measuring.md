@@ -75,7 +75,10 @@ decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`),
 reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`. `VARIANTS` puts more builds of
 seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>` and
 `<name>-lit`: variants of the codec are compared in one boot, taking turns, which a kernel per variant
-cannot do. 7 codecs, 3 boots and 20 000 pages take about 5 minutes per kernel.
+cannot do. 7 codecs, 3 boots and 20 000 pages take about 5 minutes per kernel. `PORT=1` builds the kernel copy as
+`tools/kernel-port/port.py` writes it instead of `src/` with the VM's backend, `ALGOS=lz4,seqlz:2`:
+the code the kernel would get, with its tables in one global; it is what to measure a change of
+`port.py` or of `static` and inlining with.
 
 ```sh
 ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log

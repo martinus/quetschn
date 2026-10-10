@@ -71,7 +71,8 @@ target_link_libraries(quetschn-swap-bursts PRIVATE quetschn_warnings)
 
 # seqlz without kernel code, for the tests and tools. seqlz's sources, for every target that builds it:
 # this library, the kernel codecs, the fuzzers
-set(QUETSCHN_SEQLZ_SOURCES src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c)
+set(QUETSCHN_SEQLZ_SOURCES src/seqlz_codes.c src/seqlz_compress.c src/seqlz_decompress.c src/seqlz_default_tables.c
+    src/seqlz_lit_sets.c)
 add_library(quetschn_seqlz STATIC ${QUETSCHN_SEQLZ_SOURCES})
 target_include_directories(quetschn_seqlz PUBLIC src)
 target_link_libraries(quetschn_seqlz PRIVATE quetschn_warnings)

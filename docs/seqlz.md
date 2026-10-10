@@ -14,8 +14,10 @@ This document explains how `seqlz` works for someone who has not written a compr
 term is explained where it is first used, and the [glossary](#glossary) at the end lists them all.
 The exact bytes of a compressed page, for writing a decoder, are in [format.md](format.md); the
 history of every idea, also of the ones that failed, is in [explored-designs.md](explored-designs.md).
-The code is in [`src/seqlz.c`](../src/seqlz.c), [`src/seqlz.h`](../src/seqlz.h) and
-[`src/page_lz.h`](../src/page_lz.h).
+The code is in [`src/seqlz_compress.c`](../src/seqlz_compress.c) with the matcher of
+[`src/page_lz.h`](../src/page_lz.h), [`src/seqlz_decompress.c`](../src/seqlz_decompress.c),
+[`src/seqlz_codes.c`](../src/seqlz_codes.c), which builds the codes, and the headers
+[`src/seqlz.h`](../src/seqlz.h) and [`src/seqlz_internal.h`](../src/seqlz_internal.h).
 
 ## How to read this
 
@@ -490,7 +492,7 @@ per literal.
 
 **The 1/16 rule.** The encoder codes the literals only if the 8 streams and 51 bytes more are smaller
 than 15/16 of the literals as they are, `coded + 51 < n − n / 16` in
-[`code_literals()`](../src/seqlz.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
+[`code_literals()`](../src/seqlz_compress.c) for `n` literals. zsmalloc's size classes are at least 16 bytes
 apart, so saving a few bytes mostly saves nothing, and coding the literals whenever they save
 anything gave less than 0.1 points more, for decoding time on every such page. The 51 bytes are for
 the phone: a page with coded literals costs a fixed time to read, its literal table and the buffer the

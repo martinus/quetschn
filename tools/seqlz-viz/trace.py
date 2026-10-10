@@ -198,7 +198,7 @@ PAGES = [
     (
         "text",
         "Source code",
-        "4 KiB of src/seqlz.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
+        "4 KiB of src/seqlz_decompress.c, the decoder's bit reader: text, as a program holds it in memory after reading a file.",
     ),
     (
         "relro",

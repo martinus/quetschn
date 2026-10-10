@@ -111,7 +111,7 @@ jobs:
           platforms: s390x
       - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - run: |
-          src="test/seqlz_endian.c src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
+          src="test/seqlz_endian.c src/seqlz_codes.c src/seqlz_compress.c src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
           gcc -O2 -Isrc -o le $src && ./le | tee le.txt
           gcc -m32 -O2 -Isrc -o le32 $src && ./le32 | tee le32.txt
           docker run --rm --platform linux/s390x -v "$PWD:/w" -w /w gcc:14 sh -c "gcc -O2 -Isrc -o be $src && ./be" | tee be.txt

@@ -3,7 +3,7 @@
 #
 # check.sh [dir]: docs/format.md against the code, for CI. seqlz_ref.py checks the SHA-256 of every
 # table in src/ against the one docs/format.md gives, for 4 KiB and for 16 KiB pages, and then decodes
-# pages that src/seqlz.c compressed, with raw and with coded literals: each must give the page back.
+# pages that src/ compressed, with raw and with coded literals: each must give the page back.
 # A retrain of the tables without new hashes in docs/format.md fails here, and so does a format change
 # that the spec does not describe. The pages are made up, never from a dump: tools/seqlz-worst/pages/,
 # and three written here. First, the tables in src/ must be what tools/kernel-port/gen-seqlz-tables.py
@@ -26,7 +26,8 @@ for s in 4k 16k; do
 done
 
 ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-viz/compress.c" \
-    "$repo/src/seqlz.c" "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c"
+    "$repo/src/seqlz_codes.c" "$repo/src/seqlz_compress.c" "$repo/src/seqlz_decompress.c" \
+    "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c"
 cp "$repo"/tools/seqlz-worst/pages/*.page "$out/"
 python3 - "$out" "$repo/docs/format.md" <<'EOF'
 import struct

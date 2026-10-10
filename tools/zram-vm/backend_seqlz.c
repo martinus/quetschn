@@ -11,7 +11,6 @@ extern int zram_prefetch;
 #include <linux/prefetch.h>
 
 #include "backend_seqlz.h"
-#include "page_lz.h"
 #include "seqlz.h"
 
 /* zram-prefetch.patch, after backend_seqlz.h for the zcomp types */

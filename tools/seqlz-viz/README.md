@@ -6,7 +6,7 @@ the page filling up, the bits each sequence costs against the same sequence in `
 what makes each step fast. `seqlz-compressed.html` goes the other way: the positions the matcher tries,
 the hash table filling up, each match grown backwards and forwards, the bits each sequence becomes,
 and the literals counted in the 8 tables to see whether coding them pays. They are for learning the
-format of [docs/format.md](../../docs/format.md) and how `src/seqlz.c` writes it, by watching. Built copies
+format of [docs/format.md](../../docs/format.md) and how `src/` writes it, by watching. Built copies
 are in [docs/](../../docs/seqlz-bit-by-bit.html); a browser opens them as they are.
 
 ```sh
@@ -21,7 +21,7 @@ and the step: `#text`, `#heap-fast`, `#relro-s120`.
 | `pages.cpp` | builds a hash map of the words of docs/format.md and dumps a page of its own heap and a page of libstdc++'s relocated data |
 | `compress.c` | compresses each page as `seqlz-fast` and `seqlz-fast-lit`, and checks that both decode again |
 | `trace.py` | decodes each compressed page with [`seqlz_ref.py`](../seqlz-ref/seqlz_ref.py)'s tables and writes every field with its bit position, and the C decoder's refills and fast path |
-| `ctrace.py` | the matcher of `src/page_lz.h` and the encoder of `src/seqlz.c` again, step by step, with every position tried, every hash slot and every field; checks that it writes the bytes `compress.c` wrote |
+| `ctrace.py` | the matcher of `src/page_lz.h` and the encoder of `src/seqlz_compress.c` again, step by step, with every position tried, every hash slot and every field; checks that it writes the bytes `compress.c` wrote |
 | `page.html` | the decoder's page, with `/*DATA*/` where the trace goes |
 | `compress.html` | the compressor's page, the same |
 

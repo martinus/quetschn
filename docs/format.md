@@ -3,7 +3,7 @@
 <!-- not in the kernel's copy -->
 seqlz compresses one memory page into one compressed page. This file describes the bytes, so that a
 decoder can be written from it alone, and it says which compressed pages are valid. It describes the
-format as `src/seqlz.c` writes and reads it. Sentences marked *Why:* explain a choice and are
+format as `src/` writes and reads it. Sentences marked *Why:* explain a choice and are
 not part of the format; the measurements behind them are in
 [explored-designs.md](explored-designs.md). How seqlz works, for a reader new to compression, is
 in [seqlz.md](seqlz.md).

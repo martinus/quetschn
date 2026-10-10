@@ -110,6 +110,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The kernel copy's long functions split into inline helpers: the same time in the VM and on the phone, kept](#the-kernel-copys-long-functions-split-into-inline-helpers-the-same-time-in-the-vm-and-on-the-phone-kept)
 - [Numbers that were only in the codec's comments, until 10th October 2026](#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)
 - [The kernel copy's choices measured in one boot and on the phone: -O3 kept, one decode loop, prefetch(), no __aligned(64), no load16()](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)
+- [seqlz.c split in three, as lib/lz4 is: the kernel copy the same speed, measured on the kernel copy itself](#seqlzc-split-in-three-as-liblz4-is-the-kernel-copy-the-same-speed-measured-on-the-kernel-copy-itself)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5103,6 +5104,44 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## seqlz.c split in three, as lib/lz4 is: the kernel copy the same speed, measured on the kernel copy itself
+
+*#157 asked for one file of 1754 lines to be split as `lib/lz4` is. `src/seqlz.c` is now
+`seqlz_compress.c` (with the matcher of `page_lz.h`), `seqlz_decompress.c`, `seqlz_codes.c` (the codes
+built from the lengths) and `seqlz_internal.h`. In the kernel copy the functions only one file calls
+are `static`, the code that builds the tables runs once and is `__init`, the matcher calls
+`encode_emit()` itself, and neither `code_literals()`'s `raw` nor the check of `all_symbols` per page
+are left. With `seqlz_decode()` static and the tables a global, gcc builds `decode_literals()` with
+the tables' address as a constant. The kernel copy is as fast as before, within 0.03 µs, with clang
+0.02 to 0.03 µs faster.* Code: `src/`, `tools/kernel-port/port.py`; `tools/zram-vm/run.sh` with
+`PORT=1`.
+
+Until now the VM measured `src/` with its own backend, which builds the tables per device; the kernel
+copy has them in one global. `PORT=1` builds the kernel copy as `port.py` writes it, with its backend
+`seqlz` and the level as zram's parameter. So this is the first measurement of the code the kernel
+would get.
+
+**Kernel VM**, `tools/zram-vm/run.sh` with `PORT=1` at `986c24e0fe44`, `MODE=swap`, the first desktop
+dump, 20 000 pages, CPU 2 at a fixed 4.5 GHz, boost off. The kernel copy before the split (`bad6224`)
+and after it, in the order before, after, after, before, 3 boots each. Means over the 6 boots of each
+side in µs, swap-out / warm swap-in / flushed swap-in:
+
+| | gcc 16.2.1, before | gcc, after | clang 22.1.8, before | clang, after |
+| --- | --- | --- | --- | --- |
+| `lz4` | 6.45 / 3.19 / 3.27 | 6.46 / 3.18 / 3.27 | 6.48 / 3.13 / 3.19 | 6.49 / 3.13 / 3.19 |
+| `seqlz`, level 2 | 7.43 / 3.75 / 3.91 | 7.44 / 3.75 / 3.93 | 7.60 / 3.81 / 3.94 | 7.57 / 3.78 / 3.92 |
+| `seqlz`, level 1 | 6.93 / 3.59 / 3.76 | 6.90 / 3.58 / 3.76 | 7.10 / 3.63 / 3.79 | 7.07 / 3.62 / 3.78 |
+
+gcc's level 2 flushed swap-in is 0.02 µs slower, from one boot of the second run after the split
+(4.02 µs, the others 3.87 to 3.95). Everything else is within 0.03 µs, and clang is faster in every
+column. The leftovers of #157 that cost clang's swap-out 0.11 to 0.12 µs in `src/`
+([The kernel copy's choices](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16))
+are in this too, and do not show in the kernel copy.
+
+Before the measurement the machine code, function by function: the same except where `static`
+changes the calls, `seqlz_decode()` and `seqlz_compress_page()` inlined into the interface's
+functions, `decode_literals()` with the constant tables, and the code that builds the tables.
 
 ## The kernel copy's choices measured in one boot and on the phone: -O3 kept, one decode loop, prefetch(), no __aligned(64), no load16()
 
