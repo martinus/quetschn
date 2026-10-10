@@ -887,12 +887,15 @@ The plan had the codec in `src/` and the kernel files in `kernel/`. The codec gr
 next to the designs it beat. Those designs were removed on 7th October 2026, their results are in
 [explored-designs.md](explored-designs.md) and their code is in git history before `57fb8fb`. Then
 `explore/` became `src/`. The kernel port of Phase 5, `tools/kernel-port/`, splits it into a `lib/`
-part and a zram backend when it writes them into a kernel tree.
+part and a zram backend when it writes them into a kernel tree. In #168 `seqlz.c` was split in three,
+as `lib/lz4` is.
 
 ```text
 src/                        the codec, freestanding C
-  seqlz.c, seqlz.h            encoder, decoder, the tables built from the code lengths
-  page_lz.h                   the matcher
+  seqlz_compress.c            the encoder, with page_lz.h, the matcher
+  seqlz_decompress.c          the decoder
+  seqlz_codes.c               the tables built from the code lengths
+  seqlz.h, seqlz_internal.h   the interface, and what the three share
   seqlz_*tables*              the trained tables, part of the format
   zram_seqlz.c                seqlz as a zram backend calls it, for the harness
 bench/                      the harness: per-page timing, zsmalloc's cost model, table training
