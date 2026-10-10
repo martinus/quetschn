@@ -1,0 +1,79 @@
+From d746b5e946903a3f2ead49e79211e43a8a5fad31 Mon Sep 17 00:00:00 2001
+From: Martin Leitner-Ankerl <martin.ankerl@gmail.com>
+Date: Wed, 7 Oct 2026 17:11:13 +0200
+Subject: [PATCH] x86/cpu: Use prefetcht0 for prefetch() on 64-bit
+
+On x86-64 the kernel does not define ARCH_HAS_PREFETCH, so prefetch()
+from <linux/prefetch.h> is __builtin_prefetch(). x86-64 is built with
+-mno-sse, and clang then drops __builtin_prefetch without a warning,
+while gcc emits prefetcht0. So every prefetch() of a clang-built x86-64
+kernel is gone: defconfig with zram has 10 prefetcht0 with clang 22.1.8,
+all of them inline assembly, and 845 with gcc 16.2.1.
+
+Use prefetcht0 in inline assembly on x86-64. Not the alternative that
+32-bit has: it patches in prefetchnta on every CPU with SSE, which would
+turn the prefetcht0 of gcc builds into a non-temporal prefetch.
+
+With this, clang's vmlinux has 89 prefetcht0 and gcc's still 845. Most of
+gcc's are in lib/zstd, which calls __builtin_prefetch directly and stays
+without prefetches in clang builds.
+
+Measured with a zram backend that prefetches the compressed data with
+prefetch() before it decompresses a page, clang 22.1.8, in a VM pinned
+to one CPU of a Ryzen 9 7950X at 4.5 GHz, 20000 pages swapped out and
+faulted back in, means per page, three boots each:
+
+                      decompression    whole swap-in
+  without this patch  2086..2155 ns    3887..3950 ns
+  with this patch     1978..1988 ns    3761..3775 ns
+
+lz4, which does not prefetch, swaps in the same in both, 3158..3190 ns
+and 3170..3181 ns.
+
+Signed-off-by: Martin Leitner-Ankerl <martin.ankerl@gmail.com>
+---
+ arch/x86/include/asm/processor.h | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/processor.h b/arch/x86/include/asm/processor.h
+index ec9db0dfa0df..a3162ae05cd6 100644
+--- a/arch/x86/include/asm/processor.h
++++ b/arch/x86/include/asm/processor.h
+@@ -624,15 +624,25 @@ extern int			bootloader_version;
+ extern char			ignore_fpu_irq;
+ 
+ #define HAVE_ARCH_PICK_MMAP_LAYOUT 1
++#define ARCH_HAS_PREFETCH
+ #define ARCH_HAS_PREFETCHW
+ 
+ #ifdef CONFIG_X86_32
+ # define BASE_PREFETCH		""
+-# define ARCH_HAS_PREFETCH
+ #else
+ # define BASE_PREFETCH		"prefetcht0 %1"
+ #endif
+ 
++#ifdef CONFIG_X86_64
++/*
++ * Every x86-64 CPU has prefetcht0. Not __builtin_prefetch(): the kernel
++ * builds with -mno-sse, and clang then drops the builtin without a warning.
++ */
++static inline void prefetch(const void *x)
++{
++	asm("prefetcht0 %0" : : "m" (*(const char *)x));
++}
++#else
+ /*
+  * Prefetch instructions for Pentium III (+) and AMD Athlon (+)
+  *
+@@ -645,6 +655,7 @@ static inline void prefetch(const void *x)
+ 			  X86_FEATURE_XMM,
+ 			  "m" (*(const char *)x));
+ }
++#endif
+ 
+ /*
+  * 3dnow prefetch to get an exclusive cache line.
+-- 
+2.56.0
+

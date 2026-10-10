@@ -3,7 +3,9 @@
 # Linux 4.14, <out dir>/quetschn_<name>.ko, registering the crypto compressors seqlz-<name> and
 # seqlz-<name>-lit for zram. Built as the phone's kernel is, with NDK r21e's clang 9, the codec with -O3
 # as lib/lz4, every function aligned to 64 bytes so that a change in one does not move the others. The
-# module's symbol versions get the phone's CRCs (patch_versions.py), else 4.14 refuses it.
+# module's symbol versions get the phone's CRCs (patch_versions.py), else 4.14 refuses it. OPT=-O2
+# builds the codec with that instead of -O3, ALIGN=0 without -falign-functions=64, as the kernel builds
+# arm64, where a function can start at any 4 bytes.
 #
 # Needs, in $MI9T_KERNEL (default ~/opt/mi9t-kernel):
 #   src/            phoenix-r-oss of MiCode/Xiaomi_Kernel_OpenSource, 4.14.180 for the same SoC family
@@ -24,8 +26,9 @@ cp "$src"/seqlz.c "$src"/seqlz.h "$src"/page_lz.h "$src"/seqlz_compat.h "$src"/s
 sed -e "s/\"seqlz-fast-lit\"/\"seqlz-$name-lit\"/; s/\"seqlz-fast\"/\"seqlz-$name\"/" \
     -e "s/\"seqlz-fast-lit-generic\"/\"seqlz-$name-lit-generic\"/; s/\"seqlz-fast-generic\"/\"seqlz-$name-generic\"/" \
     "$here/glue.c" >"$out/glue.c"
-printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\nCFLAGS_seqlz.o += -O3\nccflags-y += -falign-functions=64\n' \
-    "$name" "$name" >"$out/Kbuild"
+printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o seqlz.o seqlz_default_tables.o seqlz_lit_sets.o\nCFLAGS_seqlz.o += %s\n' \
+    "$name" "$name" "${OPT:--O3}" >"$out/Kbuild"
+[[ ${ALIGN:-64} == 0 ]] || printf 'ccflags-y += -falign-functions=%s\n' "${ALIGN:-64}" >>"$out/Kbuild"
 export PATH=$T/llvm/prebuilt/linux-x86_64/bin:$T/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:$PATH
 make -C "$K/src" O="$K/out" ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- \
     HOSTCFLAGS=-I"$K/hoststub" M="$out" modules 2>&1 | grep -E ' error|warning:' || true
