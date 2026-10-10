@@ -80,7 +80,7 @@ static_assert(SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3,
 static_assert(LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX,
 	      "the widest size holds the largest stream");
 static_assert(SEQLZ_LIT_STREAMS == 8U,
-	      "the literal coder and decoder are written out for 8 streams");
+	      "the literal coder is written out for 8 streams");
 
 struct seqlz_tables {
 	struct token_table token;

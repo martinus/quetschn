@@ -75,7 +75,8 @@ decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`),
 reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`. `VARIANTS` puts more builds of
 seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>` and
 `<name>-lit`: variants of the codec are compared in one boot, taking turns, which a kernel per variant
-cannot do. 7 codecs, 3 boots and 20 000 pages take about 5 minutes per kernel. `PORT=1` builds the kernel copy as
+cannot do. At most 8 codecs fit into one boot, `run.sh` refuses more. 7 codecs, 3 boots and 20 000 pages take
+about 5 minutes per kernel. `PORT=1` builds the kernel copy as
 `tools/kernel-port/port.py` writes it instead of `src/` with the VM's backend, `ALGOS=lz4,seqlz:2`:
 the code the kernel would get, with its tables in one global; it is what to measure a change of
 `port.py` or of `static` and inlining with.
@@ -293,6 +294,12 @@ Each of these cost a wrong result first. The measurements behind them are in
   Build the base twice, `build.sh a` and `build.sh a2` from one `src/`, and count a variant's
   difference only where it is larger than `a` against `a2`. The A55's cold reads of 20 000 pages
   decide nothing below 2 µs.
+- **A change of the decoder goes on the phone, also when the VM finds nothing.** Two simplifications
+  stayed within the VM's copy of the same source and still cost the phone: one prefetch per loop
+  iteration 0.8 µs of the A76's cold reads, two compares in the fast path 0.2 µs of the A55's warm
+  reads
+  ([explored-designs.md](explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
+  The A55 is in order, and the A76's cold reads wait for memory, where x86-64 does not.
 - **Compressions apart from decompressions.** `lz4hc` touches 256 KiB when it compresses, and moved the
   next codec's cold reads by 300 ns. Every repetition times all compressions first, then all
   decompressions.
