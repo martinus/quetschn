@@ -874,7 +874,7 @@ phase does not start from zero.
   Andrew Morton (`lib/` goes through the mm tree), Eric Biggers (reviewed zBeWalgo and will review
   this), Dave Rodgman.
 - A `MAINTAINERS` entry is a promise for years, and the maintainers will read it as one.
-- After the merge: propose `CONFIG_ZRAM_BACKEND_QUETSCHN=y` for Android's `gki_defconfig`, with the
+- After the merge: propose `CONFIG_ZRAM_BACKEND_SEQLZ=y` for Android's `gki_defconfig`, with the
   phone numbers of Phase 6. Without that the codec is merged, but not on phones (§1). Vendors with
   hardware `lz4` (R12) will likely choose it, so the case for the default rests on the phones
   without it, and on memory for the ones with it.

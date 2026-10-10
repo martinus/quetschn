@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 # The fuzz targets of fuzz/ for ClusterFuzzLite, with its compiler, sanitizer flags and libFuzzer, into
 # $OUT, with make_seeds.c's seeds and the input lengths fuzz/afl.sh gives them. 4 KiB pages only; the
-# fuzz job in ci.yml has 16 KiB pages and the in-order decoder too.
+# fuzz job in ci.yml has 16 KiB pages and MSan too.
 codec="src/seqlz_codes.c src/seqlz_compress.c src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
 for t in decode roundtrip diff encode; do
     extra=""

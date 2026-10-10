@@ -9,8 +9,8 @@
  * PREFETCH_STEP. In a swap-in the decoder's tables are often no longer in
  * the cache: asking for all of their lines at once lets the misses overlap,
  * instead of one after the other as the decoder runs into them. 512 bytes per
- * iteration, 8 lines of 64 bytes: with one line per iteration, the loop took
- * more instructions than the prefetches.
+ * iteration, 8 lines where they have 64 bytes: with one line per iteration,
+ * the loop took more instructions than the prefetches.
  */
 #define PREFETCH_STEP 512U
 
@@ -577,8 +577,9 @@ static __always_inline u32 next_token(struct seqlz_bit_reader *br,
  * Whether they run short depends on the codes before, which the branch
  * predictor learns only for a page it has seen, and a swap-in decodes a page
  * once. A refill leaves at least 56 bits, and two fast sequences take at most
- * 50, 11 for each token and up to 14 for each offset; after a slow one it always
- * refills, *skip is 0 then. 8 bytes of input are there, and count is at least 0.
+ * 50, 11 for each token and up to 14 for each offset; after a slow one it
+ * always refills, *skip is 0 then. 8 bytes of input are there, and count is at
+ * least 0.
  */
 static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 					   const struct token_table *t,

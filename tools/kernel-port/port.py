@@ -83,6 +83,10 @@ REWRITES = [
     ("; for 16 KiB pages 15 876 bytes", ""),
     (", 60 for 16 KiB pages", ""),
     ("20 or 22 bits more", "20 bits more"),
+    # port_compress() takes out raw and the check of all_symbols, which the tables built once pass
+    ("a copy: raw if the caller has one, else spare, at least a page,", "a copy in spare, at least a page,"),
+    # the second line of seqlz_compress_page()'s Return:, a line of its own
+    ("@dst_cap bytes or @t lacks a code.", "@dst_cap bytes."),
     ("QUETSCHN_PAGE_BITS bits, 20 or 22;", "QUETSCHN_PAGE_BITS bits, 20;"),
     ("How many bits of the offset follow the token, per class: 0, 4, 8, the page's bits, 5, the page's bits "
      "- 3. One nibble per class in one constant, 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB, so that it "

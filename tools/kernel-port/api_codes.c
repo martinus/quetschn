@@ -12,8 +12,8 @@ static int __init seqlz_init(void)
 	BUILD_BUG_ON(sizeof(struct seqlz_state) != SEQLZ_MEM_COMPRESS);
 	BUILD_BUG_ON(SEQLZ_MEM_DECOMPRESS != SEQLZ_SCRATCH);
 	/*
-	 * The lengths are fixed, so this fails only if they are broken. Then
-	 * seqlz_compress() fails for every page.
+	 * The lengths are fixed, so this fails only if they are broken. A
+	 * module then does not load; built in, only the warning says so.
 	 */
 	if (WARN_ON(seqlz_tables_init(&seqlz_fixed_tables, &seqlz_default_own) ||
 		    !seqlz_all_symbols(&seqlz_fixed_tables)))

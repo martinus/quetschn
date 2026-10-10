@@ -87,8 +87,8 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * without it, pages that compress are written faster and pages that do not
  * slower ("The matcher without its step").
  *
- * Each sequence goes to emit() as soon as it is found. With the encoder's
- * emit() inlined, finding and writing the sequences is one pass over the page.
+ * Each sequence goes to the encoder as soon as it is found. With the encoder
+ * inlined, finding and writing the sequences is one pass over the page.
  */
 static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 					     emit_fn emit, void *ctx)

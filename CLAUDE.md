@@ -162,7 +162,8 @@ Commands: `docs/measuring.md`. Rules that matter:
   repository outside such a mark, a `|` or a word ending in `_` outside backticks).
 - `tools/seqlz-viz/build.sh` feeds `docs/format.md` as text into one demo page; the committed
   `docs/seqlz-*.html` are generated, rebuild them with build.sh rather than editing by hand (paths
-  inside them were last changed by `sed`).
+  inside them were last changed by `sed`): `build.sh <scratch dir>`, then copy the two `.html` into
+  `docs/`. `build.sh docs` also leaves its binary, pages and traces there.
 - Numbers in docs go stale when tables or the matcher change. Before quoting a code length or a byte
   count, verify against `src/`: `seqlz_ref.load_tables(12)` (run from `tools/seqlz-ref/`) gives the
   codes; `tools/seqlz-viz/compress.c` built with `-Isrc` compresses a page file. Say which tables a

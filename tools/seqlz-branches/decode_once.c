@@ -6,7 +6,7 @@
  * or not at all (mode 2, the baseline to subtract in perf stat). Same-filled pages and pages zram stores
  * as they are, of 3625 bytes and more, are left out, as zram does. Prints the time per timed decode, in
  * TSC ticks on x86-64, in ns elsewhere.
- * With seqlz.c built with the kernel's flags, as cmake/kernel_codecs.cmake builds it, see run.sh.
+ * With seqlz_decompress.c built with the kernel's flags, as cmake/kernel_codecs.cmake builds it, see run.sh.
  */
 #include "seqlz.h"
 #include <stdio.h>

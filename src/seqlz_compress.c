@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * The compressor: the matcher of page_lz.h, which finds a page's sequences,
- * and the encoder, which writes them as it finds them.
+ * The compressor: the matcher, which finds a page's sequences, and the
+ * encoder, which writes them as it finds them.
  */
 #include "seqlz_internal.h"
 
@@ -50,7 +50,7 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * So dst can have any size, and a page that does not fit is an error, as for
  * the other compressors. Before each sequence the encoder checks that its
  * literals and ENC_ROOM bytes more are free between the two: a sequence's
- * copies write up to 15 bytes past its literals, and its at most two flushes
+ * copies write up to 16 bytes past its literals, and its at most two flushes
  * move the bitstream down by at most 16 bytes, writing 8 bytes below it. A page
  * that does not fit stops the writes there, and seqlz_compress() returns 0. It
  * can happen up to ENC_ROOM bytes before dst is full. With the two pages zram
