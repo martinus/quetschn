@@ -109,8 +109,9 @@ Decide everything else yourself and say what you decided.
 - **A change to the decoder or the compressor** also runs the fuzz targets: `fuzz/smoke.sh` with ASan
   and UBSan, and with `-DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON`.
 - **A change that can move speed** is measured as CLAUDE.md, **Measuring**, says. A refactor meant
-  to be neutral compares the machine code first, function by function, and is measured where the
-  code differs. Restructuring alone has cost 0.2 to 0.8 µs through code generation.
+  to be neutral compares the machine code first, function by function,
+  `tools/samecode/samecode.sh <linux tree> origin/main`, and is measured where the code differs.
+  Restructuring alone has cost 0.2 to 0.8 µs through code generation.
 - **Every measured design** gets its entry in docs/explored-designs.md, and a line in its Index, in
   the same PR.
 - **An agent that does an issue gets the issue's list in its prompt, and its result is checked
