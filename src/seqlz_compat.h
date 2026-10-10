@@ -14,6 +14,7 @@
 
 #ifdef __KERNEL__
 #include <linux/build_bug.h>
+#include <linux/cache.h>
 #include <linux/compiler.h>
 #include <linux/errno.h>
 /* min(), in linux/kernel.h before 5.10 */
@@ -22,6 +23,7 @@
 #else
 #include <linux/kernel.h>
 #endif
+#include <linux/prefetch.h>
 #include <linux/stddef.h>
 #include <linux/string.h>
 #include <linux/types.h>
@@ -38,6 +40,15 @@
 /* sizeof_field() came with 5.5 */
 #ifndef sizeof_field
 #define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
+#endif
+/*
+ * Older arm64 kernels, the Mi 9T's 4.14 among them, have cache lines of 128
+ * bytes in L1_CACHE_BYTES. Its cores have 64, as mainline says, and with 128
+ * prefetch_lines() would skip every second line.
+ */
+#if defined(__aarch64__) && L1_CACHE_BYTES == 128
+#undef L1_CACHE_BYTES
+#define L1_CACHE_BYTES 64
 #endif
 #else
 
@@ -86,6 +97,24 @@ typedef unsigned long long u64;
 #endif
 
 #define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
+
+#define L1_CACHE_BYTES 64
+
+/*
+ * Asks the CPU to load the cache line at p, without waiting for it. The kernel
+ * builds x86-64 without SSE, and clang then drops __builtin_prefetch().
+ * tools/kernel-port/x86-prefetcht0.patch makes the kernel's prefetch() the
+ * instruction itself on x86-64; this is the same, for the benchmarks that
+ * build the codec with the kernel's flags.
+ */
+static __always_inline void prefetch(const void *p)
+{
+#if defined(__x86_64__) && !defined(__SSE__)
+	__asm__("prefetcht0 %0" : : "m"(*(const char *)p));
+#else
+	__builtin_prefetch(p);
+#endif
+}
 
 /* the kernel's min() is a macro, which would break std::min in C++ */
 static inline unsigned int min(unsigned int a, unsigned int b)
