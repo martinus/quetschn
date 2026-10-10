@@ -83,8 +83,9 @@ the code the kernel would get, with its tables in one global; it is what to meas
 
 ```sh
 ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
-VARIANTS="o2=.:-O2 other=../otherworktree" ALGOS=lz4,seqlz-lit,o2-lit,other-lit BOOTS=3 MODE=swap \
+VARIANTS="o2=.:-O2 same=." ALGOS=seqlz,seqlz-lit,o2,o2-lit,same,same-lit BOOTS=3 MODE=swap \
     tools/zram-vm/run.sh <linux tree> corpus/first >variants.log
+tools/zram-vm/variants.py variants.log    # each variant against seqlz or seqlz-lit, in us and %
 KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit \
     tools/zram-vm/run.sh <linux tree> corpus/first >swap.log
 ```
@@ -294,6 +295,13 @@ Each of these cost a wrong result first. The measurements behind them are in
   Build the base twice, `build.sh a` and `build.sh a2` from one `src/`, and count a variant's
   difference only where it is larger than `a` against `a2`. The A55's cold reads of 20 000 pages
   decide nothing below 2 µs.
+- **In the VM, a copy of the base as a variant too**, `same=.` in `VARIANTS`, as `a2` on the phone. Each
+  variant is code in another place of the kernel: the copy of the same source moved swap-ins by up to
+  1.2% with clang and 0.6% with gcc, and swap-outs by 0.05 µs. A difference within the copy's, or one
+  whose sign turns between gcc and clang, is where the code lands. For a simplification that is no
+  reason to keep the complex code: `copy_match()` without its dead branch was first rejected for 0.01
+  to 0.03 µs of clang's swap-ins, then kept
+  ([explored-designs.md](explored-designs.md#copy_match-without-its-dead-branch-within-what-the-codes-place-moves-kept)).
 - **A change of the decoder goes on the phone, also when the VM finds nothing.** Two simplifications
   stayed within the VM's copy of the same source and still cost the phone: one prefetch per loop
   iteration 0.8 µs of the A76's cold reads, two compares in the fast path 0.2 µs of the A55's warm
