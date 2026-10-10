@@ -5,7 +5,8 @@
 # of docs/plan.md Phase 5. port.py into a copy of the tree's HEAD, built with KASAN, lockdep
 # (PROVE_LOCKING), DEBUG_ATOMIC_SLEEP, UBSan's bounds and shift checks, PREEMPT_DYNAMIC and the KUnit
 # tests of seqlz, which run at boot. Then boots it in a VM, 4 CPUs and 2 GiB, once per entry of RUNS,
-# with stress.c as /init: phase 1 writes every page of the corpus to new zram devices, lz4 and seqlz at
+# with stress.c as /init: phase 0 checks that the backend refuses level 0 and 3 and a dictionary, with
+# the errors it returns; phase 1 writes every page of the corpus to new zram devices, lz4 and seqlz at
 # both levels, prints mm_stat and reads them back; phase 2 swaps to zram with seqlz under memory
 # pressure for MINUTES, comparing every page with what it should hold; phase 3 runs the kernel's zram
 # selftests with seqlz. The VM sees the host's root read-only, for the corpus and the selftests' tools.
@@ -73,7 +74,9 @@ quetschn.selftests=1" \
     first=0
     grep -a '^RESULT\|# seqlz: \|selftest: .*\(PASS\|FAIL\)' "$log" || true
     bad=$(grep -a -c -E 'BUG:|WARNING:|UBSAN:|Oops|general protection|possible (circular|recursive) locking|inconsistent lock state|sleeping function called from invalid context|Kernel panic|RESULT FAIL' "$log" || true)
-    for need in 'RESULT done' '# seqlz: pass:6 fail:0' 'zram01 : \[PASS\]' 'zram02 : \[PASS\]'; do
+    for need in 'RESULT done' '# seqlz: pass:6 fail:0' 'zram01 : \[PASS\]' 'zram02 : \[PASS\]' \
+        'RESULT ok disksize after "algo=seqlz level=0"' 'RESULT ok disksize after "algo=seqlz level=3"' \
+        'RESULT ok disksize after "algo=seqlz dict=/init"'; do
         grep -a -q "$need" "$log" || { echo "missing: $need" >&2; bad=$((bad + 1)); }
     done
     if [[ $bad -ne 0 ]]; then

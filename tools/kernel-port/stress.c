@@ -11,6 +11,9 @@
  *                              stress.sh puts into /selftests; they run in a
  *                              chroot of the host, for its shell and tools
  *
+ * 0. The backend refuses what it does not have: level 0 and 3, and a
+ *    dictionary. zram creates its streams when disksize is written, so that
+ *    write fails, with the backend's error.
  * 1. The pages of the corpus written to a new zram device with lz4, seqlz at
  *    level 1 and at level 2: mm_stat right after, then every page read back
  *    and compared.
@@ -135,6 +138,29 @@ static void set_algo(int dev, const char *algo, int level)
 		snprintf(v, sizeof(v), "algo=%s level=%d", algo, level);
 		put_dev(dev, "algorithm_params", v);
 	}
+}
+
+/*
+ * disksize written after comp_algorithm seqlz and the algorithm_params params
+ * must fail with err
+ */
+static void expect_refused(int dev, const char *params, int err)
+{
+	char path[128];
+	int fd, ok, got = 0;
+
+	put_dev(dev, "comp_algorithm", "seqlz");
+	put_dev(dev, "algorithm_params", params);
+	snprintf(path, sizeof(path), "/sys/block/zram%d/disksize", dev);
+	fd = open(path, O_WRONLY);
+	if (fd >= 0 && write(fd, "64M", 3) < 0)
+		got = errno;
+	ok = fd >= 0 && got == err;
+	printf("RESULT %s disksize after \"%s\": %s\n", ok ? "ok" : "FAIL",
+	       params, got ? strerror(got) : "accepted");
+	if (fd >= 0)
+		close(fd);
+	put_dev(dev, "reset", "1");
 }
 
 static size_t open_corpus(const char *path, int *fd)
@@ -405,6 +431,11 @@ int main(void)
 	printf("RESULT kernel %s\n", version);
 	corpus = arg("corpus", "");
 	level = atoi(arg("level", "2"));
+
+	expect_refused(3, "algo=seqlz level=0", EINVAL);
+	expect_refused(3, "algo=seqlz level=3", EINVAL);
+	/* any file is a dictionary to zram, this one is there */
+	expect_refused(3, "algo=seqlz dict=/init", EOPNOTSUPP);
 
 	if (*corpus && open_corpus(corpus, &cf)) {
 		close(cf);
