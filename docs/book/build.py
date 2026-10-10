@@ -42,6 +42,7 @@ def git(*args):
 # links on GitHub point to that commit
 SRC_COMMIT = git("log", "-1", "--format=%H", "--", "src")
 OUT = HERE / "seqlz-line-by-line.html"
+STANDALONE = HERE / "seqlz-line-by-line.standalone.html"
 
 BOOK = json.loads((HERE / "book.json").read_text())
 
@@ -291,6 +292,17 @@ def build():
               .replace("{{COMMIT}}", commit))
     OUT.write_text(out)
     print(f"wrote {OUT}, {len(out) // 1024} KiB, {len(LISTINGS)} listings")
+    # the same page for a browser without the artifact host: its own skeleton, and mermaid from a CDN
+    head, body = out.split("</style>", 1)
+    STANDALONE.write_text(
+        '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        '<style>body { margin: 0; }</style>\n' + head + '</style>\n</head>\n<body>\n' + body
+        + '\n<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>\n'
+        '<script>mermaid.initialize({ startOnLoad: true, theme: '
+        'matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral" });</script>\n'
+        '</body>\n</html>\n')
+    print(f"wrote {STANDALONE}")
 
 
 def check_coverage():
