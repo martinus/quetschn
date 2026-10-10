@@ -438,6 +438,7 @@ def main():
         "scripts/gen-seqlz-tables.py": (HERE / "gen-seqlz-tables.py").read_text(),
         "lib/seqlz/tests/seqlz_kunit.c": port_kunit(),
         "lib/seqlz/Makefile": "# SPDX-License-Identifier: GPL-2.0-only OR MIT\n"
+                              "# as lib/lz4: with -O2 seqlz compresses slower, on x86-64 and arm64\n"
                               "ccflags-y += -O3\n\n"
                               "obj-$(CONFIG_SEQLZ) += seqlz.o\n"
                               "seqlz-y := seqlz_codec.o seqlz_tables.o\n\n"
