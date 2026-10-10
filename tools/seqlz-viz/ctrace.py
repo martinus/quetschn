@@ -54,7 +54,7 @@ def count(src, p, q):
 
 
 def match_page(src):
-    """src/page_lz.h's match_page(): the sequences, and for each what the matcher did"""
+    """src/page_lz.h's seqlz_match_page(): the sequences, and for each what the matcher did"""
     limit = P - 8
     table = [0] * (1 << HASH_BITS)
     pos, anchor, last = 1, 0, 1

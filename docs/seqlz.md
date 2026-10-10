@@ -583,7 +583,7 @@ flowchart LR
     R --> O
 ```
 
-The matcher, [`match_page()`](../src/page_lz.h), is **greedy**: it takes the first match it
+The matcher, [`seqlz_match_page()`](../src/page_lz.h), is **greedy**: it takes the first match it
 finds, without checking whether one that starts a byte later would be longer.
 
 1. At every position it checks two candidates: the repeat offset, and the last position whose next

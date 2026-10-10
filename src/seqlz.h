@@ -121,10 +121,15 @@
 /* length values below 16 are their own symbol */
 #define SEQLZ_LEN_DIRECT 16U
 /*
+ * A larger one is the symbol SEQLZ_LEN_LOG_BASE plus the position of its
+ * highest bit, which is 4 or more, so these symbols follow the direct ones.
+ */
+#define SEQLZ_LEN_LOG_BASE (SEQLZ_LEN_DIRECT - 4U)
+/*
  * The symbols of length values: 16 direct ones, then one per highest bit from 4
  * up to the page's bits, the largest length a page can need.
  */
-#define SEQLZ_LEN_SYMBOLS (13U + QUETSCHN_PAGE_BITS)
+#define SEQLZ_LEN_SYMBOLS (SEQLZ_LEN_LOG_BASE + QUETSCHN_PAGE_BITS + 1U)
 /* the u16 at the start of every page */
 #define SEQLZ_HEADER 2U
 /*
@@ -160,7 +165,7 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
 	}
 	b = 31U - (unsigned int)__builtin_clz(v);
 	*extra_bits = b;
-	return 12U + b; /* v >= 16, so b >= 4 and the symbol >= 16 */
+	return SEQLZ_LEN_LOG_BASE + b; /* v >= 16, so b >= 4 */
 }
 
 /*
@@ -170,8 +175,9 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
  * mask without a branch: computing class 3's from the page's bits made gcc
  * branch on the class.
  */
-#define SEQLZ_RAW_NIBBLES \
-	(0x50840U | QUETSCHN_PAGE_BITS << 12 | (QUETSCHN_PAGE_BITS - 3U) << 20)
+#define SEQLZ_RAW_NIBBLES                                               \
+	(0U | 4U << 4 | 8U << 8 | QUETSCHN_PAGE_BITS << 12 | 5U << 16 | \
+	 (QUETSCHN_PAGE_BITS - 3U) << 20)
 #define SEQLZ_RAW_BITS(cls) ((SEQLZ_RAW_NIBBLES >> (4U * (cls))) & 15U)
 /* classes 4 and 5 send the offset divided by 8, a shift by 3 */
 #define SEQLZ_OFF_SHIFT(cls) (((cls) >> 2) * 3U)

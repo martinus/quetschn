@@ -97,8 +97,9 @@ static inline int in_order_core(void)
 }
 """
 # the entry in MAINTAINERS, its fields in the order the file's head gives, the files in alphabetic order
-MAINTAINERS_ENTRY = f"""SEQLZ
+MAINTAINERS_ENTRY = f"""SEQLZ PAGE COMPRESSION
 M:	Martin Leitner-Ankerl <martin.ankerl@gmail.com>
+L:	linux-mm@kvack.org
 L:	linux-kernel@vger.kernel.org
 S:	Maintained
 W:	{PROJECT_URL}
@@ -309,12 +310,13 @@ def port_header():
     t = rename_compress(t, ";")
     # 4 KiB pages only: the values of 16 KiB pages go, not only their comments
     t = must(t, "#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
-    t = must(t, "#define SEQLZ_RAW_NIBBLES \\\n\t(0x50840U | QUETSCHN_PAGE_BITS << 12 | (QUETSCHN_PAGE_BITS - 3U) << 20)\n",
-             "#define SEQLZ_RAW_NIBBLES 0x95c840U\n")
+    t, n = re.subn(r"#define SEQLZ_RAW_NIBBLES\s*\\\n[^#]*?\(QUETSCHN_PAGE_BITS - 3U\) << 20\)\n",
+                   "#define SEQLZ_RAW_NIBBLES 0x95c840U\n", t)
+    assert n == 1, "SEQLZ_RAW_NIBBLES"
     t = common(t)
     t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
              "#if PAGE_SHIFT != 12\n#error \"seqlz is for 4 KiB pages only\"\n#endif\n"
-             "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n")
+             "#define SEQLZ_PAGE ((unsigned int)PAGE_SIZE)\n")
     return t
 
 
@@ -329,9 +331,10 @@ def port_page_lz():
 def port_codec():
     t = (SRC / "seqlz.c").read_text()
     t = spdx(t, True)
-    t = must(t, '#include "seqlz.h"\n', "#include <linux/build_bug.h>\n#include <linux/cache.h>\n"
-             "#include <linux/errno.h>\n#include <linux/export.h>\n#include <linux/init.h>\n"
-             "#include <linux/module.h>\n#include <linux/seqlz.h>\n\n#include \"seqlz.h\"\n")
+    t = must(t, '#include "seqlz.h"\n', "#include <linux/bug.h>\n#include <linux/build_bug.h>\n"
+             "#include <linux/cache.h>\n#include <linux/errno.h>\n#include <linux/export.h>\n"
+             "#include <linux/init.h>\n#include <linux/module.h>\n#include <linux/seqlz.h>\n"
+             "#include <linux/stddef.h>\n\n#include \"seqlz.h\"\n")
     t = must(t, "#if defined(__KERNEL__) && defined(__aarch64__)\n", "#ifdef CONFIG_ARM64\n")
     # src/ writes the cores' numbers out, for older kernels; the kernel's copy has its macros
     t = cut(t, r"/\*\n \* The in-order cores: .*?\n\}\n(?=\nstatic inline int prefetch_tokens)")

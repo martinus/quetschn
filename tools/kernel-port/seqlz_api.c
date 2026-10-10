@@ -31,9 +31,12 @@ static int __init seqlz_init(void)
 {
 	BUILD_BUG_ON(sizeof(struct seqlz_state) != SEQLZ_MEM_COMPRESS);
 	BUILD_BUG_ON(SEQLZ_MEM_DECOMPRESS != SEQLZ_SCRATCH);
-	/* the lengths are fixed, so this fails only if they are broken */
-	if (seqlz_tables_init(&tables, &seqlz_default_own) ||
-	    !seqlz_all_symbols(&tables))
+	/*
+	 * The lengths are fixed, so this fails only if they are broken. Then
+	 * seqlz_compress() fails for every page.
+	 */
+	if (WARN_ON(seqlz_tables_init(&tables, &seqlz_default_own) ||
+		    !seqlz_all_symbols(&tables)))
 		return -EINVAL;
 	return 0;
 }

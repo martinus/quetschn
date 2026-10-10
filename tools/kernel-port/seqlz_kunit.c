@@ -358,8 +358,8 @@ static void token(struct maker *m, struct bits *w, unsigned int t)
 	}
 }
 
-static void value(struct maker *m, struct bits *w, const struct code *c,
-		  unsigned int v)
+static void put_len_value(struct maker *m, struct bits *w,
+			  const struct code *c, unsigned int v)
 {
 	unsigned int b;
 
@@ -403,7 +403,7 @@ static unsigned int one_sequence(struct maker *m, u8 *c, unsigned int n,
 	token(m, &w, SEQLZ_LL_CAP + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS)));
 	if (cls == 1)
 		put(&w, 1, 4);
-	value(m, &w, &m->ll, PAGE_SIZE - SEQLZ_LL_CAP);
+	put_len_value(m, &w, &m->ll, PAGE_SIZE - SEQLZ_LL_CAP);
 	*padding = 8 * bytes(&w) - w.n;
 	return 2 + n + bytes(&w);
 }
@@ -501,8 +501,8 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 	 */
 	w = (struct bits){ .p = c + at };
 	token(m, &w, SEQLZ_LL_CAP + (SEQLZ_ML_CAP << SEQLZ_LL_BITS));
-	value(m, &w, &m->ll, n - SEQLZ_LL_CAP);
-	value(m, &w, &m->ml, PAGE_SIZE - n - 4 - SEQLZ_ML_CAP);
+	put_len_value(m, &w, &m->ll, n - SEQLZ_LL_CAP);
+	put_len_value(m, &w, &m->ml, PAGE_SIZE - n - 4 - SEQLZ_ML_CAP);
 	token(m, &w, 0);
 	return at + bytes(&w);
 }
