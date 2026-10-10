@@ -70,15 +70,15 @@ issue (#151 to #157, from the review of 10th October 2026).
   is fixed in the kernel, with a patch of its own, which `tools/kernel-port/` carries and `port.py`
   applies, as `x86-prefetcht0.patch`. `src/seqlz_compat.h` is the kernel's headers outside the kernel,
   and may do what the kernel does with such a patch.
-- Nothing in `lib/` depends on the CPU model (#152).
+- Nothing in `lib/` depends on the CPU model; `port.py` fails on `read_cpuid` or `MIDR_` there. #152
+  measured one decode loop for all cores instead.
 - `static` unless zram calls it. Names a reviewer can grep for, not `count` or `refill`. Every number
   has a name, or a comment that says where it comes from.
 - Comments say what the code does and, in a line, why. Numbers of a measurement, a phone, a compiler
   or our dumps go into docs/explored-designs.md and the commit message, not into `src/` (#156).
   Whoever changes code checks the comments and the kernel-doc above it against it: the review found 5
   that said something the code does not do, and 6 that named a file that no longer exists.
-- Every path the kernel takes runs in KUnit, also a path the CPU picks (#155), and every path of the
-  decoder is reached by a fuzz target.
+- Every path the kernel takes runs in KUnit, and every path of the decoder is reached by a fuzz target.
 - Memory is what `kmalloc()` or `vmalloc()` hands out, not what is asked for: 8192 and 4112 bytes in
   two allocations come as 16 KiB, as a union as 8 KiB (#154).
 - `tools/kernel-port/check.sh`: W=1 without a warning on x86-64, arm64, arm and s390, no new
@@ -107,7 +107,7 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
 ```
 
 - CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, gcc 16 KiB
-  release+sanitize (no kernel tree), fuzz 60 s per target (4 KiB, `-DSEQLZ_IN_ORDER=1`, 16 KiB, MSan), `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
+  release+sanitize (no kernel tree), fuzz 60 s per target (4 KiB, 16 KiB, MSan), `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
   (`tools/seqlz-ref/check.sh`, `tools/check-links.py`), `kernel-port` (`tools/kernel-port/check.sh` for x86-64, arm64, arm, s390; `kunit.sh` in UML on x86-64); `ci-ok` is the one required check (branch
   protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
   its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.

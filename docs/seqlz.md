@@ -951,7 +951,7 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 
 | choice | instead of | gain | price |
 | --- | --- | --- | --- |
-| the token table prefetched only on in-order arm64 cores | on every core | on a phone's Cortex-A76 cold reads 1.3 to 2.6 µs faster, at p99 about 5 µs; a Cortex-A55 needs the prefetch, 14.5 µs slower cold without any | the core's id read per page |
+| one loop, the token table prefetched on every core | a loop for in-order cores, the prefetch only there | no list of cores in the kernel, half the decoder's code; a Cortex-A55 needs the prefetch, 14.5 µs slower cold without any, and on a Cortex-A76 it did not show as slower on 10th October | a Cortex-A55 reads a warm page up to 0.3 µs slower with the out-of-order loop |
 
 </details>
 

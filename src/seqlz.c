@@ -1090,61 +1090,6 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 }
 
 /*
- * Two choices of the decoder depend on whether the core runs instructions in
- * order, as the small cores of phones do, or out of order. An arm64 kernel asks
- * the core; every other build counts as out of order, x86-64 too.
- * - The token table, 2048 entries of 4 bytes, is prefetched before each page.
- *   An in-order core stops at every cache miss it did not see coming: without
- *   the prefetches a Cortex-A55 read a cold page 14.5 us slower. An
- *   out-of-order core goes on with other work during a miss, and the 128
- *   prefetches are in its way, a page needs about 43 of the lines: without
- *   this prefetch a Cortex-A76 read a cold page 1.3 to 2.6 us faster.
- * - On the fast path, an out-of-order core loads more bits every second
- *   sequence, an in-order core only when they run short, see decode_page().
- */
-#if defined(__KERNEL__) && defined(__aarch64__)
-#include <asm/cputype.h>
-/*
- * The in-order cores: Cortex-A53, A55, A510, A520, and Qualcomm's Kryo silver
- * cores. The core's id, MIDR, has the implementer in bits 24 to 31 and the part
- * number in bits 4 to 15. ARM (0x41): Cortex-A53 0xd03, A55 0xd05, A510 0xd46,
- * A520 0xd80. Qualcomm (0x51): Kryo 2xx silver 0x801, a Cortex-A53, Kryo 3xx
- * and 4xx silver 0x803 and 0x805. The numbers are written out because the
- * phone's 4.14 kernel lacks some of the kernel's macros for them, and names
- * others differently.
- */
-static inline int in_order_core(void)
-{
-	u32 m = read_cpuid_id(), imp = m >> 24, part = (m >> 4) & 0xfffU;
-
-	return (imp == 0x41U && (part == 0xd03U || part == 0xd05U ||
-				 part == 0xd46U || part == 0xd80U)) ||
-	       (imp == 0x51U &&
-		(part == 0x801U || part == 0x803U || part == 0x805U));
-}
-
-static inline int prefetch_tokens(int in_order)
-{
-	return in_order;
-}
-#else
-/* tests take the in-order path on any CPU with -DSEQLZ_IN_ORDER=1 */
-#ifndef SEQLZ_IN_ORDER
-#define SEQLZ_IN_ORDER 0
-#endif
-static inline int in_order_core(void)
-{
-	return SEQLZ_IN_ORDER;
-}
-
-static inline int prefetch_tokens(int in_order)
-{
-	(void)in_order;
-	return 1;
-}
-#endif
-
-/*
  * Reads the sequences' bitstream, most significant bit first: bits has the
  * next bits on top, count says how many of them are real. A refill loads 8
  * bytes at once while 8 are left, and byte by byte at the end, so it never
@@ -1537,22 +1482,17 @@ static __always_inline u32 next_token(struct seqlz_bit_reader *br,
  * copies fill that time. No length value follows, so the next token's code
  * comes right after the offset.
  *
- * The refill: on an out-of-order core every second fast sequence, without
- * checking the bits left. Whether they run short depends on the codes before,
- * which the branch predictor learns only for a page it has seen, and a swap-in
- * decodes a page once. A refill leaves at least 56 bits, and two fast sequences
- * take at most 50, 11 for each token and up to 14 for each offset; after a slow
- * one it always refills, *skip is 0 then. 8 bytes of input are there, and count
- * is at least 0. An in-order core refills only when the bits run short: its
- * load would stall every second sequence.
+ * The refill: every second fast sequence, without checking the bits left.
+ * Whether they run short depends on the codes before, which the branch
+ * predictor learns only for a page it has seen, and a swap-in decodes a page
+ * once. A refill leaves at least 56 bits, and two fast sequences take at most
+ * 50, 11 for each token and up to 14 for each offset; after a slow one it always
+ * refills, *skip is 0 then. 8 bytes of input are there, and count is at least 0.
  */
 static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 					   const struct token_table *t,
-					   unsigned int *skip,
-					   const int in_order)
+					   unsigned int *skip)
 {
-	if (in_order)
-		return next_token(br, t);
 	if (!*skip) {
 		u64 v = get_unaligned_be64(br->p);
 
@@ -1574,15 +1514,10 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 #define FAST_LIT_ROOM 16U
 #define FAST_IN_ROOM 8U
 
-/*
- * seqlz_decode() for one kind of core. in_order is a constant, so there are two
- * loops: an in-order core runs one without the refill of every second fast
- * sequence, not the same loop with one more branch.
- */
+/* seqlz_decode(), see seqlz.h */
 static __always_inline int decode_page(const struct seqlz_tables *t,
 				       const void *src, unsigned int src_len,
-				       void *dst, void *scratch,
-				       const int in_order)
+				       void *dst, void *scratch)
 {
 	const u8 *s = src;
 	const u8 *const s_end = s + src_len;
@@ -1596,9 +1531,11 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 
 	if (src_len < SEQLZ_HEADER)
 		return -EINVAL;
-	/* the decoder's tables first, so that their cache misses overlap */
-	if (prefetch_tokens(in_order))
-		prefetch_lines(t->token.decode, sizeof(t->token.decode));
+	/*
+	 * The decoder's tables first, so that their cache misses overlap. An
+	 * in-order core stops at every miss it did not see coming.
+	 */
+	prefetch_lines(t->token.decode, sizeof(t->token.decode));
 	prefetch_lines(t->ll.decode, sizeof(t->ll.decode));
 	prefetch_lines(t->ml.decode, sizeof(t->ml.decode));
 	n_lit = load16(s);
@@ -1678,8 +1615,8 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		 */
 		if (!(tok & (1U << TOK_VALUE_AT)) && d <= d_fast &&
 		    (unsigned long)lit <= lit_fast &&
-		    (in_order || (unsigned long)br.p <= in_fast)) {
-			tok = next_token_fast(&br, &t->token, &skip, in_order);
+		    (unsigned long)br.p <= in_fast) {
+			tok = next_token_fast(&br, &t->token, &skip);
 			/*
 			 * No check of nl against the literals left, which saved
 			 * 3 instructions per sequence. The 16 bytes read are
@@ -1748,10 +1685,5 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		 unsigned int src_len, void *dst, void *scratch)
 {
-	/*
-	 * two copies of the loop in an arm64 kernel, one per kind of core; one
-	 * everywhere else
-	 */
-	return in_order_core() ? decode_page(t, src, src_len, dst, scratch, 1) :
-				 decode_page(t, src, src_len, dst, scratch, 0);
+	return decode_page(t, src, src_len, dst, scratch);
 }

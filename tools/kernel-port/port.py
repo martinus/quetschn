@@ -27,8 +27,8 @@ On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT inste
 QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
 references to this repository in the comments (its documents, tools and build) and no reasons that
 only hold for the Mi 9T's 4.14, Fedora's config or our test machines, which say the reason in general
-terms instead; a comment that changed is wrapped again to 80 columns. in_order_core() with the kernel's
-MIDR_* macros. Fails if a reference is left, naming it; the one URL it keeps is PROJECT_URL.
+terms instead; a comment that changed is wrapped again to 80 columns. Fails if a reference is left,
+naming it; the one URL it keeps is PROJECT_URL.
   Documentation/staging/seqlz.rst       docs/format.md as reStructuredText, see format_rst.py, in the
                                         index of Documentation/staging/
 Writes only into the tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
@@ -55,6 +55,8 @@ PROJECT_URL = "https://github.com/martinus/quetschn"
 # as the whole URL: with a path after it, it is not the one
 KEPT_URLS = re.compile(re.escape(PROJECT_URL) + r"(?![\w/#-]|\.\w)")
 SPEC = "Documentation/staging/seqlz.rst"
+# nothing in lib/ depends on the CPU model: such a choice is arch code's, a static key at most
+CPU_MODEL = re.compile(r"read_cpuid|\bMIDR_|boot_cpu_data|x86_model")
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
                        r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
@@ -88,22 +90,6 @@ REWRITES = [
      "How many bits of the offset follow the token, per class: 0, 4, 8, 12, 5 and 9. One nibble per class "
      "in one constant, so that it is a shift and a mask without a branch."),
 ]
-# which cores run in order, in the kernel's terms
-IN_ORDER_CORE = """/*
- * The in-order cores: Cortex-A53, A55, A510 and A520, and Qualcomm's Kryo
- * silver cores of the 2xx to 4xx series, which are Cortex-A53 and A55.
- */
-static inline int in_order_core(void)
-{
-	u32 m = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
-
-	return m == MIDR_CORTEX_A53 || m == MIDR_CORTEX_A55 ||
-	       m == MIDR_CORTEX_A510 || m == MIDR_CORTEX_A520 ||
-	       m == MIDR_QCOM_KRYO_2XX_SILVER ||
-	       m == MIDR_QCOM_KRYO_3XX_SILVER ||
-	       m == MIDR_QCOM_KRYO_4XX_SILVER;
-}
-"""
 # the entry in MAINTAINERS, its fields in the order the file's head gives, the files in alphabetic order
 MAINTAINERS_ENTRY = f"""SEQLZ PAGE COMPRESSION
 M:	Martin Leitner-Ankerl <martin.ankerl@gmail.com>
@@ -337,13 +323,6 @@ def port_codec():
              "#include <linux/cache.h>\n#include <linux/errno.h>\n#include <linux/export.h>\n"
              "#include <linux/init.h>\n#include <linux/module.h>\n#include <linux/seqlz.h>\n"
              "#include <linux/stddef.h>\n\n#include \"seqlz.h\"\n")
-    t = must(t, "#if defined(__KERNEL__) && defined(__aarch64__)\n", "#ifdef CONFIG_ARM64\n")
-    # src/ writes the cores' numbers out, for older kernels; the kernel's copy has its macros
-    t = cut(t, r"/\*\n \* The in-order cores: .*?\n\}\n(?=\nstatic inline int prefetch_tokens)")
-    t = must(t, "#include <asm/cputype.h>\n", "#include <asm/cputype.h>\n" + IN_ORDER_CORE)
-    t = must(t, "/* tests take the in-order path on any CPU with -DSEQLZ_IN_ORDER=1 */\n#ifndef SEQLZ_IN_ORDER\n"
-             "#define SEQLZ_IN_ORDER 0\n#endif\n", "")
-    t = must(t, "\treturn SEQLZ_IN_ORDER;\n", "\treturn 0;\n")
     # what only the harness uses: seqlz_find(), seqlz_encode() and their helpers
     t = cut(t, r"/\* ---- the matcher of page_lz\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
@@ -471,10 +450,11 @@ def main():
     added = {"MAINTAINERS": MAINTAINERS_ENTRY, ZRAM_RST: ZRAM_DOC}
     for path, text in [*out.items(), *added.items()]:
         for n, line in enumerate(text.split("\n"), 1):
-            if FORBIDDEN.search(KEPT_URLS.sub("", line)) or HARNESS_ONLY.search(line):
+            if FORBIDDEN.search(KEPT_URLS.sub("", line)) or HARNESS_ONLY.search(line) or \
+                    path.startswith("lib/") and CPU_MODEL.search(line):
                 left.append(f"{path}:{n}: {line.strip()}")
     if left:
-        sys.exit("references to this repository or reasons of our machines left:\n" + "\n".join(left))
+        sys.exit("references to this repository, reasons of our machines or a CPU model in lib/ left:\n" + "\n".join(left))
     stale = [a for (a, _), n in zip(REWRITES, rewrites_used) if n == 0]
     if stale:
         sys.exit("REWRITES that match no comment any more:\n" + "\n".join(stale))
