@@ -67,9 +67,9 @@ foreach(flag IN LISTS quetschn_kernel_flags_wanted)
 endforeach()
 
 # For A/B runs of two builds: every function on its own 64 bytes, so that a change in one function does
-# not move the ones behind it. With the kernel's 4 bytes on arm64, a change in count() moved
-# seqlz_decode() by 12 bytes, and that alone made its reads on the Mi 9T's little core 130 ns slower,
-# while two runs of the same build differ by 10 to 20 ns (docs/explored-designs.md).
+# not move the ones behind it. With the kernel's 4 bytes on arm64, a change in count(), now
+# seqlz_match_len(), moved seqlz_decode() by 12 bytes, and that alone made its reads on the Mi 9T's little
+# core 130 ns slower, while two runs of the same build differ by 10 to 20 ns (docs/explored-designs.md).
 option(QUETSCHN_ALIGN_FUNCTIONS "Align every kernel codec function to 64 bytes, for A/B comparisons" OFF)
 if(QUETSCHN_ALIGN_FUNCTIONS)
     list(APPEND QUETSCHN_KERNEL_CFLAGS -falign-functions=64)

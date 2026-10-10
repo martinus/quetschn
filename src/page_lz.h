@@ -68,7 +68,7 @@ static inline unsigned int load16(const u8 *p)
  * the other 3, the multiply mixes them, and the top bits are the hash.
  * 889523592379 is zstd's prime5bytes.
  */
-static inline unsigned int hash5(u64 v)
+static inline unsigned int seqlz_hash5(u64 v)
 {
 	return (unsigned int)(((v << 24) * 889523592379ULL) >>
 			      (64U - SEQLZ_HASH_BITS));
@@ -78,7 +78,8 @@ static inline unsigned int hash5(u64 v)
  * How many bytes at p are the same as at q, at most up to end: the length of a
  * match, q is where it copies from.
  */
-static inline unsigned int count(const u8 *p, const u8 *q, const u8 *end)
+static inline unsigned int seqlz_match_len(const u8 *p, const u8 *q,
+					   const u8 *end)
 {
 	const u8 *start = p;
 
@@ -142,8 +143,8 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * Each sequence goes to emit() as soon as it is found. With the encoder's
  * emit() inlined, finding and writing the sequences is one pass over the page.
  */
-static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
-				       void *ctx)
+static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
+					     emit_fn emit, void *ctx)
 {
 	/*
 	 * Positions in the page, not pointers: the limit is a constant, and the
@@ -169,13 +170,13 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 
 	memset(table, 0, sizeof(u16) << SEQLZ_HASH_BITS);
 	v = get_unaligned_le64(src + pos);
-	h = hash5(v);
+	h = seqlz_hash5(v);
 	cand = table[h];
 	cand_bytes = get_unaligned_le32(src + cand);
 
 	while (pos < limit) {
 		u64 v_next = get_unaligned_le64(src + pos + 1);
-		unsigned int h_next = hash5(v_next), m, len;
+		unsigned int h_next = seqlz_hash5(v_next), m, len;
 		/* the first 4 of those 8 bytes, without another load */
 		u32 cur = (u32)v;
 		/*
@@ -208,7 +209,8 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 			pos--;
 			m--;
 		}
-		len = 4U + count(src + pos + 4, src + m + 4, src + SEQLZ_PAGE);
+		len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,
+					   src + SEQLZ_PAGE);
 		last = pos - m;
 		back = -(long)last;
 		emit(ctx, src + anchor, pos - anchor, len, last);
@@ -220,10 +222,10 @@ static __always_inline void match_page(u16 *table, const u8 *src, emit_fn emit,
 		 * table, so later matches can find it.
 		 */
 		if (pos < limit) {
-			table[hash5(get_unaligned_le64(src + pos - 2))] =
+			table[seqlz_hash5(get_unaligned_le64(src + pos - 2))] =
 				(u16)(pos - 2);
 			v = get_unaligned_le64(src + pos);
-			h = hash5(v);
+			h = seqlz_hash5(v);
 			cand = table[h];
 			cand_bytes = get_unaligned_le32(src + cand);
 		}

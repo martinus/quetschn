@@ -22,6 +22,7 @@
 #else
 #include <linux/kernel.h>
 #endif
+#include <linux/stddef.h>
 #include <linux/string.h>
 #include <linux/types.h>
 /* before 6.12 it was asm/unaligned.h, as in the Mi 9T's 4.14 */
@@ -33,6 +34,10 @@
 /* static_assert() came with 5.1 */
 #ifndef static_assert
 #define static_assert _Static_assert
+#endif
+/* sizeof_field() came with 5.5 */
+#ifndef sizeof_field
+#define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
 #endif
 #else
 
@@ -79,6 +84,8 @@ typedef unsigned long long u64;
 	(!defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L)
 #define static_assert _Static_assert
 #endif
+
+#define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
 
 /* the kernel's min() is a macro, which would break std::min in C++ */
 static inline unsigned int min(unsigned int a, unsigned int b)
