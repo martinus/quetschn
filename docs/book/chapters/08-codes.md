@@ -19,8 +19,8 @@ that include generated tables, the training that made them, and what the token t
 
 @listing src/seqlz_codes.c 1-11
 
-The SPDX line uses `//` here, as the kernel wants it in `.c` files, where headers have `/* */`. The
-comment names the file's main function, the one that callers build the tables with. Line 6 includes
+The SPDX line is the licence, as in every file of `src/` ([chapter 5](#ch-compat--top)). The comment
+names the file's main function, the one that callers build the tables with. Line 6 includes
 `seqlz_internal.h`, which brings `seqlz.h` and the layout of the tables.
 
 `seqlz_tables_size()` returns `sizeof(struct seqlz_tables)`, 43 280 on x86-64. It exists because
@@ -75,12 +75,8 @@ comment says Huffman codes always are complete: a Huffman code is built as a bin
 inner node has two children, so no branch is left empty. A list of lengths from anywhere else, e.g.
 a damaged table or a typo, might not be, and `first_codes()` returns `-EINVAL` for it.
 
-::: measured Complete codes: 6% fewer instructions in the decoder
-In the second round of work on the decoder, allowing only complete codes removed the decoder's check
-for bits that are no code. "The checks were 6% of the instructions", measured on the PC in
-September 2026
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
-:::
+Allowing only complete codes took out the decoder's check for bits that are no code, 6% of its
+instructions, measured on the PC in September 2026 ([chapter 2](#ch-compression--complete)).
 
 @listing src/seqlz_codes.c 37-57
 
@@ -249,18 +245,11 @@ The four codes of 4 bits are tokens 34, 49 and 2097 and the escape, `0000` to `0
 entries 0 to 511 in that order, the first 2 KiB of the table, a quarter of it, in 32 cache lines.
 Token 2098, with its 9-bit code `101100111`, `c = 359`, has the 4 entries 1436 to 1439.
 
-::: why Most significant bit first, so that a code is one range
-Until 6th October 2026 the bitstream was read least significant bit first. Then the first bit of a
-code was the lowest bit of the index, and a code of `l` bits filled every `2^l`-th entry: token 49's
-128 entries were one in every 16, one in each of the table's 128 cache lines, and the builder had to
-reverse the bits of each code first. Read most significant bit first, the same codes are ranges, and
-a page touches 42.5 of the 128 cache lines of the token table instead of 55. The compressed pages
-are the same bytes, only the order of the bits in them changed. On the PC it cost nothing. On the
-Mi 9T, the token table was then prefetched only on in-order cores, which made the A76's cold reads 1.3
-to 2.6 µs faster; with the old layout that gain showed in one build and not in another, depending on
-where the tables landed in memory, and with the codes in one range it showed in every run
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
-:::
+The codes are ranges because the bitstream is read most significant bit first, since 6th October
+2026; read the other way, a code's entries were spread over every cache line of the table.
+[Chapter 3](#ch-cpu--msb-first) has the cache lines and the measurements. One of them is only here:
+on the Mi 9T's A76, leaving the token table out of the prefetches made cold reads 1.3 to 2.6 µs
+faster in every run once the codes were ranges, and only in some builds before.
 
 The loop at lines 77 and 78 computes its end, `(c + 1U) << (11 - l)`, in every iteration. The
 compiler can hoist it, and if not, it does not matter: the function runs once, and writes 2048
@@ -410,31 +399,22 @@ appends `tools/kernel-port/api_codes.c`:
 
 @listing tools/kernel-port/api_codes.c 1-30
 
-::: kernel __init, __ro_after_init and initcalls
-Code marked `__init` goes into a section of the kernel image that the kernel frees once booting is
-done: it runs once and then gives its memory back. A variable marked `__ro_after_init` is writable
-during boot and read-only after it; a write to it later faults, so a bug cannot change the tables.
-`subsys_initcall(fn)` asks the kernel to call `fn` during boot, at the level of subsystems, which
-comes before the level of device drivers. zram, built into the kernel, starts at the later level, so
-the tables exist before zram can compress the first page. Built as a module, the macro becomes the
-module's init function.
-:::
+`__init` code is freed after boot, `__ro_after_init` data is read-only after it, and
+`subsys_initcall()` has the kernel call `seqlz_init()` at boot, before zram starts;
+[chapter 15](#ch-zram-glue--init) explains all three.
 
 So there is one `struct seqlz_tables` in the whole kernel, `seqlz_fixed_tables`, 43 280 bytes that
 all CPUs share. `__ro_after_init` data takes room in the kernel image, so the image carries 43 280
 bytes of zeros until `seqlz_init()` fills them at boot. `docs/plan.md` notes this as a point for the cover letter to the
-kernel's maintainers, and tables built at compile time as an open question (#153).
+kernel's maintainers, and tables built at compile time as an open question, issue
+[#153](https://github.com/martinus/quetschn/issues/153) of the project's GitHub repository.
 
 The two `BUILD_BUG_ON()`s are compile-time checks like `static_assert()`: the kernel's names for the
 work memory, `SEQLZ_MEM_COMPRESS` and `SEQLZ_MEM_DECOMPRESS`, must be the sizes the codec uses.
 
-`seqlz_init()` returns what `seqlz_tables_init()` returns, and that cannot fail, which the comment
-explains. Until 10th October 2026 it checked the result with a `WARN_ON()` and returned `-EINVAL`;
-as a module seqlz then did not load, and built in, zram compressed with half-built tables, because
-the kernel's copy has no check of `all_symbols` per page. Commit `4c42cc5` moved the check to where
-the tables are made: `gen-seqlz-tables.py` checks the lengths as `seqlz_tables_init()` and
-`has_all_symbols()` do before it writes them, and the KUnit tests check the SHA-256 of the lengths in
-the kernel against the ones the format names.
+`seqlz_init()` returns what `seqlz_tables_init()` returns, and that cannot fail: since commit `4c42cc5`
+the script that writes the kernel's tables checks the lengths first, see
+[chapter 15](#ch-zram-glue--init).
 
 Line 1 marks where the appended part starts in the kernel's `seqlz_codes.c`: from there on it is the
 interface of `include/linux/seqlz.h`. The last lines are what a module needs. `module_exit()` names the
@@ -572,12 +552,9 @@ code is rare, but together they are frequent: 14 to 38 of about 200 sequences pe
 project's dumps take the escape, at 16 bits each before the offset
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)).
 Giving more of them codes would take code space from the frequent ones: 11 bits have room for 2048
-codes, fewer than the 3072 tokens. The other direction was measured too: a token table of 10 bits,
-in which 320 tokens got a code instead of 512 at the time, read cold pages 2 to 3 µs faster on both
-cores of the Mi 9T for 3 to 6 bytes more per page. Once the decoder prefetched the token table only on
-in-order cores, it gave the A76 nothing and the A55 2 to 2.6 µs for 4.8 bytes per page, and 11 bits
-stayed; [chapter 6](#ch-header--token) has what changed in the decoder since
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#1-the-token-table-in-10-bits-cold-reads-2-to-3-µs-faster-on-both-cores-for-3-to-6-bytes)).
+codes, fewer than the 3072 tokens. The other direction, a token table of 10 bits, in which 320
+tokens got a code instead of 512 at the time, was measured on the Mi 9T and not taken; the numbers
+are in [chapter 6](#ch-header--token).
 
 ## The literal tables {#ch-codes--lit-sets-file}
 

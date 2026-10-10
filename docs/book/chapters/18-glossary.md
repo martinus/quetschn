@@ -17,14 +17,15 @@ uses them in that sense throughout.
 - **canonical code**: a prefix code that follows from the code lengths alone by a fixed rule, as in
   deflate: shorter codes first, within a length in symbol order. That is why a table stores only code
   lengths. [Chapter 2](#ch-compression), [chapter 8](#ch-codes)
-- **code**: the bits written for one symbol, e.g. 9 bits for a frequent token. [Chapter 2](#ch-compression)
+- **code**: the bits written for one symbol, e.g. 4 bits for the most frequent tokens and 11 for rare
+  ones. [Chapter 2](#ch-compression)
 - **code length**: how many bits a symbol's code has. A table is a list of code lengths. [Chapter 2](#ch-compression)
 - **coded literals**: literals written as Huffman codes of one literal table instead of as bytes, in 8
   streams. Only `seqlz-fast-lit` writes them, and only where they save 1/16 of the literals plus 51
   bytes. [Chapter 11](#ch-literals-enc), [chapter 13](#ch-literals-dec)
 - **complete**: a prefix code whose codes use up every bit pattern (its Kraft sum is exactly 1), so every
   bit pattern starts some code and a decode table has no empty entry. All of seqlz's tables are
-  complete. [Chapter 8](#ch-codes)
+  complete. [Chapter 2](#ch-compression--complete), [chapter 8](#ch-codes)
 - **compressed page**: what seqlz writes for one page: a header, the literals, then the bitstream.
   [Chapter 4](#ch-format)
 - **decoder**: the code that turns a compressed page back into its 4096 bytes, `seqlz_decode()` and
@@ -34,6 +35,8 @@ uses them in that sense throughout.
   [Chapter 17](#ch-decisions)
 - **encoder**: the second half of the compressor: it writes the sequences the matcher finds and the
   literals in the format. In seqlz it runs in the same loop as the matcher. [Chapter 10](#ch-encoder)
+- **entropy coder**: the part of a codec that writes symbols in codes of their frequency, Huffman codes
+  or ANS, instead of in a fixed number of bits. [Chapter 2](#ch-compression--entropy)
 - **entropy**: the least number of bits per symbol any code can reach for given symbol frequencies, the
   sum of `p × log2(1/p)`. A Huffman code is within one bit per symbol of it. [Chapter 2](#ch-compression)
 - **escape**: the code shared by all tokens that have no code of their own, followed by the token in 12
@@ -52,6 +55,8 @@ uses them in that sense throughout.
 - **Huffman code**: the prefix code with the fewest bits for given symbol frequencies. seqlz's tables are
   Huffman codes limited to 11 bits (tokens), 10 bits (literals) and 8 bits (length values).
   [Chapter 2](#ch-compression)
+- **Kraft sum**: the sum of `2^-l` over the lengths `l` of all codes of a table. It is at most 1 for a
+  prefix code, and exactly 1 for a complete one. [Chapter 2](#ch-compression--complete)
 - **k-means**: the clustering the trainer uses for the literal tables: each page goes to the table that
   codes it in the fewest bits, each table is rebuilt from its pages, repeated until nothing moves.
   [Chapter 8](#ch-codes)
@@ -81,8 +86,12 @@ uses them in that sense throughout.
   ends. `0`, `10`, `11` is one; `0`, `01` is not. [Chapter 2](#ch-compression)
 - **repeat offset**: the offset of the match before, used again in class 0 for 0 bits. It starts at 1 on
   every page. seqlz keeps one, `zstd` three. [Chapter 4](#ch-format)
+- **optimal parser**: a matcher that searches for the sequences that make a page smallest, not the
+  first match it finds; far slower than a greedy one. seqlz's was `seqlz-opt`. [Chapter 17](#ch-decisions--not-kept)
 - **scratch**: the buffer the decoder decodes coded literals into, `SEQLZ_SCRATCH`, a page plus 16 bytes,
   one per CPU. [Chapter 6](#ch-header), [chapter 13](#ch-literals-dec)
+- **sentinel**: the 1 bit a literal stream keeps below its last real bit, so that the stream needs no
+  count of its bits: the position of that 1 is the count. [Chapter 13](#ch-literals-dec--sentinel)
 - **sequence**: `ll` literals followed by one match; a page is a list of them, and the last one has
   literals only. [Chapter 4](#ch-format)
 - **stream**: one of the 8 parts coded literals are split into, literal `k` into stream `k mod 8`, so the
@@ -95,7 +104,11 @@ uses them in that sense throughout.
   `min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class`, 3072 values; the token is what the token table
   codes. [Chapter 4](#ch-format)
 - **trained tables**: tables whose code lengths come from counting symbols on many pages, here 524 912
-  of a desktop and a phone; the counts are in `bench/seqlz_counts_*.txt`. [Chapter 8](#ch-codes)
+  of a desktop and a phone; the counts are in `bench/seqlz_counts_*.txt`. The **trainer**,
+  `quetschn-seqlz-train`, is the program that counts and builds them. [Chapter 8](#ch-codes--lengths)
+- **wild copy**: a copy of a fixed 16 bytes or more where fewer are needed; the bytes past the real
+  length are written over by the next sequence. It needs room at the ends of the buffers.
+  [Chapter 3](#ch-cpu--wild-copy), [chapter 14](#ch-decode--rooms)
 - **work memory**: the codec's own buffers per CPU: the hash table to compress, the scratch to
   decompress. Not the tables, which all CPUs share. [Chapter 1](#ch-zram), [chapter 17](#ch-decisions)
 
@@ -105,25 +118,31 @@ uses them in that sense throughout.
   `drivers/block/zram/backend_*.c`. `src/zram_seqlz.c` is seqlz's backend for the benchmarks.
   [Chapter 15](#ch-zram-glue)
 - **checkpatch**: `scripts/checkpatch.pl`, the kernel's style checker for patches; `--strict` adds the
-  checks maintainers of new code expect. [Chapter 15](#ch-zram-glue)
+  checks maintainers of new code expect. [Chapter 15](#ch-zram-glue--check)
 - **`EXPORT_SYMBOL_GPL`**: makes a kernel function callable from modules whose license is compatible with
   the GPL. The kernel copy exports `seqlz_compress()` and `seqlz_decompress()` this way.
   [Chapter 15](#ch-zram-glue)
 - **`FORTIFY_SOURCE`**: a kernel option that checks the sizes of `memcpy()` and friends where it can;
   with some configurations it makes each `memcpy()` a call. seqlz uses `__builtin_memcpy()` for its short
   copies, as `lib/lz4` does. [Chapter 3](#ch-cpu), [chapter 6](#ch-header)
+- **fuzzer, fuzz target**: a program that feeds a function millions of random and mutated inputs and
+  reports every crash, sanitizer finding or hang; a fuzz target is the function's entry point for it.
+  `fuzz/` has targets for libFuzzer and AFL++, two such programs, and ClusterFuzzLite runs them every
+  day for the repository. [Chapter 15](#ch-zram-glue--tests)
 - **`__init`**: marks a function the kernel needs only while it starts; its code is freed afterwards. The
   code that builds seqlz's tables is `__init` in the kernel copy. [Chapter 15](#ch-zram-glue)
 - **initcall**: a function the kernel calls once while it starts, registered with a macro such as
   `subsys_initcall()`. The kernel copy builds the tables in one, before a built-in zram needs them.
   [Chapter 15](#ch-zram-glue)
 - **KASAN**: the kernel address sanitizer, which catches reads and writes outside an allocation. The
-  KUnit tests and the stress test run with it. [Chapter 15](#ch-zram-glue)
+  KUnit tests and the stress test run with it. AddressSanitizer is the same for userspace programs,
+  and MemorySanitizer catches reads of memory nobody wrote; the tests and fuzz targets run with them.
+  [Chapter 15](#ch-zram-glue)
 - **kernel copy**: the code `tools/kernel-port/port.py` writes into a kernel tree from `src/`: kernel
   headers instead of `seqlz_compat.h`, `static` and `__init` where they fit, the zram backend and the
   tests. It is generated, never edited. [Chapter 15](#ch-zram-glue)
 - **kernel-doc**: the kernel's comment format for functions, `/** ... */` with `@arg:` lines, which
-  `scripts/kernel-doc` checks and turns into documentation. [Chapter 6](#ch-header)
+  `scripts/kernel-doc` checks and turns into documentation. [Chapter 15](#ch-zram-glue--interface)
 - **`kmalloc()`**: the kernel's allocator for small objects. Up to `KMALLOC_MAX_CACHE_SIZE`, 2 pages, it
   hands out objects of fixed sizes, powers of 2; a larger request gets whole pages, again a power of 2
   of them: 4112 bytes come as 8 KiB, 12 304 bytes as 16 KiB. [Chapter 1](#ch-zram)
@@ -131,8 +150,11 @@ uses them in that sense throughout.
   tables, the spec's example, round trips and damaged pages. [Chapter 15](#ch-zram-glue)
 - **`kvzalloc()`**: allocates zeroed memory with `kmalloc()` and falls back to `vmalloc()` when that
   fails. seqlz's backend allocates its work memory with it, as `zstd`'s does. [Chapter 15](#ch-zram-glue)
-- **page**: the unit of memory the kernel maps, swaps and zram compresses: 4096 bytes on x86-64 and most
-  phones, 16 KiB on some newer Android phones. [Chapter 1](#ch-zram)
+- **module**: kernel code built as a file of its own and loaded into a running kernel, instead of built
+  in. [Chapter 15](#ch-zram-glue--init)
+- **page**: the unit of memory the kernel maps, swaps and zram compresses: 4096 bytes on x86-64 and on
+  phones today. Android is moving to 16 KiB; the project has no phone with them yet, and its 16 KiB
+  pages come from the Android 17 emulator. [Chapter 1](#ch-zram)
 - **page fault**: what happens when a program touches memory that is not mapped, e.g. a page that was
   swapped out. The program waits while the kernel brings the page back. [Chapter 1](#ch-zram)
 - **per-CPU**: data the kernel keeps once for each CPU, so that CPUs do not share it. zram has a stream
@@ -148,18 +170,21 @@ uses them in that sense throughout.
   cliff above which zram stores a page uncompressed. [Chapter 1](#ch-zram)
 - **swap, swap-in, swap-out**: moving pages that were not used for a while out of RAM, and back in when
   they are touched. zram is a swap device in RAM that keeps them compressed. [Chapter 1](#ch-zram)
-- **UBSAN**: the undefined behaviour sanitizer. `CONFIG_UBSAN_BOUNDS` and `CONFIG_UBSAN_SHIFT`, which
+- **UBSan**: the undefined behaviour sanitizer. `CONFIG_UBSAN_BOUNDS` and `CONFIG_UBSAN_SHIFT`, which
   distributions enable, add a compare and a branch to each index and shift the compiler cannot prove in
-  range; seqlz masks some of them for that reason. [Chapter 7](#ch-internal)
+  range; seqlz masks some of them for that reason. [Chapter 3](#ch-cpu--ubsan)
 - **UML**: User-Mode Linux, the kernel built as an ordinary program. CI runs the KUnit tests in it.
   [Chapter 15](#ch-zram-glue)
+- **`W=1`**: a kernel build with extra compiler warnings; the kernel copy builds with it without a
+  warning. [Chapter 15](#ch-zram-glue--check)
 - **`vmalloc()`**: allocates memory that is contiguous only in virtual addresses, in whole pages. `lz4`
   asks it for 16 416 bytes and gets 5 pages, 20 480 bytes. [Chapter 1](#ch-zram)
 - **zram**: a block device in RAM whose pages are stored compressed, mostly used as swap. [Chapter 1](#ch-zram)
 - **zsmalloc**: the allocator zram stores compressed pages in, with size classes about 16 bytes apart on
   4 KiB pages. [Chapter 1](#ch-zram)
-- **zswap**: a compressed cache in front of another swap device. It gives a codec an output buffer of
-  one page, where zram gives two. [Chapter 10](#ch-encoder)
+- **zswap**: the kernel's other compressed swap, a cache in RAM in front of a swap device on disk. It
+  gives a codec an output buffer of one page, where zram gives two. [Chapter 6](#ch-header--compressor),
+  [chapter 10](#ch-encoder)
 
 ## The CPU {#glossary--cpu}
 
@@ -190,6 +215,9 @@ uses them in that sense throughout.
 - **store forwarding**: a load that reads bytes a store just wrote gets them from the store directly; a
   load that overlaps a store only in part waits for it. That decides how the decoder copies overlapping
   matches. [Chapter 12](#ch-dec-basics)
+- **software pipelining**: starting the loads of the next round of a loop while the current one is
+  still being worked on, so that an in-order core does not wait for them. The matcher does it.
+  [Chapter 3](#ch-cpu--in-order), [chapter 9](#ch-matcher)
 - **SWAR**: SIMD within a register: several small values packed into one 64-bit integer and handled with
   one instruction, e.g. the costs of a byte in all 8 literal tables summed with one add.
   [Chapter 3](#ch-cpu), [chapter 11](#ch-literals-enc)
@@ -202,8 +230,10 @@ uses them in that sense throughout.
 - **`bytelz`**: an experiment with seqlz's matcher and a byte-oriented format, 29.4% against 26.4%, not
   kept. [Chapter 17](#ch-decisions)
 - **dump**: a copy of all pages in zram at one moment, read with `dd` from `/dev/zram0`. The book's
-  numbers come from two desktop dumps and two dumps of the Mi 9T; their contents are never published,
-  since they hold keys and passwords. [Chapter 17](#ch-decisions)
+  numbers come from three dumps of one desktop, of 23rd, 24th and 28th September 2026, two of them in
+  most measurements (the first and second desktop dump are the ones of 23rd and 24th September), and
+  two dumps of the Mi 9T; the 16 KiB numbers come from dumps of the Android 17 emulator. Their contents
+  are never published, since they hold keys and passwords. [Chapter 17](#ch-decisions--unknown)
 - **kernel VM**: `tools/zram-vm/run.sh`, a kernel built with the codecs and booted in a virtual machine
   on one core of a Ryzen 9 7950X fixed at 4.5 GHz. Its swap-in and swap-out times are the ones the
   project decides with. [Chapter 17](#ch-decisions)
@@ -224,12 +254,17 @@ uses them in that sense throughout.
 - **`seqlz-fast-lit`**: seqlz with coded literals where they pay, level 2 and the default; the same
   format and decoder as `seqlz-fast`. [Chapter 11](#ch-literals-enc)
 - **`seqlz-opt`**: an optimal parser for the same format, made for zram's recompression, removed.
-  [Chapter 17](#ch-decisions)
+  [Chapter 17](#ch-decisions--not-kept)
 - **`zstd`**: the codec that compresses best in zram, with tables built for the data; level 3 is zram's
   default for it. [Chapter 2](#ch-compression)
 
 ## Measurements {#glossary--measurements}
 
+- **C1 to C6**: the six criteria of `docs/plan.md` for a merge: C1 memory (at least 8% less than the
+  better of `lzo-rle` and `lz4`), C2 p99 cold reads against `lz4`, C3 p99 writes within 1.2 times
+  `lz4`'s, C4 better than `lz4` with a dictionary, C5 work memory per CPU at most `lz4`'s 16 416 bytes,
+  C6 a decoder safe and bounded for any input. C5 and C6 are hard limits, C2 and C3 guards.
+  [Chapter 1](#ch-zram--goal)
 - **cold, warm**: a cold read finds the compressed data in no CPU cache, as for a page swapped out a
   while ago; a warm read finds it there. [Chapter 3](#ch-cpu)
 - **exchange rate, lambda**: how many bytes of stored size one µs per page written is worth to you. The
@@ -243,12 +278,14 @@ uses them in that sense throughout.
   the median or p50 is the time half of the pages stay below. [Chapter 1](#ch-zram--score)
 - **p99**: the time 99% of the pages stay below; of 20 000 sorted times, the one at position 19 800. It
   shows whether some pages are much slower than the rest. [Chapter 1](#ch-zram--score)
-- **point**: 1% of a page, 41 bytes on 4 KiB pages. "0.6 points" is 0.6% of the page size.
-  [Chapter 4](#ch-format)
+- **point**: 1% of a page, 41 bytes on 4 KiB pages. "0.6 points" is 0.6% of the page size, not 0.6% of
+  the stored size. [Chapter 4](#ch-format--offsets)
 - **score**: stored bytes plus lambda times the time per page written; lower is better. It replaced the
   bars C1 to C3 as the target for design choices. [Chapter 1](#ch-zram--score), [chapter 17](#ch-decisions)
-- **stored size**: the bytes zram spends on one compressed page, its length rounded up to zsmalloc's size
-  class. **Σ zsmalloc cost** is the sum over all pages, as a share of their size. [Chapter 1](#ch-zram)
+- **stored size**: what zsmalloc spends on compressed pages, their lengths rounded up to their size
+  classes, with the pages over the cliff at 4096 bytes. For a set of pages it is the sum, **Σ zsmalloc
+  cost**, often given as a share of the pages' size; per page it is that sum divided by the pages, the
+  "bytes per page" of the score. [Chapter 1](#ch-zram--size-classes)
 - **swap-in fault, `MODE=swap`**: the kernel VM's benchmark that swaps each page out and back in once, as
   a real page fault does. Other benchmarks decode a page more than once and train the branch predictor
   on it. [Chapter 3](#ch-cpu), [chapter 17](#ch-decisions)

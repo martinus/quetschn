@@ -20,15 +20,9 @@ into one 32-bit number, so that the decoder's loop over the sequences never has 
 
 @listing src/seqlz_internal.h 1-11
 
-Line 1 is the license, as an SPDX tag: a short, machine readable name the kernel requires in the
-first line of every file. `MIT OR GPL-2.0-only` means a user may take either license, as `lib/zstd`
-does. The kernel's rules want it in a `/* */` comment in headers and in a `//` comment in `.c`
-files, which is why `seqlz_codes.c` in [chapter 8](#ch-codes) starts with `//`.
-
-Lines 2, 3 and 146 are the usual include guard: the second `#include` of the file in one
-translation unit sees `SEQLZ_INTERNAL_H` defined and skips everything. The kernel's copy, which
-`tools/kernel-port/port.py` writes, renames it to `_LIB_SEQLZ_SEQLZ_INTERNAL_H`, after the file's
-place in the kernel tree, `lib/seqlz/`.
+Line 1 is the licence and lines 2, 3 and 146 the include guard, as in every file of `src/`
+([chapter 5](#ch-compat--top)). The kernel's copy, which `tools/kernel-port/port.py` writes, renames
+the guard to `_LIB_SEQLZ_SEQLZ_INTERNAL_H`, after the file's place in the kernel tree, `lib/seqlz/`.
 
 The comment says what the file is for, and line 10 pulls in `seqlz.h`, which brings the format's
 constants (`SEQLZ_TOKEN_BITS`, `SEQLZ_LIT_SETS`, ...) and through `seqlz_compat.h` the kernel's
@@ -67,36 +61,17 @@ and is a `u32`.
 The third paragraph explains a habit of the encoder that looks odd at first: it masks values that
 are already in range.
 
-::: kernel UBSAN: a compare and a branch for every index the compiler cannot prove
-The kernel can be built with the undefined behaviour sanitizer, UBSAN. Two of its options matter
-here. `CONFIG_UBSAN_BOUNDS` makes the compiler check every index into an array whose size it knows,
-and `CONFIG_UBSAN_SHIFT` every shift, whose count must be below the width of the type: shifting a
-64-bit value by 64 or more is undefined in C. Each check is a compare and a branch to a function
-that reports the error. Distributions enable these options in their normal kernels, not only in
-debug builds, so the checks are in the code that runs on users' machines.
-
-The compiler leaves a check out when it can prove the value is in range. An index of type `u8`
-into an array of 256 entries never needs one. An index masked with `& 31` into an array of 32
-entries does not either, nor does a shift by `n & 63` of a `u64`.
-:::
+A kernel built with the undefined behaviour sanitizer, UBSan, checks every shift and every array
+index the compiler cannot prove in range, with a compare and a branch, and distributions enable it
+in their normal kernels; a masked value needs no check ([chapter 3](#ch-cpu--ubsan)).
 
 So the encoder masks: `enc_put()` in [chapter 10](#ch-encoder) shifts its bit buffer by
 `n & 63U`, and `put_len_value()` indexes the length values' `enc[]` with
 `seqlz_len_symbol(v, &extra) & (ENC_LEN_SYMBOLS - 1U)`. For every length a page can have, the
 symbol is at most 23 (25 on 16 KiB pages, see [chapter 6](#ch-header--length-values)), and `& 31`
-changes nothing. The mask only tells the
-compiler what the code already knows. For that, `enc[]` needs a power of 2 entries, which is the
-next line.
-
-::: measured Masked indices and shifts: 4.7% fewer instructions in the compressor
-In the second round of work on the compressor, "encoder arrays of a power of 2 entries, indices and
-shifts masked" took `seqlz-fast` from 25 225 to 25 064 cycles per page, with 4.7% fewer
-instructions. That was `perf stat` in userspace on CPU 2 of the Ryzen 9 7950X at a fixed 4.5 GHz,
-over 20 000 pages, built with the kernel's flags, which then had `-fsanitize=bounds-strict` and
-`-fsanitize=shift` as a distribution's config does. The code changed a lot since, so the number is
-from 23rd September 2026
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
-:::
+changes nothing. The mask only tells the compiler what the code already knows. For that, `enc[]`
+needs a power of 2 entries, which is the next line. On 23rd September 2026, masked indices and shifts
+took the compressor to 4.7% fewer instructions ([chapter 3](#ch-cpu--ubsan) has the cycles).
 
 @listing src/seqlz_internal.h 28-33
 
@@ -118,7 +93,9 @@ it to C11's `_Static_assert` where the kernel's headers do not have it. The two 
   16 bits would write past both arrays.
 
 The assert's condition is in parentheses and spread over lines, one condition per line, because
-the kernel's `checkpatch` wants the continuation lines of a call aligned with its first argument.
+the kernel's `checkpatch`, the style checker a patch for the kernel has to pass
+([chapter 15](#ch-zram-glue--check)), wants the continuation lines of a call aligned with its first
+argument.
 
 ## The table of length values {#ch-internal--value-table}
 
@@ -219,14 +196,8 @@ To choose a page's literal table, the encoder needs, for each of the 8 tables, t
 the page's literals would take in it: the sum of their code lengths. Done naively that is 8 lookups
 and 8 adds per literal. The comment describes the trick that makes it one of each.
 
-::: cpu SWAR: SIMD within a register
-A 64-bit register can hold 8 independent 8-bit numbers side by side, one per byte, called lanes.
-One 64-bit add then adds all 8 pairs of lanes at once, as long as no lane's sum exceeds 255: a sum
-of 256 or more carries into the next lane and corrupts it. This is called SWAR, SIMD within a
-register. The kernel cannot use the CPU's real vector instructions in this code (saving and restoring
-their registers costs time and is not allowed in every context), but a plain `u64` add works
-everywhere.
-:::
+A 64-bit register holds 8 such sums side by side, one per byte, and one add adds all 8 as long as no
+sum passes 255: SWAR, SIMD within a register ([chapter 3](#ch-cpu--swar)).
 
 For each byte value `b`, `lit_cost[b]` is a `u64` whose lane `j`, bits `8 * j` to `8 * j + 7`, is
 `b`'s code length in table `j`. [Chapter 8](#ch-codes) shows the loop in `build_lit_sets()` that
@@ -307,10 +278,7 @@ The two macros size this:
   spreads the lanes into 16-bit ones, every second byte with the mask `0x00ff00ff00ff00ff`, into two
   words, and starts the 8-bit lanes again. With 8 streams that is every 200 literals of the page.
 
-The whole choice of the table costs 30 to 40 ns per write in the kernel, about 0.5% of a write of
-about 6900 ns; in userspace loops it was at most 400 cycles, 1.5% of a write
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
-`docs/seqlz.md` puts the 1.5% next to the kernel's 30 to 40 ns, which mixes the two measurements.
+What the whole choice of the table costs per write is in [chapter 11](#ch-literals-enc--cost).
 
 ## Byte 2 and the largest stream {#ch-internal--byte2}
 
@@ -380,15 +348,10 @@ need to write; `seqlz_tables_init()` computes it once, and [chapter 8](#ch-codes
 decoder does not need it. The kernel's copy has no such field: there the tables are the format's
 own, checked before they were compiled in, and `port.py` deletes the line.
 
-::: kernel One copy for all CPUs
-In the kernel, `struct seqlz_tables` is one global variable, `seqlz_fixed_tables`, built at boot and
-marked `__ro_after_init`: the kernel makes its memory read-only once booting is done. Every CPU reads
-the same 43 280 bytes. Per-CPU memory, the "work memory" that zram allocates for each CPU, is
-something else: the matcher's hash table and the decoder's literal buffer, 8 KiB per CPU with
-zram as it is, 16 KiB once zram gives compression and decompression their own contexts
-([chapter 15](#ch-zram-glue)). In the userspace harness, `src/zram_seqlz.c` allocates the tables once
-per zram device instead.
-:::
+In the kernel the struct is one global variable, `seqlz_fixed_tables`, built at boot, read-only
+after it and shared by every CPU ([chapter 15](#ch-zram-glue--init)); the per-CPU work memory is
+something else ([chapter 15](#ch-zram-glue--backend)). In the userspace harness, `src/zram_seqlz.c`
+allocates the tables once per zram device instead.
 
 ## The fields of a token entry {#ch-internal--token-entry}
 
@@ -420,13 +383,8 @@ compute from the token's number for every sequence: split off `ll`, `ml` and the
 and masks, look up the class's number of offset bits, decide whether the offset is divided by 8,
 add 4 to `ml`, compare `ll` and `ml` with their caps. The last sentence says what that cost.
 
-::: cpu In-order cores run every instruction you give them, in order
-A big core like the Cortex-A76 or a Ryzen is out of order: it looks dozens of instructions ahead,
-and runs those whose inputs are ready while others wait. A small core like the Cortex-A55, the
-little core of most Android phones, is in order: it runs instructions in program order, at most two
-per cycle, and when one waits for a load, everything behind it waits too. On such a core an
-instruction saved is time saved, almost one for one. [Chapter 3](#ch-cpu) has more.
-:::
+On an in-order core such as the phone's Cortex-A55 an instruction saved is time saved, almost one
+for one ([chapter 3](#ch-cpu--in-order)).
 
 ::: measured The token unpacked in the table: 1418 fewer instructions per page on the A55
 On the Cortex-A55 of a Xiaomi Mi 9T, `simpleperf` showed that 18 of about 60 instructions per

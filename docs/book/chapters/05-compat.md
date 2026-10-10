@@ -19,7 +19,7 @@ There are three ways `src/` gets compiled, and this header serves two of them:
 | build | who does it | where the names come from |
 | --- | --- | --- |
 | the kernel's copy | `tools/kernel-port/port.py` writes `lib/seqlz/` into a kernel tree | the kernel's headers; `seqlz_compat.h` is not in the copy |
-| `src/` as it is, inside a kernel | `tools/zram-vm/run.sh` (the kernel VM) and `tools/zram-phone/build.sh` (a module for the Mi 9T's 4.14) copy `src/` into a kernel tree | the first half of this header, `__KERNEL__` is defined |
+| `src/` as it is, inside a kernel | `tools/zram-vm/run.sh` (the kernel VM) and `tools/zram-phone/build.sh` (a kernel module, code loaded into a running kernel, for the Mi 9T's 4.14; [chapter 15](#ch-zram-glue--init)) copy `src/` into a kernel tree | the first half of this header, `__KERNEL__` is defined |
 | userspace | tests, benchmarks, fuzzers, tools, built with CMake | the second half of this header |
 
 The middle row is why the first half has fallbacks for old kernels: the phone runs Linux 4.14, from
@@ -93,8 +93,8 @@ the phone's 4.14 it falls back to `linux/kernel.h`, which has `min()` there.
 The same trick for the unaligned accessors (lines 31 to 36). Since Linux 6.12 they are in
 `linux/unaligned.h`; before, every architecture had its own `asm/unaligned.h`, and 4.14 is one of
 those. The commit that brought this header, `e814b1c`, says the codec built against the Mi 9T's 4.14
-tree with it, and against a current tree with gcc, clang and arm64 clang, there with `W=1` and no
-warnings.
+tree with it, and against a current tree with gcc, clang and arm64 clang, there with `W=1`, the
+kernel's build with extra compiler warnings ([chapter 15](#ch-zram-glue--check)), and no warnings.
 
 Lines 37 to 40 give 4.14 a `static_assert`. The kernel's macro arrived in 5.1. It wraps C11's keyword
 `_Static_assert(expression, "message")`, which every compiler the kernel supports has, so where the
@@ -117,17 +117,10 @@ This is the one place where the header changes a value of the kernel instead of 
 them, say 128 there. The Cortex-A76 and A55 of the Mi 9T have lines of 64 bytes, and mainline arm64
 says 64 too.
 
-::: cpu Cache lines and prefetching
-Memory reaches the CPU in **cache lines**, 64 bytes on x86-64 and on the arm64 cores here. The first
-read of a line that is not in a cache waits for memory, on a PC about 80 to 100 ns, which is several
-hundred instructions. A **prefetch** is an instruction that asks for a line without waiting for it:
-the program goes on, and when it reads the line later, the line is on its way or already there. Asking
-for many lines at once lets their waits overlap, instead of one after the other.
-:::
-
-The codec's decoder asks for its tables before it decodes a page, in `prefetch_lines()`
-([chapter 12](#ch-dec-basics)). It walks the table in steps of 512 bytes and, inside each step, calls
-`prefetch()` every `L1_CACHE_BYTES` bytes:
+The codec's decoder asks for its tables before it decodes a page, with a **prefetch** for each of
+their 64-byte cache lines ([chapter 3](#ch-cpu--prefetch)), in `prefetch_lines()`
+([chapter 12](#ch-dec-basics--prefetch)). It walks the table in steps of 512 bytes and, inside each
+step, calls `prefetch()` every `L1_CACHE_BYTES` bytes:
 
 ```c
 for (; q < end; q += PREFETCH_STEP)          /* PREFETCH_STEP is 512 */
@@ -320,7 +313,8 @@ These are the kernel's accessors, written for userspace. Each copies the bytes i
 with `memcpy()`, then converts the order. Why not simply `*(const u64 *)p`?
 
 - If `p` is not a multiple of 8, the C standard says the cast pointer is undefined behaviour, and the
-  compiler may assume the address is aligned. UBSan's alignment check reports it, and some CPUs fault.
+  compiler may assume the address is aligned. UBSan's alignment check reports it
+  ([chapter 3](#ch-cpu--ubsan)), and some CPUs fault.
 - The data is an array of `u8`. Reading it through a `u64 *` breaks C's aliasing rule, which lets the
   compiler assume that a `u64 *` and a `u8` array are different objects and reorder reads and writes
   between them. The kernel compiles with `-fno-strict-aliasing`, userspace does not.

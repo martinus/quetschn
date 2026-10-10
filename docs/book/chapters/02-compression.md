@@ -194,32 +194,10 @@ one write of the table, whatever the page holds.
 
 seqlz's table has 4096 slots of 2 bytes, 8 KiB, all of its work memory for compression, and it is cleared
 for every page, so every position in it is a position of the current page. Its hash covers the next
-**5 bytes**, not 4:
-
-@listing src/page_lz.h 13-22
-
-`v` holds the 8 bytes at the position, read as a little-endian number, so the first byte is the lowest
-one. Shifting left by 24 pushes the top 3 bytes out of the 64-bit number and keeps the first 5. The
-multiplication by a large odd constant, the one `zstd` uses for 5 bytes, mixes every bit of those 5
-bytes into the high bits of the product, and the shift right by `64 - 12` keeps the top 12 bits, a slot
-from 0 to 4095. E.g. the 5 bytes `cat=1` go to slot 2333 and `cat=3` to slot 125, and `,dog=` goes to
-slot 2823 at position 5 and again at position 17, which is how the match of sequence 2 is found.
-[Chapter 9](#ch-matcher) goes through the matcher line by line.
-
-::: why Why the hash covers 5 bytes
-A hash of 4 bytes can find matches of 4 bytes, a hash of 5 only those of 5 bytes or more, except
-at the repeat offset, which seqlz checks at every position without the table. In the example above a
-5-byte hash would not find `cat=` at position 12, because `cat=3` never appeared before. seqlz takes
-that loss: the many short matches a 4-byte hash finds cost time to check and save few bits. When the
-choice was made, the 5-byte hash took 5% fewer cycles to compress and made the slowest 1% of writes
-10% faster in the kernel, for pages 0.6 points larger (a point is 1% of the page, 41 bytes)
-([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-choices-with-their-numbers)).
-Measured again on 5th October 2026, with the tables of then, it no longer costs bytes: a 4-byte hash
-made `seqlz-fast-lit`'s pages 18 to 35 bytes larger, most likely because a 4-byte match at a new
-offset takes more bits than its 4 coded literals, and the greedy matcher then skips the longer match
-behind it
-([explored-designs.md, "The matcher's hash"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)).
-:::
+**5 bytes**, not 4, which finds fewer and longer matches; a match of exactly 4 bytes is still found at
+the repeat offset, which needs no table. E.g. the 5 bytes `,dog=` go to slot 2823 at position 5 and
+again at position 17, which is how the match of sequence 2 is found. [Chapter 9](#ch-matcher--hash)
+goes through the hash line by line and has the measurements behind 5 bytes.
 
 ::: try The real matcher on the example
 On a page that starts with `cat=1,dog=2;cat=3,dog=4;` and is zeros after, seqlz's matcher finds the
@@ -229,8 +207,8 @@ position 0, and position 0 starts with `cat=`. Put a `#` in front, and the first
 matcher then writes 18 literals and finds only `,dog=`. On the page without the `#`, the third
 sequence takes `4`, `;` and one zero as literals, and covers the other 4071 zeros with one match at
 offset 1. The match ends at the end of the page, and the matcher still passes a last sequence with no
-literals and no match, which is how the format marks the end. Compile a few lines against
-`src/page_lz.h` with a function that prints what `seqlz_match_page()` passes it, and try other pages.
+literals and no match, which is how the format marks the end. [Chapter 9](#ch-matcher--back) has a
+program that prints every sequence the matcher finds; give it this page, and others.
 :::
 
 The compressor here is **greedy**: it takes the first match it finds and moves on behind it, without
@@ -266,7 +244,9 @@ counts in
 6 values in a fixed width take 3 bits, and 2 of the 8 patterns are never used. Information theory says
 what they need at least: a value that occurs with probability `p` carries `-log2(p)` bits of
 information, and the average of that over all values, the **entropy**, is the least number of bits per
-value any code can reach on average. Here it is 2.42 bits. Class 0, at 30.55%, carries 1.71 bits;
+value any code can reach on average. Here it is 2.42 bits. (These are shares of all sequences in the
+training counts, which count the pages of a phone's zram dump five times; on the desktop dumps, 18% to 25% of
+the matches use the repeat offset, see [chapter 9](#ch-matcher--plan).) Class 0, at 30.55%, carries 1.71 bits;
 class 3, at 8.12%, carries 3.62. A good code gives class 0 fewer than 3 bits and class 3 more.
 
 ## Prefix codes {#ch-compression--prefix-codes}
@@ -362,8 +342,9 @@ The token has 3072, and the same method builds its code.
 
 One more limit matters in practice: a decoder that decodes with a table, as below, needs a table of
 `2^L` entries for a longest code of `L` bits. A Huffman code for 3072 symbols, some of them very rare,
-can have codes of 20 bits and more. So the trainer limits the code lengths, 11 bits for tokens, 10 for
-literals, 8 for length values, at a small cost in bits, and gives the rarest tokens no code at all; they
+can have codes of 20 bits and more. So the trainer, the program that builds seqlz's tables from counts
+([chapter 8](#ch-codes--lengths)), limits the code lengths, 11 bits for tokens, 10 for
+literals, 8 for [length values](#ch-format--length-values), at a small cost in bits, and gives the rarest tokens no code at all; they
 share one code, the **escape**, followed by the token in 12 plain bits ([chapter 4](#ch-format)).
 
 ## Canonical codes: only the lengths are stored {#ch-compression--canonical-codes}
@@ -396,44 +377,9 @@ lengths 2, 3, 3, 3, 2, 3 for classes 0 to 5:
 | codes of 3 bits | class 1: 4 = `100`, class 2: 5 = `101`, class 3: 6 = `110`, class 5: 7 = `111` |
 
 The codes differ from the tree's, the lengths are the same, and the encoder and every decoder get the
-same codes from 6 bytes of lengths. In `src/` this is `first_codes()`:
-
-@listing src/seqlz_codes.c 37-57
-
-`len` is the list of code lengths, `n` the number of symbols, `bits` the longest code allowed, and
-`next` the output. `unsigned int next[16]` is a pointer in C, an array parameter decays to one; the 16
-documents that lengths go from 0 to 15, which is why `of_len[16]` has 16 counters too, all set to 0 by
-`= { 0 }`. `k` will be the Kraft sum and `c` the running code. The first loop counts the symbols of
-each length into `of_len[]`, the `count[]` of the rule, and fails on a code longer than `bits`. The
-loop at lines 52 to 55 is rule 2: `c` starts at 0, and for each length it adds the count of the length
-before and shifts left by one, so `next[l]` is `first[l]`. Line 51 sets the count of length 0 to 0,
-because symbols without a code were counted there by the first loop and must not take numbers. The loop
-at lines 47 to 50 checks that the code is complete, the subject of the next section. The function
-returns 0, or `-EINVAL` for a code that is too long or not complete, and the caller gives up on the
-table. [Chapter 8](#ch-codes) has the rest of the file: the callers take `next[l]++` for each symbol in
-order, which is rule 3.
-
-::: try The real table of `ll` length values
-seqlz's table for the rest of a long literal run has 25 symbols. Its lengths in
-`src/seqlz_default_tables_4k.inc` are `4 4 4 4 4 5 4 5 5 5 5 5 6 6 6 6 3 3 4 5 6 8 8 8 8`. That gives
-`count[3..8] = 2 7 7 5 0 4` and `first[3..8] = 0 4 22 58 126 252`. Symbols 16 and 17, the two of 3
-bits, get `000` and `001`; symbol 0, the first of 4 bits, gets 4 = `0100`; symbol 5, the first of 5
-bits, 22 = `10110`; symbols 21 to 24 get `11111100` to `11111111`. A few lines of Python reproduce it:
-
-```python
-lens = [4,4,4,4,4,5,4,5,5,5,5,5,6,6,6,6,3,3,4,5,6,8,8,8,8]
-count = [0] * 9
-for l in lens:
-    count[l] += 1
-first, c = [0] * 9, 0
-for l in range(1, 9):
-    c = (c + count[l - 1]) << 1
-    first[l] = c
-for s, l in enumerate(lens):
-    print(s, format(first[l], f"0{l}b"))
-    first[l] += 1
-```
-:::
+same codes from 6 bytes of lengths. In `src/` this is `first_codes()` in `src/seqlz_codes.c`;
+[chapter 8](#ch-codes--first-codes) goes through it line by line and works the rule through for the
+real table of `ll` length values.
 
 ## Complete codes: every bit pattern starts a code {#ch-compression--complete}
 
@@ -447,9 +393,9 @@ An incomplete code leaves gaps. With only A = `0` and B = `10`, the sum is `1/2 
 bits `11` start no code at all; a decoder has to check for that, and say what happens then. A sum above
 1 cannot be a prefix code: three codes of lengths 1, 1 and 2 would need more than all bit strings.
 Huffman codes are always complete, because every node of the tree has two children. seqlz requires it of
-every table, and the check is lines 47 to 50 above: `k` adds `2^(bits - l)` for each code, which is the
-Kraft sum times `2^bits`, the number of decode table entries the codes fill, and it must be exactly
-`2^bits`.
+every table: `first_codes()` adds `2^(bits - l)` for each code, which is the Kraft sum times `2^bits`,
+the number of decode table entries the codes fill, and it must be exactly `2^bits`
+([chapter 8](#ch-codes--first-codes)).
 
 What this buys is a decoder without the check. Any bits it reads decode to some symbol, so there is no
 "invalid code" branch on the path from one sequence to the next. When the project made all its codes
@@ -480,25 +426,20 @@ Decoding the classes 4, 1, 0, 5, whose codes make the bits `01 100 00 111`:
 
 The last peek here needs no bits past the end, but in general it does, e.g. when the last code is
 `00`; a decoder reads zeros past the end, or the format guarantees that bytes follow. Filling the table
-is the loop at the end of each of seqlz's table builders, here the one for tokens:
-
-@listing src/seqlz_codes.c 77-79
-
-For a token of code `c` with `l` bits, the indices from `c << (11 - l)` up to, not including,
+is a loop at the end of each of seqlz's table builders ([chapter 8](#ch-codes--build-token)). For a
+token of code `c` with `l` bits, the indices from `c << (11 - l)` up to, not including,
 `(c + 1) << (11 - l)` are the 11-bit numbers whose top `l` bits are `c`, and each gets the same entry.
 seqlz's token table has `SEQLZ_TOKEN_BITS` = 11, 2048 entries of 4 bytes, 8 KiB. Token 49, "1
-literal, a match of 7 bytes, the repeat offset", the sequence of an array of 8-byte pointers that differ only in their lowest byte, has
-a code of 4 bits, so it fills 2^(11-4) = 128 entries, one sixteenth of the table. The longest codes, 11
+literal, a match of 7 bytes, the repeat offset", the sequence of an array of 8-byte pointers that
+differ only in their lowest byte, has a code of 4 bits (how a token's number comes from `ll`, `ml` and
+the offset class is in [chapter 4](#ch-format--token)), so it fills 2^(11-4) = 128 entries, one sixteenth of the table. The longest codes, 11
 bits, fill one entry each. [Chapter 7](#ch-internal) shows what an entry holds: for a token not only the
 symbol and the code length, but the two lengths and everything needed to cut the offset bits out of the
 bits that follow.
 
 The table's size is the reason for the length limits above. A table has to stay in the CPU's fastest
-cache, the L1 of a few dozen KiB, or every lookup waits for memory ([chapter 3](#ch-cpu)). When the
-token table still had entries of 2 bytes, in an earlier version of the format, codes of up to 12 bits
-made it 8 KiB, and the slowest 1% of cold reads took 5070 ns in a decode loop on the PC; with 11 bits
-and a table of 4 KiB they took 4350 ns ([explored-designs.md, "Second
-round"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
+cache, the L1 of a few dozen KiB, or every lookup waits for memory; [chapter 3](#ch-cpu--cache) has
+what one more bit of code length cost.
 
 ## Bits are read most significant first {#ch-compression--msb}
 
@@ -569,13 +510,10 @@ built.
 <figcaption>The same canonical code in a decode table: read most significant bit first, each code is one range; read least significant bit first, its entries are spread.</figcaption>
 </figure>
 
-With 8 entries it makes no difference. With the token table it does. A 4-bit code fills 128 entries of
-4 bytes: read most significant bit first that is 512 bytes in a row, 8 cache lines of 64 bytes; read the
-other way it is every 16th entry, one in each of the table's 128 cache lines. Most of a page's sequences
-use a few short codes, so a page decoded most significant bit first touches 42.5 of the token table's 128
-cache lines on average, against 55.3 the other way, and a cold read loads fewer of them from memory
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
-The compressed bytes are the same either way in size; only the order of the bits differs.
+With 8 entries it makes no difference. With the token table of 2048 entries it does: read most
+significant bit first, the few short codes most sequences use stay in a few of the table's cache
+lines, and a cold read loads fewer of them from memory, see [chapter 3](#ch-cpu--msb-first). The
+compressed bytes are the same size either way; only the order of the bits differs.
 
 ## lz4, zstd and seqlz write the same sequence differently {#ch-compression--formats}
 
@@ -601,12 +539,17 @@ sequence is one token, which holds `ll`, `ml - 4` and the offset class, with its
 offset in as many plain bits as the class says, then length values only for long runs. The decoder does
 one table lookup per sequence, where `zstd` steps three FSE states. What seqlz gives up is tables that
 fit the page. A literal table of each page's own, where that saves 16 bytes, made writes 13% and 15%
-slower for pages 0.3 and 4.6 points smaller on the project's two desktop dumps, and was not kept
+slower on the project's two desktop dumps, for 2.7 and 60.6 bytes less per page, 0.3% and 4.6% of the
+stored size, and was not kept
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-choices-with-their-numbers)).
 
 The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is 28 bytes
 in seqlz: 2 bytes of header, the literal count 16; the 16 literals as they are, the matcher's sequences
-being the ones from the box above; and 10 bytes of bitstream for the four sequences:
+being the ones from the box above; and 10 bytes of bitstream for the four sequences. The table below
+is a preview of [chapter 4](#ch-format): how a token's number packs `ll`, `ml` and the offset class
+and what the escape is, in [one sequence: the token](#ch-format--token), the long `ml` in
+[length values](#ch-format--length-values). Read it now for the sizes, and again after chapter 4 for
+the bits:
 
 | bits | what they are |
 | --- | --- |

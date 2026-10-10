@@ -104,6 +104,14 @@ compute it again) or measured, and then the text says on what and links to where
 recorded it. Measurements are from the time they were made; the tables and the code changed since,
 so a number from September 2026 is not always the number you would get today.
 
+**Dumps, points and issues.** Most measurements run on zram dumps of the project's desktop: "the
+first" and "the second desktop dump" are the ones of 23rd and 24th September 2026, and a third, of
+28th September, is named by its date. Memory is often given in **points**: a point is 1% of a page,
+41 bytes on 4 KiB pages. "0.3% smaller" is a share of the stored size instead, the bytes zram spends
+on the pages ([chapter 1](#ch-zram--size-classes)). A number like #153 is an issue in the project's
+GitHub repository, e.g. [#153](https://github.com/martinus/quetschn/issues/153), and the text links
+each one where it names it.
+
 **`src/` is not exactly what the kernel gets.** The kernel's copy of seqlz is generated from `src/`
 by a script, `tools/kernel-port/port.py`, which replaces the compatibility header with the kernel's own
 headers, drops what only the benchmarks and tests use, and adds the kernel's interface around it.

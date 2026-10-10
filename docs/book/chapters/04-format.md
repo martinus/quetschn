@@ -205,12 +205,9 @@ tables are fixed: they are part of the format and are not in the page. There are
 | literal tables 0 to 7 | 256 each | 10 bits | the coded literals |
 
 A table holds only the **code length** of each symbol, 0 for a symbol without a code. The codes
-follow from the lengths by the rule of deflate (RFC 1951, section 3.2.2), the **canonical** code:
-shorter codes first, and the codes of one length in the order of the symbols' numbers. In the
-words of the spec: `count[l]` is the number of symbols with a code of `l` bits, `first[1] = 0`, and
-`first[l] = (first[l-1] + count[l-1]) * 2`. The symbols of length `l` get the numbers `first[l]`,
-`first[l] + 1`, and so on, written in binary with exactly `l` digits.
-[Chapter 2](#ch-compression--canonical-codes) explains why this works; here is the rule applied to the real token table of 4 KiB pages:
+follow from the lengths by the rule of deflate (RFC 1951, section 3.2.2), the **canonical** code of
+[chapter 2](#ch-compression--canonical-codes): shorter codes first, and the codes of one length in
+the order of the symbols' numbers. Here is the rule applied to the real token table of 4 KiB pages:
 
 - No symbol has a code of 1, 2 or 3 bits, so `first[4] = 0`. The 4 symbols with a code of 4 bits are,
   in the order of their number, the tokens 34, 49, 2097 and the escape 3072. They get `0000`, `0001`,
@@ -376,7 +373,7 @@ The format does not care which class a compressor uses, as long as the offset co
 send offset 5 too, and class 4 can send 8 (`read(5) = 1`). `seqlz_compress()` uses class 0 when the
 offset is the one before, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of
 classes 1 to 3 that holds it. That choice is made in `seqlz_off_class()`, without a branch, see
-[chapter 3](#ch-cpu--branches). Some examples, computed with it:
+[chapter 6](#ch-header--offsets). Some examples, computed with it:
 
 | offset | offset before | class | offset bits |
 | --- | --- | --- | --- |
@@ -389,11 +386,12 @@ classes 1 to 3 that holds it. That choice is made in `seqlz_off_class()`, withou
 
 ::: why Why offsets are plain bits, and why the class is in the token
 Offsets were once a Huffman-coded symbol for their number of bits, followed by the bits. Moving the
-class into the token, with plain bits after it, cost 0.4 points of memory, and took the decoder from
+class into the token, with plain bits after it, cost 0.4 points of memory (a point is 1% of a page,
+41 bytes), and took the decoder from
 8758 to 8168 cycles per page, because each sequence then needs one table lookup on the chain from one
 token to the next, not two
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
-A point is 1% of a page, 41 bytes. The classes 4 and 5 for multiples of 8 came later and saved 24 and
+The classes 4 and 5 for multiples of 8 came later and saved 24 and
 2 bytes per page in the kernel, for about 0.2 µs more per page written
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 :::
@@ -797,7 +795,7 @@ Since the tables are part of the format, a decoder has to have exactly the right
 
 Fixed tables cost bytes: a table fitted to each page would code it tighter. That was measured several
 ways, and none paid for its time: a literal table of each page's own made writes 13% and 15% slower
-for 0.3 and 4.6 points less, and tables trained on a phone's own pages saved at most 1% on another
+on the two desktop dumps for 2.7 and 60.6 bytes less per page, 0.3% and 4.6% of the stored size, and tables trained on a phone's own pages saved at most 1% on another
 dump of that phone ([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-bytes-of-a-page)).
 How the code lengths become the encoder's codes and the decoder's lookup tables at run time is
 [chapter 8](#ch-codes).

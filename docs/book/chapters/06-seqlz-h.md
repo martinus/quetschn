@@ -178,55 +178,7 @@ is at most `31 + 4 = 35`, which fits 6 bits; with 6 bits it would be `63 + 4 = 6
 The six classes take the top of the token, above the 9 bits of the two lengths.
 `SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, `6 * 512 = 3072`. A shift, not a multiplication, because the
 class is a bit field: token `t` has `ll` in bits 0 to 3, `ml - 4` in bits 4 to 8 and the class in bits 9
-to 11.
-
-<figure class="diagram">
-<div class="scroll">
-<svg viewBox="0 0 720 190" role="img" aria-label="The 12 bits of token 2098: class 4 in bits 11 to 9, ml minus 4 equal to 3 in bits 8 to 4, ll equal to 2 in bits 3 to 0">
-  <g font-size="11" text-anchor="middle">
-    <text x="102" y="30">11</text><text x="152" y="30">10</text><text x="202" y="30">9</text>
-    <text x="252" y="30">8</text><text x="302" y="30">7</text><text x="352" y="30">6</text>
-    <text x="402" y="30">5</text><text x="452" y="30">4</text><text x="502" y="30">3</text>
-    <text x="552" y="30">2</text><text x="602" y="30">1</text><text x="652" y="30">0</text>
-  </g>
-  <g font-size="13" text-anchor="middle">
-    <g class="mark">
-      <rect x="80" y="40" width="44" height="34" class="fill-mark" stroke="currentColor"/><text x="102" y="62">1</text>
-      <rect x="130" y="40" width="44" height="34" class="fill-mark" stroke="currentColor"/><text x="152" y="62">0</text>
-      <rect x="180" y="40" width="44" height="34" class="fill-mark" stroke="currentColor"/><text x="202" y="62">0</text>
-    </g>
-    <rect x="230" y="40" width="44" height="34" class="fill-sheet" stroke="currentColor"/><text x="252" y="62">0</text>
-    <rect x="280" y="40" width="44" height="34" class="fill-sheet" stroke="currentColor"/><text x="302" y="62">0</text>
-    <rect x="330" y="40" width="44" height="34" class="fill-sheet" stroke="currentColor"/><text x="352" y="62">0</text>
-    <rect x="380" y="40" width="44" height="34" class="fill-sheet" stroke="currentColor"/><text x="402" y="62">1</text>
-    <rect x="430" y="40" width="44" height="34" class="fill-sheet" stroke="currentColor"/><text x="452" y="62">1</text>
-    <g class="acc">
-      <rect x="480" y="40" width="44" height="34" class="fill-acc" stroke="currentColor"/><text x="502" y="62">0</text>
-      <rect x="530" y="40" width="44" height="34" class="fill-acc" stroke="currentColor"/><text x="552" y="62">0</text>
-      <rect x="580" y="40" width="44" height="34" class="fill-acc" stroke="currentColor"/><text x="602" y="62">1</text>
-      <rect x="630" y="40" width="44" height="34" class="fill-acc" stroke="currentColor"/><text x="652" y="62">0</text>
-    </g>
-  </g>
-  <g font-size="12" text-anchor="middle">
-    <path d="M80 86 v8 h144 v-8" fill="none" stroke="currentColor"/>
-    <text x="152" y="112">class, 0 to 5</text>
-    <text x="152" y="130">here 4</text>
-    <path d="M230 86 v8 h244 v-8" fill="none" stroke="currentColor"/>
-    <text x="352" y="112">min(ml - 4, 31)</text>
-    <text x="352" y="130">here 3, ml = 7</text>
-    <path d="M480 86 v8 h194 v-8" fill="none" stroke="currentColor"/>
-    <text x="577" y="112">min(ll, 15)</text>
-    <text x="577" y="130">here 2</text>
-  </g>
-  <text x="80" y="170" font-size="12">token 2098 = 2 + 16 * 3 + 512 * 4: 2 literals, a match of 7 bytes, offset class 4</text>
-</svg>
-</div>
-<figcaption>The token's 12 bits: ll in bits 0 to 3, ml - 4 in bits 4 to 8, the offset class in bits 9 to 11, shown for token 2098.</figcaption>
-</figure>
-
-Token 2098 is the sequence that [`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)
-takes apart: 2 literals, a match of 7 bytes, 16 bytes back. 16 is a multiple of 8 below 256, class 4,
-sent as `16 / 8 = 2` in 5 bits.
+to 11. [Chapter 4](#ch-format--token) draws the 12 bits of token 2098 and takes it apart.
 
 Why 6 classes and not more: "Offset classes from a histogram" searched 29 539 layouts of classes
 offline, priced with the probabilities of 12.2 million sequences. The best layout with 8 classes saves
@@ -311,15 +263,9 @@ less. The trained tables still give symbol 24 a code of 8 bits in both tables, b
 `seqlz_all_symbols()` below asks for a code for every length value symbol. On 16 KiB pages it is the
 same one symbol higher: values reach 16 369, symbol 25, and symbol 26 is never needed.
 
-::: why Length values coded, not plain bits
-The obvious simpler design is to send a length value's symbol, 0 to 24, in 5 plain bits, with no
-table. It was measured twice. The first time 5 plain bits made pages 3.2 and 2.8 bytes larger on two dumps,
-and the verdict was "the tables cost the format two tables once, the 5 bits cost every page 3 bytes"
-([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)).
-The second time, on the decoder of 10th October 2026 and timed, they made pages 1.6 to 2.8 bytes
-larger, 0.2% to 0.3%, and no read got faster
-([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept)).
-:::
+Sending a length value's symbol in 5 plain bits instead, with no table, was measured twice and made
+pages larger without a faster read, the first time by 3.2 and 2.8 bytes on two dumps; the second time
+is in [chapter 4](#ch-format--length-values).
 
 @listing src/seqlz.h 134-140
 
@@ -418,15 +364,8 @@ the token table's entry has the shift for the decoder ([chapter 7](#ch-internal)
 before, and stores the class's number of offset bits in `*raw_bits`. The encoder calls it once per
 match, in `encode_emit()` ([chapter 10](#ch-encoder)). The classes of consecutive matches follow no
 pattern that a branch predictor could learn, so a chain of `if`s would mispredict often; the code
-computes the class with arithmetic instead.
-
-::: cpu Branches and mispredictions
-A CPU starts the instructions after a branch before it knows which way the branch goes: it guesses,
-from the history of that branch. When the guess is wrong, the work after it is thrown away, about 15 to
-20 cycles on a desktop CPU. A branch that goes one way or the other at random is wrong about half the
-time. Code that turns such a decision into arithmetic, comparisons that give 0 or 1 and masks, has no
-guess to get wrong. [Chapter 3](#ch-cpu) has more.
-:::
+computes the class with arithmetic instead. [Chapter 3](#ch-cpu--branches) has what a wrong guess
+costs, and when code without a branch is slower.
 
 Line 195, `is_new = (off == last) - 1U`. A comparison in C gives the `int` 0 or 1. Subtracting `1U`
 converts it to `unsigned int`: `1 - 1 = 0` when the offset repeats, and `0 - 1` wraps around to
@@ -494,17 +433,12 @@ page sizes.
 "Read only once built, one for all CPUs": the tables are built once from the code lengths and then
 only read. Every CPU that compresses or decompresses uses the same copy. In the kernel's copy they
 are one global struct, built once at boot or when the module loads, and marked `__ro_after_init`, so the
-kernel makes that memory read-only after initialization ([chapter 8](#ch-codes)). They are not part of
+kernel makes that memory read-only after initialization ([chapter 15](#ch-zram-glue--init)). They are not part of
 the per-CPU work memory.
 
-::: kernel kernel-doc
 The comments that start with `/**` below are **kernel-doc**, the kernel's format for documenting a
-function. The first line is `name() - what it does`, then one line per argument, `@name: what it is`,
-then a free description, and a section `Return:` for the result. The script `scripts/kernel-doc`
-reads these comments, checks that the arguments match the prototype, and turns them into the kernel's
-HTML documentation. `tools/kernel-port/check.sh` runs it on the kernel's copy with `-Wall`, and the copy is
-kept free of its warnings. A comment that starts with `/*` is an ordinary comment and is not checked.
-:::
+function, which a script checks against the prototype; [chapter 15](#ch-zram-glue--interface) has
+the format.
 
 @listing src/seqlz.h 221-226
 
@@ -548,7 +482,8 @@ ways that happens:
 
 `-EINVAL` is the kernel's way to report an error: a negative error number, 0 for success. The decoder
 returns the same for a page that is not valid. `seqlz_codes.c` has the code ([chapter 8](#ch-codes)).
-The kernel's copy has the same function, but `static` and `__init`, and its kernel-doc moves to the
+The kernel's copy has the same function, but `static` and `__init`, code the kernel frees after boot
+([chapter 15](#ch-zram-glue--init)), and its kernel-doc moves to the
 definition: `port.py` does that for the three functions of this header that are `static` in the copy,
 this one, `seqlz_decode()` and `seqlz_compress()`.
 
@@ -567,10 +502,8 @@ most likely pages whose literals need codes longer than 9 bits
 
 `SEQLZ_LIT_SETS` is 8: the encoder picks, for each page, the table that codes its literals in the fewest
 bits, and says which in 3 bits of the header. The tables were trained by clustering pages whose literals
-look alike. 16 tables made pages 2 and 8 bytes smaller on two dumps, and cold reads in the kernel VM
-0.26 and 0.28 µs slower, with twice the decode tables to fetch. That trade was at
-the edge and was not taken
-([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
+look alike. 16 tables saved a few bytes per page for slower cold reads and were not taken; the numbers
+are in [chapter 8](#ch-codes--lit-sets-file).
 
 @listing src/seqlz.h 261-274
 
@@ -580,12 +513,8 @@ knows where literal `k + 1` starts after it has looked up literal `k` and knows 
 lookup waits for the one before, a chain. 8 streams are 8 independent chains, and a CPU that runs
 several instructions at once works on them side by side ([chapter 13](#ch-literals-dec)).
 
-With 4 streams, pages on the Mi 9T were 2.7 bytes smaller, because there are 4 sizes fewer in the
-header and 4 streams fewer that round up to a byte. Decoding was no faster on either core, within what
-the rounds scattered, and the PC's hot loop was 2.8% slower, 7627 against 7418 cycles per page. A format
-change for 2.7 bytes and no time was not taken
-([item 3](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#3-4-literal-streams-instead-of-8-27-bytes-no-faster-not-kept)).
-That there are 8 tables and 8 streams is a coincidence; all 8 streams of a page use the page's one table.
+4 streams would make pages a few bytes smaller, with 4 sizes fewer in the header, and were measured
+and not taken, see [chapter 13](#ch-literals-dec--cost). That there are 8 tables and 8 streams is a coincidence; all 8 streams of a page use the page's one table.
 
 Line 269 declares the code lengths of the 8 literal tables, 256 bytes each, defined in
 `seqlz_lit_sets.c` from `seqlz_lit_sets_4k.inc` or `_16k.inc`. They are part of the format, like
@@ -622,9 +551,8 @@ bytes on 4 KiB pages, which needs 10 bits, and 2560 on 16 KiB pages, which needs
 
 The width is stored as `w - 5` in 3 bits, which holds exactly the 8 widths 5 to 12. Widths of 3 and 4
 bits are left out, because only 0.1% to 3% of the pages would use them, and they would need a fourth
-bit. Until 5th October 2026 each size took 2 bytes, a header of 19 bytes; with `w` bits, pages are 5.2
-and 5.5 bytes smaller on two dumps
-([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
+bit. Until 5th October 2026 each size took 2 bytes, a header of 19 bytes; what `w` bits saved is in
+[chapter 4](#ch-format--layout).
 
 `SEQLZ_LIT_WIDTH_AT` and `SEQLZ_LIT_ZERO_AT` are where the fields of byte 2 start, bit 3 and bit 6. The
 encoder writes `set | (w - 5) << 3`. The decoder reads the width as `(byte >> 3) & 7` and rejects the
@@ -646,24 +574,9 @@ E.g. a page with 1000 literals: `1000 - 1000 / 16 = 1000 - 62 = 938`, so the str
 886 bytes, 11.4% less than the literals, for the page to get coded literals. With 100 literals the
 streams must stay below `94 - 51 = 43` bytes, less than half; few pages with so few literals qualify.
 
-Both parts of the rule have a reason. The 1/16 is about zram's size classes: zsmalloc stores a page in
-slots at least 16 bytes apart, so saving a few bytes mostly saves nothing, and coding the literals
-wherever that saved anything saved less than 0.1% of a page more, for decoding time on every such page
-([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-literals-one-table-per-page-in-8-streams)). The
-51 bytes are about the phone. A page with coded literals has a fixed cost on every read, whatever the
-number of literals: the literal table has to come from memory, and the literals are decoded into a
-buffer first. On the Mi 9T's little core that is several µs.
-
-::: measured 51 bytes, on the phone
-Raising the minimum from 19 to 51 bytes made pages 7.9 bytes larger on the phone's pages and the time
-per page written 2.7 µs shorter on the A55, 1.1 µs on the A76. On the PC, in the kernel VM, it was 11
-bytes for 0.1 µs, which does not pay; the phone is the target, so 51 stayed. Only 19, 51 and 115 were
-timed, so 51 is the best of three, not a measured optimum
-([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#coded-literals-only-where-they-save-51-bytes-27-µs-per-page-written-less-on-the-a55-kept)).
-Measured again with the decoder's later prefetches, 51 against 19 saved only 0.8 µs per page written
-on the A55 and 0.4 on the A76, both within the noise; 51 stayed, "with less reason than it had"
-([item 9 of "Six choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#9-the-51-bytes-of-coded-literals-only-where-they-save-51-bytes-again-with-item-4s-and-7s-prefetches)).
-:::
+Why 1/16 and why 51 bytes, with the measurements on the phone, is in
+[chapter 11](#ch-literals-enc--rule). In short: zsmalloc's size classes make a saving of a few bytes
+worth little, and a page with coded literals costs a fixed time on every read.
 
 The 51 bytes also cover the header: `SEQLZ_LIT_HEADER(12)` is 15 bytes, at most 13 more than the raw
 page's 2. A `static_assert` in `seqlz_compress.c` checks that, because the encoder writes the coded
@@ -720,9 +633,10 @@ Lines 348 to 350 are its safety contract, and the most important lines of this h
 `scratch`. zram stores no checksum, so a page damaged in memory, or a bug elsewhere, reaches the
 decoder as it is, and a decoder that then wrote outside its buffer would turn a damaged page into a
 damaged kernel. Every length and offset is checked before it is used ([chapter 14](#ch-decode)), and
-fuzz targets feed the decoder random and damaged pages to keep it that way: 3.2 billion inputs by
-`docs/plan.md`'s count, 60 seconds per target in CI for every change, and an
-hour a day with each of three sanitizers in ClusterFuzzLite.
+fuzz targets feed the decoder random and damaged pages to keep it that way: 1.42 billion inputs in one
+run of 12 instances for 2 hours on 9th October 2026 ([chapter 14](#ch-decode--safety)), 60 seconds per
+target in CI for every change, and an hour a day with each of three sanitizers in ClusterFuzzLite, a
+service that runs the fuzz targets for the repository ([chapter 15](#ch-zram-glue--tests)).
 
 `scratch` may be `NULL`. Then pages with coded literals are invalid, which is right for a zram device
 at level 1, `seqlz-fast`: its compressor never codes literals, so its decoder needs no scratch, and the
@@ -769,11 +683,8 @@ encoder are one loop ([chapter 9](#ch-matcher), [chapter 10](#ch-encoder)).
 `SEQLZ_HASH_BITS` sets the matcher's hash table: `1 << 12 = 4096` entries of 2 bytes on 4 KiB pages,
 8 KiB; `1 << 13 = 8192` entries on 16 KiB pages, 16 KiB. Each entry is the position of the last place
 in the page whose next 5 bytes had that hash; a page has 4096 positions, one entry each if the hash
-spread them perfectly. The measurements on the Mi 9T
-([item 5 of "Six choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)):
-2048 entries made pages 2.7 bytes larger and writes no faster; 8192 entries changed the size by less
-than a byte, cost the A55 1.6 µs per write, and would have needed 16 KiB per CPU, right at the project's
-limit of `lz4`'s work memory. The `?:` is a constant expression the compiler evaluates, so it can size an array.
+spread them perfectly. 2048 and 8192 entries were measured on the Mi 9T and lost, see
+[chapter 9](#ch-matcher--hash). The `?:` is a constant expression the compiler evaluates, so it can size an array.
 The kernel's copy has `12U` there.
 
 `SEQLZ_MAX_SEQUENCES` is the most sequences a page can have. Every sequence but the last has a match of
@@ -796,25 +707,10 @@ the union costs no byte more than the table. On 16 KiB pages both members are 16
 of an anonymous union are used as if they were the struct's own, `st->table` and `st->literals`, which
 C11 and C++ both allow.
 
-::: why The literals in the matcher's table
-Before, `code_literals()` moved the raw literals and the bitstream to the end of the output buffer and
-wrote the coded literals from its front, so all three had to fit at once. With a buffer of exactly one
-page, as zswap gives, that cost 1.6% to 2.9% more memory than with two pages. With the raw literals in
-the matcher's table it is 0.1% to 0.5% on four dumps; what is left are pages whose raw form does not
-fit, although their coded form would. Writes in the kernel VM got 0.08 to 0.18 µs faster, part of that
-from the order of the boots, since `lz4` got 0.02 to 0.06 µs faster too
-([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept)).
-:::
-
-::: kernel Work memory per CPU, as kmalloc() hands it out
-zram keeps one compression stream per CPU, and each gets the codec's work memory. The kernel's
-allocator `kmalloc()` rounds a request up to a power of 2, so what counts is what it hands out, not
-what is asked for. seqlz's kernel backend puts the hash table, 8192 bytes, and the scratch, 4112 bytes,
-into one union of 8192 bytes, which `kmalloc()` hands out as exactly 8 KiB: zram uses a stream for one
-page at a time, compressing or decompressing, and neither keeps anything from one page to the next.
-`lz4` asks `vmalloc()` for 16 416 bytes, 5 pages, 20 480 bytes. [Chapter 15](#ch-zram-glue) has the
-details and the case where zram splits the two.
-:::
+Before, `code_literals()` needed room for the raw literals, the coded ones and the bitstream at once in
+the output, which cost memory with an output buffer of one page; [chapter 11](#ch-literals-enc--in-place)
+has the numbers. In the kernel, the hash table and the scratch of the decoder share one allocation of
+8 KiB per CPU, see [chapter 15](#ch-zram-glue--backend).
 
 @listing src/seqlz.h 395-407
 
@@ -831,7 +727,8 @@ output buffer. It returns the length of the compressed page, or 0.
 
 Lines 418 to 421 are its size contract. zram gives the compressor a buffer of two pages, and that is
 always enough, even for random data that does not compress at all; [chapter 10](#ch-encoder) proves it
-with the 31 bits of `SEQLZ_MAX_ESCAPE_LEN`. A smaller buffer works too, e.g. zswap's single page. A page
+with the 31 bits of `SEQLZ_MAX_ESCAPE_LEN`. A smaller buffer works too, e.g. the single page of
+zswap, the kernel's other compressed swap, a cache in RAM in front of a swap device. A page
 that does not fit is then an error, and the encoder stops "up to 32 bytes before `dst_cap` is full"
 because before each sequence it checks for its literals plus 32 bytes of room, `ENC_ROOM`, not for the
 exact bytes. With zram's two pages that never happens.

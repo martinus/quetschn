@@ -65,7 +65,7 @@ of 4 KiB pages, from `struct seqlz_tables` in `src/seqlz_internal.h` ([chapter 7
 | table | entries | bytes | cache lines | read |
 | --- | --- | ---: | ---: | --- |
 | token decode table | 2048 of 4 bytes | 8192 | 128 | once per sequence |
-| `LL` and `ML` decode tables | 256 of 4 bytes, each | 1024 each | 16 each | for length values |
+| `LL` and `ML` decode tables | 256 of 4 bytes, each | 1024 each | 16 each | for [length values](#ch-format--length-values) |
 | one literal decode table, of 8 | 1024 of 2 bytes | 2048 | 32 | once per coded literal |
 | token codes for the encoder | 3073 of 2 bytes | 6146 | about 96 | once per sequence |
 | the matcher's hash table, per CPU | 4096 of 2 bytes | 8192 | 128 | once per position |
@@ -77,9 +77,10 @@ because their codes have at most 8 (`SEQLZ_MAX_BITS`), the literal tables 1024 b
 have at most 10 (`SEQLZ_LIT_BITS`). Longer codes would compress a little better and double a table.
 
 ::: measured Tables have to stay in L1
-In an early version of the format, a token table for codes of up to 12 bits, 8 KiB of 2-byte entries
-then, made the slowest 1% of cold reads 650 ns slower than a smaller token. With codes of up to 11
-bits, a table of 4 KiB, the p99 of cold reads went from 5070 to 4350 ns. Measured in the userspace
+In an early version of the format, the token had 512 symbols and codes of up to 12 bits, a decode
+table of 8 KiB of 2-byte entries then. With it, the slowest 1% of cold reads were 650 ns slower than
+with the 256-symbol token before it, whose table was smaller. Limiting the same 512 symbols to codes
+of up to 11 bits, a table of 4 KiB, took the p99 of cold reads from 5070 to 4350 ns. Measured in the userspace
 harness on the Ryzen 9 7950X
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
 The comment at `SEQLZ_MAX_BITS` in `src/seqlz.h` says the same for the length tables: one twice as
@@ -96,32 +97,18 @@ code has to ask for the lines ahead of time. That is a **prefetch**: an instruct
 CPU to bring a line into the cache and does not wait for it. On x86-64 it is `prefetcht0`, on arm64
 `prfm`, and the kernel's name for it is `prefetch()`.
 
-`seqlz_decode()` prefetches every line of its tables before it reads the first byte of the page:
-
-@listing src/seqlz_decompress.c 7-26
-
-`prefetch_lines()` takes the table as a `const void *` and copies it into `q`, a `const u8 *`,
-because C defines pointer arithmetic only for pointers to complete types: `q + size` is `size` bytes
-on. It walks the table in steps of `PREFETCH_STEP`, 512 bytes, and the inner loop
-issues one `prefetch()` every `L1_CACHE_BYTES`, 64 bytes, so 8 per step. For the token table, 8192
-bytes, that is 16 steps and 128 prefetches; for each length table 2 steps and 16 prefetches; for the
-page's literal table, in `decode_literals()`, 4 steps and 32. The inner loop has a constant count of
-8, which lets the compiler unroll it: gcc 16.2.1 at `-O3`, the level the kernel copy is built with,
-writes the prefetches out one after the other, and the loop's own instructions, the add and the
-compare, run far less often than once per line. With one line per iteration,
-the comment says, the loop took more instructions than the prefetches. That was measured on the
-phone: a plain loop made the big core's cold reads of pages with coded literals 0.8 µs slower
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
-The three `static_assert()` lines after it check that each table's size is a multiple of 512 bytes,
-which `prefetch_lines()` needs ([chapter 12](#ch-dec-basics)).
+`seqlz_decode()` asks for the lines of its tables before it reads the first byte of the page, 8 lines
+per round of a small loop. [Chapter 12](#ch-dec-basics--prefetch) goes through that loop,
+`prefetch_lines()`, line by line, and says why a table that does not start at a cache line misses its
+last line: the literal tables always do.
 
 ::: measured What the prefetches give
 On the Mi 9T's little core, a Cortex-A55, in the phone's own kernel: without any table prefetch, cold
 reads were 14.5 µs slower on average and 30 µs slower at p99, 77.28 against 62.76 µs and 120.45
 against 90.26
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#4-prefetching-the-tables-the-a55-needs-it-the-a76-is-faster-without)).
-On the PC the prefetches cover the tables so well that reading every line of them before the decode
-made the decode in a swap-in only 6 to 25 ns faster
+On the PC the prefetches cover the tables so well that, in a swap-in in the kernel VM, reading every
+line of them before the decode made the decode only 6 to 25 ns faster
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 The same idea for the compressed data, in zram before the decoder runs, took `lz4`'s p99 of cold
 reads from 5600 to 3891 ns in the kernel VM
@@ -447,7 +434,8 @@ of the pages are the same either way: the change was the order, not the codes.
 ::: measured The bit order on the phone
 On the Mi 9T's big core, a Cortex-A76, with the token table not prefetched on that core as it was
 then: with the table's codes in one range, cold reads were 9.57 to 9.73 µs in every run; with the codes spread, one build of the same decoder read in 9.39 µs and
-another in 10.50, depending on where the module's tables landed in memory. On the PC the change
+another in 10.50, depending on where the tables of the kernel module landed in memory (a module is
+kernel code loaded at run time, see [chapter 15](#ch-zram-glue--init)). On the PC the change
 cost nothing: 7370 against 7410 cycles per page in the decode loop
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
 :::
@@ -475,54 +463,31 @@ took 1867 cycles less, with the same instructions and the same L1 misses: 111 mi
 The second number is the surprise: a branch predictor learns a page of 4 KiB after one decode.
 In userspace it is the same: 130 mispredictions per page for a page decoded once, 11.6 for a page
 decoded right after itself. Every benchmark that decodes a page more than once, a loop over pages in
-the cache, the project's read benchmark in the kernel VM that reads each page six times in a row,
-measures a decoder that knows the page. A swap-in decodes a
+the cache, the project's read benchmark in the kernel VM, which reads each page 6 times in a row,
+warm and cold, in each of the 3 runs whose median [chapter 1](#ch-zram--codecs) quotes, measures a
+decoder that knows the page. A swap-in decodes a
 page once. Since then, the decode times the project trusts come from `MODE=swap` of its kernel VM,
 which swaps each page in once per pass, with 20 000 other pages in between.
 
 Three branches of the sequence loop made 58% of the mispredictions of a page seen once:
-whether the bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, 24;
-and whether the match's offset is below 8, 20 to 22
+whether the bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, 24 (the
+**fast path** is the common case of a short sequence away from the end of the page, decoded with few
+checks, [chapter 14](#ch-decode)); and whether the match's offset is below 8, 20 to 22
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
 The first one could be removed. Whether 23 bits are left in the buffer depends on the lengths of the
 codes before, which no predictor knows for a new page. But a refill leaves at least 56 bits, and two
-fast sequences take at most 50. So the fast path refills every second time, without asking:
-
-@listing src/seqlz_decompress.c 500-514
-
-The four lines inside the `if` are the refill of `seqlz_br_refill()` without its check that 8 bytes of
-input are left: the fast path runs only where they are, see `FAST_IN_ROOM` below. `get_unaligned_be64()`
-loads the next 8 bytes with the first byte on top, `v >> br->count` moves them below the `count` bits
-that are still in the register, `br->p` moves on by the bytes that went in whole, and `count |= 56` is
-the new count, explained in [registers](#ch-cpu--registers). The last line looks up the next token by
-the top 11 bits. `*skip ^= 1U` flips between 0 and 1, so the `if` alternates: refill, no refill, refill. That is a
-branch every predictor gets right. After a slow sequence, which may have taken more bits,
-`seqlz_decode()` sets `skip` to 0, so the next fast one refills. In the kernel VM this took the
-decoder in a swap-in from 1995 to 2008 ns to 1936 to 1942 ns, 63 ns less
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
-The function is explained in [chapter 14](#ch-decode).
+fast sequences take at most 46 of them on 4 KiB pages, 50 on 16 KiB. So `next_token_fast()` refills
+every second fast sequence without asking, a branch that alternates and that every predictor gets
+right. [Chapter 14](#ch-decode--next-token) goes through the lines, the count of bits, and what it
+saved per swap-in in the kernel VM and on the phone.
 
 ### Code without a branch
 
 The other way to avoid a misprediction is code without a branch: compute the outcome with
 arithmetic. `seqlz_off_class()` picks the offset class of a match for the encoder. The classes come
-in no order a predictor could learn, so it has no `if`:
-
-@listing src/seqlz.h 186-206
-
-A comparison in C is an `int`, 0 or 1, and the code uses it as a number. For `off = 24` after a match
-with `last = 16`:
-
-- `is_new = (24 == 16) - 1U = 0 - 1U`, which wraps to `0xffffffff`: all bits set.
-- `aligned = (24 >= 16) & ((24 & 7) == 0) = 1 & 1 = 1`.
-- `cls = (1 + 1 + 0 + 2 * 1) & 0xffffffff = 4`.
-
-For `off = 24` after `last = 24`, `is_new = 1 - 1U = 0`, and the `& 0` makes the class 0, the repeat
-offset. For `off = 300`, `aligned` is 0 because `300 & 7 = 4`, and the class is `1 + 1 + 1 = 3`. The
-offset bits of the class come from `SEQLZ_RAW_BITS()`, a shift and a mask of the constant `0x95C840`,
-one hex digit per class: `(0x95C840 >> 16) & 15 = 5` bits for class 4. The comment above it in
-`seqlz.h` says why it is a constant: computing class 3's bits from the page size made gcc branch on
-the class. [Chapter 6](#ch-header) goes through both.
+in no order a predictor could learn, so it has no `if`: each comparison in C is an `int`, 0 or 1, and
+the code adds and masks them into the class. [Chapter 6](#ch-header--offsets) works it out for a few
+offsets.
 
 Code without branches is not always faster. It runs every instruction of both outcomes, and a branch
 that the predictor gets right costs almost nothing. An early version of the decoder replaced its
@@ -541,8 +506,8 @@ mispredictions.
 
 The matcher in `src/page_lz.h` asks two questions at every position of the page: do the next 4 bytes
 match at the repeat offset, and do they match at the candidate from the hash table? Both answers are
-close to random. It reads both candidates first and decides with one branch on `rep_hit | cand_hit`.
-The listing is in [in-order cores](#ch-cpu--in-order) below. With three
+close to random. It reads both candidates first and decides with one branch on `rep_hit | cand_hit`
+([chapter 9](#ch-matcher--position) has the lines). With three
 branches per position, the matcher mispredicted 539 times per page; with one branch, 329, and the p99 of
 compressing a cold page went from 15.4 to 12.6 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-seqlz-fast)).
@@ -554,23 +519,15 @@ sequence of steps where each needs the result of the one before. A chain sets a 
 time, whatever the width of the core: if each step takes 5 cycles and there are 100 of them, it takes
 500 cycles, even if the core could run 6 instructions per cycle.
 
-Decoding Huffman codes is such a chain. To decode a literal, the decoder looks at the next 10 bits of
-its stream, looks them up in the literal table, writes the byte, and shifts the stream by the code's
-length:
-
-@listing src/seqlz_decompress.c 291-298
-
-`bits >> (64U - SEQLZ_LIT_BITS)` is the top 10 bits of the stream, the index into the page's literal
-table `lt`. The entry `e` has the byte in bits 8 to 15 and the code's length in its low bits, so
-`(u8)(e >> 8)` is the literal and `e & mask` how far the stream moves on. `mask` is 63 for a literal
-that counts. In the last step of a page it is 0 for a stream that has no literal left: that stream
-decodes a byte too, which lands behind the literals, but does not move on
-([chapter 13](#ch-literals-dec)). The next literal's 10 bits are known only after the shift, and the
-shift needs the code's length, which is in the entry the load returns. So in one stream every literal waits for the load and the
-shift of the one before: an L1 load takes a few cycles, the shift one more. That is the chain of
-the top row in the figure. The 8 streams of a page with coded literals are 8 such chains that do not
-depend on each other ([chapter 4](#ch-format--layout)): the decoder steps all 8 in turn, and while one
-stream's load is on its way, the next stream's load can start.
+Decoding Huffman codes is such a chain. To decode a literal, the decoder takes the next 10 bits of
+its stream, looks them up in the literal table, writes the byte the entry holds, and shifts the
+stream by the code's length, which the entry holds too ([chapter 13](#ch-literals-dec--decode) has
+the lines). The next literal's 10 bits are known only after the shift, and the shift needs the entry
+the load returns. So in one stream every literal waits for the load and the shift of the one before:
+an L1 load takes a few cycles, the shift one more. That is the chain of the top row in the figure.
+The 8 streams of a page with coded literals are 8 such chains that do not depend on each other
+([chapter 4](#ch-format--layout)): the decoder steps all 8 in turn, and while one stream's load is on
+its way, the next stream's load can start.
 
 <figure class="diagram">
 <div class="scroll">
@@ -664,15 +621,11 @@ stream's load is on its way, the next stream's load can start.
 <figcaption>Schematic, not to scale: one stream is one chain, lookup then shift then the next lookup. 8 streams are 8 chains that start one or two cycles apart.</figcaption>
 </figure>
 
-::: measured 4 streams and 8
-With 4 streams, a literal took about 2.9 cycles to decode. With 8, decoding a page in the cache took
-8676 instead of 9070 cycles, and in the kernel, cold, p50 and p99 went from 2940 and 4810 ns to 2860
-and 4531 ns, for 8 more bytes of header with the stream sizes of 2 bytes of the time
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
-Measured again in October with today's header, 4 streams made reads 0.7% to 1.8% slower in the kernel
-VM and saved 1.1 to 2.8 bytes per page, so 8 stayed
+With 4 streams a literal took about 2.9 cycles to decode, and 8 streams made a page decode faster
+for a few bytes more header; [chapter 13](#ch-literals-dec--cost) has the measurements. Measured
+again in October 2026, 4 streams made reads 0.7% to 1.8% slower in the kernel VM and saved 1.1 to 2.8
+bytes per page, so 8 stayed
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
-:::
 
 The encoder has the same chain the other way round: appending a code to a stream is a shift and an
 or on that stream's accumulator. `lit_streams()` in `src/seqlz_compress.c` writes 4 streams at a time,
@@ -715,20 +668,13 @@ the A55, and together with three smaller changes from 17 842
 for the whole latency of the load. If the load is issued a few instructions earlier, the instructions
 in between fill the wait. Compilers do some of this, but only within what they can prove is safe and
 worth it. The matcher does it by hand: it loads the next position's 8 bytes, hash, table entry and
-candidate bytes while it compares the current one. This is called **software pipelining**:
-
-@listing src/page_lz.h 124-149
-
-`v_next` and `h_next` are the next position's bytes and hash, computed at the top of the loop, before
-anything about the current position is decided. On a miss, the next position's table entry `cand` and
-its bytes `cand_bytes` are loaded right away, so the next iteration starts with them on their way. The
-same lines show the [one branch for two questions](#ch-cpu--branches): `rep_hit` and `cand_hit` are
-computed as numbers, and only `!(rep_hit | cand_hit)` is a branch. On the A55 the loads ahead, with two smaller changes to the same loop, took
-compression from 43 841 to 42 349 cycles per page, 3.4%, with the same output; on the PC from 16 489
-to 16 148
+candidate bytes while it compares the current one. This is called **software pipelining**
+([chapter 9](#ch-matcher--position) has the lines). On the A55 the loads ahead, with two smaller
+changes to the same loop, took compression from 43 841 to 42 349 cycles per page, 3.4%, with the same
+output; on the PC from 16 489 to 16 148
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)).
 An earlier try of the same idea on the PC alone did nothing: an out-of-order core already loads the
-next position ahead by itself. [Chapter 9](#ch-matcher) explains the loop.
+next position ahead by itself.
 
 The decoder does the same: in the fast path, `next_token_fast()` looks up the next token before the
 copies of the current sequence, and the copies fill the time the load takes. On the phone that made
@@ -737,18 +683,12 @@ cold reads at the median 162 ns closer to `lz4` on the little core and 126 ns on
 
 **A miss it did not see coming stops it.** An out-of-order core finds the table lookups of the next
 sequences in its window and starts their misses early. An in-order core reaches each one only when it
-gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read. On the PC,
-prefetching the tables once made about 100 ns of difference, within the scatter of that measurement
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
+gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read, against
+6 to 25 ns on the PC ([the box above](#ch-cpu--prefetch)).
 
-::: why One decode loop for all cores
-Until 10th October 2026, the arm64 build of the decoder asked which core it ran on and took a loop
-written for in-order cores on a Cortex-A55. The kernel copy now has one loop for every core: nothing
-else in `lib/` reads the CPU's model, and the list of in-order cores would need an entry for every new
-little core. Measured on the Mi 9T, the out-of-order loop costs the A55 at most about 0.3 µs per warm
-read, 3%, and nothing that shows on the A76
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
-:::
+Until 10th October 2026 the arm64 decoder had a second loop, written for in-order cores; now one loop
+runs on every core, because nothing else in the kernel's `lib/` asks which CPU it runs on
+([chapter 17](#ch-decisions--decoder) has the cost on the A55).
 
 ## Registers and the 64-bit bit buffer {#ch-cpu--registers}
 
@@ -763,9 +703,8 @@ bits` with the next bits on top and an `int count` of how many of them are real.
 bytes at once and ORs them in below the bits that are left, and the code then takes tokens, offsets
 and length values off the top with shifts. One load of 8 bytes serves two or three sequences: a
 refill leaves at least 56 bits, and a sequence on the fast path takes at most 11 bits of token and
-14 of offset (12 on 4 KiB pages). [Chapter 12](#ch-dec-basics) shows the reader line by line; one detail shows how tight
-it is. After a refill, `count |= 56` sets `count` to the number of bits now in the register: with 10
-bits left, the refill adds 6 whole bytes, and `10 | 56 = 58 = 10 + 48`.
+14 of offset (12 on 4 KiB pages). [Chapter 12](#ch-dec-basics--bit-reader) shows the reader line by
+line.
 
 The 8 literal streams need 8 such buffers at once, and a pointer each. With a count per stream as
 well, they did not fit into the registers of x86-64. So a stream has no count: its 64 bits carry a
@@ -776,7 +715,8 @@ at a refill, once per 5 literals of a stream.
 
 Registers also decided a choice in the matcher. Like lz4, it once moved on faster and faster when it
 found no match for a while. That step needs one more value in the loop, and "the matcher's loop has no
-register to spare". Without it, pages that compress are written 1% to 3% faster in the kernel VM
+register to spare". Without it, the pages that compress are written 5% faster, and in the kernel VM
+`seqlz-fast-lit` writes a page 0.21 and 0.25 µs faster on the two desktop dumps, 3%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 
 ## Loads at any address {#ch-cpu--unaligned}
@@ -789,22 +729,12 @@ aliasing rules, which the compiler may use to reorder loads and stores. The kern
 `-fno-strict-aliasing`, but the alignment rule stays.
 
 The answer in `src/seqlz_compat.h` is `memcpy()` into a local variable; the kernel's own
-`get_unaligned_le64()` gets the same single load another way. This is the version for builds outside
-the kernel ([chapter 5](#ch-compat)):
-
-@listing src/seqlz_compat.h 163-169
-
-`SEQLZ_LE64()` is nothing on a little-endian CPU and a byte swap on a big-endian one, see
-[byte order](#ch-cpu--endian). A `memcpy()` of a constant 8 bytes is not a call: the compiler knows what it does and writes one load.
-x86-64 and arm64 both load from any address. gcc 16.2.1 at `-O2` turns `get_unaligned_le64()` into
-`movq (%rdi), %rax`, and clang for arm64 into `ldr x0, [x0]`.
-
-There is one catch in the kernel. With `CONFIG_FORTIFY_SOURCE`, `memcpy()` is a checked wrapper, and
-the Mi 9T's 4.14 kernel and its clang did not inline it: a module had 63 calls to `memcpy()`, one per
-copy of 8 or 16 bytes in the matcher, the encoder and the decoder. So the copies in `src/` call
-`__builtin_memcpy()`, as lib/lz4's `LZ4_memcpy()` and lib/zstd's `ZSTD_memcpy()` do, which the
-compiler always inlines (commit `48a7043`). `copy8()` and `copy16()` in [chapter 12](#ch-dec-basics)
-are such copies.
+`get_unaligned_le64()` gets the same single load another way. A `memcpy()` of a constant 8 bytes is
+not a call: the compiler knows what it does and writes one load, and x86-64 and arm64 both load from
+any address. gcc 16.2.1 at `-O2` turns `get_unaligned_le64()` into `movq (%rdi), %rax`, and clang for
+arm64 into `ldr x0, [x0]`. [Chapter 5](#ch-compat--endian) has the lines. In the kernel, with
+`CONFIG_FORTIFY_SOURCE`, a `memcpy()` may stay a call, which is why the copies in `src/` call
+`__builtin_memcpy()`, see [chapter 6](#ch-header--summary).
 
 ## Byte order {#ch-cpu--endian}
 
@@ -814,32 +744,18 @@ mainframe, which Linux also runs on, is big endian. The format fixes the order w
 2-byte header and the stream sizes are little endian ([chapter 4](#ch-format--layout)), and the bits
 of the bitstream are read from the top bit of each byte down. `src/seqlz_compat.h` gives each load
 its order explicitly, `get_unaligned_le64()` or `get_unaligned_be64()`, and on a CPU of the other
-order the load includes a byte swap. So a page has the same bytes on every CPU. Before commit
-`91fa53e` some loads used the CPU's own order, and on s390x under qemu every page failed to decode
-again, 4656 of 4656; CI now compresses 600 pages on x86-64, on 32-bit x86 and on s390x and compares
-the bytes.
+order the load includes a byte swap. So a page has the same bytes on every CPU; CI checks that on
+s390x, see [chapter 5](#ch-compat--endian). Both orders are used on purpose.
 
-Both orders are used on purpose:
-
-**Little endian for comparing bytes.** `seqlz_match_len()` in [chapter 9](#ch-matcher) finds where two
-strings of bytes first differ. It loads 8 bytes of each as little-endian numbers and XORs them: the
-result has 0 bits where the bytes agree. Byte 0 of the string is the lowest byte of the number, so the
-first differing byte holds the lowest set bit. Counting the trailing zero bits, `__builtin_ctzll()`,
-and dividing by 8 gives its position. For `abcdefgh` against `abcXefgh`, only byte 3 differs, `d` is
-`0x64` and `X` is `0x58`, their XOR `0x3c` has its lowest set bit at bit 2, so the count is `24 + 2 =
-26`, and `26 >> 3 = 3`.
+**Little endian for comparing bytes.** `seqlz_match_len()` loads 8 bytes of two strings as
+little-endian numbers and XORs them: byte 0 of the string is the lowest byte, so the first byte that
+differs holds the lowest set bit, and counting the trailing zero bits finds it
+([chapter 9](#ch-matcher--match-len)).
 
 **Big endian for the bitstream.** The decoder wants the next bits on top of a 64-bit register. If 8
 bytes are loaded big endian, the first byte of the stream lands in the top 8 bits, and its bit 7 in
-bit 63. For the page of `ab` in [chapter 4](#ch-format--example), the bitstream starts `dc 65 ef db
-8a`; loaded big endian that is `0xdc65efdb8a......`, and its top 11 bits, `0xdc65efdb8a000000 >> 53`,
-are 1763, binary `11011100011`, the index of token 1010's entry. On x86-64 the big-endian load is
-`movq` and `bswap`, on arm64 `ldr` and `rev`: one instruction more per refill.
-
-The encoder writes the literal streams the same way round. `lit_flush()` in [chapter 11](#ch-literals-enc)
-swaps a stream's 64 bits once with `__builtin_bswap64()` and then stores them little endian, which
-is a big-endian store; its comment says why not `put_unaligned_be64()`: in both branches that gave
-`code_literals()` other code on arm64.
+bit 63. On x86-64 the big-endian load is `movq` and `bswap`, on arm64 `ldr` and `rev`: one
+instruction more per refill.
 
 ## Eight sums in one register {#ch-cpu--swar}
 
@@ -851,37 +767,18 @@ things at once.
 The encoder uses it to choose the literal table of a page ([chapter 11](#ch-literals-enc)). It has to
 know how many bits the page's literals take in each of the 8 tables. `lit_cost` in `struct
 seqlz_tables` holds, for each of the 256 byte values, one `u64` with the byte's code length in all 8
-tables, table `k` in bits `8k` to `8k + 7`. For the byte `0x65`, the letter `e`, the code lengths in
-tables 0 to 7 are 4, 9, 10, 5, 9, 9, 10 and 10 bits, so its `u64` is `0x0a0a0909050a0904`: table 0's 4
-in the lowest byte. Adding the `u64` of every literal sums all 8 tables with one add per literal.
-For the 4 literals `65 20 65 00`:
-
-```text
-  0x0a0a0909050a0904   65, the letter e
-+ 0x0808090706070704   20, a space
-+ 0x0a0a0909050a0904   65
-+ 0x0803090202020208   00
-= 0x241f241b121d1b14   table 0: 0x14 = 20 bits, table 3: 0x12 = 18 bits, ...
-```
-
-The 8 lanes are 20, 27, 29, 18, 27, 36, 31 and 36 bits: table 3 codes these 4 bytes in 18 bits, where
-they take 32 raw. A lane holds at most 255. A literal code has at most 10 bits, so 25 literals are
-safe, `255 / 10 = 25`, and that is `LIT_COST_RUN`. After 25 literals per stream, `lit_cost()` moves
-the sums into wider lanes: `x & 0x00ff00ff00ff00ff` keeps tables 0, 2, 4 and 6 as four 16-bit lanes,
-`(x >> 8) & 0x00ff00ff00ff00ff` tables 1, 3, 5 and 7. For the sum above that is `0x001f001b001d0014`,
-the lanes 20, 29, 27 and 31, and `0x002400240012001b`, the lanes 27, 18, 36 and 36. In the kernel the
-whole choice costs 30 to 40 ns per write, about 0.5% of a write of about 6900 ns; in userspace it was
-at most 400 cycles, 1.5% of a write
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
+tables, table `k` in bits `8k` to `8k + 7`. Adding the `u64` of every literal sums all 8 tables with
+one add per literal. A lane holds at most 255, so after 25 literals of at most 10 bits the sums move
+into wider lanes. [Chapter 11](#ch-literals-enc--pricing) works it through for 4 bytes of text and
+gives what it costs per write.
 
 Three more places use a register as 8 bytes at once:
 
 - `seqlz_match_len()` compares 8 bytes with one XOR, see [byte order](#ch-cpu--endian).
-- `seqlz_hash5()` in the matcher shifts 8 loaded bytes left by 24, which drops the top 3 bytes, and
-  multiplies by an odd constant, so that the top 12 bits of the product depend on all 5 bytes left.
-- `repeat_pattern()` in the decoder builds 8 bytes of a short repeating match with one multiply. For
-  offset 3 after `abc`, the 3 bytes as a number are `0x636261`, and times `0x0001000001000001`, which
-  has a 1 in bytes 0, 3 and 6, that is `0x6261636261636261`: stored little endian, `abcabcab`.
+- `seqlz_hash5()` in the matcher hashes 5 of 8 loaded bytes with one shift and one multiply
+  ([chapter 9](#ch-matcher--hash)).
+- `repeat_pattern()` in the decoder builds 8 bytes of a short repeating match with one multiply
+  ([chapter 12](#ch-dec-basics--pattern)).
 
 ## Copying more than needed {#ch-cpu--wild-copy}
 
@@ -974,39 +871,22 @@ and two stores, whatever the length, and then moves on by the real length:
 
 The bytes past the real length are wrong, but the next sequence writes over them. This is sometimes
 called a **wild copy**. It needs room: the copy may write past the last byte the sequence needs, and
-read past the last literal. So the fast path of `seqlz_decode()` is taken only where there is enough,
-which it checks with one compare per buffer against limits computed once per page
-([chapter 14](#ch-decode)):
-
-- in the page, 64 bytes, `FAST_PAGE_ROOM`: a fast sequence writes at most 54 bytes past where it
-  starts, up to 14 literals and then up to 40 bytes of match;
-- in the literals, 16 bytes, `FAST_LIT_ROOM`, for one copy of 16;
-- in the input, 8 bytes, `FAST_IN_ROOM`, for a refill without a check.
-
-Near the end of the page the slow path copies 16 or 8 bytes at a time while they fit, and the last
-bytes one by one. The buffer coded literals are decoded into, `SEQLZ_SCRATCH`, is 4112 bytes, a page
-and 16 bytes, so that the copy of 16 literal bytes never reads past it. The encoder does the same on
-its side, with `ENC_ROOM`, 32 bytes, kept free between the literals and the bitstream it writes
-([chapter 10](#ch-encoder)).
+read past the last literal. So the fast path of `seqlz_decode()` is taken only where there is enough
+room in the page, in the literals and in the input, which it checks with one compare per buffer
+against limits computed once per page ([chapter 14](#ch-decode--rooms)). Near the end of the page the
+slow path copies fewer bytes at a time. The encoder keeps such room too ([chapter 10](#ch-encoder)).
 
 ::: measured 16 bytes, not 32
-Copying 32 bytes of every match made the mean faster and the p99 slower, 3570 to 4150 ns: the slowest
-pages have many short matches, and each paid for 32 bytes
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
-On the phone, fixed copies of 32 or 40 bytes made warm reads 0.1 µs slower on the big core and 0.5 to
-0.8 µs on the little one
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#6-the-fast-paths-copies-as-they-are)).
-The other way, copying byte by byte up to the end of the page, made the slowest pages 10 times
-slower than lz4: with offset 1 every byte waited for the store before it
+Copying 32 bytes of every match made the mean faster and the p99 slower, because the slowest pages
+have many short matches and each paid for 32 bytes ([chapter 12](#ch-dec-basics--copy-match) has the
+numbers). The other way, copying byte by byte up to the end of the page, made the slowest pages 10
+times slower than lz4: with offset 1 every byte waited for the store before it
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)).
 :::
 
-When the offset is below 16, the bytes a copy of 16 reads overlap the bytes it writes, and the copy
-has to be careful:
-an 8-byte load must not read bytes that the store before it has not written yet. `copy_match()` and
-`copy_match_fast()` handle offsets below 8 with the pattern of `repeat_pattern()` above, and offsets
-of 8 and more with copies of 8 bytes, each of which reads only bytes written at least 8 bytes
-earlier. [Chapter 12](#ch-dec-basics) goes through both.
+When the offset is below 16, the bytes a copy of 16 reads overlap the bytes it writes: an 8-byte load
+must not read bytes that the store before it has not written yet. [Chapter 12](#ch-dec-basics--copies)
+shows how the copies handle offsets below 8 and from 8 on.
 
 ## Undefined behaviour the code steers around {#ch-cpu--ub}
 
@@ -1017,22 +897,13 @@ that look odd until you know which one.
 **A shift by the width of the type or more.** `x << n` and `x >> n` are undefined for a 64-bit `x`
 when `n` is 64 or more. The hardware does not agree on a result either. x86 uses only the low 5 bits of
 the count for a 32-bit shift and the low 6 bits for a 64-bit one, so a shift by the width shifts by
-0 and returns `x`. 32-bit arm uses the low byte of the count, and a 32-bit value shifted by 32 is 0. Bit readers meet this whenever a field can have 0 bits: "the top `x` bits" is
-`v >> (64 - x)`, a shift by 64 for `x = 0`. `seqlz_br_value()` reads the `x` extra bits of a length value,
-and `x` is 0 for a value below 16, so it shifts twice:
-
-@listing src/seqlz_decompress.c 229-243
-
-The first line looks up the top 8 bits, `SEQLZ_MAX_BITS`, in the table of `ll` or `ml` values. Its
-entry holds the code's length `n` in bits 0 to 3, the number of extra bits `x` in bits 4 to 7, and
-the base value from bit 8 on, which `(e >> 8) & 0xffffU` takes out. In the sum,
-`r->bits << n` drops the code of `n` bits, the `>> 1` clears the top bit, and the last shift, by `63U
-- x`, is at most 63. `seqlz_br_drop()` then takes the code and the extra bits off the register, and the base plus the extra
-bits is the value. [Chapter 12](#ch-dec-basics) explains the rest of the function. For the page of
-`ab`, the `ML` code `111101` has `n = 6` and `x = 11`, and the expression is the 11 bits after the
-code, 2011. For a value below 16, `x = 0`, the shift by 63 of a number whose top bit is clear gives
-0, which is right. Written the obvious way, the same `x = 0` would shift by 64, and on x86-64 return
-the whole register instead of 0.
+0 and returns `x`. 32-bit arm uses the low byte of the count, and a 32-bit value shifted by 32 is 0.
+Bit readers meet this whenever a field can have 0 bits: "the top `x` bits" is
+`v >> (64 - x)`, a shift by 64 for `x = 0`. `seqlz_br_value()` reads the `x` extra bits of a length
+value, and `x` is 0 for a value below 16. So it shifts twice: first by 1, then by `63 - x`, which is
+at most 63, and a value below 16 comes out as 0, as it should. Written the obvious way, the same
+`x = 0` would shift by 64, and on x86-64 return the whole register instead of 0.
+[Chapter 12](#ch-dec-basics--bit-reader) goes through the function.
 
 The token table's entries use a mask instead. An entry holds the shift that cuts the offset out of
 the bits, `64 - raw_bits`, but `& 63`: for class 0, without offset bits, that is 0 instead of 64, the
@@ -1041,13 +912,12 @@ shift is harmless, and the decoder then takes the repeat offset because the fiel
 reason.
 
 **Counting the zeros of 0.** `__builtin_ctzll(x)`, the number of trailing zero bits, is undefined for
-`x = 0`, and here the hardware differs again. gcc writes `rep bsf`, which runs as `tzcnt` on CPUs
-that have it and returns 64, and as the older `bsf` on CPUs that do not, which Intel documents as
-undefined for 0. arm64 has no such instruction; clang writes a bit reversal and a count of leading
-zeros, which gives 64. `seqlz_match_len()` calls it only where the XOR is not 0, and makes that plain
-with `x | 1ULL << 63`, one instruction, `bts` or `orr`: a number with bit 63 set is never 0, and for a
-number that is not 0, the OR does not change the count. The literal streams never pass 0 either: their marker bit, the 1 below
-the last real bit ([registers](#ch-cpu--registers)), is never shifted out.
+`x = 0`, and the hardware differs again. gcc writes `rep bsf`, which runs as `tzcnt` and returns 64
+on CPUs that have it, and as the older `bsf`, undefined for 0, on CPUs that do not; clang for arm64
+gives 64. `seqlz_match_len()` calls it only where the XOR is not 0, and makes that plain to the
+compiler with one OR ([chapter 9](#ch-matcher--match-len)).
+The literal streams never pass 0 either: their marker bit, the 1 below the last real bit
+([registers](#ch-cpu--registers)), is never shifted out.
 
 **A pointer outside its buffer.** In C, computing a pointer before the start of an array, or more
 than one past its end, is undefined even if it is never used to load. `seqlz_decode()` needs the
@@ -1056,12 +926,13 @@ bytes of input that would be a pointer before the input. So `lit_fast` and `in_f
 long` numbers, not pointers, and the fast path compares addresses as numbers.
 
 What the code relies on instead is what C defines: unsigned arithmetic wraps around. `off - 1U >= (unsigned int)(d - (u8 *)dst)` checks in one compare that an offset is at least 1 and at most the bytes
-written: for `off = 0`, `off - 1U` is `0xffffffff`, larger than any page. The same wrap makes
-`is_new` above all ones.
+written: for `off = 0`, `off - 1U` is `0xffffffff`, larger than any page. The same wrap gives
+`seqlz_off_class()` its mask of all ones ([chapter 6](#ch-header--offsets)).
 
 ## What the kernel's sanitizers add {#ch-cpu--ubsan}
 
-The kernel can check for some undefined behaviour at run time. `CONFIG_UBSAN_SHIFT` checks every
+The kernel can check for some undefined behaviour at run time, with the undefined behaviour sanitizer,
+**UBSan**. `CONFIG_UBSAN_SHIFT` checks every
 shift whose count the compiler cannot prove to be in range, and `CONFIG_UBSAN_BOUNDS` every array
 index it cannot prove to be inside the array. Fedora's x86-64 kernel enables both, and the project
 builds its benchmark copies of every codec with the same flags, `-fsanitize=shift` and
