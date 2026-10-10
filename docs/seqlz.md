@@ -240,9 +240,11 @@ the lighter one decoding.
 
 At p99 `seqlz-fast-lit` reads cold pages in 4.51 and 4.61 µs, faster than `lzo-rle` (5.26 and 5.48)
 and than `lz4` (4.72 and 4.71). It writes in 11.2 and 11.3 µs, where `lz4` needs 9.3 and 9.5 and
-`zstd` 23.5 and 23.7. Its work memory is 12 304 bytes per CPU: the matcher's table of
-8192 bytes and a buffer of 4112 bytes the decoder decodes literals into. `lz4`'s is 16 440: the
-16 416 bytes of work space the limit is about, and a small struct. Two things are not work memory:
+`zstd` 23.5 and 23.7. Its work memory is 8 KiB per CPU, one `kmalloc()` for the matcher's table of
+8192 bytes and a buffer of 4112 bytes the decoder decodes literals into, which are never in use at the
+same time; 16 KiB once zram gives compression and decompression contexts of their own. `lz4` takes the
+16 416 bytes of work space the limit is about from `vmalloc()`, which are 5 pages, 20 KiB, and a small
+struct. Two things are not work memory:
 the buffer the compressed page is written into is zram's, two pages per CPU for every codec, and the
 tables for encoder and decoder, 43 280 bytes, are built from the fixed code lengths and shared by all
 CPUs: once when the kernel starts in the kernel's copy (`tools/kernel-port/`), once per zram device in

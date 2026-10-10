@@ -14,8 +14,13 @@
 #include "backend_seqlz.h"
 
 #ifndef ZCOMP_RW_SPLIT
-/* the work memory of compression and of decompression, per CPU */
-struct seqlz_ctx {
+/*
+ * The work memory of compression and of decompression, per CPU. zram holds
+ * the stream's mutex for either, and neither keeps anything in it from one
+ * page to the next, so they share it: kmalloc() gives 8 KiB for the larger,
+ * 16 KiB for both together.
+ */
+union seqlz_ctx {
 	u8 cmem[SEQLZ_MEM_COMPRESS];
 	u8 dmem[SEQLZ_MEM_DECOMPRESS];
 };
@@ -67,8 +72,10 @@ static int seqlz_create_dctx(struct zcomp_params *params,
 #else
 static int seqlz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	struct seqlz_ctx *c = kvzalloc_obj(*c);
+	union seqlz_ctx *c;
 
+	BUILD_BUG_ON(sizeof(*c) > KMALLOC_MAX_CACHE_SIZE);
+	c = kvzalloc_obj(*c);
 	if (!c)
 		return -ENOMEM;
 	ctx->context = c;
@@ -87,7 +94,7 @@ static int seqlz_zcomp_compress(struct zcomp_params *params,
 #ifdef ZCOMP_RW_SPLIT
 	void *wrkmem = ctx->context;
 #else
-	void *wrkmem = ((struct seqlz_ctx *)ctx->context)->cmem;
+	void *wrkmem = ((union seqlz_ctx *)ctx->context)->cmem;
 #endif
 	int ret;
 
@@ -107,7 +114,7 @@ static int seqlz_zcomp_decompress(struct zcomp_params *params,
 #ifdef ZCOMP_RW_SPLIT
 	void *wrkmem = ctx->context;
 #else
-	void *wrkmem = ((struct seqlz_ctx *)ctx->context)->dmem;
+	void *wrkmem = ((union seqlz_ctx *)ctx->context)->dmem;
 #endif
 	int ret;
 
