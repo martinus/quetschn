@@ -2,7 +2,7 @@
 /*
  * A seqlz decoder written from docs/format.md alone, slow on purpose: every bit is read on its own, every
  * code is found by its canonical number, and every rule of the format is a check where the format
- * states it. Nothing from src/, so that a misreading in seqlz.c is not shared. fuzz/seqlz_diff_fuzz.c
+ * states it. Nothing from src/, so that a misreading in src/ is not shared. fuzz/seqlz_diff_fuzz.c
  * and test/seqlz_ref_test.cpp hold it against seqlz_decode().
  */
 #include "seqlz_ref.h"

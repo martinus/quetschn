@@ -88,7 +88,7 @@
  * match length half as many matches need one as with 4, at the same memory
  * ("Second round: branches, tails and table sizes"). At most 4 and 5:
  * the decoder's token entry has 4 bits for ll and 6 for ml, see token_entry()
- * in seqlz.c.
+ * in seqlz_internal.h.
  */
 #define SEQLZ_LL_BITS 4U
 #define SEQLZ_ML_BITS 5U
@@ -112,7 +112,8 @@
 /*
  * The longest code the escape may have. The encoder counts on 31 bits for a
  * token and its offset, the escape included, to know that zram's two pages are
- * always room enough for a compressed page; see the encoder in seqlz_compress.c.
+ * always room enough for a compressed page; see the encoder in
+ * seqlz_compress.c.
  */
 #define SEQLZ_MAX_ESCAPE_LEN (31U - QUETSCHN_PAGE_BITS - SEQLZ_ESCAPE_BITS)
 /* the largest ll and ml - 4 a token holds: 15 and 31, larger ones follow */
@@ -365,8 +366,8 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 }
 
 /*
- * The compressor finds the matches with its own matcher, in page_lz.h, and
- * writes each sequence as soon as it is found, in one pass over the page.
+ * The compressor finds the matches with its own matcher and writes each
+ * sequence as soon as it is found, in one pass over the page.
  */
 /*
  * The matcher's hash table has 1 << SEQLZ_HASH_BITS entries of 2 bytes, 8 KiB
@@ -415,8 +416,9 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * @coded: whether to Huffman code the literals where that saves enough
  *
  * Two pages, as zram's buffer has, are always enough, even for random data,
- * see the encoder in seqlz_compress.c. A smaller @dst works too: a page that does not
- * fit is an error, which can happen up to 32 bytes before @dst_cap is full.
+ * see the encoder in seqlz_compress.c. A smaller @dst works too: a page that
+ * does not fit is an error, which can happen up to 32 bytes before @dst_cap is
+ * full.
  * The page is written with raw literals first, so it has to fit that way; the
  * coded literals then go over the raw ones, which @st holds meanwhile. The same
  * bytes as seqlz_encode() for the sequences of seqlz_find().

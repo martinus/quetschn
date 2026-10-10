@@ -492,7 +492,7 @@ function load() {
   S.cats = cats; S.lcats = lcats;
 }
 
-// bytes the fast path stores for the match, see seqlz.c
+// bytes the fast path stores for the match, see copy_match() in seqlz_decompress.c
 function matchWritten(q) {
   if (q.off >= 8) return q.ml > 32 ? 40 : q.ml > 16 ? 32 : 16;
   const step = [0, 8, 8, 6, 8, 5, 6, 7][q.off];

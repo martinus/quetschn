@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * The codes and decode tables, built from the code lengths: seqlz_tables_init().
+ * The codes and decode tables, built from the code lengths:
+ * seqlz_tables_init().
  */
 #include "seqlz_internal.h"
 

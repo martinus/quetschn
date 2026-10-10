@@ -4,7 +4,8 @@
 
 /*
  * The kernel's names for what the codec needs: types, attributes, unaligned
- * access, min(). In a kernel build they come from the kernel's headers.
+ * access, min(), sizeof_field(), static_assert(), prefetch() and
+ * L1_CACHE_BYTES. In a kernel build they come from the kernel's headers.
  * Everywhere else (the tests, the benchmarks, the fuzzers and the tools) the
  * same names are defined here, from the compiler's freestanding headers, as
  * lib/bootconfig.c and lib/decompress_unxz.c share their code with tools/.
@@ -87,7 +88,6 @@ typedef unsigned long long u64;
 #ifndef __cplusplus
 #define noinline __attribute__((__noinline__))
 #define __cold __attribute__((__cold__))
-#define __aligned(x) __attribute__((__aligned__(x)))
 #endif
 
 /* a keyword in C23 and C++ */
