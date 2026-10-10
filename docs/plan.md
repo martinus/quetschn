@@ -163,6 +163,17 @@ The same problem statement as quetschn: *"ZRAM compresses each page individually
 compression algorithm is forced to use a very small sliding window. None of the available compression
 algorithms is designed to achieve high compression ratios with small inputs."* It did not get in.
 
+How it worked: a container of small steps run one after the other, up to 7 of them, a "combination":
+an LZ4-like matcher on aligned 8-byte words, a tree of the 8-byte values, a shuffle of the bytes, a
+Burrows-Wheeler transform, move-to-front, run-length coding, Huffman coding, and a bitmap of the bytes
+that are not 0. A page first tried the combination that worked on the page before, then the next ones,
+and the list could be changed at run time in sysfs. The author's own numbers, through zram, in Mbit/s
+([v7](https://lkml.rescloud.iu.edu/1804.1/06074.html)): on a memory snapshot of `hpcg` a ratio of 16.3
+against 5.95 to 6.70 for `zstd`, writing 47 Mbit/s (189 with other combinations) against 277 for
+`zstd` level 1 and 502 for `lz4`; on source code a ratio of 1.89 against 2.27 for `lzo` and 2.93 for
+`zstd` level 1, writing 28 Mbit/s against 430 and 200. So there was no single format to specify, a
+decoder for every step, and a time per page that depended on how many combinations a page tried.
+
 Eric Biggers's objections are the checklist quetschn has to pass before the first patch is sent:
 
 1. **No rigorous comparison to zstd.** *"This still isn't a valid excuse for not comparing it to
@@ -875,8 +886,8 @@ phase does not start from zero.
 The plan had the codec in `src/` and the kernel files in `kernel/`. The codec grew up in `explore/`,
 next to the designs it beat. Those designs were removed on 7th October 2026, their results are in
 [explored-designs.md](explored-designs.md) and their code is in git history before `57fb8fb`. Then
-`explore/` became `src/`. The kernel port of Phase 5 will split it into a `lib/` part and a zram
-backend.
+`explore/` became `src/`. The kernel port of Phase 5, `tools/kernel-port/`, splits it into a `lib/`
+part and a zram backend when it writes them into a kernel tree.
 
 ```text
 src/                        the codec, freestanding C
@@ -965,7 +976,8 @@ As of 9th October 2026:
 - **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages, its own pages, in its own kernel as zram and
   as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on the pages
   of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
-  per CPU, above C5.
+  per CPU, above C5. The first series is for 4 KiB pages only (Phase 7), so 16 KiB pages are for the
+  second one.
 - **Phase 7: the question to the maintainers is sent** (R3, R11), on 9th October 2026 to linux-mm,
   linux-block and linux-kernel, [the thread](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/). Not answered yet.
 - **Levels 3 and 4** (#139): a deeper matcher for the same format, 2.7% to 4.3% less for about twice
@@ -975,7 +987,8 @@ Next, in this order:
 
 1. The answer of Sergey Senozhatsky and Minchan Kim to [the question](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/): a new algorithm at
    all, and as a zram backend or as an acomp algorithm (§3.4). The answer decides the form of
-   Phase 5.
+   the series of Phase 7: the zram backend that `tools/kernel-port/` writes now, or another one
+   (item 5).
 2. Fewer data-dependent branches in the decoder. In a fault it mispredicts about 110 branches per page
    that it gets right after a decode of the same page, which every benchmark before hid by decoding a
    page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). The refill without its branch on
@@ -993,6 +1006,7 @@ Next, in this order:
    16 KiB pages, 2.6% smaller on a second dump
    ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 4. The work memory with 16 KiB pages: within C5, or a reason why not. Which context C5 limits, once
-   zram splits them, is open (§3.3).
+   zram splits them, is open (§3.3). Not for the first series, which is for 4 KiB pages only (Phase
+   7).
 5. Phase 5 again if the maintainers want another form than a zram backend, e.g. an acomp algorithm:
    `lib/seqlz/` stays, the glue changes, and `stress.sh` runs again.
