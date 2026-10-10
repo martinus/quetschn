@@ -18,7 +18,7 @@ ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$here/co
 python3 - "$repo/src/seqlz.c" "$out/text.page" <<'EOF'
 import sys
 s = open(sys.argv[1], "rb").read()
-i = s.index(b"static inline void refill(")
+i = s.index(b"static inline void seqlz_br_refill(")
 open(sys.argv[2], "wb").write(s[i : i + 4096])
 EOF
 "$out/compress" "$out/heap.page" "$out/text.page" "$out/relro.page"
