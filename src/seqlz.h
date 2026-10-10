@@ -32,8 +32,8 @@
  *   3:    below the page size; 12 bits for 4 KiB pages
  *   4, 5: a multiple of 8 from 16 on, below 256 or below the page size; the
  *         offset divided by 8, so 3 bits less than class 2 or 3
- * Memory pages are full of 8-byte aligned data: of the offsets from 16 to 255,
- * 72% and 56% were multiples of 8 on two zram dumps.
+ * Memory pages are full of 8-byte aligned data, so many offsets are multiples
+ * of 8.
  *
  * An ll of 15 or more is followed by ll - 15 as a length value, an ml - 4 of 31
  * or more by ml - 4 - 31. A length value below 16 is its own symbol. A larger
@@ -58,8 +58,8 @@
 /*
  * The bit operations and the short copies are the compiler's builtins, as in
  * lib/lz4 and lib/zstd. __builtin_ctzll() and __builtin_clz() instead of
- * __ffs64(), __fls() and fls(): on x86-64 those are inline assembly, and with
- * them gcc compiled the literal coder and decoder in another shape.
+ * __ffs64(), __fls() and fls(), which are inline assembly on x86-64 that the
+ * compiler cannot look into.
  * __builtin_memcpy() for copies of 8 and 16 bytes, as LZ4_memcpy() and
  * ZSTD_memcpy(): it is always inlined, and memcpy() is not with every
  * CONFIG_FORTIFY_SOURCE, which makes each copy a call. __builtin_bswap64()
@@ -72,29 +72,29 @@
 #define SEQLZ_PAGE (1U << QUETSCHN_PAGE_BITS)
 /*
  * The longest code of a length value: its decode table has 256 entries, 1 KiB.
- * With 9 bits a cold read took 80 ns longer.
+ * A table twice as large made cold reads slower.
  */
 #define SEQLZ_MAX_BITS 8U
 /*
  * The longest code of a token: its decode table has 2048 entries, 8 KiB. With
- * 10 bits more tokens take the escape and pages are 4.8 bytes larger; the A55
- * wrote a page 0.8 to 1.1 us faster, the A76 not at all ("Six choices made on
- * the PC, measured on the phone", 1 and 7).
+ * 10 bits more tokens take the escape and pages are larger, and only in-order
+ * cores wrote them faster ("Six choices made on the PC, measured on the
+ * phone", 1 and 7).
  */
 #define SEQLZ_TOKEN_BITS 11U
 /*
  * How many bits of ll and ml - 4 the token holds; larger ones need a length
  * value after the token, which costs a second table lookup. With 5 bits for the
- * match length 8.5% of the matches need one, with 4 bits 18.7%, at the same
- * memory ("Second round: branches, tails and table sizes"). At most 4 and 5:
+ * match length half as many matches need one as with 4, at the same memory
+ * ("Second round: branches, tails and table sizes"). At most 4 and 5:
  * the decoder's token entry has 4 bits for ll and 6 for ml, see token_entry()
  * in seqlz.c.
  */
 #define SEQLZ_LL_BITS 4U
 #define SEQLZ_ML_BITS 5U
 /*
- * The offset classes at the top. Two more would save at most 0.1% of memory,
- * by a model of the offsets ("Offset classes from a histogram").
+ * The offset classes at the top. Two more would save almost no memory, by a
+ * model of the offsets ("Offset classes from a histogram").
  */
 #define SEQLZ_OFF_CLASSES 6U
 #define SEQLZ_TOKEN_SYMBOLS \
@@ -103,8 +103,8 @@
  * The escape, the symbol after the last token. Codes of at most 11 bits have
  * room for 2048 symbols, and there are 3072 tokens, so the rare ones get no
  * code: they are sent as the escape's code and then the token in
- * SEQLZ_ESCAPE_BITS bits. Already with 1536 tokens, a code for each of them
- * took 75% of the code space ("seqlz, third decoder round").
+ * SEQLZ_ESCAPE_BITS bits. A code for every token would take code space from
+ * the frequent ones ("seqlz, third decoder round").
  */
 #define SEQLZ_ESCAPE SEQLZ_TOKEN_SYMBOLS
 /* the fewest bits that hold every token, 3072 < 4096 */
@@ -244,20 +244,19 @@ int seqlz_tables_init(struct seqlz_tables *t,
 /*
  * Coded literals: the longest code, and the number of fixed tables a page can
  * choose from. The encoder takes the table that codes the page's literals in
- * the fewest bits. Codes of 9 bits were no faster on the phone and made pages
- * up to 64 bytes larger ("Six choices made on the PC, measured on the phone",
- * 2). 16 tables saved 2 and 8 bytes per page on two dumps, and a cold read took
- * 0.26 and 0.28 us longer, for the larger tables ("seqlz-fast-lit by the score:
- * no budget, offsets in steps of 8").
+ * the fewest bits. Codes of 9 bits made pages larger and were no faster ("Six
+ * choices made on the PC, measured on the phone", 2). 16 tables saved a few
+ * bytes per page, and made cold reads slower, for the larger tables
+ * ("seqlz-fast-lit by the score: no budget, offsets in steps of 8").
  */
 #define SEQLZ_LIT_BITS 10U
 #define SEQLZ_LIT_SETS 8U
 /*
  * The coded literals are 8 bitstreams, literal k in stream k % 8. A literal's
  * code length is known only after its table lookup, so one stream is one long
- * chain of lookups; the decoder runs 8 such chains side by side. With 4 streams
- * pages were 2.7 bytes smaller and no faster on the phone ("Six choices made
- * on the PC, measured on the phone", 3).
+ * chain of lookups; the decoder runs 8 such chains side by side. 4 streams made
+ * pages a little smaller and decoding no faster ("Six choices made on the PC,
+ * measured on the phone", 3).
  */
 #define SEQLZ_LIT_STREAMS 8U
 extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
@@ -276,8 +275,7 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * w is the fewest bits that hold the largest size, but at least 5. A stream
  * holds every 8th literal of at most 10 bits, at most 640 bytes in a 4 KiB page
  * and 2560 in a 16 KiB page, so w is at most 12. Sizes of 2 bytes each made
- * pages 5.2 and 5.5 bytes larger on two dumps; widths of 3 and 4 bits were left
- * out because only 0.1% to 3% of the pages would use them.
+ * pages larger; widths of 3 and 4 bits are left out, few pages would use them.
  */
 #define SEQLZ_LIT_HEADER(w) (3U + (w))
 #define SEQLZ_SIZE_BITS_MIN 5U
@@ -289,14 +287,13 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_WIDTH_AT 3
 #define SEQLZ_LIT_ZERO_AT 6
 /*
- * The encoder codes a page's literals only where that saves 1/16 of them and
- * at least this many bytes. Decoding coded literals has a cost that does not
+ * The encoder codes a page's literals only where that saves more than 1/16 of
+ * them plus this many bytes. Decoding coded literals has a cost that does not
  * depend on how many there are: the literal table has to be read from memory,
- * and the literals decoded into a buffer first. On the phone's pages, 51
- * instead of 19 bytes made pages 7.9 bytes larger and saved 2.7 us per page
- * written on the A55, 1.1 us on the A76; on the PC 11 bytes for 0.1 us
- * ("Coded literals only where they save 51 bytes: 2.7 µs per page written less
- * on the A55, kept").
+ * and the literals decoded into a buffer first. A smaller minimum made pages a
+ * few bytes smaller and writes slower, most on in-order cores ("Coded literals
+ * only where they save 51 bytes: 2.7 µs per page written less on the A55,
+ * kept").
  */
 #define SEQLZ_LIT_CODED_MIN 51U
 /*
@@ -365,7 +362,13 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
  * The compressor finds the matches with its own matcher, in page_lz.h, and
  * writes each sequence as soon as it is found, in one pass over the page.
  */
-/* the same as PAGE_LZ_HASH_BITS in page_lz.h, seqlz.c checks that */
+/*
+ * The matcher's hash table has 1 << SEQLZ_HASH_BITS entries of 2 bytes, 8 KiB
+ * for 4 KiB pages. With 2048 entries pages were larger and the compressor no
+ * faster; with 8192 in-order cores wrote pages slower ("Six choices made on the
+ * PC, measured on the phone", 5). For 16 KiB pages it is 16 KiB, as lz4's
+ * table.
+ */
 #define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
 /* every sequence but the last covers at least 4 bytes of the page */
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)

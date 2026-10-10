@@ -30,8 +30,10 @@
  * Context: Any context. It does not sleep and allocates nothing.
  *
  * Return: the length of the compressed page, -E2BIG if it does not fit into
- * @dst_len bytes, which can happen up to 32 bytes before @dst is full, or
- * -EINVAL for another @level.
+ * @dst_len bytes, or -EINVAL for another @level. The page is written with its
+ * literals raw first, also at SEQLZ_LEVEL_CODED, and -E2BIG comes as soon as
+ * that is within 32 bytes of @dst_len, even where the page with coded literals
+ * would be smaller.
  */
 int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 		   void *wrkmem, int level);

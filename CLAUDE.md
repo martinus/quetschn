@@ -83,7 +83,8 @@ issue (#151 to #157, from the review of 10th October 2026).
   checkpatch `--strict` finding. Stack frames stay below 1024 bytes, the 32-bit `FRAME_WARN`; the
   deepest is 640 (`code_literals()`, gcc, x86-64), 992 with KASAN and UBSan.
 - Nothing in the copy names this repository, our machines, phones or dumps. `port.py` fails on names
-  (`FORBIDDEN`), not on wording like "on pages of a phone".
+  (`FORBIDDEN`), not on wording like "on pages of a phone". It fails too on a rewrite in `REWRITES` that
+  matches no comment any more: change or remove it with the comment it was for.
 
 ## Build, test, format
 
@@ -94,8 +95,8 @@ point at another worktree's `_deps`. To skip the network, reuse doctest:
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
-cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 115 cases, ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 95 cases
+cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 130 cases, ctest 2/2 with kernel tree
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 109 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
