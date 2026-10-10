@@ -8,6 +8,7 @@
 extern int zram_prefetch;
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/prefetch.h>
 
 #include "backend_seqlz.h"
 #include "page_lz.h"
@@ -166,7 +167,7 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	 * line from the second on, as quetschn_prefetch_page() of bench/kernel_codecs/zram_codec.h */
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
-			PAGE_LZ_PREFETCH((const char *)req->src + q);
+			prefetch((const char *)req->src + q);
 	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst,
 							      ((struct sz_ctx *)ctx->context)->scratch))
 		return -EINVAL;

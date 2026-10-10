@@ -72,10 +72,15 @@ on such a page is the kernel's part. `KARGS` adds to the kernel command line, an
 `zram.zram_prefetch=8` gives seqlz the prefetch that its backend has. `LLVM=1` builds the kernel with
 clang, as Android does. `run.sh` works on trees with zram's contexts split into compression and
 decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`), and on trees whose zram
-reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`.
+reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`. `VARIANTS` puts more builds of
+seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>` and
+`<name>-lit`: variants of the codec are compared in one boot, taking turns, which a kernel per variant
+cannot do. 7 codecs, 3 boots and 20 000 pages take about 5 minutes per kernel.
 
 ```sh
 ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
+VARIANTS="o2=.:-O2 other=../otherworktree" ALGOS=lz4,seqlz-lit,o2-lit,other-lit BOOTS=3 MODE=swap \
+    tools/zram-vm/run.sh <linux tree> corpus/first >variants.log
 KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit \
     tools/zram-vm/run.sh <linux tree> corpus/first >swap.log
 ```
@@ -278,6 +283,13 @@ Each of these cost a wrong result first. The measurements behind them are in
   ([explored-designs.md](explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)).
   `tools/zram-phone/run.sh` runs each codec alone, in turns; all codecs in one process only for
   differences of several µs.
+- **On the phone, a second module of the same source.** Each module lands its code elsewhere: two
+  copies of `main` differed by 0.13 µs in the A55's warm reads and by 2.2 µs in its cold reads, and the
+  same decode loop in another module read 0.2 to 0.3 µs slower warm
+  ([explored-designs.md](explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
+  Build the base twice, `build.sh a` and `build.sh a2` from one `src/`, and count a variant's
+  difference only where it is larger than `a` against `a2`. The A55's cold reads of 20 000 pages
+  decide nothing below 2 µs.
 - **Compressions apart from decompressions.** `lz4hc` touches 256 KiB when it compresses, and moved the
   next codec's cold reads by 300 ns. Every repetition times all compressions first, then all
   decompressions.

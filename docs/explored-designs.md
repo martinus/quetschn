@@ -109,6 +109,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The macros of seqlz.c as inline functions: the same time in the VM, on the phone no more than where a module lands, kept](#the-macros-of-seqlzc-as-inline-functions-the-same-time-in-the-vm-on-the-phone-no-more-than-where-a-module-lands-kept)
 - [The kernel copy's long functions split into inline helpers: the same time in the VM and on the phone, kept](#the-kernel-copys-long-functions-split-into-inline-helpers-the-same-time-in-the-vm-and-on-the-phone-kept)
 - [Numbers that were only in the codec's comments, until 10th October 2026](#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)
+- [The kernel copy's choices measured in one boot and on the phone: -O3 kept, one decode loop, prefetch(), no __aligned(64), no load16()](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5100,6 +5101,76 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## The kernel copy's choices measured in one boot and on the phone: -O3 kept, one decode loop, prefetch(), no __aligned(64), no load16()
+
+*The review of the kernel copy (#151, #152, #157) asked for the kernel's `prefetch()` instead of inline
+assembly, one decode loop instead of a list of in-order cores in `lib/`, and a reason for `-O3`,
+`__aligned(64)` and `load16()`. Each changed the machine code of a hot function, so each was measured,
+in the kernel VM and on the Mi 9T. `-O3` writes 0.1 to 0.19 µs faster on x86-64 and 0.93 µs on the
+A55: kept. The others are within the noise or close to it, and are taken for the simpler code: one
+decode loop costs the A55 up to 0.3 µs per warm read, `prefetch()` up to 0.2.* Code: the variants
+in `tools/zram-vm/run.sh` (`VARIANTS`) and `tools/zram-phone/build.sh` (`OPT`, `ALIGN`).
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `986c24e0fe44` with `x86-prefetcht0.patch`, `MODE=swap`, the
+backend's prefetch, CPU 2 at a fixed 4.5 GHz, boost off, 3 boots per kernel, 20 000 pages per dump.
+All variants are backends of their own in one kernel, so they take turns in every boot. `main` is
+`9ae946f`. The mean over the boots, in µs, swap-out / warm swap-in / flushed swap-in, and the
+difference of each variant to `main`:
+
+| | gcc 16.2.1, first desktop dump | gcc, second phone dump | clang 22.1.8, first desktop dump | clang, second phone dump |
+| --- | --- | --- | --- | --- |
+| `lz4` | 6.47 / 3.18 / 3.27 | 5.89 / 3.06 / 3.14 | 6.46 / 3.12 / 3.18 | 5.88 / 3.01 / 3.08 |
+| `main` | 7.42 / 3.71 / 3.77 | 6.58 / 3.46 / 3.53 | 7.46 / 3.74 / 3.79 | 6.67 / 3.51 / 3.54 |
+| `-O2` | +0.13 / +0.03 / +0.02 | +0.19 / +0.02 / +0.03 | +0.12 / +0.01 / 0.00 | +0.10 / 0.00 / 0.00 |
+| without `__aligned(64)` | +0.02 / 0.00 / 0.00 | +0.04 / -0.01 / -0.01 | +0.09 / -0.01 / -0.02 | +0.07 / -0.02 / -0.02 |
+| `get_unaligned_le16()` | -0.03 / -0.02 / -0.01 | +0.01 / -0.03 / -0.01 | +0.04 / -0.02 / -0.02 | +0.04 / -0.01 / -0.01 |
+| `prefetch()` | 0.00 / -0.02 / -0.01 | +0.04 / -0.01 / -0.01 | +0.01 / 0.00 / -0.02 | 0.00 / -0.01 / 0.00 |
+| the leftovers of #157 | -0.03 / -0.01 / 0.00 | -0.01 / -0.01 / -0.01 | +0.12 / -0.01 / -0.02 | +0.11 / -0.02 / 0.00 |
+
+The boots of one kernel are within 0.10 µs of each other for swap-out and 0.07 for swap-in, mostly
+within 0.03. clang's swap-out moves by 0.04 to 0.12 µs with every change that does not touch the
+compressor at all (`__aligned(64)` is on a decoder function), which says how much where the code lands
+is worth there. With clang, `prefetch()` gives the same machine code as the inline assembly, with the
+patch. The leftovers are `code_literals()` without its `raw`, `decode_literals()` without its bare blocks
+and the width's `__builtin_clz()` on a line of its own; `seqlz_encode()` with a buffer of a page on the
+stack did not build in the kernel, `-Werror=frame-larger-than=`, so it got a static one for the run.
+During gcc's run on the desktop dump, the module of the second phone run was built, a few seconds; that
+run's boots give `main`'s swap-out as 7.38, 7.48 and 7.40 µs, no wider than the other runs.
+
+**The Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, `COOL=45`, the second phone dump, NDK r21e's clang
+9, every function aligned to 64 bytes but in the variants `an` and `nan`, the A55 at 1.80 GHz and the A76
+at 2.21 GHz. Each codec alone in its process, in turns; 3 rounds in the first run, 4 in the second.
+Means in µs, write / warm read / cold read:
+
+| module | A55, run 1 | A55, run 2 | A76, run 1 | A76, run 2 |
+| --- | --- | --- | --- | --- |
+| `a`, `main` | 31.49 / 11.89 / 30.75 | 31.36 / 12.09 / 32.18 | 11.95 / 4.26 / 8.07 | 11.94 / 4.30 / 7.60 |
+| `a2`, the same source again | | 31.42 / 11.96 / 29.95 | | 11.89 / 4.29 / 7.36 |
+| one loop, out of order, token prefetch for all | 31.53 / 12.39 / 32.23 | 31.42 / 12.33 / 31.20 | 11.98 / 4.30 / 7.44 | 11.92 / 4.33 / 7.65 |
+| one loop, in order, token prefetch for all | 31.53 / 12.23 / 32.92 | 31.44 / 12.25 / 30.40 | 11.95 / 4.40 / 7.82 | 11.89 / 4.43 / 7.80 |
+| `prefetch()` | 31.59 / 12.11 / 30.60 | 31.41 / 12.23 / 32.05 | 11.94 / 4.29 / 7.39 | 11.92 / 4.27 / 7.48 |
+| `an`, `main`, functions not aligned | 31.54 / 12.02 / 31.39 | 31.48 / 11.97 / 31.08 | 11.90 / 4.28 / 7.30 | 11.88 / 4.34 / 7.36 |
+| `nan`, without `__aligned(64)`, not aligned | 31.55 / 11.85 / 30.32 | 31.37 / 12.02 / 31.18 | 11.97 / 4.24 / 7.42 | 11.89 / 4.33 / 7.53 |
+| `get_unaligned_le16()` | 31.63 / 11.91 / 30.13 | | 12.00 / 4.29 / 7.39 | |
+| `-O2` | 32.42 / 12.07 / 31.68 | | 12.16 / 4.28 / 7.65 | |
+
+Two copies of the same source, `a` and `a2`, differ by 0.13 µs in the A55's warm reads and by 2.2 µs in
+its cold ones, which are no use here. The in-order loop for every core runs the same code on the A55 as
+`main`, only placed elsewhere, and reads 0.2 to 0.3 µs slower there; the out-of-order loop 0.3 to 0.5.
+So the out-of-order loop costs the A55 at most about 0.3 µs per warm read, 3%, and nothing that shows on
+the A76. The token prefetch on the A76, 1.3 to 2.6 µs of cold reads slower in
+[The sequences' bitstream most significant bit first](#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept),
+did not show: with it 7.44 and 7.65 µs, without it 8.07 and 7.60. The in-order loop is 0.1 µs slower
+on the A76's warm reads, as [The refill without its branch](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)
+says. `prefetch()` is arm64's inline assembly with a `"p"` operand, so clang computes each line's
+address with an add instead of an offset in the `prfm`: 0.1 to 0.3 µs on the A55's warm reads, nothing
+on the A76.
+
+Taken: one out-of-order decode loop with the token prefetch on every core (#152), `prefetch()` with the
+x86 patch in the series (#151), no `__aligned(64)` and the kernel's `get_unaligned_le16()` (#157), all
+for less code and nothing on the list of a `lib/` reviewer. `-O3` stays, with these numbers as its
+reason. The leftovers wait for the split of `seqlz.c`, which moves their code anyway.
 
 ## Numbers that were only in the codec's comments, until 10th October 2026
 
