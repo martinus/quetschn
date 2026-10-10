@@ -168,10 +168,12 @@ Green locally is not the gate, CI is. A red CI on a PR you opened is work now: d
 again until it is green.
 
 **While CI runs, build the next PR in a worktree of its own**: `gra -y work --path <branch>`, never
-`git worktree add` under `~/gra`. When the next PR builds on the open one, push its branch from that
-head first, `git push origin <head sha>:refs/heads/<branch>`, then `gra -y work --path <branch>`
-checks it out. When two PRs change the same function of `src/`, wait for the merge instead: a
-conflict there is a measured function that moved.
+`git worktree add` under `~/gra`. While the VM or the phone times, write the next PR's code but do
+not compile it, not even a few seconds of a test program pinned to another core: that happened in
+two sessions. When the next PR builds on the open one, push its branch from that head first,
+`git push origin <head sha>:refs/heads/<branch>`, then `gra -y work --path <branch>` checks it out.
+When two PRs change the same function of `src/`, wait for the merge instead: a conflict there is a
+measured function that moved.
 
 ### 8. Merge, reset, and read the list again
 
@@ -184,10 +186,14 @@ The same commands every time.
 
 1. **State first**: `gh pr view <n> --json state` before every push to a PR branch. Martin merges
    himself while you work; a merged PR's follow-up goes on a new branch from `origin/main`.
-2. **Push**: `git push -u origin <branch>`.
+2. **Push**: `git push -u origin <branch>`, with a name no PR had before
+   (`gh pr list --state all --head <branch>` is empty): with a reused name, `gh pr view <branch>`
+   shows the old, merged PR.
 3. **Create**: `gh pr create --base main --head <branch> --title "<area>: <what>" --body-file <file>`.
-   The body in Martin's voice: what, why, the numbers with hardware and compiler, the tests and the
-   mutation that proved each, what was not run and why. No attribution, no footer, no session link.
+   The body in Martin's voice: what, why, the numbers with hardware and compiler (copied from the
+   log's `KERNEL CONFIG_CC_VERSION_TEXT` line, not from memory: "gcc 15" stood in two bodies for
+   gcc 16.2.1), the tests and the mutation that proved each, what was not run and why. No
+   attribution, no footer, no session link.
 4. **Watch**: `gh pr checks <n> --watch --interval 30` in the background. `ci-ok` is the required
    check. ClusterFuzzLite's `fuzz (address)` runs on PRs that touch the codec and is not part of
    `ci-ok`: read it too.
