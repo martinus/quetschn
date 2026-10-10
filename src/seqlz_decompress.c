@@ -131,11 +131,12 @@ static __always_inline u64 repeat_pattern(const u8 *d, unsigned int off)
 static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 				       unsigned int len)
 {
-	unsigned int step = off >= 8 ? 8U : repeat_step[off & 7U],
-		     back = off >= 8 ? off : step, k = 0;
+	unsigned int k = 0;
 
 	if (off < 8) {
+		/* with less than 8 bytes left, byte by byte below */
 		if ((unsigned int)(d_end - d) >= 8U) {
+			unsigned int step = repeat_step[off & 7U];
 			/*
 			 * reads d - off up to d - off + 7, which is below
 			 * d + 8 <= d_end: inside the page
@@ -148,27 +149,24 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 			     k < len && (unsigned int)(d_end - d) >= k + 8U;
 			     k += step)
 				put_unaligned_le64(pat, d + k);
-			back = 0;
-		} else {
-			back = 0; /* less than 8 bytes left: byte by byte */
 		}
-	} else if ((unsigned int)(d_end - d) >= 16U) {
-		/*
-		 * Most matches are at most 16 bytes, so 16 bytes are copied
-		 * without a loop. With off >= 8 the second copy reads bytes the
-		 * first one wrote or that were there before, so the order is
-		 * right. 32 bytes made the median page faster and the slowest
-		 * ones slower: those have many short matches, and copied 32
-		 * bytes for each.
-		 */
-		copy8(d, d - off);
-		copy8(d + 8, d + 8 - off);
-		k = 16;
-	}
-	if (back != 0) {
+	} else {
+		if ((unsigned int)(d_end - d) >= 16U) {
+			/*
+			 * Most matches are at most 16 bytes, so 16 bytes are
+			 * copied without a loop. The second copy reads bytes
+			 * the first one wrote or that were there before, so the
+			 * order is right. 32 bytes made the median page faster
+			 * and the slowest ones slower: those have many short
+			 * matches, and copied 32 bytes for each.
+			 */
+			copy8(d, d - off);
+			copy8(d + 8, d + 8 - off);
+			k = 16;
+		}
 		while (k < len && (unsigned int)(d_end - d) >= k + 8U) {
-			copy8(d + k, d + k - back);
-			k += step;
+			copy8(d + k, d + k - off);
+			k += 8;
 		}
 	}
 	for (; k < len; k++)
@@ -229,8 +227,7 @@ static inline void seqlz_br_drop(struct seqlz_bit_reader *r, unsigned int n)
  * QUETSCHN_PAGE_BITS bits, 20 or 22; the caller refills before.
  */
 static inline unsigned int seqlz_br_value(struct seqlz_bit_reader *r,
-					  const struct value_table *t,
-					  u32 *entry)
+					  const struct value_table *t)
 {
 	u32 e = t->decode[r->bits >> (64U - SEQLZ_MAX_BITS)];
 	unsigned int n = e & 15U, x = (e >> 4) & 15U;
@@ -241,7 +238,6 @@ static inline unsigned int seqlz_br_value(struct seqlz_bit_reader *r,
 	unsigned int v = ((e >> 8) & 0xffffU) +
 			 (unsigned int)(((r->bits << n) >> 1) >> (63U - x));
 
-	*entry = e;
 	seqlz_br_drop(r, n + x);
 	return v;
 }
@@ -512,7 +508,7 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 
 /*
  * The fast path's match of len bytes, at most 34, off bytes before d: with room
- * for 40 bytes at d, see decode_page(). Without loops for all but long matches
+ * for 40 bytes at d, see seqlz_decode(). Without loops for all but long matches
  * with an offset below 8.
  */
 static __always_inline void copy_match_fast(u8 *d, unsigned int off,
@@ -598,18 +594,16 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 }
 
 /*
- * The room the fast path of decode_page() needs. In the page: it writes at most
- * 54 bytes, 14 literals and 40 bytes of match. In the literals: one copy of 16
- * bytes. In the input: the 8 bytes of a refill.
+ * The room the fast path of seqlz_decode() needs. In the page: it writes at
+ * most 54 bytes, 14 literals and 40 bytes of match. In the literals: one copy
+ * of 16 bytes. In the input: the 8 bytes of a refill.
  */
 #define FAST_PAGE_ROOM 64U
 #define FAST_LIT_ROOM 16U
 #define FAST_IN_ROOM 8U
 
-/* seqlz_decode(), see seqlz.h */
-static __always_inline int decode_page(const struct seqlz_tables *t,
-				       const void *src, unsigned int src_len,
-				       void *dst, void *scratch)
+int seqlz_decode(const struct seqlz_tables *t, const void *src,
+		 unsigned int src_len, void *dst, void *scratch)
 {
 	const u8 *s = src;
 	const u8 *const s_end = s + src_len;
@@ -671,7 +665,6 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 	tok = next_token(&br, &t->token);
 	for (;;) {
 		unsigned int nl, len, off, back, raw;
-		u32 e;
 
 		if (tok >> TOK_ESCAPE_AT) {
 			/* escape: SEQLZ_ESCAPE_BITS bits of the token follow */
@@ -730,7 +723,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		/* the slow path: length values, and every check */
 		if (nl == SEQLZ_LL_CAP) {
 			seqlz_br_refill(&br);
-			nl += seqlz_br_value(&br, &t->ll, &e);
+			nl += seqlz_br_value(&br, &t->ll);
 		}
 		if (lit > lit_end || nl > (unsigned int)(lit_end - lit) ||
 		    nl > (unsigned int)(d_end - d))
@@ -750,7 +743,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 
 		if (len == SEQLZ_ML_CAP + 4U) {
 			seqlz_br_refill(&br);
-			len += seqlz_br_value(&br, &t->ml, &e);
+			len += seqlz_br_value(&br, &t->ml);
 		}
 		last = off;
 		/* off must point into the page; off - 1 wraps for 0 */
@@ -772,10 +765,4 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 	    (br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))))
 		return -EINVAL;
 	return 0;
-}
-
-int seqlz_decode(const struct seqlz_tables *t, const void *src,
-		 unsigned int src_len, void *dst, void *scratch)
-{
-	return decode_page(t, src, src_len, dst, scratch);
 }
