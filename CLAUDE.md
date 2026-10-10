@@ -113,7 +113,9 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
   10 minutes with ASan on PRs that touch `src/` or `fuzz/`; not in `ci-ok`.
 - `src/` is in the kernel's style, `src/.clang-format`: tabs, 80 columns, `u8 *p`. clang-format does not
   reflow comments there; wrap them by hand to 80 columns in the kernel's block form. The `.inc` tables
-  are not in the format check: after training, `clang-format -i src/*.inc`.
+  are not in the format check: `tools/kernel-port/gen-seqlz-tables.py` writes them from
+  `bench/seqlz_counts_*.txt` (its command is in each file's head), and `tools/seqlz-ref/check.sh` fails
+  when they differ from its output; never clang-format or edit them by hand.
   Everything else keeps the project's `.clang-format`.
 - Run locally before pushing a docs or table change: `tools/seqlz-ref/check.sh` (hashes in
   docs/format.md vs `src/` tables, 22 pages decoded by the spec decoder, ~1.5 s) and
@@ -151,6 +153,10 @@ Commands: `docs/measuring.md`. Rules that matter:
 - `tools/seqlz-ref/seqlz_ref.py` parses `docs/format.md` rows of the form ``| `TOK_4k` | `<sha256>` |``.
   Keep that table format exactly. Retrained tables need new hashes there, or `check.sh` fails in CI, and
   new `bench/seqlz_counts_*.txt` (`quetschn-seqlz-train --counts`), or the test `seqlz_train` fails.
+- `docs/format.md` is also the kernel's `Documentation/staging/seqlz.rst`, written by
+  `tools/kernel-port/format_rst.py`. HTML comments mark what only this repository has and what only the
+  kernel's copy has; the converter fails on Markdown it does not know (block quotes, links into the
+  repository outside such a mark, a `|` or a word ending in `_` outside backticks).
 - `tools/seqlz-viz/build.sh` feeds `docs/format.md` as text into one demo page; the committed
   `docs/seqlz-*.html` are generated, rebuild them with build.sh rather than editing by hand (paths
   inside them were last changed by `sed`).

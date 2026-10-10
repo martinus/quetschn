@@ -8,8 +8,10 @@ src/ stays the one source of the codec. This writes from it:
   lib/seqlz/seqlz_codec.c, page_lz.h    from src/seqlz.c and src/page_lz.h, and the interface's
                                         functions from tools/kernel-port/seqlz_api.c, with the tables
                                         built once
-  lib/seqlz/seqlz_default_tables.c, seqlz_lit_sets.c: the tables of src/, the .inc files of 4 KiB
-                                        pages in them
+  lib/seqlz/seqlz_tables.c              the tables, generated in the tree by scripts/gen-seqlz-tables.py,
+                                        tools/kernel-port/gen-seqlz-tables.py, from lib/seqlz/seqlz_counts.txt,
+                                        bench/seqlz_counts_4k.txt with comments of its own and lines of at
+                                        most 80 columns
   lib/seqlz/tests/seqlz_kunit.c         the KUnit tests, tools/kernel-port/seqlz_kunit.c, with the
                                         tables' SHA-256 and the worked example from docs/format.md
   lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Makefile: the module seqlz, CONFIG_SEQLZ, and
@@ -24,13 +26,18 @@ QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the 
 references to this repository in the comments (its documents, tools and build) and no reasons that
 only hold for the Mi 9T's 4.14, Fedora's config or our test machines, which say the reason in general
 terms instead; a comment that changed is wrapped again to 80 columns. in_order_core() with the kernel's
-MIDR_* macros. Fails if a reference is left, naming it; the two URLs it keeps are SPEC_URL and
-PROJECT_URL. Writes only into the tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
+MIDR_* macros. Fails if a reference is left, naming it; the one URL it keeps is PROJECT_URL.
+  Documentation/staging/seqlz.rst       docs/format.md as reStructuredText, see format_rst.py, in the
+                                        index of Documentation/staging/
+Writes only into the tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
 """
 import pathlib
 import re
+import subprocess
 import sys
 import textwrap
+
+import format_rst
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -41,12 +48,11 @@ WIDTH = 80
 HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
                           r"\bseqlz_tables_size\b")
 
-# the two references to this repository the kernel's copy keeps: where it points for the format, and the
-# project's page in MAINTAINERS
-SPEC_URL = "https://github.com/martinus/quetschn/blob/main/docs/format.md"
+# the one reference to this repository the kernel's copy keeps, the project's page in MAINTAINERS
 PROJECT_URL = "https://github.com/martinus/quetschn"
-# each as the whole URL: PROJECT_URL with a path after it is not one of them
-KEPT_URLS = re.compile("|".join(re.escape(u) + r"(?![\w/#-]|\.\w)" for u in (SPEC_URL, PROJECT_URL)))
+# as the whole URL: with a path after it, it is not the one
+KEPT_URLS = re.compile(re.escape(PROJECT_URL) + r"(?![\w/#-]|\.\w)")
+SPEC = "Documentation/staging/seqlz.rst"
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
                        r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
@@ -57,7 +63,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
     ("docs/format.md is the specification. docs/explored-designs.md has the measurements behind each "
-     "choice, by the headings quoted below.", f"The format is specified in {SPEC_URL}."),
+     "choice, by the headings quoted below.", f"{SPEC} specifies the format."),
     (" The same bytes as seqlz_encode() for the sequences of seqlz_find().", ""),
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
@@ -103,9 +109,11 @@ L:	linux-mm@kvack.org
 L:	linux-kernel@vger.kernel.org
 S:	Maintained
 W:	{PROJECT_URL}
+F:	Documentation/staging/seqlz.rst
 F:	drivers/block/zram/backend_seqlz.*
 F:	include/linux/seqlz.h
 F:	lib/seqlz/
+F:	scripts/gen-seqlz-tables.py
 """
 # the backend in zram's documentation, after what it says about levels; the facts are the Kconfig help's
 # and backend_seqlz.c's
@@ -122,14 +130,14 @@ Huffman codes them where that saves space, which takes more time::
 HEADING = re.compile(r" ?\(\"[^\"]+\"(?:,? [^)]*)?\)")
 PAGE_BITS_BLOCK = re.compile(r"(/\*[^*]*?(?:\*[^/][^*]*?)*?\*/\n)?#ifndef QUETSCHN_PAGE_BITS\n#define QUETSCHN_PAGE_BITS 12[^\n]*\n#endif\n")
 
-TABLE_HEADERS = {
-    "seqlz_default_tables.c": "The code lengths compiled in, part of the format, trained on pages of\n"
-                              "desktops and phones. The specification, see seqlz.h, has the symbol counts\n"
-                              "they are built from, and how.",
-    "seqlz_lit_sets.c": "The literal tables of pages with coded literals, one chosen per page, part of\n"
-                        "the format: 8, by k-means over the literal histograms of the training pages.\n"
-                        "The most used table first.",
-}
+# the comment of the counts in the kernel's copy, instead of the one of bench/
+COUNTS_HEAD = """# The symbol counts of seqlz's tables for 4 KiB pages, which
+# scripts/gen-seqlz-tables.py turns into lib/seqlz/seqlz_tables.c. Counted on
+# 524 912 memory pages of desktops and a phone, with seqlz's matcher; the
+# literal tables by k-means over the 440 898 pages with more than 64 literals.
+# token, ll and ml: how often each symbol occurred, by number. lit: the pages of
+# a literal table, then how often each byte occurred as a literal on them.
+"""
 
 
 def visual(s):
@@ -256,15 +264,6 @@ def spdx(text, c_style):
             "/* SPDX-License-Identifier: GPL-2.0-only OR MIT */") + "\n" + rest
 
 
-def top_comment(text, words):
-    """the first comment after the SPDX line replaced"""
-    first, rest = text.split("\n", 1)
-    m = re.match(r"/\*.*?\*/\n", rest, re.S)
-    assert m, "no top comment"
-    body = "\n".join(" * " + l if l else " *" for l in words.split("\n"))
-    return first + "\n/*\n" + body + "\n */\n" + rest[m.end():]
-
-
 def cut(text, pattern):
     """the one match of the regular expression pattern, across lines, removed"""
     found = re.findall(pattern, text, re.S)
@@ -357,22 +356,21 @@ def port_codec():
     return t
 
 
-def port_tables(name, inc_base, symbol):
-    t = (SRC / name).read_text()
-    t = spdx(t, True)
-    t = top_comment(t, TABLE_HEADERS[name])
-    # the KUnit tests check the tables against their SHA-256 and make pages with them
-    t = must(t, '#include "seqlz.h"\n', '#include <kunit/visibility.h>\n#include <linux/export.h>\n\n'
-             '#include "seqlz.h"\n')
-    # 4 KiB pages only: the format for 16 KiB pages is not fixed yet (format.md, Status). The .inc file
-    # without its SPDX line and comment, so that the export follows the table, as checkpatch wants it
-    inc = (SRC / f"{inc_base}_4k.inc").read_text()
-    inc = re.sub(r"\A//[^\n]*\n/\*.*?\*/\n", "", inc, flags=re.S)
-    assert inc.startswith("const "), inc[:80]
-    t = must(t, f'#if QUETSCHN_PAGE_BITS != 12\n#include "{inc_base}_16k.inc"\n#else\n'
-                f'#include "{inc_base}_4k.inc"\n#endif\n', f"{inc}EXPORT_SYMBOL_IF_KUNIT({symbol});\n")
-    t = common(t)
-    return t
+def port_counts():
+    """bench/seqlz_counts_4k.txt with the comment of the kernel's copy and at most 80 columns"""
+    words = [w for line in (REPO / "bench" / "seqlz_counts_4k.txt").read_text().split("\n")
+             if not line.startswith("#") for w in line.split()]
+    out, line = [], ""
+    for w in words:
+        if w in ("token", "ll", "ml", "lit") and line:
+            out.append(line)
+            line = ""
+        if line and len(line) + 1 + len(w) > WIDTH:
+            out.append(line)
+            line = ""
+        line = f"{line} {w}" if line else w
+    out.append(line)
+    return COUNTS_HEAD + "\n".join(out) + "\n"
 
 
 def port_kunit():
@@ -444,14 +442,15 @@ def main():
         "lib/seqlz/seqlz.h": port_header(),
         "lib/seqlz/page_lz.h": port_page_lz(),
         "lib/seqlz/seqlz_codec.c": port_codec(),
-        "lib/seqlz/seqlz_default_tables.c": port_tables("seqlz_default_tables.c", "seqlz_default_tables",
-                                                        "seqlz_default_own"),
-        "lib/seqlz/seqlz_lit_sets.c": port_tables("seqlz_lit_sets.c", "seqlz_lit_sets", "seqlz_lit_sets"),
+        "lib/seqlz/seqlz_counts.txt": port_counts(),
+        SPEC: ".. SPDX-License-Identifier: GPL-2.0-only OR MIT\n\n" +
+              format_rst.convert((REPO / "docs" / "format.md").read_text()),
+        "scripts/gen-seqlz-tables.py": (HERE / "gen-seqlz-tables.py").read_text(),
         "lib/seqlz/tests/seqlz_kunit.c": port_kunit(),
         "lib/seqlz/Makefile": "# SPDX-License-Identifier: GPL-2.0-only OR MIT\n"
                               "ccflags-y += -O3\n\n"
                               "obj-$(CONFIG_SEQLZ) += seqlz.o\n"
-                              "seqlz-y := seqlz_codec.o seqlz_default_tables.o seqlz_lit_sets.o\n\n"
+                              "seqlz-y := seqlz_codec.o seqlz_tables.o\n\n"
                               "obj-$(CONFIG_SEQLZ_KUNIT_TEST) += tests/seqlz_kunit.o\n",
         "lib/seqlz/.kunitconfig": "CONFIG_KUNIT=y\nCONFIG_SEQLZ_KUNIT_TEST=y\n",
         "drivers/block/zram/backend_seqlz.c": port_backend(tree),
@@ -471,6 +470,12 @@ def main():
     for path, text in out.items():
         (tree / path).parent.mkdir(parents=True, exist_ok=True)
         (tree / path).write_text(text)
+    # the tables, by the generator in the tree, as anybody would make them again
+    (tree / "scripts/gen-seqlz-tables.py").chmod(0o755)
+    out["lib/seqlz/seqlz_tables.c"] = subprocess.run(
+        [sys.executable, "scripts/gen-seqlz-tables.py", "lib/seqlz/seqlz_counts.txt"], cwd=tree, check=True,
+        capture_output=True, text=True).stdout
+    (tree / "lib/seqlz/seqlz_tables.c").write_text(out["lib/seqlz/seqlz_tables.c"])
 
     patch(tree / "lib/Kconfig", "config LZ4_DECOMPRESS\n\ttristate\n\n",
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"
@@ -488,6 +493,8 @@ def main():
           "\t  pages that are compressed and decompressed again, and pages\n"
           "\t  that are damaged or invalid by one rule of the format.\n\n"
           "\t  If unsure, say N.\n\n", "config SEQLZ\n")
+    patch(tree / "Documentation/staging/index.rst", "   rpmsg\n   speculation\n",
+          "   rpmsg\n   seqlz\n   speculation\n", "   seqlz\n")
     patch(tree / "lib/Makefile", "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\n",
           "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\nobj-$(CONFIG_SEQLZ) += seqlz/\n", "CONFIG_SEQLZ")
     z = tree / "drivers/block/zram"

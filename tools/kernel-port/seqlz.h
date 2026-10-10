@@ -2,8 +2,8 @@
 /*
  * seqlz: compression of single memory pages of 4 KiB, for zram. An LZ format
  * whose sequences and literals are Huffman coded with tables that are part of
- * the format, so a page carries none. The format is specified in
- * https://github.com/martinus/quetschn/blob/main/docs/format.md.
+ * the format, so a page carries none. Documentation/staging/seqlz.rst specifies
+ * the format.
  */
 #ifndef _LINUX_SEQLZ_H
 #define _LINUX_SEQLZ_H

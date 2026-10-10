@@ -1,5 +1,6 @@
 # The seqlz format
 
+<!-- not in the kernel's copy -->
 seqlz compresses one memory page into one compressed page. This file describes the bytes, so that a
 decoder can be written from it alone, and it says which compressed pages are valid. It describes the
 format as `src/seqlz.c` writes and reads it. Sentences marked *Why:* explain a choice and are
@@ -14,6 +15,20 @@ are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both
 file, slow on purpose, and checked against `seqlz_decode()`, see
 [How this file was checked](#how-this-file-was-checked).
 
+The text between the comments "not in the kernel's copy" and "end" is left out of the kernel's copy of
+this file, which `tools/kernel-port/port.py` writes as reStructuredText; the comments "in the kernel's
+copy" have text only for that copy.
+<!-- end -->
+<!-- in the kernel's copy:
+seqlz compresses one memory page into one compressed page, for zram. This document describes the
+bytes, so that a decoder can be written from it alone, and it says which compressed pages are valid.
+Sentences marked *Why:* explain a choice and are not part of the format.
+
+At level 1 the compressor stores the literals as they are, at level 2 it codes them where that pays.
+It is one format, and the decoder decodes both.
+-->
+
+<!-- not in the kernel's copy -->
 ## Status
 
 > [!IMPORTANT]
@@ -38,6 +53,7 @@ That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
 ([seqlz.md](seqlz.md#what-is-not-known-yet)). So it is not in the first series for the kernel:
 `tools/kernel-port/` builds seqlz for 4 KiB pages only.
+<!-- end -->
 
 ## The idea
 
@@ -72,6 +88,10 @@ the decoder has to know it. Some numbers depend on it:
 
 The compressed page is a byte string of length `len`. Its length is not stored in it either: zram
 stores it and gives it to the decoder.
+<!-- in the kernel's copy:
+
+Linux has seqlz for 4 KiB pages only. The format for 16 KiB pages is not fixed yet.
+-->
 
 ## Layout of a compressed page
 
@@ -145,28 +165,50 @@ are no code.
 ## The tables
 
 The tables are part of the format: they are fixed, and a page cannot say that it uses others. A new
-set of tables would be a new format, with a new name in zram. Each table is a list of code lengths, one
-byte per symbol, symbol 0 first:
+set of tables would be a new format, see [No version in the page](#no-version-in-the-page). Each table
+is a list of code lengths, one byte per symbol, symbol 0 first:
 
+<!-- in the kernel's copy:
+| table | symbols | longest code | in `lib/seqlz/seqlz_tables.c` |
+| --- | --- | --- | --- |
+| tokens and escape, `TOK` | 3073 | 11 bits | `seqlz_default_own.token` |
+| literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_own.ll` |
+| match length values, `ML` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_own.ml` |
+| literal tables 0 to 7 | 256 each | 10 bits | `seqlz_lit_sets[0]` to `[7]` |
+-->
+<!-- not in the kernel's copy -->
 | table | symbols | longest code | 4 KiB pages | 16 KiB pages |
 | --- | --- | --- | --- | --- |
 | tokens and escape, `TOK` | 3073 | 11 bits | `src/seqlz_default_tables_4k.inc`, `.token` | `src/seqlz_default_tables_16k.inc`, `.token` |
 | literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | the same, `.ll` | the same, `.ll` |
 | match length values, `ML` | `LEN_SYMBOLS` | 8 bits | the same, `.ml` | the same, `.ml` |
 | literal tables 0 to 7 | 256 each | 10 bits | `src/seqlz_lit_sets_4k.inc`, `seqlz_lit_sets[0]` to `[7]` | `src/seqlz_lit_sets_16k.inc`, the same |
+<!-- end -->
 
 `LL` and `ML` are not the literal tables: they code the lengths `ll` and `ml` of a sequence when they
 are too large for a token. The literal tables code the literals themselves.
 
 ### Where the tables come from
 
+<!-- in the kernel's copy:
+Every table is built from counts that are in the kernel, `lib/seqlz/seqlz_counts.txt`, by
+`scripts/gen-seqlz-tables.py`, which writes `lib/seqlz/seqlz_tables.c`. The counts say how often each
+token, `ll` and `ml` symbol occurred on the training pages, and for each literal table, how often each
+byte occurred as a literal on the pages that table codes best. The pages are 524 912 memory pages of
+desktops and a phone. They are not published, because memory pages hold keys and passwords. The counts
+can't give those back: they are sums over all pages, each literal table's over 845 pages or more, and
+they don't say which symbol came after which or on which page.
+-->
+<!-- not in the kernel's copy -->
 Every table is built from counts that are in this repository:
 [`bench/seqlz_counts_4k.txt`](../bench/seqlz_counts_4k.txt) and
 [`bench/seqlz_counts_16k.txt`](../bench/seqlz_counts_16k.txt). They have how often each token, `ll` and
 `ml` symbol occurred on the training pages, and for each literal table, how often each byte occurred as
-a literal on the pages that table codes best. `quetschn-seqlz-train --from-counts <file>` turns the counts
-into the code lengths, and with `--lit-sets` into the literal tables; `bench/seqlz_train.cpp` has how.
-The test `seqlz_train` checks in CI that this gives the tables in `src/` bit for bit, for both page sizes.
+a literal on the pages that table codes best. `tools/kernel-port/gen-seqlz-tables.py` turns the counts
+into the tables in `src/`, and `tools/seqlz-ref/check.sh` checks in CI that they are its output, byte for
+byte. `quetschn-seqlz-train --from-counts <file>` does the same in C++, see `bench/seqlz_train.cpp`, and
+the test `seqlz_train` checks that it gives the same tables, for both page sizes. The kernel gets the
+generator as `scripts/gen-seqlz-tables.py` and the 4 KiB counts.
 
 The 4 KiB tables are counted on 524 912 pages: the resident pages of a desktop, 60 132 pages of its zram
 dump of 28th September 2026, and the first zram dump of a Xiaomi Mi 9T, five times, so that the phone
@@ -176,9 +218,10 @@ and passwords. The counts can't give those back: they are sums over all pages, e
 845 pages or more for 4 KiB (the phone's counted five times) and 453 or more for 16 KiB, and they don't say which symbol came after which
 or on which page. `quetschn-seqlz-train --corpus <pages> --counts <file>` counts other pages the same
 way.
+<!-- end -->
 
 The SHA-256 of each table's lengths, as bytes in symbol order (the literal tables one after the other),
-so that a decoder can check that it has the right ones; `tools/seqlz-ref/seqlz_ref.py` checks them:
+so that a decoder can check that it has the right ones:
 
 | table | SHA-256 |
 | --- | --- |
@@ -191,7 +234,13 @@ so that a decoder can check that it has the right ones; `tools/seqlz-ref/seqlz_r
 | `ML_16k` | `a44d8993849e2385181b89d8299a518a39071652bb6d09d61383a5153acbb867` |
 | `LIT_16k` | `cc37c3ba7e7ffdb91ff873d7c9a19f04301efe79c4b2fd7202c137212a769db4` |
 
-How the tables were trained is in [explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
+<!-- not in the kernel's copy -->
+`tools/seqlz-ref/seqlz_ref.py` checks them. How the tables were trained is in
+[explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
+<!-- end -->
+<!-- in the kernel's copy:
+The KUnit tests of seqlz check the 4 KiB ones.
+-->
 
 ## The bitstream of the sequences
 
@@ -349,7 +398,7 @@ The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times, wi
 Not part of the format: any page that decodes is fine, and one page can be written in many ways, as
 with lz4 or zstd. For reference, `seqlz_compress()` writes:
 
-- the matches of a greedy matcher (`src/page_lz.h`); each offset with class 0 when it is the last
+- the matches of a greedy matcher (`page_lz.h`); each offset with class 0 when it is the last
   one, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of classes 1 to 3 that holds
   it;
 - the escape only for a token without a code;
@@ -371,6 +420,7 @@ that keeps pages longer, or zram's pages kept across a kexec by live update (`ke
 which zram does not do in 2026. The values of byte 2 with its top bits set are invalid now and free for
 a format that has to tell itself apart.
 
+<!-- not in the kernel's copy -->
 ## How this file was checked
 
 `tools/seqlz-ref/seqlz_ref.py` decodes bit by bit, from this file alone, and agreed with `seqlz_decode()` on
@@ -386,3 +436,4 @@ found none either.
 `test/seqlz_ref_test.cpp` checks the example above, the compressor's pages, damaged pages, and pages
 made by hand for the rules that damage rarely reaches: the top bits of `t`, a literal code outside its
 stream, the last sequence's class.
+<!-- end -->
