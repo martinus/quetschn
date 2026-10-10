@@ -131,11 +131,12 @@ static __always_inline u64 repeat_pattern(const u8 *d, unsigned int off)
 static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 				       unsigned int len)
 {
-	unsigned int step = off >= 8 ? 8U : repeat_step[off & 7U],
-		     back = off >= 8 ? off : step, k = 0;
+	unsigned int k = 0;
 
 	if (off < 8) {
+		/* with less than 8 bytes left, byte by byte below */
 		if ((unsigned int)(d_end - d) >= 8U) {
+			unsigned int step = repeat_step[off & 7U];
 			/*
 			 * reads d - off up to d - off + 7, which is below
 			 * d + 8 <= d_end: inside the page
@@ -148,27 +149,24 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 			     k < len && (unsigned int)(d_end - d) >= k + 8U;
 			     k += step)
 				put_unaligned_le64(pat, d + k);
-			back = 0;
-		} else {
-			back = 0; /* less than 8 bytes left: byte by byte */
 		}
-	} else if ((unsigned int)(d_end - d) >= 16U) {
-		/*
-		 * Most matches are at most 16 bytes, so 16 bytes are copied
-		 * without a loop. With off >= 8 the second copy reads bytes the
-		 * first one wrote or that were there before, so the order is
-		 * right. 32 bytes made the median page faster and the slowest
-		 * ones slower: those have many short matches, and copied 32
-		 * bytes for each.
-		 */
-		copy8(d, d - off);
-		copy8(d + 8, d + 8 - off);
-		k = 16;
-	}
-	if (back != 0) {
+	} else {
+		if ((unsigned int)(d_end - d) >= 16U) {
+			/*
+			 * Most matches are at most 16 bytes, so 16 bytes are
+			 * copied without a loop. The second copy reads bytes
+			 * the first one wrote or that were there before, so the
+			 * order is right. 32 bytes made the median page faster
+			 * and the slowest ones slower: those have many short
+			 * matches, and copied 32 bytes for each.
+			 */
+			copy8(d, d - off);
+			copy8(d + 8, d + 8 - off);
+			k = 16;
+		}
 		while (k < len && (unsigned int)(d_end - d) >= k + 8U) {
-			copy8(d + k, d + k - back);
-			k += step;
+			copy8(d + k, d + k - off);
+			k += 8;
 		}
 	}
 	for (; k < len; k++)

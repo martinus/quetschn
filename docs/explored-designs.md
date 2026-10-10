@@ -111,6 +111,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [Numbers that were only in the codec's comments, until 10th October 2026](#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)
 - [The kernel copy's choices measured in one boot and on the phone: -O3 kept, one decode loop, prefetch(), no __aligned(64), no load16()](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)
 - [seqlz.c split in three, as lib/lz4 is: the kernel copy the same speed, measured on the kernel copy itself](#seqlzc-split-in-three-as-liblz4-is-the-kernel-copy-the-same-speed-measured-on-the-kernel-copy-itself)
+- [copy_match() without its dead branch: within what the code's place moves, kept](#copy_match-without-its-dead-branch-within-what-the-codes-place-moves-kept)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5104,6 +5105,43 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## copy_match() without its dead branch: within what the code's place moves, kept
+
+*In `copy_match()`, `back` is `off` whenever its loop runs, and `step` is then 8: both branches for an
+offset below 8 set `back` to 0. Without `back`, and with the loop only for an offset of 8 or more, the
+code says what it does, but gcc and clang lay out `seqlz_decompress()` differently, in two variants
+tried. gcc's warm reads got up to 0.04 µs faster on one dump, clang's swap-ins 0.01 to 0.03 µs slower
+on both, and the swap-outs, whose code did not change, moved by up to 0.05 µs. Kept: the simpler code
+for a difference that is not larger than where the code lands.* Code: `copy_match()` in
+`src/seqlz_decompress.c`, #174.
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `454a0ad` with `VARIANTS`, `MODE=swap`, the backend's
+prefetch, CPU 2 at a fixed 4.5 GHz, boost off, 3 boots per kernel, 20 000 pages per dump. `cm` is the
+variant, `same` the same source as `seqlz` again, all backends of one kernel, taking turns. The mean
+over the boots minus `seqlz`'s, in µs, swap-out / warm swap-in / flushed swap-in, raw literals and
+coded:
+
+| | `cm`, raw | `cm`, coded | `same`, raw | `same`, coded |
+| --- | --- | --- | --- | --- |
+| gcc 16.2.1, first desktop dump | -0.030 / -0.036 / -0.019 | +0.012 / -0.022 / -0.007 | -0.013 / -0.012 / +0.010 | -0.000 / +0.003 / +0.006 |
+| gcc, second phone dump | +0.025 / -0.022 / -0.019 | +0.032 / -0.027 / -0.015 | -0.008 / -0.016 / +0.000 | +0.012 / -0.021 / -0.014 |
+| clang 22.1.8, first desktop dump | -0.053 / +0.013 / +0.029 | -0.042 / +0.007 / +0.016 | +0.012 / -0.003 / -0.003 | +0.007 / +0.006 / -0.009 |
+| clang, second phone dump | -0.036 / +0.017 / +0.027 | -0.041 / +0.022 / +0.029 | +0.033 / -0.007 / +0.002 | +0.004 / +0.005 / -0.007 |
+
+`seqlz`'s own means were 3.53 / 3.69 µs warm with gcc on the first dump and 3.56 / 3.74 with clang.
+On the phone dump with gcc, `same` moved as much as `cm`, so only the first dump says anything for
+gcc. With clang, `cm`'s swap-ins are slower in all 8 cells, `same`'s within 0.009 µs, and the
+flushed ones outside the range of the boots: 3.62 to 3.64 µs against 3.58 to 3.61, and 3.54 to 3.57
+against 3.52 to 3.53. But `cm`'s swap-outs move by 0.04 to 0.05 µs, although the encoder is the same
+source: that is only where the code lands, and the sign of the reads turns with the compiler. `same`
+measures the boots, not that; a decoder laid out anew moves by as much. So the variant is kept for
+the code, which says what it does, and not for its time. First rejected for clang's numbers,
+then kept on a second look at the swap-outs.
+
+Not measured on the Mi 9T: two modules of the same source differ there by 0.13 µs in the A55's warm
+reads ([The kernel copy's choices](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)),
+six times what is to be seen here.
 
 ## seqlz.c split in three, as lib/lz4 is: the kernel copy the same speed, measured on the kernel copy itself
 
