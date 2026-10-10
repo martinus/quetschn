@@ -40,3 +40,16 @@ ls "$work/build/lib/seqlz/seqlz_codec.o" "$work/build/lib/seqlz/tests/seqlz_kuni
 # Without the blank line after it, which checkpatch would take for an empty commit message
 (cd "$work/src" && { git diff --cached --stat; git diff --cached; } | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
 (cd "$work/src" && scripts/kernel-doc -none -Wall lib/seqlz/seqlz_codec.c lib/seqlz/seqlz.h include/linux/seqlz.h) && echo "kernel-doc: no warnings"
+# the specification as docutils reads it; Sphinx, which the kernel's htmldocs need, is not required here
+if python3 -c 'import docutils' 2>/dev/null; then
+    python3 - "$work/src/Documentation/staging/seqlz.rst" <<'EOF'
+import io, sys
+import docutils.core
+err = io.StringIO()
+docutils.core.publish_string(open(sys.argv[1]).read(), writer_name="null",
+                             settings_overrides={"halt_level": 2, "report_level": 1, "warning_stream": err})
+sys.exit(err.getvalue() or print("Documentation/staging/seqlz.rst: no docutils warnings"))
+EOF
+else
+    echo "Documentation/staging/seqlz.rst: not checked, python3 has no docutils"
+fi

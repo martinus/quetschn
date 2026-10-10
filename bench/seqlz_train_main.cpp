@@ -2,8 +2,9 @@
 //
 // Trains the static Huffman tables of seqlz (src/seqlz.h) on a corpus: the matches of seqlz's own
 // matcher on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
-// SEQLZ_MAX_BITS bits. Writes a C initializer for src/seqlz_default_tables_4k.inc or _16k.inc, by the
-// page size of the build, with --lit-sets the literal tables of src/seqlz_lit_sets_4k.inc or _16k.inc.
+// SEQLZ_MAX_BITS bits. Writes a C initializer of the code lengths, by the page size of the build, with
+// --lit-sets the literal tables. src/seqlz_default_tables_4k.inc and the others are made by
+// tools/kernel-port/gen-seqlz-tables.py from the counts that --counts writes, the same tables.
 // --counts also writes the counts the tables are built from, --from-counts builds them from such a file
 // instead of a corpus: bench/seqlz_counts_4k.txt and _16k.txt are the ones of the tables in src/.
 

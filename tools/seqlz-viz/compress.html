@@ -875,7 +875,7 @@ function seqCard(i) {
     const hitTxt = q.hit === "both" ? `Both match. The last offset is taken: it costs no offset bits.` : q.hit === "rep" ? `The bytes at the last offset match: the same offset as the match before, which costs no offset bits.` : `The bytes at slot ${q.slot}'s position match: a match ${fmt(q.hp - q.cand)} bytes back.`;
     const back = q.hp - q.d;
     h += op("var(--c-match)", "M", `<p>${hitTxt}</p>${back ? `<p>The ${plural(back, "byte")} before are equal too: the match grows backwards to byte ${fmt(q.d)}, and ${back === 1 ? "that byte is" : "those bytes are"} no literal after all.</p>` : ""}
-      <p>Forwards, <code>count()</code> compares 16 bytes at once with two 8-byte XORs, then 8 at a time: ${q.ml - 4 === 1 ? "1 more byte is" : `${fmt(q.ml - 4)} more bytes are`} equal after the first 4${q.d + q.ml === PAGE ? ", up to the end of the page" : ""}, <b>${fmt(q.ml)}</b> in all. The matcher jumps behind them: the ${fmt(q.ml - 1)} positions inside the match are not tried.</p>`);
+      <p>Forwards, <code>seqlz_match_len()</code> compares 16 bytes at once with two 8-byte XORs, then 8 at a time: ${q.ml - 4 === 1 ? "1 more byte is" : `${fmt(q.ml - 4)} more bytes are`} equal after the first 4${q.d + q.ml === PAGE ? ", up to the end of the page" : ""}, <b>${fmt(q.ml)}</b> in all. The matcher jumps behind them: the ${fmt(q.ml - 1)} positions inside the match are not tried.</p>`);
     h += op("var(--k-esc)", "#", `<p>Each position tried went into its slot, position ${fmt(q.hp)} into slot ${q.slot}. ${q.d + q.ml < LIMIT ? `After the match, position ${fmt(q.d + q.ml - 2)}, 2 before its end, goes into its slot too: so a later match can start where this one ends.` : ""}</p>`);
   }
   // the token

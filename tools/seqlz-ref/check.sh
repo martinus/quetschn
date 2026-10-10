@@ -6,12 +6,24 @@
 # pages that src/seqlz.c compressed, with raw and with coded literals: each must give the page back.
 # A retrain of the tables without new hashes in docs/format.md fails here, and so does a format change
 # that the spec does not describe. The pages are made up, never from a dump: tools/seqlz-worst/pages/,
-# and three written here. Needs cc and python3.
+# and three written here. First, the tables in src/ must be what tools/kernel-port/gen-seqlz-tables.py
+# makes from the counts in bench/, byte for byte. Needs cc and python3.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 out=${1:-$(mktemp -d)}
 mkdir -p "$out"
+
+for s in 4k 16k; do
+    for t in "--lengths seqlz_default_tables" "--lit-sets seqlz_lit_sets"; do
+        set -- $t
+        if ! (cd "$repo" && tools/kernel-port/gen-seqlz-tables.py "$1" "bench/seqlz_counts_$s.txt" |
+            cmp -s - "src/${2}_$s.inc"); then
+            echo "src/${2}_$s.inc is not what tools/kernel-port/gen-seqlz-tables.py $1 makes" >&2
+            exit 1
+        fi
+    done
+done
 
 ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-viz/compress.c" \
     "$repo/src/seqlz.c" "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c"
