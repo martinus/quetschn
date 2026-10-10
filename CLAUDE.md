@@ -77,8 +77,8 @@ issue (#151 to #157, from the review of 10th October 2026).
   that said something the code does not do, and 6 that named a file that no longer exists.
 - Every path the kernel takes runs in KUnit, also a path the CPU picks (#155), and every path of the
   decoder is reached by a fuzz target.
-- Memory is what `kmalloc()` or `vmalloc()` hands out, not what is asked for: 12 304 bytes come as
-  16 KiB (#154).
+- Memory is what `kmalloc()` or `vmalloc()` hands out, not what is asked for: 8192 and 4112 bytes in
+  two allocations come as 16 KiB, as a union as 8 KiB (#154).
 - `tools/kernel-port/check.sh`: W=1 without a warning on x86-64, arm64, arm and s390, no new
   checkpatch `--strict` finding. Stack frames stay below 1024 bytes, the 32-bit `FRAME_WARN`; the
   deepest is 640 (`code_literals()`, gcc, x86-64), 992 with KASAN and UBSan.

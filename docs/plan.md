@@ -48,7 +48,7 @@ criteria:
 | C2 | lower p99 decompression latency than `lz4`, cold cache, on x86-64 **and** on an arm64 little core, 95% bootstrap confidence interval excluding 0, latency statistic of §5.2 | decompression runs in the page fault (§3.2), and on a phone often on a little core | not met, see R10 |
 | C3 | p99 compression latency within 1.2× of `lz4`, same statistic as C2 | zram compresses more often than it decompresses | at the bar: 1.21 and 1.19 times `lz4` |
 | C4 | beats `lz4` **with a trained dictionary**, not only bare `lz4` | zram supports dictionaries, and Honor made `lz4` with a dictionary more than 50% faster in March 2026 (`f0f6f7871430`) | met: 20.4% less than `lz4` with a dictionary |
-| C5 | per-CPU workspace ≤ `lz4`'s 16 416 B | `lz4` needs 16 416 B per CPU, `lzo` 16 384 B, `842` 61 440 B (§3.3) | met with 4 KiB pages, 12 304 B. Not with 16 KiB pages, 32 784 B, the sum of the compression and the decompression context (§3.3) |
+| C5 | per-CPU workspace ≤ `lz4`'s 16 416 B | `lz4` needs 16 416 B per CPU, `lzo` 16 384 B, `842` 61 440 B (§3.3) | met with 4 KiB pages: 8 KiB per CPU from `kmalloc()`, 16 KiB with the contexts split, against `lz4`'s 20 KiB from `vmalloc()`. With 16 KiB pages 32 KiB, as much as `lz4`, and 48 KiB with the split (§3.3) |
 | C6 | the decompressor is fuzz-safe and bounded in time for any input | this is what stopped the last new codec (§2.2) | met: 3.2 billion fuzz inputs, the worst case measured |
 
 C1 and C2 together were meant to be the merge argument: *strictly better than the current default and
@@ -325,15 +325,32 @@ see [explored-designs.md](explored-designs.md)).
 The split into read and write streams of October 2026 (§3.2) keeps the 3 pages: `buffer`, 2 pages,
 goes with the write stream, `local_copy`, 1 page, with the read stream. A backend gets two contexts
 too, one from `create_cctx` for compression and an optional one from `create_dctx` for decompression.
-`seqlz-fast-lit` splits without extra memory, because compression uses only the hash table and
-decompression only the scratch for the coded literals
-([`src/zram_seqlz.c:101`](../src/zram_seqlz.c#L101), `SEQLZ_SCRATCH` in
-[`src/seqlz.h:307`](../src/seqlz.h#L307), the table in [`src/seqlz.h:374`](../src/seqlz.h#L374)):
+`seqlz-fast-lit` splits without extra memory asked for, because compression uses only the hash table
+and decompression only the scratch for the coded literals (`struct seqlz_state` and `SEQLZ_SCRATCH` in
+[`src/seqlz.h`](../src/seqlz.h)).
 
-| page size | compression context: hash table | decompression context: literal scratch | sum |
-| --- | ---: | ---: | ---: |
-| 4 KiB | 8192 B | 4112 B | 12 304 B |
-| 16 KiB | 16 384 B | 16 400 B | 32 784 B |
+What counts is what `kmalloc()` and `vmalloc()` hand out, not what is asked for. `kmalloc()` rounds up
+to a power of 2 up to `KMALLOC_MAX_CACHE_SIZE`, 2 pages; `vmalloc()` to whole pages. Without the split,
+the backend's one context per CPU is a union of the hash table and the scratch: zram holds the stream's
+mutex for either, and neither keeps anything from one page to the next
+([`tools/kernel-port/backend_seqlz.c`](../tools/kernel-port/backend_seqlz.c)). With the split the two are
+separate allocations, and the scratch, 16 bytes more than a page, takes the next larger cache:
+
+| page size | hash table | literal scratch | one context, the union | split contexts |
+| --- | ---: | ---: | ---: | ---: |
+| 4 KiB | 8192 B | 4112 B | 8192 B asked, 8192 B allocated | 12 304 B asked, 16 384 B allocated |
+| 16 KiB | 16 384 B | 16 400 B | 16 400 B asked, 32 768 B allocated | 32 784 B asked, 49 152 B allocated |
+
+`lz4` asks `vmalloc()` for 16 416 B, which takes 5 pages, 20 480 B, with 4 KiB pages, and 2 pages,
+32 768 B, with 16 KiB pages. `lzo-rle` asks
+`kzalloc()` for 16 384 B. At level 1 the split has no decompression context. A scratch of 4096 B would
+save the second 4 KiB of the split; the decoder's copies of 16 bytes read past the last literal, which
+is what the 16 bytes are for.
+
+The tables are global, not per CPU: 43 280 B of `__ro_after_init`, which is `PROGBITS`, so they are
+zeros in the image until `seqlz_init()` builds them, in `vmlinux` or in the module. `SEQLZ` is built in
+even with `ZRAM=m`, because the bool `ZRAM_BACKEND_SEQLZ` selects it, as `ZRAM_BACKEND_LZ4` selects
+`LZ4_COMPRESS`. Both are for the cover letter, or for tables built at compile time (#153).
 
 `seqlz-fast` needs no decompression context. The harness (`bench/kernel_codecs/zram_codec.h`) and the
 kernel's backend (`tools/kernel-port/backend_seqlz.c`) have the two contexts since #102, the
@@ -341,8 +358,8 @@ backend for a tree with the series; at level 1 it has no decompression context.
 `lz4`'s 16 416 B are for compression only, and after
 patch 5 of the series `lz4` has no decompression context at all. So C5 has a question now that it did
 not have with one context: is the limit for the compression context, for each context, or for the
-sum? With 16 KiB pages the compression context alone, 16 384 B, is within `lz4`'s 16 416 B, the sum
-is not. This is not decided yet, and next action 4 in §9 depends on it.
+sum? With 16 KiB pages the compression context alone, 16 KiB allocated, is below `lz4`'s 32 KiB, the
+sum of the split contexts, 48 KiB, is not. This is not decided yet, and next action 4 in §9 depends on it.
 
 ### 3.4 The integration surface is small
 
