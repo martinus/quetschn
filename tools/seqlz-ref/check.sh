@@ -24,6 +24,24 @@ for s in 4k 16k; do
         fi
     done
 done
+# and it refuses lengths that seqlz_tables_init() refuses, so the kernel's tables built from what it writes
+# cannot fail
+python3 - "$repo/tools/kernel-port/gen-seqlz-tables.py" <<'EOF'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("gen", sys.argv[1])
+gen = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gen)
+gen.check("complete", [1, 2, 3, 3], 3, True)
+gen.check("an escaped symbol", [1, 2, 3, 3, 0], 3, False)
+for lengths, every in [([1, 2, 2, 2], True), ([1, 2, 3], True), ([1, 2, 4, 4, 4, 4], True), ([1, 2, 3, 3, 0], True)]:
+    try:
+        gen.check(str(lengths), lengths, 3, every)
+    except SystemExit:
+        continue
+    sys.exit(f"gen-seqlz-tables.py takes the lengths {lengths}, which seqlz_tables_init() refuses")
+EOF
 
 ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-viz/compress.c" \
     "$repo/src/seqlz_codes.c" "$repo/src/seqlz_compress.c" "$repo/src/seqlz_decompress.c" \

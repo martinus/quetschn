@@ -12,13 +12,12 @@ static int __init seqlz_init(void)
 	BUILD_BUG_ON(sizeof(struct seqlz_state) != SEQLZ_MEM_COMPRESS);
 	BUILD_BUG_ON(SEQLZ_MEM_DECOMPRESS != SEQLZ_SCRATCH);
 	/*
-	 * The lengths are fixed, so this fails only if they are broken. A
-	 * module then does not load; built in, only the warning says so.
+	 * Does not fail: before scripts/gen-seqlz-tables.py writes
+	 * seqlz_tables.c, it checks the lengths as seqlz_tables_init() does,
+	 * every table a complete prefix code with a code for every symbol, and
+	 * the KUnit tests check that the lengths are the format's.
 	 */
-	if (WARN_ON(seqlz_tables_init(&seqlz_fixed_tables, &seqlz_default_own) ||
-		    !seqlz_all_symbols(&seqlz_fixed_tables)))
-		return -EINVAL;
-	return 0;
+	return seqlz_tables_init(&seqlz_fixed_tables, &seqlz_default_own);
 }
 subsys_initcall(seqlz_init);
 

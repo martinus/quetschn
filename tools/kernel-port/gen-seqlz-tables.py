@@ -15,6 +15,10 @@
 # Each table is a length-limited prefix code, built by package-merge, with every count plus 1. Only the
 # most frequent tokens get a code; the others are sent as the escape, the last symbol of the token
 # table, and the 12 bits of the token.
+#
+# Before it writes them, it checks the lengths as seqlz_tables_init() does, and fails if one does not
+# pass: so the tables built from them once, at boot, cannot fail, and the encoder has a code for every
+# symbol it writes.
 
 import sys
 
@@ -87,6 +91,17 @@ def token_lengths(counts, page_bits):
     return best
 
 
+def check(name, lengths, max_bits, every):
+    """lengths as seqlz_tables_init() takes them: no code longer than max_bits, the codes filling the
+    decode table of 2^max_bits entries exactly, and with every a code for every symbol"""
+    if max(lengths) > max_bits:
+        sys.exit(f"{name}: a code is longer than {max_bits} bits")
+    if sum(1 << (max_bits - n) for n in lengths if n) != 1 << max_bits:
+        sys.exit(f"{name}: the codes do not fill the decode table exactly")
+    if every and not all(lengths):
+        sys.exit(f"{name}: a symbol has no code")
+
+
 def read_counts(path):
     words = []
     with open(path) as f:
@@ -124,17 +139,24 @@ def lengths_initializer(tables):
     plus_one = [[c + 1.0 for c in t] for t in tables[:3]]
     # a length value's symbols: 16 of their own, then one per highest bit from 4 up to the page's bits
     page_bits = len(tables[1]) - 13
+    token = token_lengths(plus_one[0], page_bits)
+    ll, ml = code_lengths(plus_one[1], VALUE_BITS), code_lengths(plus_one[2], VALUE_BITS)
+    # a token without a code is sent as the escape, which must have one that leaves room for the offset
+    check("token", token, TOKEN_BITS, False)
+    if not 0 < token[-1] <= 31 - page_bits - ESCAPE_BITS:
+        sys.exit("token: the escape has no code, or one too long")
+    check("ll", ll, VALUE_BITS, True)
+    check("ml", ml, VALUE_BITS, True)
     return initializer("const struct seqlz_lengths seqlz_default_own", [
-        (".token = ", token_lengths(plus_one[0], page_bits)),
-        (".ll = ", code_lengths(plus_one[1], VALUE_BITS)),
-        (".ml = ", code_lengths(plus_one[2], VALUE_BITS)),
-    ], "\t")
+        (".token = ", token), (".ll = ", ll), (".ml = ", ml)], "\t")
 
 
 def lit_sets_initializer(tables):
     # every byte gets a code, the encoder needs one; the first number of a literal table's counts is its
     # pages, not a byte
     sets = [code_lengths([c + 1.0 for c in t[1:]], LIT_BITS) for t in tables[3:]]
+    for k, s in enumerate(sets):
+        check(f"lit {k}", s, LIT_BITS, True)
     return initializer("const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256]", [("", s) for s in sets], "\t")
 
 
