@@ -365,9 +365,8 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	const u8 *ip[SEQLZ_LIT_STREAMS];
 	const u8 *start[SEQLZ_LIT_STREAMS];
 	unsigned int sz[SEQLZ_LIT_STREAMS];
-	u64 b0 = 1, b1 = 1, b2 = 1, b3 = 1, b4 = 1, b5 = 1, b6 = 1, b7 = 1;
-	const u8 *i0, *i1, *i2, *i3, *i4, *i5, *i6, *i7;
-	unsigned int k, j, rest, steps, r;
+	u64 b[SEQLZ_LIT_STREAMS];
+	unsigned int i, k, j, rest, steps, r;
 	u64 total = 0;
 	const u16 *lt;
 
@@ -377,8 +376,10 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
 	prefetch_lines(lt, sizeof(t->lit[0].decode));
 	total = lit_stream_sizes(s, width, q, sz, start);
-	for (k = 0; k < SEQLZ_LIT_STREAMS; k++)
-		ip[k] = start[k];
+	for (i = 0; i < SEQLZ_LIT_STREAMS; i++) {
+		ip[i] = start[i];
+		b[i] = 1;
+	}
 	if (SEQLZ_LIT_HEADER(width) + total > src_len)
 		return NULL;
 	/*
@@ -387,48 +388,14 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	 */
 	for (k = 0; k + SEQLZ_LIT_STREAMS * SEQLZ_LIT_ROUNDS <= n_lit;
 	     k += SEQLZ_LIT_STREAMS * SEQLZ_LIT_ROUNDS) {
-		i0 = ip[0];
-		i1 = ip[1];
-		i2 = ip[2];
-		i3 = ip[3];
-		i4 = ip[4];
-		i5 = ip[5];
-		i6 = ip[6];
-		i7 = ip[7];
-		b0 = lit_refill(&i0, b0, end);
-		b1 = lit_refill(&i1, b1, end);
-		b2 = lit_refill(&i2, b2, end);
-		b3 = lit_refill(&i3, b3, end);
-		b4 = lit_refill(&i4, b4, end);
-		b5 = lit_refill(&i5, b5, end);
-		b6 = lit_refill(&i6, b6, end);
-		b7 = lit_refill(&i7, b7, end);
-		ip[0] = i0;
-		ip[1] = i1;
-		ip[2] = i2;
-		ip[3] = i3;
-		ip[4] = i4;
-		ip[5] = i5;
-		ip[6] = i6;
-		ip[7] = i7;
-		for (j = 0; j < SEQLZ_LIT_ROUNDS; j++) {
-			b0 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j], b0, lt,
-					63U);
-			b1 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 1], b1,
-					lt, 63U);
-			b2 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 2], b2,
-					lt, 63U);
-			b3 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 3], b3,
-					lt, 63U);
-			b4 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 4], b4,
-					lt, 63U);
-			b5 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 5], b5,
-					lt, 63U);
-			b6 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 6], b6,
-					lt, 63U);
-			b7 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 7], b7,
-					lt, 63U);
-		}
+		for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
+			b[i] = lit_refill(&ip[i], b[i], end);
+		for (j = 0; j < SEQLZ_LIT_ROUNDS; j++)
+			for (i = 0; i < SEQLZ_LIT_STREAMS; i++) {
+				unsigned int at = k + SEQLZ_LIT_STREAMS * j + i;
+
+				b[i] = lit_decode(&out[at], b[i], lt, 63U);
+			}
 	}
 	/*
 	 * The rest, fewer than 40 literals: rest / 8 steps of all 8
@@ -444,65 +411,18 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	rest = n_lit - k;
 	steps = rest / SEQLZ_LIT_STREAMS;
 	r = rest % SEQLZ_LIT_STREAMS;
-	i0 = ip[0];
-	i1 = ip[1];
-	i2 = ip[2];
-	i3 = ip[3];
-	i4 = ip[4];
-	i5 = ip[5];
-	i6 = ip[6];
-	i7 = ip[7];
-	b0 = lit_refill(&i0, b0, end);
-	b1 = lit_refill(&i1, b1, end);
-	b2 = lit_refill(&i2, b2, end);
-	b3 = lit_refill(&i3, b3, end);
-	b4 = lit_refill(&i4, b4, end);
-	b5 = lit_refill(&i5, b5, end);
-	b6 = lit_refill(&i6, b6, end);
-	b7 = lit_refill(&i7, b7, end);
-	for (j = 0; j < steps; j++) {
-		b0 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j], b0, lt, 63U);
-		b1 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 1], b1, lt,
-				63U);
-		b2 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 2], b2, lt,
-				63U);
-		b3 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 3], b3, lt,
-				63U);
-		b4 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 4], b4, lt,
-				63U);
-		b5 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 5], b5, lt,
-				63U);
-		b6 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 6], b6, lt,
-				63U);
-		b7 = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + 7], b7, lt,
-				63U);
-	}
+	for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
+		b[i] = lit_refill(&ip[i], b[i], end);
+	for (j = 0; j < steps; j++)
+		for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
+			b[i] = lit_decode(&out[k + SEQLZ_LIT_STREAMS * j + i],
+					  b[i], lt, 63U);
 	k += SEQLZ_LIT_STREAMS * steps;
-	b0 = lit_decode(&out[k], b0, lt, (0U - (r > 0U)) & 63U);
-	b1 = lit_decode(&out[k + 1], b1, lt, (0U - (r > 1U)) & 63U);
-	b2 = lit_decode(&out[k + 2], b2, lt, (0U - (r > 2U)) & 63U);
-	b3 = lit_decode(&out[k + 3], b3, lt, (0U - (r > 3U)) & 63U);
-	b4 = lit_decode(&out[k + 4], b4, lt, (0U - (r > 4U)) & 63U);
-	b5 = lit_decode(&out[k + 5], b5, lt, (0U - (r > 5U)) & 63U);
-	b6 = lit_decode(&out[k + 6], b6, lt, (0U - (r > 6U)) & 63U);
-	b7 = lit_decode(&out[k + 7], b7, lt, (0U - (r > 7U)) & 63U);
-	ip[0] = i0;
-	ip[1] = i1;
-	ip[2] = i2;
-	ip[3] = i3;
-	ip[4] = i4;
-	ip[5] = i5;
-	ip[6] = i6;
-	ip[7] = i7;
-	if (!lit_stream_ends(start[0], sz[0], ip[0], b0) ||
-	    !lit_stream_ends(start[1], sz[1], ip[1], b1) ||
-	    !lit_stream_ends(start[2], sz[2], ip[2], b2) ||
-	    !lit_stream_ends(start[3], sz[3], ip[3], b3) ||
-	    !lit_stream_ends(start[4], sz[4], ip[4], b4) ||
-	    !lit_stream_ends(start[5], sz[5], ip[5], b5) ||
-	    !lit_stream_ends(start[6], sz[6], ip[6], b6) ||
-	    !lit_stream_ends(start[7], sz[7], ip[7], b7))
-		return NULL;
+	for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
+		b[i] = lit_decode(&out[k + i], b[i], lt, (0U - (r > i)) & 63U);
+	for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
+		if (!lit_stream_ends(start[i], sz[i], ip[i], b[i]))
+			return NULL;
 	return q + total;
 }
 

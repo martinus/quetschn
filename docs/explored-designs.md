@@ -112,6 +112,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The kernel copy's choices measured in one boot and on the phone: -O3 kept, one decode loop, prefetch(), no __aligned(64), no load16()](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)
 - [seqlz.c split in three, as lib/lz4 is: the kernel copy the same speed, measured on the kernel copy itself](#seqlzc-split-in-three-as-liblz4-is-the-kernel-copy-the-same-speed-measured-on-the-kernel-copy-itself)
 - [copy_match() without its dead branch: within what the code's place moves, kept](#copy_match-without-its-dead-branch-within-what-the-codes-place-moves-kept)
+- [Five simplifications measured in the VM and on the phone: the literal streams as arrays kept, four not](#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5105,6 +5106,72 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## Five simplifications measured in the VM and on the phone: the literal streams as arrays kept, four not
+
+*Five places where the code is more complex than it has to be, for a speed that was measured on the
+old decoder, in userspace, or not at all: `decode_literals()` with 8 streams written out by name
+(`i0` to `i7`, `b0` to `b7`), `prefetch_lines()` with 8 prefetches per iteration, `copy_match_fast()`
+with 5 stores before its loop, the token entry's bit `TOK_VALUE_AT`, and 8 literal streams instead
+of 4. Measured as backends of one kernel next to a second copy of the same source, and on the Mi 9T
+next to a second module of `main`. Kept: the streams as arrays, 105 lines less; the A55 reads coded
+pages 0.1 µs faster with it. Not kept: the prefetch loop costs the A76 0.8 µs in cold reads of coded
+pages, without `TOK_VALUE_AT` the A55 reads raw pages 0.2 µs slower, both within the VM's noise; the
+loop in `copy_match_fast()` and 4 streams are slower with gcc and clang in the VM.* Code:
+`decode_literals()` in `src/seqlz_decompress.c`.
+
+**Kernel VM**, `tools/zram-vm/run.sh` with `VARIANTS`, `MODE=swap`, the backend's prefetch, CPU 2 at a
+fixed 4.5 GHz, boost off, 3 boots per kernel, 20 000 pages per dump. At most 8 codecs fit into one
+boot, so two kernels, A and B, each with `seqlz`, `seqlz-lit` and `same`, the same source again. The
+mean over the boots minus `seqlz`'s or `seqlz-lit`'s, in µs, swap-out / warm swap-in / flushed
+swap-in:
+
+| | gcc 16.2.1, first desktop dump | gcc, second phone dump | clang 22.1.8, first desktop dump | clang, second phone dump |
+| --- | --- | --- | --- | --- |
+| A: the streams as arrays, coded | +0.027 / +0.036 / +0.043 | +0.036 / +0.042 / +0.043 | -0.066 / +0.025 / +0.020 | -0.021 / +0.025 / +0.029 |
+| A: 4 literal streams, coded | -0.020 / +0.059 / +0.060 | -0.019 / +0.054 / +0.061 | -0.026 / +0.063 / +0.068 | +0.002 / +0.046 / +0.075 |
+| A: `prefetch_lines()` a plain loop, raw | +0.003 / +0.011 / +0.025 | +0.024 / +0.023 / +0.006 | +0.072 / -0.019 / +0.022 | +0.048 / +0.015 / +0.012 |
+| A: `prefetch_lines()` a plain loop, coded | +0.020 / +0.019 / +0.022 | +0.016 / +0.009 / +0.022 | +0.087 / +0.024 / +0.023 | +0.068 / +0.019 / +0.030 |
+| A: `same`, raw | +0.022 / -0.022 / -0.012 | +0.005 / -0.021 / -0.021 | +0.048 / -0.003 / +0.044 | +0.040 / +0.033 / +0.025 |
+| A: `same`, coded | +0.037 / -0.014 / -0.005 | +0.046 / -0.008 / +0.006 | +0.054 / +0.036 / +0.040 | +0.050 / +0.037 / +0.038 |
+| B: `copy_match_fast()` with a loop, raw | +0.052 / +0.008 / +0.022 | +0.045 / +0.014 / +0.013 | -0.073 / +0.025 / +0.046 | -0.069 / +0.048 / +0.041 |
+| B: `copy_match_fast()` with a loop, coded | +0.009 / +0.018 / +0.002 | +0.009 / +0.021 / +0.025 | -0.042 / +0.038 / +0.052 | -0.038 / +0.046 / +0.058 |
+| B: without `TOK_VALUE_AT`, raw | -0.039 / +0.014 / +0.021 | -0.001 / +0.010 / +0.006 | +0.068 / +0.004 / +0.022 | +0.046 / +0.016 / +0.019 |
+| B: without `TOK_VALUE_AT`, coded | +0.012 / +0.027 / -0.009 | +0.009 / -0.004 / +0.004 | +0.063 / +0.016 / +0.017 | +0.040 / +0.030 / +0.033 |
+| B: `same`, raw | -0.023 / +0.001 / -0.004 | +0.008 / -0.010 / -0.011 | +0.032 / +0.011 / +0.023 | +0.008 / +0.026 / +0.013 |
+| B: `same`, coded | +0.013 / -0.006 / -0.017 | +0.003 / -0.010 / -0.005 | -0.017 / +0.026 / +0.029 | +0.002 / +0.021 / +0.044 |
+
+`seqlz-lit`'s swap-ins take 3.45 to 3.76 µs, so 0.04 µs is about 1%. The copy of the same source moved
+by up to 0.044 µs with clang, 0.022 with gcc: that is where the code lands. Against it, the arrays are
+1.3% slower with gcc and 0.4% faster with clang, the prefetch loop 0.6 to 1.0% slower with gcc and 0.4
+to 0.5% faster with clang, without `TOK_VALUE_AT` 0.4 to 0.6% slower with gcc and 0.1 to 0.2% faster
+with clang. The loop in `copy_match_fast()` is 0.5 to 0.7% slower with both, 4 streams 1.8% with gcc
+and 0.7% with clang. 4 streams make pages smaller, 2.7 and 2.8 bytes on the desktop dumps and 1.1 and
+1.5 on the phone dumps (`seqlz-fast-lit`, zsmalloc cost): 0.1 to 0.2% less memory for 0.7 to 1.8%
+slower reads, and a change of the format. Not kept.
+
+**The Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, `COOL=45`, 4 rounds, the second phone dump,
+NDK r21e's clang 9, the A55 at 1.80 GHz and the A76 at 2.21 GHz. `a` and `a2` are two modules of
+`main`. Means in µs, warm read / cold read; the writes did not move:
+
+| module | A55, raw | A55, coded | A76, raw | A76, coded |
+| --- | --- | --- | --- | --- |
+| `a`, `main` | 11.36 / 29.56 | 12.36 / 31.68 | 3.86 / 7.16 | 4.26 / 7.68 |
+| `a2`, `main` again | 11.27 / 28.33 | 12.29 / 31.18 | 3.90 / 6.91 | 4.32 / 7.54 |
+| the streams as arrays | | 12.19 / 30.09 | | 4.30 / 7.80 |
+| `prefetch_lines()` a plain loop | 11.32 / 28.23 | 12.43 / 30.35 | 3.92 / 7.27 | 4.35 / 8.47 |
+| without `TOK_VALUE_AT` | 11.54 / 29.23 | 12.38 / 31.29 | 3.91 / 7.25 | 4.33 / 7.50 |
+
+The prefetch loop's cold reads of coded pages on the A76, 8.15 to 8.84 µs over the rounds against
+7.38 to 7.99 for `a` and `a2`: its literal table is 2 KiB, 32 lines, and one prefetch per iteration
+takes more instructions than the prefetches, as the comment said. Without `TOK_VALUE_AT` the A55's warm
+reads of raw pages, 11.46 to 11.70 against 11.18 to 11.46: the in-order core pays for the two compares
+in the fast path's condition. The arrays read coded pages on the A55 faster than both copies of
+`main`, and on the A76 within them, but for its cold reads, 0.12 µs above `a`; `a` and `a2` differ
+there by 0.14. The A55's cold reads spread by 2 to 4 µs over the rounds and decide nothing. A first run
+with all three in one module had the A76's reads 0.1 µs slower warm and 0.6 to 0.7 µs cold; the run
+per change puts the cold reads on the prefetch loop, and the warm ones on it and `TOK_VALUE_AT`, 0.03
+to 0.06 µs each.
 
 ## copy_match() without its dead branch: within what the code's place moves, kept
 

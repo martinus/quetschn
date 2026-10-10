@@ -22,7 +22,10 @@
 set -euo pipefail
 
 [[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-lit] [LLVM=1] [MODE=swap] [BOOTS=3] [VARIANTS=name=dir[:cflags]] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
-# ALGOS: zram's names of the backends, a level after a colon, e.g. zstd:-1 or zstd:9
+# ALGOS: zram's names of the backends, a level after a colon, e.g. zstd:-1 or zstd:9; at most 8, one zram
+# device each (init.c's MAX_ALGOS, zram.num_devices): init.c dropped the rest without a word
+n_algos=$(tr ',' '\n' <<<"${ALGOS:-lz4}" | wc -l)
+[[ $n_algos -le 8 ]] || { echo "ALGOS has $n_algos codecs, at most 8 fit into one boot" >&2; exit 2; }
 # LLVM=1 builds the kernel with clang, as Android does, instead of gcc
 kmake=(make ${LLVM:+LLVM=$LLVM})
 tree=$1
