@@ -127,14 +127,30 @@ static inline unsigned int min(unsigned int a, unsigned int b)
  * arm64 a plain load or store, and a byte swap for big endian.
  */
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define SEQLZ_LE16(x) __builtin_bswap16(x)
 #define SEQLZ_LE32(x) __builtin_bswap32(x)
 #define SEQLZ_LE64(x) __builtin_bswap64(x)
 #define SEQLZ_BE64(x) (x)
 #else
+#define SEQLZ_LE16(x) (x)
 #define SEQLZ_LE32(x) (x)
 #define SEQLZ_LE64(x) (x)
 #define SEQLZ_BE64(x) __builtin_bswap64(x)
 #endif
+
+static __always_inline u16 get_unaligned_le16(const void *p)
+{
+	u16 v;
+
+	memcpy(&v, p, sizeof(v));
+	return SEQLZ_LE16(v);
+}
+
+static __always_inline void put_unaligned_le16(u16 val, void *p)
+{
+	val = SEQLZ_LE16(val);
+	memcpy(p, &val, sizeof(val));
+}
 
 static __always_inline u32 get_unaligned_le32(const void *p)
 {

@@ -32,23 +32,6 @@ static inline void prefetch_lines(const void *p, unsigned long size)
 }
 
 /*
- * The u16 at the start of a page, byte by byte. get_unaligned_le16() and
- * put_unaligned_le16() would do the same, but with them clang compiled
- * seqlz_decode() and code_literals() with other registers, and pages were read
- * and written slower.
- */
-static inline void store16(u8 *p, unsigned int v)
-{
-	p[0] = (u8)v;
-	p[1] = (u8)(v >> 8);
-}
-
-static inline unsigned int load16(const u8 *p)
-{
-	return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
-}
-
-/*
  * A hash of the low 5 bytes of v, as zstd computes it: the shift by 24 drops
  * the other 3, the multiply mixes them, and the top bits are the hash.
  * 889523592379 is zstd's prime5bytes.

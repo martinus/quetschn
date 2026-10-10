@@ -565,7 +565,7 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 	}
 	in = e->p;
 	bytes = (unsigned int)(end - in);
-	store16(d, n_lit);
+	put_unaligned_le16((u16)n_lit, d);
 	/*
 	 * Byte k of the bitstream is at end - 1 - k. 8 bytes at a time while
 	 * the copy does not overlap them, else one at a time, in place: only a
@@ -842,7 +842,7 @@ static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
 static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 				  unsigned int len, const u8 *raw, u8 *spare)
 {
-	const unsigned int n_literals = load16(d),
+	const unsigned int n_literals = get_unaligned_le16(d),
 			   bitstream = len - SEQLZ_HEADER - n_literals;
 	const u8 *literals = d + SEQLZ_HEADER;
 	unsigned int bits = ~0U, k, j, coded, set = 0, sizes[SEQLZ_LIT_STREAMS],
@@ -890,7 +890,7 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		q[j + 1] = q[j] + sizes[j];
 	lit_streams(t->lit[set].enc, literals, n_literals, q);
-	store16(d, SEQLZ_LIT_CODED | n_literals);
+	put_unaligned_le16((u16)(SEQLZ_LIT_CODED | n_literals), d);
 	/*
 	 * byte 2: the table in bits 0 to 2, width - SEQLZ_SIZE_BITS_MIN in bits
 	 * 3 to 5
@@ -1262,13 +1262,11 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
  * Decodes the coded literals of a page into out, the scratch, see
  * SEQLZ_LIT_HEADER for the layout. Returns where the sequences' bitstream
  * starts, or NULL if the page is not valid. Not inlined: inside the loop over
- * the sequences its registers made pages with raw literals slower too. Aligned
- * to a cache line, so that a change in front of it does not move its loops:
- * where they land alone moved the time of reads on in-order cores.
+ * the sequences its registers made pages with raw literals slower too.
  */
-static noinline __aligned(64) const u8 *decode_literals(
-	const struct seqlz_tables *t, const u8 *s, unsigned int src_len,
-	unsigned int n_lit, u8 *out)
+static noinline const u8 *decode_literals(const struct seqlz_tables *t,
+					  const u8 *s, unsigned int src_len,
+					  unsigned int n_lit, u8 *out)
 {
 	const u8 *const end = s + src_len;
 	/*
@@ -1538,7 +1536,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 	prefetch_lines(t->token.decode, sizeof(t->token.decode));
 	prefetch_lines(t->ll.decode, sizeof(t->ll.decode));
 	prefetch_lines(t->ml.decode, sizeof(t->ml.decode));
-	n_lit = load16(s);
+	n_lit = get_unaligned_le16(s);
 	if (n_lit & SEQLZ_LIT_CODED) {
 		/* decoded into the scratch first, the bitstream follows them */
 		const u8 *q;
