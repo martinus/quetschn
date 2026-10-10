@@ -11,39 +11,24 @@
 #include "seqlz.h"
 
 /*
- * Asks the CPU to load a cache line, without waiting for it. The kernel builds
- * x86-64 without SSE, and then clang drops __builtin_prefetch(), and the
- * kernel's prefetch() with it; gcc keeps it. Every x86-64 CPU has prefetcht0,
- * so here it is the instruction itself.
+ * Prefetches every cache line of [p, p + size); size is a multiple of
+ * PREFETCH_STEP. In a swap-in the decoder's tables are often no longer in
+ * the cache: asking for all of their lines at once lets the misses overlap,
+ * instead of one after the other as the decoder runs into them. 512 bytes per
+ * iteration, 8 lines of 64 bytes: with one line per iteration, the loop took
+ * more instructions than the prefetches.
  */
-#if defined(__x86_64__) && !defined(__SSE__)
-#define PAGE_LZ_PREFETCH(p) __asm__("prefetcht0 %0" : : "m"(*(const char *)(p)))
-#else
-#define PAGE_LZ_PREFETCH(p) __builtin_prefetch(p)
-#endif
+#define PREFETCH_STEP 512U
 
-/*
- * Prefetches every cache line of [p, p + size); size is a multiple of 512. In
- * a swap-in the decoder's tables are often no longer in the cache: asking for
- * all of their lines at once lets the misses overlap, instead of one after the
- * other as the decoder runs into them. 8 lines of 64 bytes per iteration: with
- * one line per iteration, the loop took more instructions than the prefetches.
- */
 static inline void prefetch_lines(const void *p, unsigned long size)
 {
 	const u8 *q = p;
 	const u8 *const end = q + size;
+	unsigned int k;
 
-	for (; q < end; q += 512) {
-		PAGE_LZ_PREFETCH(q);
-		PAGE_LZ_PREFETCH(q + 64);
-		PAGE_LZ_PREFETCH(q + 128);
-		PAGE_LZ_PREFETCH(q + 192);
-		PAGE_LZ_PREFETCH(q + 256);
-		PAGE_LZ_PREFETCH(q + 320);
-		PAGE_LZ_PREFETCH(q + 384);
-		PAGE_LZ_PREFETCH(q + 448);
-	}
+	for (; q < end; q += PREFETCH_STEP)
+		for (k = 0; k < PREFETCH_STEP; k += L1_CACHE_BYTES)
+			prefetch(q + k);
 }
 
 /*

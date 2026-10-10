@@ -19,6 +19,10 @@ git -C "$tree" archive HEAD | tar -x -C "$work" --one-top-level=src
 # without automatic maintenance: the commit of a whole tree starts it in the background, and it still
 # wrote into .git when the trap removed it, which failed the job
 git -C "$work/src" init -q && git -C "$work/src" config maintenance.auto false && git -C "$work/src" config gc.auto 0
+# the series' patch of arch/x86 goes into the base, so that checkpatch sees seqlz's part alone; it is
+# checked by itself below. port.py leaves a tree that has it alone
+patch -d "$work/src" -p1 -R -s -f --dry-run <"$here/x86-prefetcht0.patch" >/dev/null ||
+    patch -d "$work/src" -p1 -s <"$here/x86-prefetcht0.patch"
 git -C "$work/src" add -A && git -C "$work/src" -c user.name=port -c user.email=port@localhost commit -qm base
 python3 "$here/port.py" "$work/src" >/dev/null
 git -C "$work/src" add -A
@@ -35,10 +39,18 @@ done
 "${kmake[@]}" -j"$(nproc)" W=1 lib/seqlz/ drivers/block/zram/ 2>&1 | tee "$work/build.log" | grep -E 'warning|error' && exit 1
 ls "$work/build/lib/seqlz/seqlz_codec.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null && echo "build: no warnings"
+# x86-64: the decoder's prefetches are there; with clang only because of x86-prefetcht0.patch
+if grep -q '^CONFIG_X86_64=y' "$work/build/.config"; then
+    n=$(objdump -d "$work/build/lib/seqlz/seqlz_codec.o" | grep -c prefetcht0 || true)
+    [[ $n -gt 0 ]] || { echo "lib/seqlz/seqlz_codec.o has no prefetcht0" >&2; exit 1; }
+    echo "prefetch: $n prefetcht0"
+fi
 
 # with the diffstat, as a mail of git format-patch has it: checkpatch sees in it that MAINTAINERS changes.
 # Without the blank line after it, which checkpatch would take for an empty commit message
 (cd "$work/src" && { git diff --cached --stat; git diff --cached; } | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
+echo "x86-prefetcht0.patch:"
+(cd "$work/src" && perl scripts/checkpatch.pl --strict --show-types "$here/x86-prefetcht0.patch" || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:"
 (cd "$work/src" && scripts/kernel-doc -none -Wall lib/seqlz/seqlz_codec.c lib/seqlz/seqlz.h include/linux/seqlz.h) && echo "kernel-doc: no warnings"
 # the specification as docutils reads it; Sphinx, which the kernel's htmldocs need, is not required here
 if python3 -c 'import docutils' 2>/dev/null; then

@@ -4934,7 +4934,9 @@ assembly, because the kernel's `prefetch()` is nothing in a clang-built x86-64 k
 `arch/x86` makes `prefetch()` a `prefetcht0` on x86-64. With it the codec can use the kernel's
 `prefetch()` and swaps in as fast as with its own instruction; without it, 120 to 180 ns slower per
 swap-in and 740 to 810 ns at p99.* The patch is commit `d746b5e94690` on the branch `x86-prefetcht0` of the Linux tree,
-not sent.
+not sent. Since #151 it is `tools/kernel-port/x86-prefetcht0.patch`: `port.py` applies it to the tree
+it writes into, unless the tree has it, the codec uses `prefetch()`, and `check.sh` fails when the
+kernel copy built for x86-64 has no `prefetcht0`.
 
 x86-64 does not define `ARCH_HAS_PREFETCH`, only 32-bit does, so `<linux/prefetch.h>` makes
 `prefetch(x)` `__builtin_prefetch(x)`, and that macro hides the inline function of

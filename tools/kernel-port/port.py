@@ -21,6 +21,8 @@ src/ stays the one source of the codec. This writes from it:
                                         CPU or with separate ones for compression and decompression
   MAINTAINERS                           the entry of seqlz, with the project's page
   Documentation/admin-guide/blockdev/zram.rst: the backend, its page size and its levels
+  arch/x86/include/asm/processor.h      x86-prefetcht0.patch, prefetch() as prefetcht0 on x86-64, which
+                                        clang drops otherwise; not if the tree has it already
 On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT instead of
 QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
 references to this repository in the comments (its documents, tools and build) and no reasons that
@@ -322,8 +324,9 @@ def port_header():
 def port_page_lz():
     t = (SRC / "page_lz.h").read_text()
     t = spdx(t, False)
-    t = must(t, '#include "seqlz.h"\n', "#include <linux/string.h>\n#include <linux/types.h>\n"
-             "#include <linux/unaligned.h>\n\n#include \"seqlz.h\"\n")
+    t = must(t, '#include "seqlz.h"\n', "#include <linux/cache.h>\n#include <linux/prefetch.h>\n"
+             "#include <linux/string.h>\n#include <linux/types.h>\n#include <linux/unaligned.h>\n\n"
+             "#include \"seqlz.h\"\n")
     return common(t)
 
 
@@ -429,6 +432,14 @@ def patch(path, a, b, marker):
     if marker in t:
         sys.exit(f"{path}: already has {marker}")
     path.write_text(must(t, a, b))
+
+
+def apply_patch(tree, path):
+    """a patch of the series that is not seqlz's own, unless the tree has it: then it applies in reverse"""
+    patch = ["patch", "-p1", "-s", "-f", "-d", str(tree), "-i", str(path)]
+    if subprocess.run(patch + ["-R", "--dry-run"], capture_output=True).returncode == 0:
+        return
+    subprocess.run(patch + ["-N"], check=True)
 
 
 def main():
@@ -537,6 +548,7 @@ def main():
           "F:\tlib/seqlz/")
     patch(tree / ZRAM_RST, "the value the lower the compression ratio).\n\n",
           "the value the lower the compression ratio).\n\n" + ZRAM_DOC, "CONFIG_ZRAM_BACKEND_SEQLZ")
+    apply_patch(tree, HERE / "x86-prefetcht0.patch")
     for path in out:
         print(path)
 

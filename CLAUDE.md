@@ -67,7 +67,9 @@ issue (#151 to #157, from the review of 10th October 2026).
   Documentation/admin-guide/blockdev/zram.rst` into a directory and run `port.py <dir>`.
 - The kernel's helpers, not our own: `get_unaligned_le16()`, `sizeof_field()`, `prefetch()`,
   `L1_CACHE_BYTES`, `BIT()`. No inline assembly, also not for one architecture: a gap in the kernel
-  is fixed in the kernel, with a patch of its own (#151).
+  is fixed in the kernel, with a patch of its own, which `tools/kernel-port/` carries and `port.py`
+  applies, as `x86-prefetcht0.patch`. `src/seqlz_compat.h` is the kernel's headers outside the kernel,
+  and may do what the kernel does with such a patch.
 - Nothing in `lib/` depends on the CPU model (#152).
 - `static` unless zram calls it. Names a reviewer can grep for, not `count` or `refill`. Every number
   has a name, or a comment that says where it comes from.

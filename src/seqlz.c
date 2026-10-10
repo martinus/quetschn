@@ -108,10 +108,13 @@ static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
 	      "token_entry's fields are too narrow");
 static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 	      "an escaped token has SEQLZ_ESCAPE_BITS bits");
-static_assert((sizeof_field(struct token_table, decode) % 512U == 0 &&
-	       sizeof_field(struct value_table, decode) % 512U == 0 &&
-	       sizeof_field(struct lit_table, decode) % 512U == 0),
-	      "prefetch_lines() takes multiples of 512 bytes");
+/* prefetch_lines() takes multiples of PREFETCH_STEP */
+static_assert(sizeof_field(struct token_table, decode) % PREFETCH_STEP == 0,
+	      "the token table");
+static_assert(sizeof_field(struct value_table, decode) % PREFETCH_STEP == 0,
+	      "the length values' tables");
+static_assert(sizeof_field(struct lit_table, decode) % PREFETCH_STEP == 0,
+	      "the literal tables");
 
 /*
  * The token table's entry for token s with a code of n bits. It holds what the
