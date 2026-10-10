@@ -87,8 +87,6 @@ jobs:
       matrix:
         include:
           - {name: 4k, cmake: ''}
-          # the decoder's loop for in-order cores, which arm64 kernels take on A53, A55, A510 and A520
-          - {name: 4k-in-order, cmake: '-DCMAKE_C_FLAGS=-DSEQLZ_IN_ORDER=1'}
           - {name: 16k, cmake: '-DQUETSCHN_PAGE_BITS=14'}
           - {name: 4k-msan, cmake: '-DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON'}
     name: fuzz (${{ matrix.name }})
@@ -102,8 +100,8 @@ jobs:
           path: build-fuzz/crashes
 
   # The same compressed bytes on every CPU, and every page decodes again: on big-endian s390x under
-  # qemu, on 32-bit x86, which the kernel's build bots build too, and with the decoder's loop for in-order
-  # cores, as on x86-64. Plain C, so that it builds in seconds under qemu.
+  # qemu, and on 32-bit x86, which the kernel's build bots build too. Plain C, so that it builds in seconds
+  # under qemu.
   same-bytes:
     runs-on: ubuntu-latest
     steps:
@@ -116,11 +114,8 @@ jobs:
           src="test/seqlz_endian.c src/seqlz.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
           gcc -O2 -Isrc -o le $src && ./le | tee le.txt
           gcc -m32 -O2 -Isrc -o le32 $src && ./le32 | tee le32.txt
-          # the decoder's loop for in-order cores, which only arm64 kernels pick at run time
-          gcc -O2 -DSEQLZ_IN_ORDER=1 -Isrc -o lei $src && ./lei | tee lei.txt
           docker run --rm --platform linux/s390x -v "$PWD:/w" -w /w gcc:14 sh -c "gcc -O2 -Isrc -o be $src && ./be" | tee be.txt
           diff le.txt le32.txt
-          diff le.txt lei.txt
           diff le.txt be.txt
 
   # The docs against the code: the tables' hashes in docs/format.md, and pages compressed by src/
