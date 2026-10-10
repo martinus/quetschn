@@ -36,7 +36,7 @@ The 4096 bytes, in four parts:
     <rect x="389.4" y="30" width="310.6" height="40" fill="none" stroke="currentColor"/>
     <text x="20" y="22">header</text>
     <text x="158" y="55" text-anchor="middle">48 records of 32 bytes</text>
-    <text x="337.5" y="55" text-anchor="middle">text</text>
+    <text x="337.5" y="55" text-anchor="middle" class="on-fill">text</text>
     <text x="544.7" y="55" text-anchor="middle">zeros</text>
     <text x="20" y="88" text-anchor="middle">0</text>
     <text x="34" y="104" text-anchor="middle">64</text>
@@ -324,7 +324,7 @@ the page is 796 bytes.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 230" role="img" aria-label="The 796 bytes of the compressed page: a 10-byte header, 8 literal streams from byte 10 to 525, the bitstream of the sequences from 525 to 796, with the header's bytes shown enlarged below">
+<svg viewBox="0 0 720 240" role="img" aria-label="The 796 bytes of the compressed page: a 10-byte header, 8 literal streams from byte 10 to 525, the bitstream of the sequences from 525 to 796, with the header's bytes shown enlarged below">
   <g font-size="11">
     <rect x="20" y="40" width="8.5" height="40" class="fill-acc" stroke="currentColor"/>
     <rect x="28.5" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
@@ -344,12 +344,12 @@ the page is 796 bytes.
     <text x="328" y="64" text-anchor="middle">s5</text>
     <text x="383.9" y="64" text-anchor="middle">s6</text>
     <text x="440.3" y="64" text-anchor="middle">s7</text>
-    <text x="584.3" y="58" text-anchor="middle">bitstream of the sequences</text>
-    <text x="584.3" y="72" text-anchor="middle">271 bytes, MSB first</text>
+    <text x="584.3" y="58" text-anchor="middle" class="on-fill">bitstream of the sequences</text>
+    <text x="584.3" y="72" text-anchor="middle" class="on-fill">271 bytes, MSB first</text>
     <text x="248" y="30" text-anchor="middle">8 literal streams, 515 bytes, table 0</text>
-    <text x="20" y="96" text-anchor="middle">0</text>
+    <text x="20" y="96" text-anchor="middle" class="halo">0</text>
     <text x="30" y="110" text-anchor="middle">10</text>
-    <text x="84.9" y="96" text-anchor="middle">76</text>
+    <text x="84.9" y="96" text-anchor="middle" class="halo">76</text>
     <text x="135.3" y="110" text-anchor="middle">135</text>
     <text x="190.9" y="96" text-anchor="middle">200</text>
     <text x="245.5" y="110" text-anchor="middle">264</text>
@@ -359,17 +359,18 @@ the page is 796 bytes.
     <text x="468.5" y="110" text-anchor="middle">525</text>
     <text x="700" y="96" text-anchor="middle">796</text>
     <line x1="20" y1="80" x2="20" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
-    <line x1="28.5" y1="80" x2="420" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
-    <rect x="20" y="160" width="80" height="34" class="fill-acc" stroke="currentColor"/>
-    <rect x="100" y="160" width="40" height="34" class="fill-acc" stroke="currentColor"/>
-    <rect x="140" y="160" width="280" height="34" class="fill-acc" stroke="currentColor"/>
-    <text x="60" y="181" text-anchor="middle">a2 82</text>
-    <text x="120" y="181" text-anchor="middle">10</text>
-    <text x="280" y="181" text-anchor="middle">c2 5d 10 08 0c 0a 85</text>
-    <text x="60" y="212" text-anchor="middle">u16: coded, 674</text>
-    <text x="120" y="212" text-anchor="middle">table 0, w 7</text>
-    <text x="280" y="212" text-anchor="middle">sizes 66 59 65 64 64 65 66 66, 7 bits each</text>
-    <text x="20" y="154">bytes 0 to 9, the header</text>
+    <line x1="28.5" y1="80" x2="520" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
+    <rect x="20" y="160" width="100" height="34" class="fill-acc" stroke="currentColor"/>
+    <rect x="120" y="160" width="50" height="34" class="fill-acc" stroke="currentColor"/>
+    <rect x="170" y="160" width="350" height="34" class="fill-acc" stroke="currentColor"/>
+    <text x="70" y="181" text-anchor="middle" class="on-fill">a2 82</text>
+    <text x="145" y="181" text-anchor="middle" class="on-fill">10</text>
+    <text x="345" y="181" text-anchor="middle" class="on-fill">c2 5d 10 08 0c 0a 85</text>
+    <text x="70" y="212" text-anchor="middle">u16: coded, 674</text>
+    <line x1="145" y1="196" x2="145" y2="216" stroke="currentColor"/>
+    <text x="145" y="230" text-anchor="middle">table 0, w 7</text>
+    <text x="345" y="212" text-anchor="middle">sizes 66 59 65 64 64 65 66 66, 7 bits each</text>
+    <text x="536" y="181">bytes 0 to 9, the header</text>
   </g>
 </svg>
 </div>

@@ -46,7 +46,7 @@ the number of literals of the whole page. 15 bits could count up to 32767, but a
   <text x="700" y="90" text-anchor="middle" class="mut">len</text>
   <text x="20" y="124" text-anchor="start" font-weight="bold">coded literals: h &amp; 0x8000 is set</text>
   <rect x="20" y="134" width="90" height="34" class="fill-sheet" stroke="currentColor"/>
-  <text x="65.0" y="156" text-anchor="middle">h = 0x8000 + n</text>
+  <text x="65.0" y="156" text-anchor="middle" font-size="11">h = 0x8000+n</text>
   <rect x="110" y="134" width="30" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="125.0" y="156" text-anchor="middle">t</text>
   <rect x="140" y="134" width="110" height="34" class="fill-sheet" stroke="currentColor"/>

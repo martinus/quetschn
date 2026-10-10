@@ -253,7 +253,7 @@ packs them. With the real tables:
     <text x="410" y="102">9</text><text x="470" y="102">5</text><text x="530" y="102">10</text>
     <text x="590" y="102">9</text><text x="650" y="102">4</text>
     <text x="230" y="152">18</text><text x="290" y="152">13</text><text x="350" y="152">18</text>
-    <text x="410" y="152">11</text><text x="470" y="152" class="acc">7</text><text x="530" y="152">12</text>
+    <text x="410" y="152">11</text><text x="470" y="152" class="on-fill">7</text><text x="530" y="152">12</text>
     <text x="590" y="152">11</text><text x="650" y="152">12</text>
   </g>
 </svg>
@@ -422,9 +422,9 @@ its 9-bit code, and the escape with its 4-bit code.
     <rect x="560" y="22" width="120" height="30" class="fill-acc"/>
   </g>
   <g font-size="12" text-anchor="middle">
-    <text x="50" y="42">E</text><text x="70" y="42">V</text><text x="90" y="42">-</text>
-    <text x="160" y="42">ML</text><text x="260" y="42">LL</text><text x="350" y="42">DROP</text>
-    <text x="420" y="42">SHIFT</text><text x="500" y="42">BACK</text><text x="620" y="42">N</text>
+    <text x="50" y="42" class="on-fill">E</text><text x="70" y="42">V</text><text x="90" y="42">-</text>
+    <text x="160" y="42">ML</text><text x="260" y="42">LL</text><text x="350" y="42" class="on-fill">DROP</text>
+    <text x="420" y="41" class="on-fill" font-size="10">SHIFT</text><text x="500" y="42" class="on-fill">BACK</text><text x="620" y="42" class="on-fill">N</text>
   </g>
   <g font-size="11">
     <text x="4" y="82">2098</text>

@@ -63,7 +63,7 @@ the page.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 280" role="img" aria-label="dst before and after code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
+<svg viewBox="0 0 720 280" font-size="12" role="img" aria-label="dst before and after code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
   <text x="20" y="22">dst after compress_page(): 209 bytes, raw literals</text>
   <rect x="20" y="30" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="50" text-anchor="middle">c9 00</text>
@@ -249,7 +249,7 @@ x >> 8 & lanes   = 0x002400240012001b    odd:  tables 7, 5, 3, 1 = 36, 36, 18, 2
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 240" role="img" aria-label="the 8 byte lanes of x split into the 16-bit lanes of even and odd">
+<svg viewBox="0 0 720 240" font-size="13" role="img" aria-label="the 8 byte lanes of x split into the 16-bit lanes of even and odd">
   <text x="20" y="58">x</text>
   <text x="20" y="128">even</text>
   <text x="20" y="198">odd</text>

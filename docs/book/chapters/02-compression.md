@@ -83,7 +83,7 @@ A compressor that remembers where every 4 bytes last appeared finds this, from l
     <path d="M570,78 C570,104 234,104 234,78"/><path d="M230,84 L234,78 L238,84"/>
   </g>
   <g class="acc" font-size="11" text-anchor="middle">
-    <text x="248" y="18">match: 4 bytes from 12 back</text>
+    <text x="248" y="15" class="halo">match: 4 bytes from 12 back</text>
     <text x="402" y="116">match: 5 bytes from 12 back</text>
   </g>
   <g fill="none" stroke="currentColor" stroke-width="1">

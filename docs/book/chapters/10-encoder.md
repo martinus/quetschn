@@ -75,7 +75,7 @@ while the encoder works and after it is done:
   <g class="mark"><rect class="fill-sheet" x="300" y="144" width="230" height="36" stroke="currentColor" stroke-width="1.5"/></g>
   <rect x="530" y="144" width="170" height="36" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
   <g font-size="12" text-anchor="middle">
-    <g class="acc"><text x="40" y="166">n_lit</text></g>
+    <g class="acc"><text x="40" y="166" font-size="10.5">n_lit</text></g>
     <text x="180" y="166">literals</text>
     <text x="615" y="166">not part of the page</text>
   </g>
@@ -89,7 +89,7 @@ while the encoder works and after it is done:
     <path d="M 585 72 C 585 112, 430 104, 418 140"/>
     <polygon class="fill-mark" points="417,144 413,134 422,136"/>
   </g>
-  <g class="mark" font-size="11"><text x="560" y="116">copied, byte order turned around</text></g>
+  <g class="mark" font-size="11"><text x="716" y="106" text-anchor="end">copied, byte order</text><text x="716" y="120" text-anchor="end">turned around</text></g>
 </svg>
 </div>
 <figcaption>The buffer while encoding, and after encoder_finish(): the bitstream moves from the back to right after the literals.</figcaption>

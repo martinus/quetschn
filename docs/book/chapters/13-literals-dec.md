@@ -59,7 +59,7 @@ Here is one stream in three states, from the page that [chapter 11](#ch-literals
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 250" role="img" aria-label="the 64 bits of stream 0 after a refill, after 5 codes, and after the next refill, with the sentinel 1 moving up and down">
+<svg viewBox="0 0 720 250" font-size="12" role="img" aria-label="the 64 bits of stream 0 after a refill, after 5 codes, and after the next refill, with the sentinel 1 moving up and down">
   <text x="100" y="30">after the first refill: 0x43564ee00096ca9f, ctz = 0</text>
   <rect x="100" y="38" width="567" height="28" fill="none" stroke="currentColor"/>
   <text x="383" y="57" text-anchor="middle">63 bits of the stream, from ip = byte 8</text>
@@ -379,7 +379,7 @@ starts the lookup of stream 1 while stream 0's is still waiting for the cache ([
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 330" role="img" aria-label="one stream is one chain of 40 dependent lookups; 8 streams are 8 chains of 5 that run side by side">
+<svg viewBox="0 0 720 330" font-size="12" role="img" aria-label="one stream is one chain of 40 dependent lookups; 8 streams are 8 chains of 5 that run side by side">
   <text x="20" y="22">1 stream</text>
   <g>
     <rect x="40" y="40" width="44" height="26" fill="none" stroke="currentColor"/>

@@ -97,7 +97,7 @@ arm64 store it, goes through it like this:
     <text x="276" y="57">10</text><text x="328" y="57">00</text><text x="380" y="57">56</text><text x="432" y="57">34</text><text x="484" y="57">12</text><text x="536" y="57">7f</text><text x="588" y="57">00</text><text x="640" y="57">00</text>
     <text x="276" y="107">00</text><text x="328" y="107">00</text><text x="380" y="107">7f</text><text x="432" y="107">12</text><text x="484" y="107">34</text><text x="536" y="107">56</text><text x="588" y="107">00</text><text x="640" y="107">10</text>
     <text x="276" y="157">12</text><text x="328" y="157">34</text><text x="380" y="157">56</text><text x="432" y="157">00</text><text x="484" y="157">10</text><text x="536" y="157">00</text><text x="588" y="157">00</text><text x="640" y="157">00</text>
-    <text x="276" y="207">5f</text><text x="328" y="207">de</text><text x="380" y="207">9f</text><text x="432" y="207">cb</text><text x="484" y="207">b0</text><text x="536" y="207">00</text><text x="588" y="207">00</text><text x="640" y="207">00</text>
+    <text x="276" y="207">5f</text><text x="315" y="207">d</text><text x="341" y="207">e</text><text x="380" y="207">9f</text><text x="432" y="207">cb</text><text x="484" y="207">b0</text><text x="536" y="207">00</text><text x="588" y="207">00</text><text x="640" y="207">00</text>
   </g>
   <g class="acc" fill="none" stroke="currentColor" stroke-width="1.5">
     <path d="M 250 224 L 250 230 L 328 230 L 328 224"/>
@@ -378,8 +378,8 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
     <line x1="582" y1="200" x2="166" y2="90"/>
   </g>
   <polygon points="160,86 172,87 167,96" class="fill-paper" stroke="currentColor" stroke-width="1"/>
-  <text x="250" y="150" font-size="12">the slot's position is a candidate</text>
-  <text x="250" y="166" font-size="12">only: 4 bytes are compared</text>
+  <text x="40" y="150" font-size="12">the slot's position is a candidate</text>
+  <text x="40" y="166" font-size="12">only: 4 bytes are compared</text>
 </svg>
 </div>
 <figcaption>Two candidates at position 400: the repeat offset, 64 bytes back, and the position the table's slot holds.</figcaption>

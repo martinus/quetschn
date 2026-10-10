@@ -141,7 +141,7 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 212" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 8 to 15 and token 0 one line, 69; read least significant bit first, token 49 has an entry in every line and token 0 in 8 lines" font-size="12">
+<svg viewBox="0 0 720 230" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 8 to 15 and token 0 one line, 69; read least significant bit first, token 49 has an entry in every line and token 0 in 8 lines" font-size="12">
   <text x="186" y="28" text-anchor="middle" font-weight="bold">most significant bit first</text>
   <rect x="50" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="67" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
@@ -418,8 +418,8 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <text x="404" y="156" text-anchor="end" class="mut" font-size="11">112</text>
   <g class="acc"><rect x="50" y="186" width="14" height="14" class="fill-acc" fill-opacity="0.3" stroke="currentColor"/></g>
   <text x="70" y="198" text-anchor="start">lines with an entry of token 49, code 0001</text>
-  <g class="mark"><rect x="410" y="186" width="14" height="14" class="fill-mark" fill-opacity="0.75" stroke="currentColor"/></g>
-  <text x="430" y="198" text-anchor="start">lines with an entry of token 0, code 10001010</text>
+  <g class="mark"><rect x="50" y="206" width="14" height="14" class="fill-mark" fill-opacity="0.75" stroke="currentColor"/></g>
+  <text x="70" y="218" text-anchor="start">lines with an entry of token 0, code 10001010</text>
 </svg>
 </div>
 <figcaption>The 128 cache lines of the token table, 16 per row. Most significant bit first, a code&#39;s entries are one range; least significant bit first, they are spread over the table.</figcaption>

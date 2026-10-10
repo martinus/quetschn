@@ -69,7 +69,7 @@ the project checked against (`986c24e0fe44`, September 2026).
   </g>
   <g font-size="11">
     <line x1="504" y1="90" x2="504" y2="104" stroke="currentColor" fill="none"/>
-    <text x="440" y="117">3625 bytes or more: stored raw, 4096</text>
+    <text x="504" y="117" text-anchor="middle">3625 bytes or more: stored raw, 4096</text>
   </g>
   <g fill="none" stroke="currentColor" stroke-width="1.2">
     <line x1="648" y1="90" x2="648" y2="140"/><path d="M644,136 L648,140 L652,136"/>
@@ -209,7 +209,7 @@ than a whole page. zram asks zsmalloc where they start, `zs_huge_class_size()`, 
     <text x="700" y="206" text-anchor="middle">4096</text>
     <text x="414" y="175" text-anchor="end">3400</text><text x="414" y="133" text-anchor="end">3632</text>
     <text x="414" y="48" text-anchor="end">4096</text>
-    <text x="545" y="80">the cliff: 3625 bytes</text><text x="545" y="94">or more are stored</text><text x="545" y="108">as 4096</text>
+    <text x="558" y="144">the cliff: 3625 bytes</text><text x="558" y="158">or more are stored</text><text x="558" y="172">as 4096</text>
     <text x="200" y="228" text-anchor="middle">compressed length, bytes</text>
     <text x="560" y="228" text-anchor="middle">compressed length, bytes</text>
     <text x="60" y="30">slot, bytes</text><text x="420" y="30">slot, bytes</text>
@@ -472,11 +472,11 @@ the benchmark logs.
     <circle cx="627.6" cy="114.5" r="4.5"/>
   </g>
   <g class="acc"><circle cx="338.4" cy="111.2" r="5.5" fill="currentColor"/></g>
-  <g font-size="11">
+  <g font-size="11" class="halo">
     <text x="302" y="48">lz4, 6.14 µs, 1450 B</text>
     <text x="282" y="68" text-anchor="end">lzo-rle, 6.04 µs, 1361 B</text>
     <text x="348" y="134">seqlz-fast-lit, 7.36 µs, 1035 B</text>
-    <text x="627.6" y="136" text-anchor="middle">zstd 3, 15.29 µs, 1012 B</text>
+    <text x="627.6" y="101" text-anchor="middle">zstd 3, 15.29 µs, 1012 B</text>
     <text x="322" y="84" class="acc">247 B/µs</text>
     <text x="460" y="104" class="acc">2.9 B/µs</text>
   </g>

@@ -150,12 +150,12 @@ first, then symbol order within a length.
     <rect x="652" y="50" width="46" height="40" class="fill-paper"/>
   </g>
   <g stroke="currentColor" stroke-width="1" stroke-dasharray="3 3">
-    <line x1="376" y1="50" x2="376" y2="90"/><line x1="422" y1="50" x2="422" y2="90"/>
-    <line x1="468" y1="50" x2="468" y2="90"/><line x1="560" y1="50" x2="560" y2="90"/>
+    <path d="M376,50 V61 M376,81 V90 M422,50 V61 M422,81 V90 M468,50 V61 M468,81 V90" class="on-fill"/>
+    <path d="M560,50 V61 M560,81 V90"/>
   </g>
   <g font-size="12" text-anchor="middle">
-    <text x="422" y="75">symbol 3</text><text x="560" y="75">symbol 0</text>
-    <text x="629" y="75">2</text><text x="675" y="75">4</text>
+    <text x="422" y="75" class="on-fill">symbol 3</text><text x="560" y="75">symbol 0</text>
+    <text x="629" y="75" class="on-fill">2</text><text x="675" y="75">4</text>
     <text x="422" y="110">code 0: entries 0 to 3</text><text x="560" y="110">10: 4, 5</text>
     <text x="629" y="110">110</text><text x="675" y="110">111</text>
   </g>

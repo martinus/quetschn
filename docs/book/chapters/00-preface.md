@@ -72,13 +72,13 @@ flowchart TB
     Z["zram: a page to store"] --> C["seqlz_compress()"]
     C --> CP["compress_page()"]
     CP --> M["seqlz_match_page()<br/>page_lz.h, the matcher"]
-    M -->|"each sequence<br/>as it is found"| E["encode_emit()<br/>token, offset, length values"]
-    CP --> F["encoder_finish()<br/>bitstream behind the literals"]
-    C --> L["code_literals()<br/>Huffman codes the literals<br/>if that saves enough"]
+    M -->|"each sequence<br/>as it is found"| E["encode_emit()<br/>token, offset,<br/>length values"]
+    CP --> F["encoder_finish()<br/>bitstream behind<br/>the literals"]
+    C --> L["code_literals()<br/>Huffman codes<br/>the literals<br/>if that saves enough"]
     R["zram: a page to read"] --> D["seqlz_decode()"]
     D --> DL["decode_literals()<br/>8 streams side by side"]
-    D --> LOOP["the loop over the sequences<br/>one table lookup each"]
-    T["seqlz_tables_init()<br/>once, from the trained lengths"] -.->|"read only"| C
+    D --> LOOP["the loop over<br/>the sequences,<br/>one table lookup each"]
+    T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C
     T -.->|"read only"| D
 </pre>
 

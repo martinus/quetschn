@@ -377,7 +377,7 @@ then simply the top bits of the register, `bits >> (64 - 11)` for an 11-bit look
   </g>
   <g font-size="13" text-anchor="middle">
     <rect x="200" y="26" width="56" height="26" class="fill-acc" stroke="currentColor"/>
-    <text x="228" y="44">01</text>
+    <text x="228" y="44" class="on-fill">01</text>
     <rect x="260" y="26" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="288" y="44">02</text>
     <rect x="320" y="26" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="348" y="44">03</text>
     <rect x="380" y="26" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="408" y="44">04</text>
@@ -393,9 +393,9 @@ then simply the top bits of the register, `bits >> (64 - 11)` for an 11-bit look
     <rect x="440" y="96" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="468" y="114">04</text>
     <rect x="500" y="96" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="528" y="114">03</text>
     <rect x="560" y="96" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="588" y="114">02</text>
-    <rect x="620" y="96" width="56" height="26" class="fill-acc" stroke="currentColor"/><text x="648" y="114">01</text>
+    <rect x="620" y="96" width="56" height="26" class="fill-acc" stroke="currentColor"/><text x="648" y="114" class="on-fill">01</text>
 
-    <rect x="200" y="166" width="56" height="26" class="fill-acc" stroke="currentColor"/><text x="228" y="184">01</text>
+    <rect x="200" y="166" width="56" height="26" class="fill-acc" stroke="currentColor"/><text x="228" y="184" class="on-fill">01</text>
     <rect x="260" y="166" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="288" y="184">02</text>
     <rect x="320" y="166" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="348" y="184">03</text>
     <rect x="380" y="166" width="56" height="26" class="fill-sheet" stroke="currentColor"/><text x="408" y="184">04</text>

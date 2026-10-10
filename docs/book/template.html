@@ -145,7 +145,13 @@ figure.diagram figcaption, figure.listing + .listnote { font-family: var(--displ
 svg .acc { color: var(--accent); } svg .mark { color: var(--mark); } svg .mut { color: var(--muted); }
 svg .fill-sheet { fill: var(--sheet); } svg .fill-paper { fill: var(--paper); } svg .fill-acc { fill: var(--accent); } svg .fill-mark { fill: var(--mark); }
 svg .stroke-rule { stroke: var(--rule); }
-.mermaid { background: transparent; }
+/* text on a solid fill-acc or fill-mark: the page colour, which stands out from both in both themes */
+svg .on-fill { color: var(--paper); }
+/* a label that a line crosses: a band of the page colour around the letters keeps it readable */
+svg .halo { paint-order: stroke; stroke: var(--paper); stroke-width: 6px; stroke-linejoin: round; }
+/* on a phone a figure keeps a readable size and scrolls sideways in its box, not the page */
+figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
+.mermaid { background: transparent; overflow-x: auto; }
 
 .bits { font-family: var(--mono); letter-spacing: 0.04em; }
 .endnote { margin-top: 5rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); font-family: var(--display); font-size: 0.85rem; color: var(--muted); }

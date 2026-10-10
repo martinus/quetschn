@@ -16,19 +16,19 @@ fast path
 
 <pre class="mermaid">
 flowchart TB
-    S["seqlz_decode(): prefetch tables,<br/>header, literals raw or decoded"] --> N0["tok = next_token()"]
+    S["seqlz_decode():<br/>prefetch tables, header,<br/>literals raw or decoded"] --> N0["tok = next_token()"]
     N0 --> E{"escape?"}
     E -->|yes| X["refill, read 12 bits,<br/>tok = token_entry(idx, 0)"]
     E -->|no| O
     X --> O["offset from the entry,<br/>drop code and offset bits"]
-    O --> C{"no length value, d &lt;= d_fast,<br/>lit &lt;= lit_fast, br.p &lt;= in_fast?"}
+    O --> C{"no length value,<br/>d &lt;= d_fast,<br/>lit &lt;= lit_fast,<br/>br.p &lt;= in_fast?"}
     C -->|"yes: fast path"| F["next_token_fast():<br/>next token first,<br/>refill every second time"]
-    F --> FC["copy16() literals, check off,<br/>copy_match_fast()"]
+    F --> FC["copy16() literals,<br/>check off,<br/>copy_match_fast()"]
     FC --> E
     C -->|"no: slow path"| L["ll value if any,<br/>check nl, copy_literals()"]
     L --> D{"d == d_end?"}
-    D -->|yes| END["last sequence: ml - 4 = 0, class 0?<br/>then the end checks"]
-    D -->|no| M["ml value if any,<br/>check off and len, copy_match()"]
+    D -->|yes| END["last sequence:<br/>ml - 4 = 0, class 0?<br/>then the end checks"]
+    D -->|no| M["ml value if any,<br/>check off and len,<br/>copy_match()"]
     M --> NT["tok = next_token(), skip = 0"]
     NT --> E
 </pre>
@@ -218,7 +218,7 @@ these three constants say how much.
     <rect x="20" y="30" width="420" height="24" class="fill-sheet" stroke="currentColor"/>
     <text x="30" y="47">written so far, and room</text>
     <g class="mark"><rect x="440" y="30" width="240" height="24" class="fill-mark" stroke="currentColor"/></g>
-    <text x="450" y="47">last 64 bytes: slow path only</text>
+    <text x="450" y="47" class="on-fill">last 64 bytes: slow path only</text>
     <text x="440" y="70" font-size="11">d_fast = d_end - 64</text>
     <text x="680" y="70" font-size="11" text-anchor="end">d_end</text>
     <g class="acc"><rect x="440" y="80" width="60.0" height="18" class="fill-acc" stroke="currentColor"/>
@@ -233,7 +233,7 @@ these three constants say how much.
     <text x="546" y="177" font-size="11">readable</text>
     <g class="mark"><rect x="620" y="160" width="60" height="24" class="fill-mark" stroke="currentColor"/></g>
     <text x="540" y="200" font-size="11">lit_end</text>
-    <text x="620" y="214" font-size="11">lit_fast = lit_bound - 16</text>
+    <text x="620" y="214" font-size="11" text-anchor="end">lit_fast = lit_bound - 16</text>
     <text x="680" y="200" font-size="11" text-anchor="end">lit_bound</text>
     <text x="20" y="232" font-size="11">raw literals: lit_bound = s_end, the bitstream lies behind lit_end; coded: lit_bound = scratch + 4112</text>
     <text x="10" y="262" font-weight="bold">the bitstream, br.p to s_end</text>
