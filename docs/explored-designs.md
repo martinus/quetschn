@@ -113,6 +113,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [seqlz.c split in three, as lib/lz4 is: the kernel copy the same speed, measured on the kernel copy itself](#seqlzc-split-in-three-as-liblz4-is-the-kernel-copy-the-same-speed-measured-on-the-kernel-copy-itself)
 - [copy_match() without its dead branch: within what the code's place moves, kept](#copy_match-without-its-dead-branch-within-what-the-codes-place-moves-kept)
 - [Five simplifications measured in the VM and on the phone: the literal streams as arrays kept, four not](#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)
+- [Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept](#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5106,6 +5107,55 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
+
+*["Length values in 5 plain bits"](#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)
+again, on the decoder of 10th October and timed this time: a length value's symbol in 5 plain bits
+instead of a code of the `ll` or `ml` table. The two tables would leave the format, the trainer and the
+counts, and the decoder would not prefetch their 32 lines per page. The pages are 1.6 to 2.8 bytes
+larger, 0.2 to 0.3%, as before. No read got faster: in the VM within the copy of the same source, on
+the Mi 9T within or above `main`; gcc's writes in the kernel 1.8 to 3.0% slower. Not kept.* Code: not
+merged.
+
+zsmalloc cost in bytes per page, `seqlz-fast-lit` / `seqlz-fast`, all pages:
+
+| dump | the tables | 5 plain bits |
+| --- | --- | --- |
+| first desktop dump | 1259.9 / 1449.9 | 1262.4 / 1452.4 |
+| second desktop dump | 1239.6 / 1403.4 | 1242.4 / 1406.2 |
+| first phone dump | 705.4 / 746.5 | 707.0 / 748.1 |
+| second phone dump | 896.9 / 950.3 | 899.0 / 952.3 |
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `e83fe2a` with `VARIANTS`, `MODE=swap`, the backend's
+prefetch, CPU 2 at a fixed 4.5 GHz, boost off, 3 boots per kernel, 20 000 pages per dump; `pl` the
+variant, `same` the same source as `seqlz` again. The mean over the boots minus `seqlz`'s or
+`seqlz-lit`'s, in µs, swap-out / warm swap-in / flushed swap-in, from `tools/zram-vm/variants.py`:
+
+| | gcc 16.2.1, first desktop dump | gcc, second phone dump | clang 22.1.8, first desktop dump | clang, second phone dump |
+| --- | --- | --- | --- | --- |
+| `pl`, raw | +0.207 / +0.023 / +0.030 | +0.112 / +0.006 / +0.022 | -0.013 / -0.014 / -0.014 | -0.039 / +0.003 / -0.012 |
+| `pl`, coded | +0.170 / +0.019 / +0.021 | +0.149 / +0.027 / +0.034 | -0.041 / -0.005 / -0.015 | -0.035 / -0.005 / +0.003 |
+| `same`, raw | +0.015 / +0.003 / +0.012 | -0.017 / +0.000 / +0.013 | -0.023 / +0.010 / +0.005 | -0.007 / +0.013 / +0.014 |
+| `same`, coded | +0.027 / -0.005 / +0.004 | +0.033 / +0.005 / +0.022 | -0.048 / -0.003 / -0.010 | -0.023 / +0.017 / +0.013 |
+
+gcc's writes are 0.11 to 0.21 µs slower in the kernel only: in userspace, `quetschn-bench-seqlz-fast-lit
+--compress` with gcc took 0.8% fewer instructions and 1.5% fewer cycles for the variant, so it is how
+gcc lays out `seqlz_compress()` with the kernel's flags, not more work. Not looked into further.
+
+**The Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, `COOL=45`, 4 rounds, the second phone dump,
+NDK r21e's clang 9; `a` and `a2` two modules of `main`. Means in µs, write / warm read / cold read:
+
+| module | A55, raw | A55, coded | A76, raw | A76, coded |
+| --- | --- | --- | --- | --- |
+| `a`, `main` | 28.58 / 11.28 / 29.69 | 31.66 / 12.30 / 31.35 | 10.96 / 3.93 / 6.88 | 11.96 / 4.30 / 7.51 |
+| `a2`, `main` again | 28.72 / 11.27 / 27.76 | 31.61 / 12.21 / 29.45 | 10.93 / 3.84 / 6.86 | 11.86 / 4.36 / 7.50 |
+| 5 plain bits | 28.68 / 11.33 / 28.68 | 31.70 / 12.33 / 30.39 | 10.95 / 3.93 / 6.97 | 11.92 / 4.35 / 7.78 |
+
+Within `a` and `a2` but for the A76's cold reads of coded pages, 7.72 to 7.92 µs over the rounds
+against 7.21 to 7.84. The 32 lines no longer prefetched did not make the A55's cold reads faster: they
+spread by 1 to 2 µs over the rounds and decide nothing. So 0.2 to 0.3% more memory on every page buys
+two tables fewer in the format, and no time.
 
 ## Five simplifications measured in the VM and on the phone: the literal streams as arrays kept, four not
 
