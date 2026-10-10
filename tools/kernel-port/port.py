@@ -51,7 +51,7 @@ WIDTH = 80
 
 # what only the harness and the tests of src/ use, left out of the kernel's copy
 HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
-                          r"\bseqlz_tables_size\b")
+                          r"\bseqlz_tables_size\b|\ball_symbols\b")
 
 # the one reference to this repository the kernel's copy keeps, the project's page in MAINTAINERS
 PROJECT_URL = "https://github.com/martinus/quetschn"
@@ -87,6 +87,7 @@ REWRITES = [
     ("a copy: raw if the caller has one, else spare, at least a page,", "a copy in spare, at least a page,"),
     # the second line of seqlz_compress_page()'s Return:, a line of its own
     ("@dst_cap bytes or @t lacks a code.", "@dst_cap bytes."),
+    ("@t: tables with a code for every symbol, see seqlz_all_symbols()", "@t: the tables"),
     ("QUETSCHN_PAGE_BITS bits, 20 or 22;", "QUETSCHN_PAGE_BITS bits, 20;"),
     ("How many bits of the offset follow the token, per class: 0, 4, 8, the page's bits, 5, the page's bits "
      "- 3. One nibble per class in one constant, 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB, so that it "
@@ -368,13 +369,14 @@ def port_internal():
     t = must(t, "#ifndef SEQLZ_INTERNAL_H\n#define SEQLZ_INTERNAL_H\n",
              "#ifndef _LIB_SEQLZ_SEQLZ_INTERNAL_H\n#define _LIB_SEQLZ_SEQLZ_INTERNAL_H\n")
     t = must(t, '#include "seqlz.h"\n', "#include <linux/stddef.h>\n#include <linux/types.h>\n\n#include \"seqlz.h\"\n")
+    t = must(t, "\tbool all_symbols; /* see seqlz_all_symbols() */\n", "")
     t = must(t, "\n#endif\n", "\n/* built by seqlz_init(), see seqlz_codes.c */\n"
              "extern struct seqlz_tables seqlz_fixed_tables;\n\n#endif\n")
     return common(t)
 
 
 INCLUDES = {
-    "codes": ["linux/bug.h", "linux/build_bug.h", "linux/errno.h", "linux/init.h", "linux/module.h", "linux/seqlz.h",
+    "codes": ["linux/build_bug.h", "linux/errno.h", "linux/init.h", "linux/module.h", "linux/seqlz.h",
               "linux/string.h"],
     "compress": ["linux/errno.h", "linux/export.h", "linux/seqlz.h", "linux/string.h", "linux/unaligned.h"],
     "decompress": ["linux/cache.h", "linux/errno.h", "linux/export.h", "linux/prefetch.h", "linux/seqlz.h",
@@ -395,13 +397,16 @@ def port_c(name):
 def port_codes(docs):
     t = port_c("codes")
     t = cut(t, r"size_t seqlz_tables_size\(void\)\n\{\n.*?\n\}\n\n")
+    # whether every symbol has a code: scripts/gen-seqlz-tables.py checked that when it wrote the lengths
+    t = cut(t, r"bool seqlz_all_symbols\(.*?\n\}\n\n")
+    t = cut(t, r"/\*\n \* Whether the encoder can write every page:.*?\n\}\n\n")
+    t = must(t, "\tt->all_symbols = has_all_symbols(lengths);\n", "")
     # all of it runs once, from seqlz_init()
-    for name in ["length_entry", "first_codes", "build_token", "build_values", "build_lit", "build_lit_sets",
-                 "has_all_symbols"]:
+    for name in ["length_entry", "first_codes", "build_token", "build_values", "build_lit", "build_lit_sets"]:
         m = re.search(r"^static (\w+) " + name + r"\(([^)]*)\)\n\{", t, re.M)
         assert m, name
         t = t[:m.start()] + signature(f"static {m.group(1)} __init {name}(", m.group(2), "\n{") + t[m.end():]
-    for name in ["seqlz_all_symbols", "seqlz_tables_init"]:
+    for name in ["seqlz_tables_init"]:
         t = make_static(t, name, init=True)
         t = put_doc(t, name, docs[name])
     t = t.rstrip("\n") + "\n\n" + (HERE / "api_codes.c").read_text()
