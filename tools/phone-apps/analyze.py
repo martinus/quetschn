@@ -88,7 +88,8 @@ for algo in sorted({r['algo'] for r in rows}):
 # The spread between the runs of one algorithm, pooled over the algorithms, in % of the mean, against the
 # spread of the algorithms' means. F is the ratio of the two variances, as in a one-way ANOVA: the larger,
 # the better the number tells the algorithms apart with this many runs. Chance alone gives an F above 3.5
-# in 1 of 20 series of 5 algorithms with 3 runs each, above 5.1 with 3 algorithms.
+# in 1 of 20 series of 5 algorithms with 3 runs each, above 5.1 with 3 algorithms of 3 runs, above 3.7
+# with 3 algorithms of 6 runs.
 groups = {}
 for r in rows:
     groups.setdefault(r['algo'], []).append(r)
