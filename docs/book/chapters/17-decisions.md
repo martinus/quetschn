@@ -741,8 +741,8 @@ A55, still below the slowest compression.
 The limit is `lz4`'s work memory, 16 416 bytes per CPU. It was 4 KiB at first, and moved to `lz4`'s
 16 KiB on 23rd September 2026: 8 points less memory on the compressed pages are worth far more than a few
 KiB per CPU, and a budget of 4 KiB costs the matcher speed or ratio
-([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)). On a phone with 16 cores every 4
-KiB below `lz4` is 64 KiB, resident for good.
+([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)). On the Mi 9T, with its 8
+cores, every 4 KiB below `lz4` is 32 KiB, resident for good.
 
 What counts is what `kmalloc()` and `vmalloc()` hand out, not what is asked for. `lz4` asks `vmalloc()`
 for 16 416 bytes and gets 5 pages, 20 480 bytes. seqlz needs the 8192 bytes of the hash table to compress
@@ -826,8 +826,10 @@ every boot, and 20 KiB more tables
 ### Recompression
 
 zram can compress idle pages again later with a second algorithm. `seqlz-opt`, an optimal parser for the
-same format, took 237 µs per page for 59 and 106 bytes, 0.3 and 0.4 bytes per µs: at that time it would
-have to save 700 to 4000 bytes per page to compete. `zstd` as the second algorithm is cheaper, but each
+same format, took 237 µs per page for 59 and 106 bytes, 0.3 and 0.4 bytes per µs, where the step from
+`seqlz-fast-lit` to writing every page with `zstd` 3 is 3 and 17: at that time it would have to save
+700 to 4000 bytes per page to compete. `zstd` 3 as the second algorithm recompresses 16 times as fast
+as `seqlz-opt`, but each
 read of a recompressed page is then about 2.3 µs slower, and those reads come in bursts when an app that
 was idle is used again ([Recompression, measured, not pursued](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#recompression-measured-not-pursued)).
 `seqlz-opt` is removed, and no design depends on recompression.

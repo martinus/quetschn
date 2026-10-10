@@ -363,12 +363,12 @@ either"*
 ([`docs/plan.md` §2.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#22-the-failure-zbewalgo-benjamin-warnke-2018-reached-v7-never-merged)).
 seqlz's decoder checks every length and offset against the room left in the page and in the literals
 before it uses them, stops after at most `PAGE / 4 + 1` sequences, and requires that a page ends exactly
-where its bits end. Fuzzers, programs that feed a function billions of random and damaged inputs and
-report every crash and every read out of bounds ([chapter 15](#ch-zram-glue--tests)), fed it billions
-of pages. Of the pages the project built to be slow, the slowest decodes in 1.33 times the p99 time
-of real pages, measured in time on the Mi 9T's small core, a Cortex-A55, where `lz4`'s slowest takes
-1.57 times its own. Counted in instructions, on valid pages that only a damaged zram could hold, the
-costliest found take 1.59 times seqlz's p99 and 2.58 times `lz4`'s
+where its bits end. Fuzzers, programs that feed a function random and damaged inputs and report
+every crash and every read out of bounds ([chapter 15](#ch-zram-glue--fuzzing)), fed it billions of
+pages. Of the pages the project built to be slow, the slowest decodes in 1.33 times the p99 time of
+real pages, measured on the Mi 9T's small core, a Cortex-A55, where `lz4`'s slowest takes 1.57 times
+its own. Counted in instructions, the costliest page a search for slow pages found decodes in 1.59
+times seqlz's p99, and the same search found a page with 2.58 times `lz4`'s p99 for `lz4`
 ([explored-designs.md, "The worst case"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
 [Chapter 14](#ch-decode) shows each check where it is.
 
@@ -535,8 +535,8 @@ to write a page.
 
 ::: warn The read times in this table flatter the decoder
 The project's read benchmark in the VM reads every page several times in a row in each run, warm and
-cold, and that trains the CPU's branch predictor, which guesses the outcome of each `if` from its
-past ([chapter 3](#ch-cpu--branches)), on the page. In a real swap-in, which decodes a page once, `seqlz-fast-lit` mispredicts about 110 branches
+cold, and that trains the CPU's branch predictor on the page: the predictor guesses the outcome of
+each `if` from its past ([chapter 3](#ch-cpu--branches)). In a real swap-in, which decodes a page once, `seqlz-fast-lit` mispredicts about 110 branches
 per page more, and its reads are 0.52 and 0.72 µs slower than `lz4`'s instead of the 0.17 and 0.34 µs
 above
 ([explored-designs.md, "The decoder in a fault, found"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).

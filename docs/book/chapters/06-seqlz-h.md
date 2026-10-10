@@ -139,7 +139,8 @@ a table the page touches is then a wait for memory.
 The token table is the larger trade. With 10 bits instead of 11 it would be 4 KiB, but fewer tokens fit
 a code of their own and more take the longer escape, so pages get larger. On the Mi 9T this was measured
 twice ([item 1 and item 7](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#six-choices-made-on-the-pc-measured-on-the-phone-the-token-table-and-the-prefetches-matter-the-rest-does-not)
-of "Six choices made on the PC, measured on the phone"). Pages were 2 to 6 bytes larger on four dumps.
+of "Six choices made on the PC, measured on the phone"). Pages were 4.8 bytes larger on the phone's
+pages and 2 to 6 bytes on four dumps; 320 tokens got a code of their own instead of 512.
 In item 1, 10 bits read cold 2.0 to 2.7 µs faster on the A76, the big out-of-order core, and 2.3 to 3.2
 µs on the A55, the little in-order core: the decoder prefetched 64 lines of the token table less. Item 7
 measured again after the decoder had stopped prefetching the token table on the A76. Then 10 bits gave
@@ -178,7 +179,10 @@ is at most `31 + 4 = 35`, which fits 6 bits; with 6 bits it would be `63 + 4 = 6
 The six classes take the top of the token, above the 9 bits of the two lengths.
 `SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, `6 * 512 = 3072`. A shift, not a multiplication, because the
 class is a bit field: token `t` has `ll` in bits 0 to 3, `ml - 4` in bits 4 to 8 and the class in bits 9
-to 11. [Chapter 4](#ch-format--token) draws the 12 bits of token 2098 and takes it apart.
+to 11. [Chapter 4](#ch-format--token) draws the 12 bits of token 2098, the sequence that
+[`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)
+takes apart: 2 literals, a match of 7 bytes, 16 bytes back. 16 is a multiple of 8 below 256, class 4,
+sent as `16 / 8 = 2` in 5 bits.
 
 Why 6 classes and not more: "Offset classes from a histogram" searched 29 539 layouts of classes
 offline, priced with the probabilities of 12.2 million sequences. The best layout with 8 classes saves
@@ -633,10 +637,11 @@ Lines 348 to 350 are its safety contract, and the most important lines of this h
 `scratch`. zram stores no checksum, so a page damaged in memory, or a bug elsewhere, reaches the
 decoder as it is, and a decoder that then wrote outside its buffer would turn a damaged page into a
 damaged kernel. Every length and offset is checked before it is used ([chapter 14](#ch-decode)), and
-fuzz targets feed the decoder random and damaged pages to keep it that way: 1.42 billion inputs in one
-run of 12 instances for 2 hours on 9th October 2026 ([chapter 14](#ch-decode--safety)), 60 seconds per
+fuzz targets feed the decoder random and damaged pages to keep it that way: 1.42 billion inputs, and
+1.94 billion against a second decoder, in one run of 12 instances for 2 hours on 9th October 2026
+([chapter 14](#ch-decode--safety)), 60 seconds per
 target in CI for every change, and an hour a day with each of three sanitizers in ClusterFuzzLite, a
-service that runs the fuzz targets for the repository ([chapter 15](#ch-zram-glue--tests)).
+service that runs the fuzz targets for the repository ([chapter 15](#ch-zram-glue--fuzzing)).
 
 `scratch` may be `NULL`. Then pages with coded literals are invalid, which is right for a zram device
 at level 1, `seqlz-fast`: its compressor never codes literals, so its decoder needs no scratch, and the
@@ -683,7 +688,7 @@ encoder are one loop ([chapter 9](#ch-matcher), [chapter 10](#ch-encoder)).
 `SEQLZ_HASH_BITS` sets the matcher's hash table: `1 << 12 = 4096` entries of 2 bytes on 4 KiB pages,
 8 KiB; `1 << 13 = 8192` entries on 16 KiB pages, 16 KiB. Each entry is the position of the last place
 in the page whose next 5 bytes had that hash; a page has 4096 positions, one entry each if the hash
-spread them perfectly. 2048 and 8192 entries were measured on the Mi 9T and lost, see
+spread them perfectly. 2048 and 8192 entries were measured on the Mi 9T and not taken, see
 [chapter 9](#ch-matcher--hash). The `?:` is a constant expression the compiler evaluates, so it can size an array.
 The kernel's copy has `12U` there.
 

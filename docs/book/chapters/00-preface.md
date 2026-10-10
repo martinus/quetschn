@@ -86,7 +86,9 @@ flowchart TB
 
 **Listings are the real files.** Every listing names its file and its line numbers, and the build
 script takes the lines from the repository at the commit named on the title page. If you open the
-file at that commit, the line numbers match. The kernel's coding style indents with tabs of 8
+file at that commit, the line numbers match. That commit is the last one that changed `src/`,
+`a7a6313` of 10th October 2026. A few chapters name `a2d57dd`, a later commit that changed only
+files outside `src/`, so `src/` is the same at both. The kernel's coding style indents with tabs of 8
 columns and keeps lines within 80 columns, and the listings show it that way.
 
 **4 KiB pages unless said otherwise.** seqlz is written for pages of 4 KiB and of 16 KiB; the

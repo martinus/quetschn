@@ -201,8 +201,9 @@ goes through the hash line by line and has the measurements behind 5 bytes.
 
 ::: try The real matcher on the example
 On a page that starts with `cat=1,dog=2;cat=3,dog=4;` and is zeros after, seqlz's matcher finds the
-first two sequences exactly as above. It finds `cat=` at position 12 anyway, for a reason that has
-nothing to do with the hash: the cleared table holds 0 in every slot, an empty slot is a candidate at
+first two sequences exactly as above. Its hash of 5 bytes cannot find `cat=` at position 12, because
+`cat=3` never appeared before, but the matcher finds it anyway, for a reason that has nothing to do
+with the hash: the cleared table holds 0 in every slot, an empty slot is a candidate at
 position 0, and position 0 starts with `cat=`. Put a `#` in front, and the first match is gone: the
 matcher then writes 18 literals and finds only `,dog=`. On the page without the `#`, the third
 sequence takes `4`, `;` and one zero as literals, and covers the other 4071 zeros with one match at
@@ -546,10 +547,10 @@ stored size, and was not kept
 The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is 28 bytes
 in seqlz: 2 bytes of header, the literal count 16; the 16 literals as they are, the matcher's sequences
 being the ones from the box above; and 10 bytes of bitstream for the four sequences. The table below
-is a preview of [chapter 4](#ch-format): how a token's number packs `ll`, `ml` and the offset class
-and what the escape is, in [one sequence: the token](#ch-format--token), the long `ml` in
-[length values](#ch-format--length-values). Read it now for the sizes, and again after chapter 4 for
-the bits:
+runs ahead of [chapter 4](#ch-format), which explains how a token's number packs `ll`, `ml` and the
+offset class and what the escape is ([one sequence: the token](#ch-format--token)), and how a long
+`ml` is sent ([length values](#ch-format--length-values)). Read it now for the sizes, and again after
+chapter 4 for the bits:
 
 | bits | what they are |
 | --- | --- |

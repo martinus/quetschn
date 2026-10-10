@@ -651,8 +651,9 @@ counts of the training. The generator checks the lengths before it writes them, 
 as `seqlz_tables_init()`: no code too long, codes that fill each decode table exactly, a code for
 every length value and literal, an escape code short enough. And the KUnit tests compare a SHA-256 of
 the lengths with the one in the format's specification. So `seqlz_init()` cannot fail. Before commit
-`4c42cc5` it had a `WARN_ON()` and could return an error; built in, zram would then have compressed
-with half-built tables, because the per-page check of `all_symbols` is not in the kernel copy.
+`4c42cc5`, of 10th October 2026, it had a `WARN_ON()` and could return `-EINVAL`: as a module seqlz
+then did not load, and built in, zram would have compressed with half-built tables, because the
+per-page check of `all_symbols` is not in the kernel copy.
 
 `seqlz_exit()` is empty, and still needed: a module that has an init function and no exit function
 cannot be unloaded. `__exit` lets a built-in kernel drop the function entirely.

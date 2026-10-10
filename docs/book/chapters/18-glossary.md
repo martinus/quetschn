@@ -35,10 +35,10 @@ uses them in that sense throughout.
   [Chapter 17](#ch-decisions)
 - **encoder**: the second half of the compressor: it writes the sequences the matcher finds and the
   literals in the format. In seqlz it runs in the same loop as the matcher. [Chapter 10](#ch-encoder)
-- **entropy coder**: the part of a codec that writes symbols in codes of their frequency, Huffman codes
-  or ANS, instead of in a fixed number of bits. [Chapter 2](#ch-compression--entropy)
 - **entropy**: the least number of bits per symbol any code can reach for given symbol frequencies, the
   sum of `p × log2(1/p)`. A Huffman code is within one bit per symbol of it. [Chapter 2](#ch-compression)
+- **entropy coder**: the part of a codec that writes symbols in codes of their frequency, Huffman codes
+  or ANS, instead of in a fixed number of bits. [Chapter 2](#ch-compression--entropy)
 - **escape**: the code shared by all tokens that have no code of their own, followed by the token in 12
   plain bits. Only 576 of the 3072 tokens have their own code. [Chapter 4](#ch-format)
 - **fast path**: the decoder's path for a sequence with no length value and room to the ends of the page,
@@ -82,12 +82,12 @@ uses them in that sense throughout.
 - **offset class**: one of 6 ways to store an offset: the repeat offset in 0 bits, offsets below 16, 256
   and the page size in 4, 8 and 12 bits, and multiples of 8 sent divided by 8 in 5 and 9 bits.
   [Chapter 6](#ch-header)
+- **optimal parser**: a matcher that searches for the sequences that make a page smallest, not the
+  first match it finds; far slower than a greedy one. seqlz's was `seqlz-opt`. [Chapter 17](#ch-decisions--not-kept)
 - **prefix code**: a set of codes where no code is the start of another, so a decoder knows where a code
   ends. `0`, `10`, `11` is one; `0`, `01` is not. [Chapter 2](#ch-compression)
 - **repeat offset**: the offset of the match before, used again in class 0 for 0 bits. It starts at 1 on
   every page. seqlz keeps one, `zstd` three. [Chapter 4](#ch-format)
-- **optimal parser**: a matcher that searches for the sequences that make a page smallest, not the
-  first match it finds; far slower than a greedy one. seqlz's was `seqlz-opt`. [Chapter 17](#ch-decisions--not-kept)
 - **scratch**: the buffer the decoder decodes coded literals into, `SEQLZ_SCRATCH`, a page plus 16 bytes,
   one per CPU. [Chapter 6](#ch-header), [chapter 13](#ch-literals-dec)
 - **sentinel**: the 1 bit a literal stream keeps below its last real bit, so that the stream needs no
@@ -128,7 +128,7 @@ uses them in that sense throughout.
 - **fuzzer, fuzz target**: a program that feeds a function millions of random and mutated inputs and
   reports every crash, sanitizer finding or hang; a fuzz target is the function's entry point for it.
   `fuzz/` has targets for libFuzzer and AFL++, two such programs, and ClusterFuzzLite runs them every
-  day for the repository. [Chapter 15](#ch-zram-glue--tests)
+  day for the repository. [Chapter 15](#ch-zram-glue--fuzzing)
 - **`__init`**: marks a function the kernel needs only while it starts; its code is freed afterwards. The
   code that builds seqlz's tables is `__init` in the kernel copy. [Chapter 15](#ch-zram-glue)
 - **initcall**: a function the kernel calls once while it starts, registered with a macro such as

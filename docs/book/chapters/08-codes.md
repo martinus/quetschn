@@ -247,9 +247,11 @@ Token 2098, with its 9-bit code `101100111`, `c = 359`, has the 4 entries 1436 t
 
 The codes are ranges because the bitstream is read most significant bit first, since 6th October
 2026; read the other way, a code's entries were spread over every cache line of the table.
-[Chapter 3](#ch-cpu--msb-first) has the cache lines and the measurements. One of them is only here:
-on the Mi 9T's A76, leaving the token table out of the prefetches made cold reads 1.3 to 2.6 µs
-faster in every run once the codes were ranges, and only in some builds before.
+[Chapter 3](#ch-cpu--msb-first) has the cache lines and the measurements. One more result belongs
+here: on the Mi 9T's A76, leaving the token table out of the prefetches, as the decoder then did on
+that core, made cold reads 1.3 to 2.6 µs faster in every run once the codes were ranges, and only in
+some builds before
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
 
 The loop at lines 77 and 78 computes its end, `(c + 1U) << (11 - l)`, in every iteration. The
 compiler can hoist it, and if not, it does not matter: the function runs once, and writes 2048

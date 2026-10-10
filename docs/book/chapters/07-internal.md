@@ -278,7 +278,7 @@ The two macros size this:
   spreads the lanes into 16-bit ones, every second byte with the mask `0x00ff00ff00ff00ff`, into two
   words, and starts the 8-bit lanes again. With 8 streams that is every 200 literals of the page.
 
-What the whole choice of the table costs per write is in [chapter 11](#ch-literals-enc--cost).
+What the whole choice of the table costs per write is in [chapter 11](#ch-literals-enc--pricing).
 
 ## Byte 2 and the largest stream {#ch-internal--byte2}
 

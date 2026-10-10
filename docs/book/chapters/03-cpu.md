@@ -683,12 +683,13 @@ cold reads at the median 162 ns closer to `lz4` on the little core and 126 ns on
 
 **A miss it did not see coming stops it.** An out-of-order core finds the table lookups of the next
 sequences in its window and starts their misses early. An in-order core reaches each one only when it
-gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read, against
-6 to 25 ns on the PC ([the box above](#ch-cpu--prefetch)).
+gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read. On the PC,
+prefetching the tables once made about 100 ns of difference, within the scatter of that measurement
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
 
 Until 10th October 2026 the arm64 decoder had a second loop, written for in-order cores; now one loop
 runs on every core, because nothing else in the kernel's `lib/` asks which CPU it runs on
-([chapter 17](#ch-decisions--decoder) has the cost on the A55).
+([chapter 17](#ch-decisions--one-loop-for-all-cores) has the cost on the A55).
 
 ## Registers and the 64-bit bit buffer {#ch-cpu--registers}
 
