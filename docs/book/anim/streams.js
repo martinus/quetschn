@@ -325,5 +325,5 @@ BookAnim.define('streams', function (ctx) {
     ctx.say(p.say);
   }
   build();
-  return { steps: function () { return plan.length; }, draw: draw, interval: 1100, narrow: true };
+  return { steps: function () { return plan.length; }, draw: draw, interval: 1100, wide: 720 };
 });

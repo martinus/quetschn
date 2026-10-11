@@ -254,5 +254,5 @@ BookAnim.define('accum', function (ctx) {
     dstRow(st, s);
     ctx.say(say(k, st));
   }
-  return { steps: steps.length, draw: draw, interval: 1400, narrow: true };
+  return { steps: steps.length, draw: draw, interval: 1400, wide: 760 };
 });

@@ -129,5 +129,5 @@ BookAnim.define('table', function (ctx) {
     ctx.say(looks.length + ' lookups for ' + looks.length + ' codes, ' + bits.length + ' bits: the classes ' + MSG.join(', ') + '. One lookup per code, whatever its length.');
   }
 
-  return { steps: S_END + 1, draw: draw, interval: 1300, narrow: true };
+  return { steps: S_END + 1, draw: draw, interval: 1300, wide: 640 };
 });

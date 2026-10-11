@@ -120,7 +120,7 @@ BookAnim.define('ends', function (ctx) {
       if (fin === nFinish() - 1) {
         // the page
         ctx.svg('path', { d: 'M' + bx(0) + ',' + (Y + BH + 6) + ' v6 H' + bx(end) + ' v-6', class: 'en-brace' }, g);
-        T(Math.min(bx(end) + 4, X0 + BW - 170), Y + BH + 22, 'the page: ' + r.len + ' bytes', 'en-ptrt', bx(end) + 174 > X0 + BW ? 'start' : 'start');
+        T(Math.min(bx(end) + 4, X0 + BW - 170), Y + BH + 22, 'the page: ' + r.len + ' bytes', 'en-ptrt', 'start');
       } else {
         var t = 'out = ' + out;
         T(Math.max(X0 + t.length * 7.3, bx(out) - 3), Y + BH + 18, t, 'en-ptrt', 'end');
@@ -357,7 +357,7 @@ BookAnim.define('ends', function (ctx) {
     ctx.say(say(s));
   }
   return {
-    steps: steps, draw: draw, interval: 700, narrow: true,
+    steps: steps, draw: draw, interval: 700, wide: 760,
     // step k shows dst after sequence k
     link: {
       label: 'written into dst (chapter 10)',

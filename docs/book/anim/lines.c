@@ -109,7 +109,7 @@ int main(void) {
         fprintf(stderr, "lines.c: %u sequences, chapter 16 has 180\n", seqs);
         return 1;
     }
-    printf("{\"comp\":%u,\"start\":%ld,\"bits\":%lu,\"idx\":[", n, (long)(q - comp), pos);
+    printf("{\"idx\":[");
     for (i = 0; i < seqs; i++)
         printf("%s%u", i ? "," : "", idx[i]);
     printf("],\"len\":[");

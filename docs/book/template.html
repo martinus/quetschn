@@ -157,7 +157,7 @@ pre.numbered { padding-block: 0.6rem; }
 .box pre.snippet { background: var(--paper); }
 
 /* ---- tables and figures ---- */
-.tablewrap, table { display: block; overflow-x: auto; max-width: 100%; }
+table { display: block; overflow-x: auto; max-width: 100%; }
 table { border-collapse: collapse; margin: 1.2rem 0 1.4rem; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 0.35rem 0.8rem 0.35rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
 th { font-family: var(--display); font-weight: 700; font-size: 0.82rem; border-bottom: 1.5px solid var(--ink); }
@@ -165,10 +165,9 @@ figure.diagram { margin: 1.8rem 0; }
 figure.diagram .scroll { overflow-x: auto; }
 figure.diagram svg { display: block; max-width: 100%; height: auto; margin-inline: auto; color: var(--ink); font-family: var(--mono); }
 figure.diagram svg text { fill: currentColor; }
-figure.diagram figcaption, figure.listing + .listnote { font-family: var(--display); font-size: 0.85rem; color: var(--muted); margin-top: 0.6rem; }
+figure.diagram figcaption { font-family: var(--display); font-size: 0.85rem; color: var(--muted); margin-top: 0.6rem; }
 svg .acc { color: var(--accent); } svg .mark { color: var(--mark); } svg .mut { color: var(--muted); }
 svg .fill-sheet { fill: var(--sheet); } svg .fill-paper { fill: var(--paper); } svg .fill-acc { fill: var(--accent); } svg .fill-mark { fill: var(--mark); }
-svg .stroke-rule { stroke: var(--rule); }
 /* text on a solid fill-acc or fill-mark: the page colour, which stands out from both in both themes */
 svg .on-fill { color: var(--paper); }
 /* a label that a line crosses: a band of the page colour around the letters keeps it readable */
@@ -195,9 +194,8 @@ figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
   html { scroll-padding-top: calc(env(safe-area-inset-top, 0px) + 3.6rem); }
   .hexpage { font-size: 0.86rem; gap: 0.25rem; }
   .hexpage span { padding: 0.3rem 0.38rem; }
-  .topbar { display: flex; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; align-items: center; gap: 0.8rem;
-            padding: 0.55rem 16px; background: var(--paper); border-bottom: 1px solid var(--rule); font-family: var(--display); font-size: 0.9rem; }
-  .topbar { gap: 0.4rem; padding-block: 0.35rem; }
+  .topbar { display: flex; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; align-items: center; gap: 0.4rem;
+            padding: 0.35rem 16px; background: var(--paper); border-bottom: 1px solid var(--rule); font-family: var(--display); font-size: 0.9rem; }
   .topbar .icon { color: var(--ink); }
   .topbar .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
   main { padding-inline: 16px; }

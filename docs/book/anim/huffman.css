@@ -11,4 +11,3 @@
 .an-stage .hf-bar { fill: var(--rule); }
 .an-stage .hf-bar-on { fill: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .an-stage .hf-edge { transition: none; } }
-#anim-huffman:not(.narrow) .an-stage > svg { min-width: 640px; }

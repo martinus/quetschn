@@ -81,5 +81,5 @@ BookAnim.define('overlap', function (ctx) {
       else ctx.say('memmove() copies the source as it was before the copy: byte ' + src + (src < n ? ' was the literal "' + v2 + '".' : ' was not written yet, so byte ' + cur + ' gets whatever was in memory there, here "?".') + (cur === n + LEN - 1 ? ' Only the first ' + off + ' bytes of the match are right: a block copy is wrong for an overlapping match.' : ''));
     }
   }
-  return { steps: function () { return LITS[off].length + LEN + 1; }, draw: draw, interval: 750, narrow: true };
+  return { steps: function () { return LITS[off].length + LEN + 1; }, draw: draw, interval: 750 };
 });

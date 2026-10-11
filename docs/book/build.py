@@ -132,9 +132,8 @@ def render_listing(path, a, b):
         sys.exit(f"listing {path} {a}-{b}: file has {len(lines)} lines")
     COVERED.setdefault(path, set()).update(range(a, b + 1))
     LISTINGS.append((path, a, b))
-    lang = "c"
     body = "\n".join(lines[a - 1:b])
-    hl = highlight_lines(body, lang)
+    hl = highlight_lines(body, "c")
     rows = "".join(
         f'<span class="line"><span class="ln" data-n="{a + i}"></span><span class="lc">{h}</span></span>'
         for i, h in enumerate(hl))
@@ -240,7 +239,8 @@ def render_stepper(what, where):
     css = ""
     if not STEPPER_CSS[0]:
         STEPPER_CSS[0] = True
-        css = f'<style>{(HERE / "stepper" / "stepper.css").read_text()}</style>'
+        css = (f'<style>{(HERE / "stepper" / "stepper.css").read_text()}</style>'
+               f'<script>{(HERE / "stepper" / "frame.js").read_text()}</script>')
     return (css +
             f'<figure class="stepper nocomments" id="{sid}" data-kind="{what}" tabindex="-1" aria-label="{k["label"]}">'
             f'<div class="st-bar"><div class="st-pages" role="group" aria-label="Page">{pages}</div>'
@@ -522,10 +522,6 @@ def build():
                     + f'<header class="chapterhead"><span class="chapno">{label}</span>'
                       f'<h1 id="{cid}">{title}</h1></header>'
                     + body[m.end():])
-            subs = []
-            for hm in re.finditer(r"<h2([^>]*)>(.*?)</h2>", body, re.S):
-                sid = re.search(r'id="([^"]+)"', hm.group(1))
-                subs.append((sid.group(1) if sid else None, hm.group(2)))
 
             def add_id(hm):
                 attrs, inner = hm.group(2), hm.group(3)
@@ -621,7 +617,6 @@ def check_coverage():
                     rngs.append(f"{start}-{a}" if a != start else f"{a}")
                     start = b
             print(f"not covered: {rel}: {', '.join(rngs)}")
-    # overlaps are fine, but report listings that repeat many lines
     return not missing_any
 
 

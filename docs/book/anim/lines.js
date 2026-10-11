@@ -4,7 +4,7 @@
  * reads its bitstream, against the same bits read the other way, the index bit-reversed.
  */
 BookAnim.define('lines', function (ctx) {
-  var D = ctx.data, IDX = D.idx, LEN = D.len, NL = IDX.length, BITS = 11, ONE = IDX.length, GROUP = 4;
+  var D = ctx.data, IDX = D.idx, LEN = D.len, NL = IDX.length, BITS = 11;
   var COLS = 16, CH = 20, L;
   // the two grids side by side, or on a phone (ctx.narrow) one above the other in 368 units, each with
   // the current lookup's bits and its count below it
@@ -28,7 +28,8 @@ BookAnim.define('lines', function (ctx) {
     return set;
   }
   // how many lookups are done after step k
-  function upto(k) { return k <= ONE ? k : Math.min(NL, ONE + GROUP * (k - ONE)); }
+  // how many lookups are done after step k: one a step, the last step shows them all
+  function upto(k) { return Math.min(k, NL); }
   // the start, one step per lookup, so that a link from another figure lands on its sequence, the totals
   var STEPS = NL + 2;
 
@@ -63,7 +64,7 @@ BookAnim.define('lines', function (ctx) {
   }
 
   function draw(k) {
-    var n = upto(k), first = k <= ONE ? n - 1 : upto(k - 1), last = n - 1, side, i, nw = ctx.narrow;
+    var n = upto(k), first = n - 1, last = n - 1, side, i, nw = ctx.narrow;
     L = layout(nw);
     var CELL = L.CELL, GX = L.GX, W = L.W, H = L.H;
     root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
@@ -126,21 +127,16 @@ BookAnim.define('lines', function (ctx) {
   function sentence(k, n, first, last, count, newIn) {
     if (k === 0) return 'Chapter 16\'s page has ' + NL + ' sequences, and each starts with a lookup in the token table: 2048 entries of 4 bytes, 16 to a cache line, 128 lines. Each lookup reads the entry the next 11 bits of the bitstream point to.';
     if (k === STEPS - 1) return 'All ' + NL + ' token lookups of this page: most significant bit first they touch ' + count[0] + ' of the 128 lines, bits reversed ' + count[1] + '. These are this page\'s numbers; the chapter\'s 42.5 against 55.3 lines are the mean of 20 000 pages.';
-    if (k <= ONE) {
-      var l = LEN[last], s = bin(IDX[last]), a = IDX[last], b = rev(a);
-      var na = Object.keys(codeLines(0, last)).length, nb = Object.keys(codeLines(1, last)).length;
-      return 'Lookup ' + n + ': the next 11 bits are ' + s + ', and the code is the first ' + l + ', ' + s.slice(0, l) +
-        '. Most significant bit first that is entry ' + a + ', line ' + (a >> 4) + (newIn[0] ? ', a new line' : ', touched before') +
-        '. Bits reversed it is entry ' + b + ', line ' + (b >> 4) + (newIn[1] ? ', a new line' : ', touched before') +
-        '. Whatever bits follow, this code lands in ' + na + (na > 1 ? ' lines' : ' line') + ' in the first layout and in ' + nb + ' in the second.';
-    }
-    var lens = LEN.slice(first, n);
-    return 'Lookups ' + (first + 1) + ' to ' + n + ', codes of ' + lens.slice(0, -1).join(', ') + (lens.length > 1 ? ' and ' : '') + lens[lens.length - 1] +
-      ' bits: ' + newIn[0] + ' new ' + (newIn[0] === 1 ? 'line' : 'lines') + ' most significant bit first, ' + newIn[1] + ' bits reversed. So far ' + count[0] + ' against ' + count[1] + ' lines.';
+    var l = LEN[last], s = bin(IDX[last]), a = IDX[last], b = rev(a);
+    var na = Object.keys(codeLines(0, last)).length, nb = Object.keys(codeLines(1, last)).length;
+    return 'Lookup ' + n + ': the next 11 bits are ' + s + ', and the code is the first ' + l + ', ' + s.slice(0, l) +
+      '. Most significant bit first that is entry ' + a + ', line ' + (a >> 4) + (newIn[0] ? ', a new line' : ', touched before') +
+      '. Bits reversed it is entry ' + b + ', line ' + (b >> 4) + (newIn[1] ? ', a new line' : ', touched before') +
+      '. Whatever bits follow, this code lands in ' + na + (na > 1 ? ' lines' : ' line') + ' in the first layout and in ' + nb + ' in the second.';
   }
 
   return {
-    steps: STEPS, draw: draw, interval: 600, narrow: true,
+    steps: STEPS, draw: draw, interval: 600, wide: 760,
     // one token lookup per sequence, step k is lookup k
     link: {
       label: 'its token\u2019s cache line (chapter 3)',

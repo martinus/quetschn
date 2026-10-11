@@ -8,4 +8,3 @@
 .an-stage svg text.tb-mark { fill: var(--mark); }
 .an-stage svg text.tb-mut { fill: var(--muted); }
 .an-stage svg text.tb-bold { font-weight: 600; }
-#anim-table:not(.narrow) .an-stage > svg { min-width: 640px; }

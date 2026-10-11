@@ -272,5 +272,5 @@ BookAnim.define('pricing', function (ctx) {
     ctx.say(p.say);
   }
   buildDrawing();
-  return { steps: function () { return plan.length; }, draw: draw, interval: 1300, narrow: true };
+  return { steps: function () { return plan.length; }, draw: draw, interval: 1300, wide: 650 };
 });

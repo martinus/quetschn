@@ -1,9 +1,11 @@
 /*
  * The book's animations: a figure with controls (start, back, play, step, a slider), a sentence for
  * the current step, and a stage the animation draws into. An animation is a file anim/<name>.js that
- * calls BookAnim.define(name, setup); setup(ctx) returns { steps, draw(k), interval, narrow }; steps is
- * a number, or a function when the reader's choices change it; narrow: true says that draw(k) draws a
- * layout of its own when ctx.narrow is true. draw(k) draws
+ * calls BookAnim.define(name, setup); setup(ctx) returns { steps, draw(k), interval, wide }; steps is
+ * a number, or a function when the reader's choices change it. Where the stage is narrower than wide
+ * pixels (600 if not set), e.g. on a phone, ctx.narrow is true and draw(k) draws a layout of its own,
+ * about 360 units wide, instead of scaling the wide one down. wide is about 85% of the wide drawing's
+ * width, so that its text of 12 units stays above 10 px. draw(k) draws
  * step k from nothing or over what is there; it must give the same picture for k whatever came before.
  */
 (function () {
@@ -91,14 +93,10 @@
     var scrub = el('input', 'an-scrub', null, bar);
     scrub.type = 'range'; scrub.min = 0; scrub.value = 0; scrub.setAttribute('aria-label', 'Step');
     var pos = el('span', 'an-pos', null, bar);
-    var cs = getComputedStyle(fig);
     var ctx = {
-      fig: fig, stage: stage, el: el, svg: svg, calm: calm.matches,
+      stage: stage, el: el, svg: svg,
       data: dataEl ? JSON.parse(dataEl.textContent) : null,
       say: function (t) { sayEl.textContent = t; },
-      sayHTML: function (h) { sayEl.innerHTML = h; },
-      // a colour token of the page, e.g. color('accent'), for a canvas
-      color: function (t) { return getComputedStyle(fig).getPropertyValue('--' + t).trim(); },
       // an element that stays from step to step, so that CSS transitions move it
       keyed: function (parent, key, make) {
         var e = parent.querySelector('[data-key="' + key + '"]');
@@ -107,13 +105,13 @@
       },
       // extra controls of an animation go into the bar, e.g. a choice of input
       bar: bar,
-      // true where the stage is narrower than NARROW pixels, e.g. on a phone: then draw(k) draws a
-      // layout of its own, about 360 units wide, instead of scaling the wide one down
+      // see the head of this file; set again below, once the animation said how wide it is
       narrow: stage.clientWidth < NARROW
     };
     var a = defs[name](ctx), i = 0, timer = null;
-    // an animation with a narrow layout says so with narrow: true; the others keep scrolling sideways
-    fig.classList.toggle('narrow', !!a.narrow && ctx.narrow);
+    var wide = a.wide || NARROW;
+    ctx.narrow = stage.clientWidth < wide;
+    fig.classList.toggle('narrow', ctx.narrow);
     function n() { return typeof a.steps === 'function' ? a.steps() : a.steps; }
     function go(k) {
       i = Math.max(0, Math.min(n() - 1, k));
@@ -150,13 +148,11 @@
     // a change of input from the animation's own controls: steps may change
     ctx.restart = function () { play(false); go(0); };
     ctx.go = function (k) { play(false); go(k); };
-    ctx.redraw = function () { go(i); };
     document.addEventListener('book-theme', function () { setTimeout(function () { go(i); }, 0); });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { go(i); });
-    calm.addEventListener('change', function () { ctx.calm = calm.matches; });
-    // the other layout when the stage gets narrower or wider than NARROW, e.g. a phone turned
-    if (a.narrow && window.ResizeObserver) new ResizeObserver(function () {
-      var nw = stage.clientWidth < NARROW;
+    // the other layout when the stage gets narrower or wider than the wide layout, e.g. a phone turned
+    if (window.ResizeObserver) new ResizeObserver(function () {
+      var nw = stage.clientWidth < wide;
       if (nw !== ctx.narrow) { ctx.narrow = nw; fig.classList.toggle('narrow', nw); go(i); }
     }).observe(stage);
     go(0);

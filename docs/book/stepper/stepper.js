@@ -12,21 +12,12 @@
       ll: (e >>> 19) & 15, ml: (e >>> 23) & 63, value: (e >>> 30) & 1, escape: e >>> 31
     };
   }
-  function hex(v, w) { var s = (v >>> 0).toString(16); while (s.length < w) s = '0' + s; return s; }
+  var U = window.BookStepper.util, hex = U.hex, ch = U.ch, el = U.el, keepVisible = U.keepVisible;
   function bitsOf(s) { return (BigInt(s[F.hi]) << 32n) | BigInt(s[F.lo]); }
   function bin(v, n) { var s = ''; for (var i = n - 1; i >= 0; i--) s += (v >> i) & 1; return s; }
-  function ch(b) { return b >= 32 && b < 127 ? String.fromCharCode(b) : b === 10 ? '↵' : '·'; }
-  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
-  function Stepper(fig) {
-    var data = JSON.parse(document.getElementById(fig.id + '-data').textContent);
-    var C = data.consts;
-    var rows = {};
-    fig.querySelectorAll('.st-code .line').forEach(function (r) { rows[r.querySelector('.ln').getAttribute('data-n')] = r; });
-    var codeBox = fig.querySelector('.st-code');
-    var say = fig.querySelector('.st-say');
-    var scrub = fig.querySelector('.st-scrub');
-    var pos = fig.querySelector('.st-pos');
+  function view(vc) {
+    var fig = vc.fig, data = vc.data, C = data.consts;
     var bitsBox = fig.querySelector('.st-bits');
     var regLine = fig.querySelector('.st-regline');
     var varsBox = fig.querySelector('.st-vars');
@@ -35,16 +26,13 @@
     var litHead = fig.querySelector('.st-lithead');
     var canvas = fig.querySelector('canvas');
     var win = fig.querySelector('.st-window');
-    var page, pageId, steps, seqStarts, when, kind, i = 0, timer = null, stmt = {};
+    var page, steps, seqStarts, when, kind;
 
-    // the statement text of each line, to find what a step does
-    Object.keys(rows).forEach(function (n) { stmt[n] = rows[n].querySelector('.lc').textContent.trim(); });
-    function at(s) { return stmt[s[F.line]] || ''; }
+    function at(s) { return vc.stmt(s[F.line]); }
     function is(s, prefix) { return at(s).indexOf(prefix) === 0; }
 
     function load(id) {
       page = data.pages[id];
-      pageId = id;
       steps = page.steps;
       seqStarts = [];
       steps.forEach(function (s, k) { if (is(s, 'if (tok >> TOK_ESCAPE_AT)')) seqStarts.push(k); });
@@ -61,9 +49,7 @@
       for (var k = 0; k < steps.length; k++) if (steps[k][F.p] >= 0) { page.bitStart = steps[k][F.p]; break; }
       page.nLit = page.lit.length;
       buildBytes();
-      scrub.max = steps.length - 1;
-      fig.querySelectorAll('.st-pages button').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-page') === id ? 'true' : 'false'); });
-      go(0);
+      return { steps: steps.length, groups: seqStarts };
     }
 
     function buildBytes() {
@@ -205,17 +191,6 @@
       if (l >= 0 && lk[Math.min(l, lk.length - 1)]) keepVisible(litBox, lk[Math.min(l, lk.length - 1)]);
     }
 
-    var calm = matchMedia('(prefers-reduced-motion: reduce)');
-    function scrollBox(box, top) { box.scrollTo({ top: Math.max(0, top), behavior: calm.matches ? 'auto' : 'smooth' }); }
-    // the byte boxes scroll only when the byte leaves them; the boxes are position: relative, so
-    // offsetTop counts from their top
-    function keepVisible(box, child) {
-      var top = child.offsetTop, h = box.clientHeight;
-      if (top < box.scrollTop || top > box.scrollTop + h - child.offsetHeight) scrollBox(box, top - h / 3);
-    }
-    // the current line of code stays at one height, a third down, and the code moves under it
-    function followLine(row) { scrollBox(codeBox, row.offsetTop - codeBox.clientHeight / 3); }
-
     function colors() {
       var cs = getComputedStyle(fig);
       return { lit: cs.getPropertyValue('--mark').trim(), match: cs.getPropertyValue('--accent').trim(),
@@ -223,14 +198,9 @@
     }
 
     function drawPage(k) {
-      var s = steps[k], t = at(s), col = colors(), ctx = canvas.getContext('2d');
-      var cell = canvas.width / 64;
-      ctx.fillStyle = col.paper; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      for (var b = 0; b < C.PAGE; b++) {
-        var done = when[b] >= 0 && when[b] < k;
-        ctx.fillStyle = done ? (kind[b] === 1 ? col.lit : col.match) : col.empty;
-        ctx.fillRect((b % 64) * cell, Math.floor(b / 64) * cell, cell - 1, cell - 1);
-      }
+      var s = steps[k], t = at(s), col = colors(), cell = canvas.width / 64;
+      // a byte final before step k in the colour of what wrote it, else empty
+      var ctx = U.cells(canvas, function (b) { return when[b] >= 0 && when[b] < k ? kind[b] : 0; }, [col.empty, col.lit, col.match], col.paper);
       // the bytes the current copy writes, and where a match copies from
       var d = s[F.d], n = 0, src = -1;
       if (/^(copy16|copy_literals)/.test(t)) n = /^copy16/.test(t) ? 16 : s[F.nl];
@@ -254,68 +224,17 @@
       }
     }
 
-    function go(k) {
-      i = Math.max(0, Math.min(steps.length - 1, k));
-      var s = steps[i];
-      fig.querySelectorAll('.st-code .line.now').forEach(function (r) { r.classList.remove('now'); });
-      var r = rows[s[F.line]];
-      if (r) { r.classList.add('now'); followLine(r); }
-      say.textContent = explain(i);
-      drawBits(s); drawVars(s); drawInput(s); drawPage(i);
-      scrub.value = i;
-      pos.textContent = 'step ' + (i + 1) + ' of ' + steps.length + ', sequence ' + seqOf(i) + ' of ' + seqStarts.length;
-      // the same sequence in the other figures of chapter 16's page
-      if (window.BookLinks) window.BookLinks.show(fig.id, pageId === 'slab' && seqOf(i) > 0 ? seqOf(i) - 1 : null);
-    }
-
-    function seqStep(dir) {
-      var n = seqOf(i);
-      if (dir > 0) go(n < seqStarts.length ? seqStarts[n] : steps.length - 1);
-      else go(n >= 2 && seqStarts[n - 1] === i ? seqStarts[n - 2] : n >= 1 && seqStarts[n - 1] < i ? seqStarts[n - 1] : 0);
-    }
-    function play(on) {
-      if (timer) { clearInterval(timer); timer = null; }
-      fig.classList.toggle('playing', on);
-      if (on) timer = setInterval(function () { if (i >= steps.length - 1) play(false); else go(i + 1); }, 420);
-    }
-
-    fig.querySelectorAll('[data-do]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var a = b.getAttribute('data-do');
-        if (a !== 'play') play(false);
-        if (a === 'prev') go(i - 1);
-        if (a === 'next') go(i + 1);
-        if (a === 'prevseq') seqStep(-1);
-        if (a === 'nextseq') seqStep(1);
-        if (a === 'first') go(0);
-        if (a === 'play') play(!timer);
-      });
-    });
-    fig.querySelectorAll('.st-pages button').forEach(function (b) {
-      b.addEventListener('click', function () { play(false); load(b.getAttribute('data-page')); });
-    });
-    var cmBtn = fig.querySelector('.st-cm');
-    cmBtn.addEventListener('click', function () {
-      var show = fig.classList.toggle('nocomments') === false;
-      cmBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
-      go(i);
-    });
-    scrub.addEventListener('input', function () { play(false); go(+scrub.value); });
-    fig.addEventListener('keydown', function (ev) {
-      if (ev.target === scrub) return;
-      if (ev.key === 'ArrowRight') { play(false); ev.shiftKey ? seqStep(1) : go(i + 1); ev.preventDefault(); }
-      if (ev.key === 'ArrowLeft') { play(false); ev.shiftKey ? seqStep(-1) : go(i - 1); ev.preventDefault(); }
-    });
-    // colours follow the theme
-    document.addEventListener('book-theme', function () { setTimeout(function () { go(i); }, 0); });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { go(i); });
-    if (window.BookLinks) window.BookLinks.add(fig.id, 'decoded (chapter 14)', fig, function (seq) {
-      play(false);
-      if (pageId !== 'slab') load('slab');
-      go(seqStarts[Math.min(seq, seqStarts.length - 1)]);
-    });
-    load(fig.querySelector('.st-pages button').getAttribute('data-page'));
+    return {
+      load: load,
+      line: function (k) { return steps[k][F.line]; },
+      draw: function (k) { var s = steps[k]; drawBits(s); drawVars(s); drawInput(s); drawPage(k); },
+      say: explain,
+      pos: function (k) { return 'step ' + (k + 1) + ' of ' + steps.length + ', sequence ' + seqOf(k) + ' of ' + seqStarts.length; },
+      seq: function (k) { return seqOf(k) > 0 ? seqOf(k) - 1 : null; },
+      stepOfSeq: function (seq) { return seqStarts[Math.min(seq, seqStarts.length - 1)]; },
+      linkLabel: 'decoded (chapter 14)'
+    };
   }
 
-  document.querySelectorAll('figure.stepper[data-kind="decode"]').forEach(function (f) { Stepper(f); });
+  document.querySelectorAll('figure.stepper[data-kind="decode"]').forEach(function (f) { window.BookStepper.start(f, view); });
 })();

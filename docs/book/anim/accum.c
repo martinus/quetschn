@@ -25,11 +25,10 @@ static u8 shadow[CAP], real_dst[CAP];
 static struct seqlz_encoder real;
 
 static void op_head(struct drv* D, const char* kind) {
-    printf("%s{\"seq\":%u,\"op\":\"%s\",\"acc0\":\"%016llx\",\"cnt0\":%u,\"p0\":%ld",
+    printf("%s{\"seq\":%u,\"op\":\"%s\",\"cnt0\":%u,\"p0\":%ld",
            D->ops++ ? "," : "",
            D->n,
            kind,
-           (unsigned long long)D->e.acc,
            D->e.cnt,
            (long)(shadow + CAP - D->e.p));
 }
@@ -108,7 +107,7 @@ static void traced(struct drv* D, unsigned int ll, unsigned int ml, unsigned int
     code = token_code(t, tok, &tlen);
     offv = (off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0));
     printf("%s{\"seq\":%u,\"op\":\"seq\",\"ll\":%u,\"ml\":%u,\"off\":%u,\"cls\":%u,\"tok\":%u,"
-           "\"esc\":%u,\"tlen\":%u,\"raw\":%u,\"last\":%u}",
+           "\"esc\":%u,\"tlen\":%u,\"raw\":%u}",
            D->ops++ ? "," : "",
            D->n,
            ll,
@@ -118,8 +117,7 @@ static void traced(struct drv* D, unsigned int ll, unsigned int ml, unsigned int
            tok,
            esc,
            tlen,
-           raw_bits,
-           e->last);
+           raw_bits);
     if (esc) {
         pt[np++] = (struct part){"escape", tlen - SEQLZ_ESCAPE_BITS, code >> SEQLZ_ESCAPE_BITS};
         pt[np++] = (struct part){"token", SEQLZ_ESCAPE_BITS, tok};

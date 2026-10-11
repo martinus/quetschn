@@ -109,5 +109,5 @@ BookAnim.define('abbits', function (ctx) {
     });
     ctx.say(st.say);
   }
-  return { steps: STEPS.length, draw: draw, interval: 2200, narrow: true };
+  return { steps: STEPS.length, draw: draw, interval: 2200, wide: 630 };
 });

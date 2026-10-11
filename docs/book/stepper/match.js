@@ -5,23 +5,16 @@
  * candidates, the hash table and the sequences follow from the page and the steps before.
  */
 (function () {
-  var F = { line: 0, pos: 1, anchor: 2, last: 3, h: 4, cand: 5, rep: 6, chit: 7, m: 8, len: 9 };
-  var MASK = (1n << 64n) - 1n;
+  var F = { line: 0, pos: 1, anchor: 2, last: 3, h: 4, cand: 5, rep: 6, chit: 7, m: 8, len: 9, h2: 10 };
+  var U = window.BookStepper.util, hex = U.hex, ch = U.ch, el = U.el;
+  // the kinds of step the drawing needs, found once per page from the statement's text
+  var OP = { top: 1, insert: 2, emit: 3, last: 4 };
 
-  function hex(v, w) { var s = (v >>> 0).toString(16); while (s.length < w) s = '0' + s; return s; }
-  function ch(b) { return b >= 32 && b < 127 ? String.fromCharCode(b) : b === 10 ? '↵' : '·'; }
-  function el(tag, cls, text, parent) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; if (parent) parent.appendChild(e); return e; }
 
-  function Matcher(fig) {
-    var data = JSON.parse(document.getElementById(fig.id + '-data').textContent);
+  function view(vc) {
+    var fig = vc.fig, data = vc.data, state = vc.state;
     var C = data.consts, SLOTS = 1 << C.HASH_BITS;
-    var rows = {}, stmt = {};
-    fig.querySelectorAll('.st-code .line').forEach(function (r) { rows[r.querySelector('.ln').getAttribute('data-n')] = r; });
-    Object.keys(rows).forEach(function (n) { stmt[n] = rows[n].querySelector('.lc').textContent.trim(); });
-    var codeBox = fig.querySelector('.st-code'), say = fig.querySelector('.st-say');
-    var scrub = fig.querySelector('.st-scrub'), posEl = fig.querySelector('.st-pos');
-    var state = fig.querySelector('.st-state');
-    var page, pageId, steps, emits, tops, i = 0, timer = null;
+    var page, steps, ops, emits, cache;
 
     // the panes
     function pane(title) { var s = el('section', null, null, state); el('h4', null, title, s); return s; }
@@ -38,40 +31,40 @@
     var pSeq = pane('The sequences, as the encoder gets them');
     var seqBox = el('div', 'm-seqs', null, pSeq);
 
-    function at(s) { return stmt[s[F.line]] || ''; }
+    function at(s) { return vc.stmt(s[F.line]); }
     function is(s, p) { return at(s).indexOf(p) === 0; }
-    function le(p, n) { var v = 0n; for (var k = n - 1; k >= 0; k--) v = (v << 8n) | BigInt(page.page[p + k] || 0); return v; }
-    function hash5(p) { return Number(((le(p, 8) << 24n) * 889523592379n & MASK) >> BigInt(64 - C.HASH_BITS)); }
     function four(p) { return page.page.slice(p, p + 4); }
     function same(a, b) { return a.length === b.length && a.every(function (x, k) { return x === b[k]; }); }
 
     function load(id) {
       page = data.pages[id];
-      pageId = id;
       steps = page.steps;
-      emits = []; tops = [];
+      ops = new Uint8Array(steps.length);
+      emits = [];
       steps.forEach(function (s, k) {
-        if (is(s, 'emit(')) emits.push(k);
-        if (is(s, 'u64 v_next')) tops.push(k);
+        ops[k] = is(s, 'u64 v_next') ? OP.top : is(s, 'table[seqlz_hash5') ? OP.insert
+          : is(s, 'emit(ctx, src + anchor, SEQLZ_PAGE') ? OP.last : is(s, 'emit(') ? OP.emit : 0;
+        if (ops[k] === OP.emit || ops[k] === OP.last) emits.push(k);
       });
-      scrub.max = steps.length - 1;
-      fig.querySelectorAll('.st-pages button').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-page') === id ? 'true' : 'false'); });
-      go(0);
+      cache = null;
+      return { steps: steps.length, groups: emits };
     }
 
-    // the table and the sequences after the steps before k
+    // the table and the sequences after the steps before k, on from the last step drawn if that was
+    // before k: from step 0 it was up to 4667 steps on every draw
     function replay(k) {
-      var table = new Int32Array(SLOTS).fill(-1), seqs = [];
-      for (var j = 0; j < k; j++) {
-        var s = steps[j];
-        if (is(s, 'u64 v_next')) table[s[F.h]] = s[F.pos];
-        if (is(s, 'table[seqlz_hash5')) table[hash5(s[F.pos] - 2)] = s[F.pos] - 2;
-        if (is(s, 'emit(')) {
-          var last = is(s, 'emit(ctx, src + anchor, SEQLZ_PAGE');
-          seqs.push({ at: s[F.anchor], ll: (last ? C.PAGE : s[F.pos]) - s[F.anchor], ml: last ? 0 : s[F.len], off: last ? 0 : s[F.last] });
+      if (!cache || cache.k > k) cache = { k: 0, table: new Int32Array(SLOTS).fill(-1), seqs: [] };
+      for (var j = cache.k; j < k; j++) {
+        var s = steps[j], op = ops[j];
+        if (op === OP.top) cache.table[s[F.h]] = s[F.pos];
+        if (op === OP.insert) cache.table[s[F.h2]] = s[F.pos] - 2;
+        if (op === OP.emit || op === OP.last) {
+          var last = op === OP.last;
+          cache.seqs.push({ at: s[F.anchor], ll: (last ? C.PAGE : s[F.pos]) - s[F.anchor], ml: last ? 0 : s[F.len], off: last ? 0 : s[F.last] });
         }
       }
-      return { table: table, seqs: seqs };
+      cache.k = k;
+      return cache;
     }
 
     function explain(k, s, n) {
@@ -92,7 +85,7 @@
       if (t.indexOf('len = 4U') === 0) return 'Forwards: the first 4 bytes match, seqlz_match_len() compares from pos + 4, 8 bytes at a time with one XOR each. The match is ' + n[F.len] + ' bytes, at offset ' + (s[F.pos] - s[F.m]) + '.';
       if (t.indexOf('emit(ctx, src + anchor, SEQLZ_PAGE') === 0) return 'pos = ' + pos + ' reached ' + C.LIMIT + ', 8 bytes before the end, where a try would read past the page: the loop stops. The rest, ' + (C.PAGE - s[F.anchor]) + ' bytes from ' + s[F.anchor] + ', is the last sequence, literals and no match.';
       if (t.indexOf('emit(') === 0) return 'A sequence: ' + (pos - s[F.anchor]) + ' literal' + (pos - s[F.anchor] === 1 ? '' : 's') + ' from ' + s[F.anchor] + ', then a match of ' + s[F.len] + ' bytes at offset ' + s[F.last] + '. The encoder writes it at once (chapter 10); the matcher keeps no list.';
-      if (t.indexOf('table[seqlz_hash5') === 0) return 'The positions inside the match were skipped, none of them is in the table. One goes in: ' + (pos - 2) + ', 2 bytes before the match’s end, into slot ' + hash5(pos - 2) + '. Then the loop goes on at ' + pos + '.';
+      if (t.indexOf('table[seqlz_hash5') === 0) return 'The positions inside the match were skipped, none of them is in the table. One goes in: ' + (pos - 2) + ', 2 bytes before the match’s end, into slot ' + s[F.h2] + '. Then the loop goes on at ' + pos + '.';
       return '';
     }
 
@@ -130,14 +123,10 @@
       return { lit: v('mark'), match: v('accent'), empty: v('rule'), ink: v('ink'), paper: v('paper'), pend: v('warn'), filled: v('accent'), slot: v('sheet') };
     }
 
-    function drawTable(s, rp) {
-      var col = colors(), c = tabCanvas.getContext('2d'), cell = tabCanvas.width / 64, t = rp.table;
-      c.fillStyle = col.paper; c.fillRect(0, 0, tabCanvas.width, tabCanvas.height);
+    function drawTable(s, rp, col) {
+      var cell = tabCanvas.width / 64, t = rp.table;
       // no gaps: at this size a gap would be as wide as a slot
-      for (var k = 0; k < SLOTS; k++) {
-        c.fillStyle = t[k] >= 0 ? col.filled : col.slot;
-        c.fillRect((k % 64) * cell, Math.floor(k / 64) * cell, cell, cell);
-      }
+      var c = U.cells(tabCanvas, function (k) { return t[k] >= 0 ? 1 : 0; }, [col.slot, col.filled], null);
       if (!is(s, 'memset')) {
         var h = s[F.h];
         c.strokeStyle = col.lit; c.lineWidth = 4;
@@ -145,8 +134,8 @@
       }
     }
 
-    function drawPage(s, rp) {
-      var col = colors(), c = pageCanvas.getContext('2d'), cell = pageCanvas.width / 64;
+    function drawPage(s, rp, col) {
+      var cell = pageCanvas.width / 64;
       var kind = new Uint8Array(C.PAGE);
       rp.seqs.forEach(function (q) {
         for (var b = q.at; b < q.at + q.ll; b++) kind[b] = 1;
@@ -154,11 +143,7 @@
       });
       var pos = s[F.pos], anchor = s[F.anchor];
       for (var b2 = anchor; b2 < pos && b2 < C.PAGE; b2++) if (!kind[b2]) kind[b2] = 3;
-      c.fillStyle = col.paper; c.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-      for (var k = 0; k < C.PAGE; k++) {
-        c.fillStyle = [col.empty, col.lit, col.match, col.pend][kind[k]];
-        c.fillRect((k % 64) * cell, Math.floor(k / 64) * cell, cell - 1, cell - 1);
-      }
+      var c = U.cells(pageCanvas, function (k) { return kind[k]; }, [col.empty, col.lit, col.match, col.pend], col.paper);
       function box(a, n, color) {
         c.strokeStyle = color; c.lineWidth = 2;
         for (var q = a; q < a + n && q < C.PAGE; q++) if (q >= 0) c.strokeRect((q % 64) * cell + 1, Math.floor(q / 64) * cell + 1, cell - 3, cell - 3);
@@ -179,67 +164,21 @@
       }
     }
 
-    var calm = matchMedia('(prefers-reduced-motion: reduce)');
-    function followLine(row) { codeBox.scrollTo({ top: Math.max(0, row.offsetTop - codeBox.clientHeight / 3), behavior: calm.matches ? 'auto' : 'smooth' }); }
-
-    function go(k) {
-      i = Math.max(0, Math.min(steps.length - 1, k));
-      var s = steps[i], n = steps[Math.min(i + 1, steps.length - 1)];
-      fig.querySelectorAll('.st-code .line.now').forEach(function (r) { r.classList.remove('now'); });
-      var r = rows[s[F.line]];
-      if (r) { r.classList.add('now'); followLine(r); }
-      var rp = replay(i);
-      say.textContent = explain(i, s, n);
-      drawCmp(s); drawVars(s); drawTable(s, rp); drawPage(s, rp); drawSeqs(rp);
-      scrub.value = i;
-      posEl.textContent = 'step ' + (i + 1) + ' of ' + steps.length + ', position ' + s[F.pos] + ', ' + rp.seqs.length + ' of ' + emits.length + ' sequences';
-      // the sequence being looked for, the number of sequences emitted before this step
-      if (window.BookLinks) window.BookLinks.show(fig.id, pageId === 'slab' && rp.seqs.length < emits.length ? rp.seqs.length : null);
-    }
-    function seqStep(dir) {
-      var list = emits, k;
-      if (dir > 0) { for (k = 0; k < list.length; k++) if (list[k] > i) return go(list[k]); go(steps.length - 1); }
-      else { for (k = list.length - 1; k >= 0; k--) if (list[k] < i) return go(list[k]); go(0); }
-    }
-    function play(on) {
-      if (timer) { clearInterval(timer); timer = null; }
-      fig.classList.toggle('playing', on);
-      if (on) timer = setInterval(function () { if (i >= steps.length - 1) play(false); else go(i + 1); }, 420);
-    }
-    fig.querySelectorAll('[data-do]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var a = b.getAttribute('data-do');
-        if (a !== 'play') play(false);
-        if (a === 'prev') go(i - 1);
-        if (a === 'next') go(i + 1);
-        if (a === 'prevseq') seqStep(-1);
-        if (a === 'nextseq') seqStep(1);
-        if (a === 'first') go(0);
-        if (a === 'play') play(!timer);
-      });
-    });
-    fig.querySelectorAll('.st-pages button').forEach(function (b) { b.addEventListener('click', function () { play(false); load(b.getAttribute('data-page')); }); });
-    var cmBtn = fig.querySelector('.st-cm');
-    cmBtn.addEventListener('click', function () {
-      var show = fig.classList.toggle('nocomments') === false;
-      cmBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
-      go(i);
-    });
-    scrub.addEventListener('input', function () { play(false); go(+scrub.value); });
-    fig.addEventListener('keydown', function (ev) {
-      if (ev.target === scrub) return;
-      if (ev.key === 'ArrowRight') { play(false); ev.shiftKey ? seqStep(1) : go(i + 1); ev.preventDefault(); }
-      if (ev.key === 'ArrowLeft') { play(false); ev.shiftKey ? seqStep(-1) : go(i - 1); ev.preventDefault(); }
-    });
-    document.addEventListener('book-theme', function () { setTimeout(function () { go(i); }, 0); });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { go(i); });
-    if (window.BookLinks) window.BookLinks.add(fig.id, 'found by the matcher (chapter 9)', fig, function (seq) {
-      play(false);
-      if (pageId !== 'slab') load('slab');
-      go(emits[Math.min(seq, emits.length - 1)]);
-    });
-    load(fig.querySelector('.st-pages button').getAttribute('data-page'));
+    return {
+      load: load,
+      line: function (k) { return steps[k][F.line]; },
+      draw: function (k) {
+        var s = steps[k], rp = replay(k), col = colors();
+        drawCmp(s); drawVars(s); drawTable(s, rp, col); drawPage(s, rp, col); drawSeqs(rp);
+      },
+      say: function (k) { return explain(k, steps[k], steps[Math.min(k + 1, steps.length - 1)]); },
+      pos: function (k) { return 'step ' + (k + 1) + ' of ' + steps.length + ', position ' + steps[k][F.pos] + ', ' + replay(k).seqs.length + ' of ' + emits.length + ' sequences'; },
+      // the sequence being looked for: the number of sequences emitted before this step
+      seq: function (k) { var n = replay(k).seqs.length; return n < emits.length ? n : null; },
+      stepOfSeq: function (seq) { return emits[Math.min(seq, emits.length - 1)]; },
+      linkLabel: 'found by the matcher (chapter 9)'
+    };
   }
 
-  document.querySelectorAll('figure.stepper[data-kind="match"]').forEach(function (f) { Matcher(f); });
+  document.querySelectorAll('figure.stepper[data-kind="match"]').forEach(function (f) { window.BookStepper.start(f, view); });
 })();

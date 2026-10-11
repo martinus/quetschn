@@ -44,7 +44,7 @@ BookAnim.define('hash', function (ctx) {
     while (pos + HBYTES <= n) {
       var h = hash5(b, pos), c = tab[h], eq = 0;
       if (c !== null) { tries++; while (eq < MINM && b[c + eq] === b[pos + eq]) eq++; }
-      var e = { pos: pos, h: h, cand: c, eq: eq, tabBefore: tab.slice(), seqs: seqs.slice(), anchor: anchor };
+      var e = { pos: pos, h: h, cand: c, eq: eq, seqs: seqs.slice(), anchor: anchor };
       tab[h] = pos;
       e.tab = tab.slice();
       if (c === null || eq < MINM) {
@@ -83,7 +83,7 @@ BookAnim.define('hash', function (ctx) {
     var s = TEXTS[which][1], n = s.length, e = ev[k], i;
     while (layer.firstChild) layer.removeChild(layer.firstChild);
     var decided = e.t === 'start' ? 0 : e.pos;    // bytes before the cursor are decided
-    var inMatch = {}, candSet = {}, done = {};
+    var inMatch = {}, candSet = {};
     // bytes covered by emitted matches
     var p = 0;
     e.seqs.forEach(function (sq) { p += sq.ll; for (var j = 0; j < sq.ml; j++) inMatch[p + j] = true; p += sq.ml; });
@@ -92,7 +92,6 @@ BookAnim.define('hash', function (ctx) {
     var span = e.t === 'len' || e.t === 'emit' ? e.len : (e.cand !== null && e.cand !== undefined ? MINM : 0);
     if (e.t === 'emit') for (i = 0; i < e.len; i++) inMatch[e.pos + i] = true;
     if (cur >= 0 && e.cand !== null && e.cand !== undefined) for (i = 0; i < span; i++) candSet[e.cand + i] = true;
-    var cmp = cur >= 0 ? (e.t === 'lit' ? (e.cand === null ? 0 : MINM) : span) : 0;
     if (ctx.narrow) { narrow(e, s, cur, decided, inMatch, candSet); return say(e, s); }
     root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
 
@@ -304,5 +303,5 @@ BookAnim.define('hash', function (ctx) {
       e.fails + ' of ' + e.tries + ' candidates failed the compare: collisions. Without the compare, each would have been a wrong match.');
   }
 
-  return { steps: function () { return ev.length; }, draw: draw, interval: 1100, narrow: true };
+  return { steps: function () { return ev.length; }, draw: draw, interval: 1100, wide: 880 };
 });

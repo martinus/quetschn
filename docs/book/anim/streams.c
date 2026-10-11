@@ -67,7 +67,7 @@ int main(void) {
         if ((d & 63U) != len || d >> 8 != k)
             return fail("decode and enc disagree");
     }
-    printf("{\"set\":%u,\"width\":%u,\"comp\":%u,\"raw\":%u,\"rounds\":%u,\"lit\":[", set, width, n, n_raw, SEQLZ_LIT_ROUNDS);
+    printf("{\"set\":%u,\"rounds\":%u,\"lit\":[", set, SEQLZ_LIT_ROUNDS);
     for (k = 0; k < n_lit; k++)
         printf("%s%u", k ? "," : "", scratch[k]);
     printf("],\"len\":[");

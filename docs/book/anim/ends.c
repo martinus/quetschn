@@ -197,7 +197,7 @@ int main(void) {
     cs[1] = small;
     cs[2] = small - 1;
 
-    printf("{\"page\":%u,\"room\":%u,\"header\":%u,", SEQLZ_PAGE, ENC_ROOM, SEQLZ_HEADER);
+    printf("{\"room\":%u,\"header\":%u,", ENC_ROOM, SEQLZ_HEADER);
     printf("\"runs\":[");
     for (k = 0; k < 3; k++) {
         cap = cs[k];
@@ -246,7 +246,7 @@ int main(void) {
         if (k == 2) {
             const struct rec* r = &R.r[R.fail - 1];
 
-            printf("\"fail_ll\":%u,\"fail_room\":%ld,", r->ll, r->room);
+            printf("\"fail_room\":%ld,", r->room);
         }
         if (k == 0)
             print_recs(&R);

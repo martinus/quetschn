@@ -75,7 +75,7 @@ BookAnim.define('refill', function (ctx) {
       ctx.svg('text', { x: bx(0), y: 14, 'font-size': 11, class: 'rf-lab', text: 'bit 63' }, root);
       ctx.svg('text', { x: bx(63) + L.CW, y: 14, 'font-size': 11, 'text-anchor': 'end', class: 'rf-lab', text: 'bit 0' }, root);
     }
-    var y0 = ctx.narrow ? 22 : 22;
+    var y0 = 22;
     // the register: counted bits on top, the rest
     row(y0, 'bits', s.bits, function (i) { return i < s.count ? 'rf-count' : 'rf-rest'; }, s.count, 'count ' + s.count);
     if (s.v != null) row(y0 + L.regH, 'v', s.v, function () { return 'rf-v'; });
@@ -110,5 +110,5 @@ BookAnim.define('refill', function (ctx) {
     });
     ctx.say(s.say);
   }
-  return { steps: S.length, draw: draw, interval: 2000, narrow: true };
+  return { steps: S.length, draw: draw, interval: 2000, wide: 720 };
 });

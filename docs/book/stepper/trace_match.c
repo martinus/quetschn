@@ -21,20 +21,19 @@ static void step(int line,
                  unsigned int last,
                  unsigned int h,
                  unsigned int cand,
-                 u32 cand_bytes,
-                 u32 cur,
                  int rep_hit,
                  int cand_hit,
                  unsigned int m,
                  unsigned int len);
-#define STEP_A() step(__LINE__, pos, anchor, last, h, cand, cand_bytes, (u32)v, -1, -1, 0, 0)
-#define STEP_B() step(__LINE__, pos, anchor, last, h, cand, cand_bytes, cur, (int)rep_hit, (int)cand_hit, m, len)
+#define STEP_A() step(__LINE__, pos, anchor, last, h, cand, -1, -1, 0, 0)
+#define STEP_B() step(__LINE__, pos, anchor, last, h, cand, (int)rep_hit, (int)cand_hit, m, len)
 #include "page_lz.h"
 #include "pages.h"
 
 /*
- * One step: the line and the variables. The 4 bytes at pos and at cand, and the slot of pos - 2 that
- * a hit inserts, follow from the page, so the page's step-through computes them.
+ * One step: the line and the variables, and the slot that position pos - 2 hashes to, where a hit
+ * inserts it, from the real seqlz_hash5(). The 4 bytes at pos and at cand follow from the page, so
+ * the page's step-through takes them from there.
  */
 static void step(int line,
                  unsigned int pos,
@@ -42,15 +41,13 @@ static void step(int line,
                  unsigned int last,
                  unsigned int h,
                  unsigned int cand,
-                 u32 cand_bytes,
-                 u32 cur,
                  int rep_hit,
                  int cand_hit,
                  unsigned int m,
                  unsigned int len) {
-    (void)cand_bytes;
-    (void)cur;
-    printf("%s[%d,%u,%u,%u,%u,%u,%d,%d,%u,%u]",
+    unsigned int h2 = pos >= 2 && pos - 2 + 8 <= SEQLZ_PAGE ? seqlz_hash5(get_unaligned_le64(g_src + pos - 2)) : 0;
+
+    printf("%s[%d,%u,%u,%u,%u,%u,%d,%d,%u,%u,%u]",
            g_steps++ ? "," : "",
            line,
            pos,
@@ -61,7 +58,8 @@ static void step(int line,
            rep_hit,
            cand_hit,
            m,
-           len);
+           len,
+           h2);
 }
 
 /* the page again, from the sequences: the check that they are right */

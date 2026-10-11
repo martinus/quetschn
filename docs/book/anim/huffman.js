@@ -177,5 +177,5 @@ BookAnim.define('huffman', function (ctx) {
     ctx.say('On average 2 × (' + two.join(' + ') + ') + 3 × (' + three.join(' + ') + ') = ' + avg.toFixed(2) + ' bits per offset class, against 3 for the fixed width. The entropy, ' + ent.toFixed(2) + ' bits, is the least any code can reach.');
   }
 
-  return { steps: S_AVG + 1, draw: draw, interval: 1300, narrow: true };
+  return { steps: S_AVG + 1, draw: draw, interval: 1300, wide: 640 };
 });

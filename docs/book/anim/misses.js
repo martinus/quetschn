@@ -164,5 +164,5 @@ BookAnim.define('misses', function (ctx) {
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
-  return { steps: function () { return plans[mode].total / STEP + 1; }, draw: draw, interval: 450, narrow: true };
+  return { steps: function () { return plans[mode].total / STEP + 1; }, draw: draw, interval: 450 };
 });
