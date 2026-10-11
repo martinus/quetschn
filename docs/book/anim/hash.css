@@ -1,0 +1,19 @@
+.an-stage .hs-cell { stroke: var(--rule); stroke-width: 1; }
+.an-stage .hs-todo { fill: var(--paper); }
+.an-stage .hs-lit { fill: var(--sheet); }
+.an-stage .hs-match { fill: var(--why); }
+.an-stage .hs-bad { fill: var(--warn); }
+.an-stage .hs-cand { fill: none; stroke: var(--mark); stroke-width: 2.4; }
+.an-stage .hs-cur { fill: none; stroke: var(--accent); stroke-width: 2.4; }
+.an-stage .hs-brace, .an-stage .hs-tick { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.an-stage .hs-arc-ok { fill: none; stroke: var(--accent); stroke-width: 2; }
+.an-stage .hs-arc-bad { fill: none; stroke: var(--mark); stroke-width: 2; stroke-dasharray: 4 3; }
+.an-stage .hs-slot { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .hs-slot-hot { fill: var(--paper); stroke: var(--accent); stroke-width: 2.4; }
+.an-stage svg text.hs-acc { fill: var(--accent); }
+.an-stage svg text.hs-mark { fill: var(--mark); }
+.an-stage svg text.hs-mut { fill: var(--muted); }
+.an-stage svg text.hs-bold { font-weight: 600; }
+.an-stage svg text.hs-halo { paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
+/* on a phone the drawing keeps its size and scrolls sideways, its labels are small already */
+#anim-hash .an-stage > svg { min-width: 880px; }

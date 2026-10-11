@@ -196,6 +196,8 @@ overwrite each other. So the compressor misses a match now and then. It never ma
 because every candidate is compared before it is used. In exchange, each position costs one read and
 one write of the table, whatever the page holds.
 
+@anim hash wide The three steps on a short text, as a model, not seqlz's matcher: the table has 16 slots instead of 4096, the hash is seqlz's hash of 5 bytes cut to 4 bits, and there is no repeat offset. Every number is computed from the text.
+
 seqlz's table has 4096 slots of 2 bytes, 8 KiB, all of its work memory for compression, and it is cleared
 for every page, so every position in it is a position of the current page. Its hash covers the next
 **5 bytes**, not 4, which finds fewer and longer matches; a match of exactly 4 bytes is still found at
@@ -285,6 +287,10 @@ Each symbol's code is the path from the root to its leaf, 0 for one branch and 1
 | 3 | {3, 2} and class 4 | $16.94 + 24.17$ | 41.11 |
 | 4 | {1, 5} and class 0 | $28.34 + 30.55$ | 58.89 |
 | 5 | the two that are left | $41.11 + 58.89$ | 100 |
+
+@anim huffman The table above, one join per two steps, then the codes read off the tree. The shares are the ones of the offset classes in the training counts; the average is computed from them.
+
+The same as a picture:
 
 <figure class="diagram">
 <div class="scroll">
@@ -428,6 +434,8 @@ Decoding the classes 4, 1, 0, 5, whose codes make the bits `01 100 00 111`:
 | `10000111` | `100` | class 1, 3 bits | 3 |
 | `00111` | `001` | class 0, 2 bits | 2 |
 | `111` | `111` | class 5, 3 bits | 3 |
+
+@anim table From the code lengths to a decode table and back to symbols: the [canonical codes](#ch-compression--canonical-codes), the 8 entries filled code by code, then the four lookups of the table above. Every number is computed from the lengths 2, 3, 3, 3, 2, 3.
 
 The last peek here needs no bits past the end, but in general it does, e.g. when the last code is
 `00`; a decoder reads zeros past the end, or the format guarantees that bytes follow. Filling the table
