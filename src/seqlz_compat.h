@@ -8,7 +8,7 @@
  * L1_CACHE_BYTES. In a kernel build they come from the kernel's headers.
  * Everywhere else (the tests, the benchmarks, the fuzzers and the tools) the
  * same names are defined here, from the compiler's freestanding headers, as
- * lib/bootconfig.c and lib/decompress_unxz.c share their code with tools/.
+ * tools/ does for lib/bootconfig.c and lib/rbtree.c, which it builds too.
  * Nothing here defines bool, true, false or NULL itself, so that seqlz.h stays
  * usable from C++.
  */

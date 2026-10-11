@@ -255,12 +255,14 @@ the experiments of `tools/zram-vm/` and in the harness.
 </details>
 
 No codec is better on both counts: nothing stores pages smaller than `seqlz-fast-lit` without taking
-twice its time, and nothing is faster without taking at least 26% more bytes. `zstd` saves 3 and 16
-bytes per page for each µs more than `seqlz-fast-lit`, and `seqlz-fast-lit` saves 247 and 238 bytes
-per page for each µs more than `lzo-rle`. So if a µs is worth less than 16 bytes to you, `zstd`'s
-smaller pages pay for its extra time, at least on the second dump. If a µs is worth more than about
-240 bytes, `lzo-rle`'s saved time beats `seqlz-fast-lit`'s smaller pages. In between,
-`seqlz-fast-lit` is the best choice on both dumps. The chart below shows it.
+twice its time, and none of zram's codecs is faster without taking at least 26% more bytes. `zstd`
+saves 3 and 16 bytes per page for each µs more than `seqlz-fast-lit`. `seqlz-fast`, the same format
+with raw literals, was measured in the same boots, 1123 / 1477 bytes and 6.79 / 7.34 µs per page
+written. `seqlz-fast-lit` saves 153 and 190 bytes per page for each µs more than `seqlz-fast`, and
+`seqlz-fast` about 320 and 290 for each µs more than `lzo-rle`. So if a µs is worth less than 16 bytes
+to you, `zstd`'s smaller pages pay for its extra time, at least on the second dump. From there up to
+153 bytes, `seqlz-fast-lit` is the best choice on both dumps, from 190 to about 290 bytes
+`seqlz-fast`, and above about 320 bytes `lzo-rle`. The chart below shows it, without `seqlz-fast`.
 
 ![Stored size against time for all codecs](plots/seqlz-codecs.svg)
 
@@ -485,7 +487,7 @@ per stream, because each stream is rounded up to whole bytes on its own. A byte 
 most 255 and a code has at most 10 bits, so every 200 literals of the page, 25 per stream, the sums
 are added into two other 64-bit numbers per stream, with 4 sums of 16 bits each, before they can
 overflow. This was measured at 30 to 40 ns per write in the
-kernel, about 1.5% of a write. Writing the coded literals afterwards costs much more, about 0.6 ns
+kernel, about 0.5% of a write. Writing the coded literals afterwards costs much more, about 0.6 ns
 per literal.
 
 </details>
@@ -564,7 +566,8 @@ sequence with 0 literals. [format.md](format.md#example) takes it apart bit by b
 <summary>Why the tables are fixed, and why there are no tables per device</summary>
 
 A literal table of its own for each page, where that saves 16 bytes, made writes 13% and 15% slower
-for 0.3 and 4.6 points less; with one of 4 token tables as well, 43% slower for 2.6 and 6.6 points.
+for pages 0.3% and 4.6% smaller, 2.7 and 60.6 bytes; with one of 4 token tables as well, 43% slower
+for 2.6% and 6.6% smaller pages.
 zram can pass a dictionary to the codec, a block of bytes set for each zram device, and tables
 trained on a phone's own pages could have come that way. They saved at most 1% on another dump of the same phone, so there are none: one
 set of tables for all, trained on other pages than the ones the numbers here are measured on.
@@ -654,11 +657,14 @@ them up, so they are lower than the 25.4% of the result; the differences between
 counts. So collisions are not what the matcher misses. It misses older places with the same bytes,
 which only a search through more positions finds.
 
-The hash covers 5 bytes and not 4 for speed. A table on 4 bytes finds many more matches of 4 bytes,
-and checking them costs time, while with coded literals such a match saves little: it costs about as
-many bits as its 4 bytes as literals. 5 bytes cost 0.6 points and save 5% of the compress cycles, see
-[the choices](#the-choices-with-their-numbers). Matches of 4 bytes at the repeat offset are still
-found without the table.
+The hash covers 5 bytes and not 4. A table on 4 bytes finds many more matches of 4 bytes, and
+checking them costs time, while with coded literals such a match saves little: it costs about as
+many bits as its 4 bytes as literals. With the tables of 5th October, 4 bytes make `seqlz-fast-lit`'s
+pages 18 to 35 bytes larger, most likely because the greedy matcher takes such a match and then
+misses the longer one behind it, and on x86-64 compressing takes more time
+([explored-designs.md](explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)).
+With older tables 5 bytes saved 5% of the compress cycles and cost 0.6 points. Matches of 4 bytes at
+the repeat offset are still found without the table.
 
 </details>
 
@@ -682,8 +688,8 @@ it:
 
 1. loads the next bytes into the register if fewer than 23 bits are left: enough for a token with a
    code of its own, 11 bits, and a 12-bit offset. An escaped token, and a length value, load more
-   before they read. On a core that runs instructions out of order, a sequence without a length value
-   instead loads every second time without asking, because whether the bits run short is a branch the
+   before they read. A sequence without a length value instead loads every second time without
+   asking, on every core since #152, because whether the bits run short is a branch the
    CPU guesses wrong on a page it has not seen
    ([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept));
 2. looks up the next 11 bits in the token table, like the 3-bit table in
@@ -754,7 +760,7 @@ compress (54 037 against 22 076 per page) and 2.2 times to decode (16 489 agains
 
 ## Why zstd still stores pages smaller
 
-On the second dump `zstd` 3 stores pages 10% smaller than `seqlz-fast-lit`, on the first 3%. Three
+On the second dump `zstd` 3 stores pages 10% smaller than `seqlz-fast-lit`, on the first 2%. Three
 things make the difference, each measured:
 
 * **Better matches.** `zstd` 3 searches more. The matches of `lz4hc`, `lz4`'s slow and thorough
@@ -763,7 +769,7 @@ things make the difference, each measured:
   chain got 2.7% to 5.9% for about twice and 3 times the write time, not kept
   ([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)).
 * **Its own literal table per page.** Coding the literals is worth 2.3 and 4.7 points to `zstd` 3.
-  A page's own table instead of the best of 8 fixed ones would save `seqlz` 0.3 and 4.6 points more,
+  A page's own table instead of the best of 8 fixed ones would make `seqlz`'s pages 0.3% and 4.6% smaller,
   for 13% to 15% slower writes. At level 3 it was 2.5% to 3.4% in the kernel VM, not kept either, see
   [explored-designs.md](explored-designs.md#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept).
 * **Adaptive sequence coding.** `zstd` codes literal length, match length and offset with separate
@@ -870,7 +876,7 @@ of October 2026 removes in its patch 3 (#103).
 
 What `zstd` gets for its work is [smaller pages](#why-zstd-still-stores-pages-smaller): tables that fit
 the page, three repeat offsets, and better matches. What `seqlz` loses with fixed tables is measured in
-[the choices](#the-choices-with-their-numbers): 0.3 and 4.6 points for the literals. Picking one of 4
+[the choices](#the-choices-with-their-numbers): pages 0.3% and 4.6% larger for the literals. Picking one of 4
 token tables per page was measured too, together with the literal table, and was not kept: 2.6% and
 6.6% smaller pages for 43% slower writes
 ([explored-designs.md](explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
@@ -928,7 +934,7 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 
 | choice | instead of | gain | price |
 | --- | --- | --- | --- |
-| fixed tables | a table built for each page | 13% and 15% faster writes | 0.3 and 4.6 points |
+| fixed tables | a table built for each page | 13% and 15% faster writes | pages 0.3% and 4.6% larger, 2.7 and 60.6 bytes |
 | one of 8 literal tables per page | one table for all pages | pages 10.2% and 12.5% smaller than without coded literals, where one table gives 7.3% and 6.3% | 8 tables of 2 KiB to decode with |
 | literals in 8 streams | 4 streams | 4% fewer decode cycles, 8676 instead of 9070 per page | 8 more bytes of header, with sizes of 2 bytes: 0.1 to 0.2 points |
 | stream sizes in as many bits as the largest needs | 2 bytes each | 5.2 and 5.5 bytes less per page, 0.13 points, no time measured | 5 bits of byte 2 |
@@ -941,7 +947,7 @@ dump. Cycle counts are from the time of each change, so rows are not comparable 
 
 | choice | instead of | gain | price |
 | --- | --- | --- | --- |
-| a hash of 5 bytes | 4 bytes | 5% fewer compress cycles, and the slowest 1% of writes 10% faster in the kernel | 0.6 points |
+| a hash of 5 bytes | 4 bytes | 5% fewer compress cycles, and the slowest 1% of writes 10% faster in the kernel, with older tables | none with the tables of 5th October: 4 bytes make pages 18 to 35 bytes larger |
 | the repeat offset checked at every position | only the table of positions | 0.5 points smaller | |
 | the table of positions cleared for each page | checking each entry's age | compressing 7% faster | |
 | every position tried | `lz4`'s way of skipping ahead faster and faster when it finds no match | writes 1% to 3% faster in the kernel | pages zram stores uncompressed take 2.3 µs longer |
