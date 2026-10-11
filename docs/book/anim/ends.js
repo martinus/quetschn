@@ -313,5 +313,13 @@ BookAnim.define('ends', function (ctx) {
     legend();
     ctx.say(say(s));
   }
-  return { steps: steps, draw: draw, interval: 700 };
+  return {
+    steps: steps, draw: draw, interval: 700,
+    // step k shows dst after sequence k
+    link: {
+      label: 'written into dst (chapter 10)',
+      seqAt: function (k) { return k >= 1 && k <= nSeq() ? k - 1 : null; },
+      stepOf: function (seq) { return Math.min(seq + 1, nSeq()); }
+    }
+  };
 });

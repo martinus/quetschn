@@ -12,6 +12,12 @@ passwords, so the page here is built to look like one: a small header, an array 
 pointer, a few small integers and a name each, a stretch of English text, and zeros up to the end.
 It compresses to 796 bytes, 19.4% of the page, and with raw literals to 947.
 
+Four figures of the book show this page sequence by sequence, each from the real code: the matcher
+finding it ([chapter 9](#stepper-match)), the encoder writing it into `dst` ([chapter 10](#anim-ends)),
+the cache line of its token's lookup ([chapter 3](#anim-lines)), and the decoder reading it again
+([chapter 14](#stepper-decode)). Under each one's sentence a row of links jumps the others to the same
+sequence, so one sequence can be followed from the matcher to the page it decodes to.
+
 ## The page {#ch-trace--page}
 
 The 4096 bytes, in four parts:

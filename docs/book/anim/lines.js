@@ -4,7 +4,7 @@
  * reads its bitstream, against the same bits read the other way, the index bit-reversed.
  */
 BookAnim.define('lines', function (ctx) {
-  var D = ctx.data, IDX = D.idx, LEN = D.len, NL = IDX.length, BITS = 11, ONE = 12, GROUP = 4;
+  var D = ctx.data, IDX = D.idx, LEN = D.len, NL = IDX.length, BITS = 11, ONE = IDX.length, GROUP = 4;
   var COLS = 16, CELL = 24, CH = 20, GX = [44, 500], GY = 64, W = 900, H = GY + 8 * CH + 66;
 
   function rev(v) { var r = 0; for (var i = 0; i < BITS; i++) r = r << 1 | (v >> i & 1); return r; }
@@ -22,16 +22,13 @@ BookAnim.define('lines', function (ctx) {
   }
   // how many lookups are done after step k
   function upto(k) { return k <= ONE ? k : Math.min(NL, ONE + GROUP * (k - ONE)); }
-  var STEPS = ONE + Math.ceil((NL - ONE) / GROUP) + 1;
+  // the start, one step per lookup, so that a link from another figure lands on its sequence, the totals
+  var STEPS = NL + 2;
 
   var choice = ctx.el('div', 'an-choice', null, ctx.bar);
   var endBtn = ctx.el('button', null, 'to the end', choice);
   endBtn.type = 'button';
-  endBtn.addEventListener('click', function () {
-    var scrub = ctx.fig.querySelector('.an-scrub');
-    scrub.value = scrub.max;
-    scrub.dispatchEvent(new Event('input'));
-  });
+  endBtn.addEventListener('click', function () { ctx.go(STEPS - 1); });
 
   var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'The 128 cache lines of the token table, twice: the lines that the token lookups of one page touch with the bitstream read most significant bit first, and with the index bit-reversed' }, ctx.stage);
   var cells = [ctx.svg('g', {}, root), ctx.svg('g', {}, root)];
@@ -125,5 +122,13 @@ BookAnim.define('lines', function (ctx) {
       ' bits: ' + newIn[0] + ' new ' + (newIn[0] === 1 ? 'line' : 'lines') + ' most significant bit first, ' + newIn[1] + ' bits reversed. So far ' + count[0] + ' against ' + count[1] + ' lines.';
   }
 
-  return { steps: STEPS, draw: draw, interval: 600 };
+  return {
+    steps: STEPS, draw: draw, interval: 600,
+    // one token lookup per sequence, step k is lookup k
+    link: {
+      label: 'its token\u2019s cache line (chapter 3)',
+      seqAt: function (k) { return k === 0 || k === STEPS - 1 ? null : k - 1; },
+      stepOf: function (seq) { return seq + 1; }
+    }
+  };
 });

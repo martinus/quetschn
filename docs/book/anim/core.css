@@ -24,3 +24,7 @@ figure.anim figcaption { padding: 0 0.9rem 0.8rem; font-size: 0.85rem; color: va
 .an-move { transition: transform 0.35s ease, opacity 0.35s ease, fill 0.35s ease; }
 @media (prefers-reduced-motion: reduce) { .an-move { transition: none; } }
 @media (max-width: 62rem) { figure.anim.wide { --animw: 100%; margin-left: 0; } }
+/* the same sequence in the other figures, see BookLinks in core.js */
+.xlinks { margin: 0; padding: 0.35rem 0.9rem 0.45rem; background: var(--why); border-top: 1px dashed var(--rule); font-family: var(--display);
+          font-size: 0.82rem; display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; }
+.xlinks .xl-head { color: var(--muted); }

@@ -21,7 +21,7 @@
     var codeBox = fig.querySelector('.st-code'), say = fig.querySelector('.st-say');
     var scrub = fig.querySelector('.st-scrub'), posEl = fig.querySelector('.st-pos');
     var state = fig.querySelector('.st-state');
-    var page, steps, emits, tops, i = 0, timer = null;
+    var page, pageId, steps, emits, tops, i = 0, timer = null;
 
     // the panes
     function pane(title) { var s = el('section', null, null, state); el('h4', null, title, s); return s; }
@@ -47,6 +47,7 @@
 
     function load(id) {
       page = data.pages[id];
+      pageId = id;
       steps = page.steps;
       emits = []; tops = [];
       steps.forEach(function (s, k) {
@@ -174,7 +175,7 @@
       el('div', 'm-seqh', list.length + ' sequence' + (list.length === 1 ? '' : 's') + ' so far' + (list.length > 6 ? ', the last 6:' : ''), seqBox);
       for (var q = from; q < list.length; q++) {
         var r = list[q];
-        el('div', 'm-seq', '#' + q + ' at ' + r.at + ': ' + r.ll + ' literal' + (r.ll === 1 ? '' : 's') + (r.ml ? ', match ' + r.ml + ' at offset ' + r.off : ', no match: the last'), seqBox);
+        el('div', 'm-seq', '#' + (q + 1) + ' at ' + r.at + ': ' + r.ll + ' literal' + (r.ll === 1 ? '' : 's') + (r.ml ? ', match ' + r.ml + ' at offset ' + r.off : ', no match: the last'), seqBox);
       }
     }
 
@@ -192,6 +193,8 @@
       drawCmp(s); drawVars(s); drawTable(s, rp); drawPage(s, rp); drawSeqs(rp);
       scrub.value = i;
       posEl.textContent = 'step ' + (i + 1) + ' of ' + steps.length + ', position ' + s[F.pos] + ', ' + rp.seqs.length + ' of ' + emits.length + ' sequences';
+      // the sequence being looked for, the number of sequences emitted before this step
+      if (window.BookLinks) window.BookLinks.show(fig.id, pageId === 'slab' && rp.seqs.length < emits.length ? rp.seqs.length : null);
     }
     function seqStep(dir) {
       var list = emits, k;
@@ -230,6 +233,11 @@
     });
     document.addEventListener('book-theme', function () { setTimeout(function () { go(i); }, 0); });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { go(i); });
+    if (window.BookLinks) window.BookLinks.add(fig.id, 'found by the matcher (chapter 9)', fig, function (seq) {
+      play(false);
+      if (pageId !== 'slab') load('slab');
+      go(emits[Math.min(seq, emits.length - 1)]);
+    });
     load(fig.querySelector('.st-pages button').getAttribute('data-page'));
   }
 

@@ -35,7 +35,7 @@
     var litHead = fig.querySelector('.st-lithead');
     var canvas = fig.querySelector('canvas');
     var win = fig.querySelector('.st-window');
-    var page, steps, seqStarts, when, kind, i = 0, timer = null, stmt = {};
+    var page, pageId, steps, seqStarts, when, kind, i = 0, timer = null, stmt = {};
 
     // the statement text of each line, to find what a step does
     Object.keys(rows).forEach(function (n) { stmt[n] = rows[n].querySelector('.lc').textContent.trim(); });
@@ -44,6 +44,7 @@
 
     function load(id) {
       page = data.pages[id];
+      pageId = id;
       steps = page.steps;
       seqStarts = [];
       steps.forEach(function (s, k) { if (is(s, 'if (tok >> TOK_ESCAPE_AT)')) seqStarts.push(k); });
@@ -263,6 +264,8 @@
       drawBits(s); drawVars(s); drawInput(s); drawPage(i);
       scrub.value = i;
       pos.textContent = 'step ' + (i + 1) + ' of ' + steps.length + ', sequence ' + seqOf(i) + ' of ' + seqStarts.length;
+      // the same sequence in the other figures of chapter 16's page
+      if (window.BookLinks) window.BookLinks.show(fig.id, pageId === 'slab' && seqOf(i) > 0 ? seqOf(i) - 1 : null);
     }
 
     function seqStep(dir) {
@@ -306,6 +309,11 @@
     // colours follow the theme
     document.addEventListener('book-theme', function () { setTimeout(function () { go(i); }, 0); });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { go(i); });
+    if (window.BookLinks) window.BookLinks.add(fig.id, 'decoded (chapter 14)', fig, function (seq) {
+      play(false);
+      if (pageId !== 'slab') load('slab');
+      go(seqStarts[Math.min(seq, seqStarts.length - 1)]);
+    });
     load(fig.querySelector('.st-pages button').getAttribute('data-page'));
   }
 
