@@ -188,7 +188,7 @@ The same commands every time.
 1. **State first**: `gh pr view <n> --json state` before every push to a PR branch. Martin merges
    himself while you work; a merged PR's follow-up goes on a new branch from `origin/main`.
 2. **Push**: first `git show --stat HEAD`: every file you meant, and nothing else. `git add` the files
-   by name, not `-A`: `patch` leaves `.orig` files and `seqlz-viz/build.sh docs` its intermediates,
+   by name, not `-A`: `patch` left `.orig` files and a build script its intermediates,
    and both got committed; a commit after `git reset --soft` took only what was staged and left half
    the change out. Then `git push -u origin <branch>`, with a name no PR had before
    (`gh pr list --state all --head <branch>` is empty): with a reused name, `gh pr view <branch>`

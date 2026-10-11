@@ -213,6 +213,7 @@ def decode_panes():
             f'<div class="st-legend">header, <span class="b-lit">literals</span>, <span class="b-bits">the sequences&rsquo; bitstream</span>; '
             f'the outlined byte is the next one the bit reader loads</div></section>'
             f'<section><h4 class="st-lithead"></h4><div class="st-litbytes"></div></section>'
+            f'<section><h4>What this sequence costs</h4><div class="st-cost"></div></section>'
             f'<section><h4>The page, 4096 bytes</h4><div class="st-page"><canvas width="384" height="384" aria-hidden="true"></canvas></div>'
             f'<div class="st-window"></div>'
             f'<div class="st-legend">written by a <span class="k-lit">literal</span> or a <span class="k-match">match</span>; '

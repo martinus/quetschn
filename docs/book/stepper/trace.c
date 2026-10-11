@@ -114,6 +114,16 @@ int main(void) {
         array("comp", comp, n);
         printf(",");
         array("lit", g_lit, n_lit);
+        if (coded) {
+            /* the length of each literal's code in the page's table, byte 2's low 3 bits */
+            const struct lit_table* lt = &t->lit[comp[2] & 7U];
+            unsigned int j;
+
+            printf(",\"litlen\":[");
+            for (j = 0; j < n_lit; j++)
+                printf("%s%u", j ? "," : "", lt->enc[g_lit[j]] & 0xffU);
+            printf("]");
+        }
         printf("}");
     }
     printf("}}\n");

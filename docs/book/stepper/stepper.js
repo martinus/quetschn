@@ -26,7 +26,8 @@
     var litHead = fig.querySelector('.st-lithead');
     var canvas = fig.querySelector('canvas');
     var win = fig.querySelector('.st-window');
-    var page, steps, seqStarts, when, kind;
+    var costBox = fig.querySelector('.st-cost');
+    var page, steps, seqStarts, seqs, when, kind;
 
     function at(s) { return vc.stmt(s[F.line]); }
     function is(s, prefix) { return at(s).indexOf(prefix) === 0; }
@@ -49,6 +50,7 @@
       for (var k = 0; k < steps.length; k++) if (steps[k][F.p] >= 0) { page.bitStart = steps[k][F.p]; break; }
       page.nLit = page.lit.length;
       buildBytes();
+      seqs = costs();
       return { steps: steps.length, groups: seqStarts };
     }
 
@@ -63,6 +65,48 @@
       litHead.textContent = page.coded
         ? 'The literals, Huffman coded in the page, decoded into the scratch buffer first (' + page.nLit + ')'
         : 'The literals, raw, bytes 2 to ' + (C.HEADER + page.nLit - 1) + ' of the compressed page (' + page.nLit + ')';
+    }
+
+    /*
+     * What each sequence costs: in seqlz the bits the bit reader moves on from its first step to the
+     * next sequence's, which are its token, offset and length values (at a sequence's first step its
+     * token is read but not dropped yet), and the codes of its literals; in lz4's format a token
+     * byte, the literals as bytes, 2 bytes of offset and a byte more per 255 of a long length
+     */
+    function costs() {
+      function used(s) { return s[F.p] * 8 - s[F.count]; }
+      var end = steps.length - 1, list = [];
+      seqStarts.forEach(function (a, q) {
+        var b = q + 1 < seqStarts.length ? seqStarts[q + 1] : end, ll = 0, ml = 0, lit = 0, k;
+        for (k = a; k < b; k++) {
+          if (is(steps[k], 'd += nl')) { ll = steps[k][F.nl]; lit = steps[k][F.lit]; }
+          if (is(steps[k], 'd += len')) ml = steps[k][F.len];
+        }
+        var litBits = 0;
+        for (k = lit; k < lit + ll; k++) litBits += page.litlen ? page.litlen[k] : 8;
+        var ext = (ll >= 15 ? 1 + Math.floor((ll - 15) / 255) : 0) + (ml && ml - 4 >= 15 ? 1 + Math.floor((ml - 19) / 255) : 0);
+        list.push({ ll: ll, ml: ml, seq: used(steps[b]) - used(steps[a]), lit: litBits, lz4tok: 8 + (ml ? 16 : 0) + 8 * ext, lz4lit: 8 * ll });
+      });
+      return list;
+    }
+
+    function drawCost(k) {
+      costBox.textContent = '';
+      var q = seqOf(k) - 1, c = seqs[q];
+      if (!c) { el('div', 'st-legend', 'Before the first sequence.', costBox); return; }
+      var a = c.seq + c.lit, b = c.lz4tok + c.lz4lit, max = Math.max(a, b);
+      function bar(label, parts, total) {
+        var row = el('div', 'c-row', null, costBox);
+        el('span', 'c-lab', label, row);
+        var track = el('span', 'c-bar', null, row);
+        parts.forEach(function (p) { if (p[0]) { var seg = el('span', p[1], null, track); seg.style.width = (100 * p[0] / max) + '%'; } });
+        el('span', 'c-num', total + ' bits', row);
+      }
+      bar('seqlz', [[c.seq, 'c-code'], [c.lit, 'c-lit']], a);
+      bar('lz4\u2019s format', [[c.lz4tok, 'c-code'], [c.lz4lit, 'c-lit']], b);
+      el('div', 'st-legend', 'Sequence ' + (q + 1) + ': ' + c.ll + ' literal' + (c.ll === 1 ? '' : 's') + (c.ml ? ', a match of ' + c.ml : ', no match') +
+        '. In seqlz ' + c.seq + ' bits of token, offset and lengths and ' + c.lit + ' of ' + (page.litlen ? 'coded' : 'raw') + ' literals; in lz4\u2019s format ' +
+        c.lz4tok + ' and ' + c.lz4lit + '. The page\u2019s header and stream sizes are not counted.', costBox);
     }
 
     function seqOf(k) { var n = 0; while (n < seqStarts.length && seqStarts[n] <= k) n++; return n; }
@@ -227,7 +271,7 @@
     return {
       load: load,
       line: function (k) { return steps[k][F.line]; },
-      draw: function (k) { var s = steps[k]; drawBits(s); drawVars(s); drawInput(s); drawPage(k); },
+      draw: function (k) { var s = steps[k]; drawBits(s); drawVars(s); drawInput(s); drawCost(k); drawPage(k); },
       say: explain,
       pos: function (k) { return 'step ' + (k + 1) + ' of ' + steps.length + ', sequence ' + seqOf(k) + ' of ' + seqStarts.length; },
       seq: function (k) { return seqOf(k) > 0 ? seqOf(k) - 1 : null; },

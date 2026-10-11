@@ -565,9 +565,8 @@ python3 -c "import hashlib; print(hashlib.sha256(b'ab' * 2048).hexdigest())"
 2c888a3809c425e853a6ac08e1c1ffd9393fe3e49419e8f71ac23ab0362617a3
 ```
 
-Flip any bit of the 9 bytes and run it again: most flips make the page invalid. The repository also
-has an animated version of this, `docs/seqlz-bit-by-bit.html`, which decodes three pages step by
-step; download it and open it in a browser.
+Flip any bit of the 9 bytes and run it again: most flips make the page invalid. The same 9 bytes go
+through the real `seqlz_decode()` one statement at a time in [chapter 14](#ch-decode--example).
 :::
 
 ## A second page: four sequences and 7 bits of padding {#ch-format--example2}

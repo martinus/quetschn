@@ -86,7 +86,6 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 | [Measuring](docs/measuring.md) | benchmark, in a kernel VM, in userspace or on a phone, and collect pages |
 | [The plan](docs/plan.md) | know the goal, how designs are scored, what zram needs, and where the project stands |
 | [Explored designs](docs/explored-designs.md) | know what was tried, with the numbers, before you try it again |
-| [seqlz, bit by bit](docs/seqlz-bit-by-bit.html) and [seqlz, compressed](docs/seqlz-compressed.html) | watch real pages being decoded and compressed, step by step. GitHub shows only their source: download a file and open it in a browser |
 
 ## License
 
