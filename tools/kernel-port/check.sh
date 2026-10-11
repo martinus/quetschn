@@ -36,9 +36,18 @@ for c in ZRAM_BACKEND_SEQLZ=y SEQLZ_KUNIT_TEST=m; do
     grep -q "^CONFIG_$c" "$work/build/.config" || { echo "CONFIG_$c not set" >&2; exit 1; }
 done
 "${kmake[@]}" -j"$(nproc)" prepare >/dev/null
-"${kmake[@]}" -j"$(nproc)" W=1 lib/seqlz/ drivers/block/zram/ 2>&1 | tee "$work/build.log" | grep -E 'warning|error' && exit 1
+"${kmake[@]}" -j"$(nproc)" W=1 KCFLAGS=-fstack-usage lib/seqlz/ drivers/block/zram/ 2>&1 | tee "$work/build.log" |
+    grep -E 'warning|error' && exit 1
 ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null && echo "build: no warnings"
+# the codec's deepest stack frames, from -fstack-usage: gcc writes file:line:column:function, clang
+# file:line:function. They stay below 1024 bytes, the 32-bit FRAME_WARN of older kernels; CLAUDE.md has
+# them with KASAN and UBSan too
+frames=$(cat "$work/build"/lib/seqlz/*.su | awk -F'\t' '{ n = split($1, f, ":"); print $2, f[n] }' | sort -n -r)
+echo "stack: $(head -3 <<<"$frames" | awk '{ printf "%s%s %s", (NR > 1 ? ", " : ""), $2, $1 }')"
+deepest=$(head -1 <<<"$frames" | cut -d' ' -f1)
+[[ $deepest =~ ^[0-9]+$ ]] || { echo "no stack usage of lib/seqlz/ found" >&2; exit 1; }
+[[ $deepest -lt 1024 ]] || { echo "a stack frame of $deepest bytes, they stay below 1024" >&2; exit 1; }
 # x86-64: the decoder's prefetches are there; with clang only because of x86-prefetcht0.patch
 if grep -q '^CONFIG_X86_64=y' "$work/build/.config"; then
     n=$(objdump -d "$work/build/lib/seqlz/seqlz_decompress.o" | grep -c prefetcht0 || true)
