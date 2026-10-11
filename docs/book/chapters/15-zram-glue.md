@@ -94,7 +94,7 @@ Line 1 is the licence line every file of the project starts with ([chapter 5](#c
 Lines 3 and 4 name the two codecs this file defines. Both write the
 same format and both are read by the same decoder. They differ in one argument to
 `seqlz_compress()`: `seqlz-fast` keeps the literals raw, `seqlz-fast-lit` lets
-`code_literals()` ([chapter 11](#ch-literals-enc)) Huffman code them when that saves at least 1/16 of
+`code_literals()` ([chapter 11](#ch-literals-enc)) Huffman code them when that saves at least $\frac{1}{16}$ of
 them plus 51 bytes. In the kernel's copy these are levels 1 and 2 of one backend called `seqlz`; the
 harness names them as two codecs, so that it can compare them side by side with the others in one run.
 
@@ -791,7 +791,7 @@ when a CPU comes up or a device is set up, not in the path of a page.
 :::
 
 So the bytes that count per CPU are what the allocator hands out. Without the union, a struct of the
-hash table and the scratch side by side was 8192 + 4112 = 12 304 bytes, above `KMALLOC_MAX_CACHE_SIZE`,
+hash table and the scratch side by side was $8192 + 4112 = 12\,304$ bytes, above `KMALLOC_MAX_CACHE_SIZE`,
 and `kvzalloc()` took 16 KiB for it. As a union it is 8192 bytes, the larger member, and comes from
 `kmalloc-8k`: 8 KiB per CPU. For comparison, `lz4` asks `vmalloc()` for 16 416 bytes, which is 5 pages,
 20 480 bytes

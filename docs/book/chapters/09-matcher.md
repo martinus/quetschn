@@ -42,7 +42,7 @@ them as a number with the first byte in the lowest bits, on every CPU.
 
 To find out whether the bytes at the current position appeared before, the matcher keeps a table:
 for a few bytes of content, the last position where they were seen. A table indexed by the content
-itself would need 2<sup>32</sup> entries for 4 bytes, so the content is first squeezed into a small
+itself would need $2^{32}$ entries for 4 bytes, so the content is first squeezed into a small
 number, a **hash**, and the hash is the index. Two different byte strings can get the same hash, a
 **collision**; the table then holds only one of them, and the matcher has to check that the bytes
 really match. The hash is computed at every position the matcher tries, about 4000 per page, so it
@@ -56,7 +56,7 @@ operations:
 1. `v << 24` shifts out the top 24 bits. The load put the byte at `p` in bits 0 to 7 and the byte at
    `p + 7` in bits 56 to 63, so the top 3 bytes are the bytes at `p + 5`, `p + 6` and `p + 7`. What is
    left, in bits 24 to 63, are the 5 bytes at `p` to `p + 4`, and bits 0 to 23 are 0.
-2. `* 889523592379ULL` multiplies by a 40-bit odd constant, modulo 2<sup>64</sup>, as every `u64`
+2. `* 889523592379ULL` multiplies by a 40-bit odd constant, modulo $2^{64}$, as every `u64`
    multiplication in C is: the bits above 64 are dropped, which is defined for unsigned types.
 3. `>> (64U - SEQLZ_HASH_BITS)` keeps the top 12 bits of the product, a number below 4096. The cast to
    `unsigned int` cannot lose anything.
@@ -125,7 +125,7 @@ are kept.
 
 **Why a multiplication.** It is one instruction, and it adds many shifted copies of the input on top of
 each other, so every input bit reaches many output bits. The constant has to be odd: multiplying by an
-odd number modulo 2<sup>64</sup> can be undone, so no two inputs collide before the shift. `zstd` calls
+odd number modulo $2^{64}$ can be undone, so no two inputs collide before the shift. `zstd` calls
 this constant `prime5bytes` and uses the same formula for its 5-byte hash. 889523592379 is
 `0xcf1bbcdcbb`, 40 bits, and it is prime; for the hash, being odd is what matters.
 
@@ -176,7 +176,7 @@ difference is byte 11, `L` against `x`:
 | `x2`, bytes 8 to 15 | `0x0000000034000000`: byte 3 of it is `'L' ^ 'x'` = `0x4c ^ 0x78` = `0x34` |
 | `x = x1 ? x1 : x2` | `x2` |
 | <code>x &#124; x2</code> | not 0, so the function returns |
-| <code>__builtin_ctzll(x &#124; 1ULL &lt;&lt; 63)</code> | 26: `0x34` is `00110100`, its lowest set bit is bit 2 of byte 3, 3 × 8 + 2 |
+| <code>__builtin_ctzll(x &#124; 1ULL &lt;&lt; 63)</code> | 26: `0x34` is `00110100`, its lowest set bit is bit 2 of byte 3, $3 \times 8 + 2$ |
 | result | `8 + (26 >> 3)` = 8 + 3 = 11 |
 
 11 bytes are equal, and the program that checked this, compiled against `src/page_lz.h`, returns 11.
@@ -423,7 +423,7 @@ position 1 before the loop, and the loop always computes them for the next posit
 them. Why that helps is in the [next section](#ch-matcher--position).
 
 **The table: 4096 positions of 2 bytes, cleared for each page.** Line 118 sets the table to zeros:
-`sizeof(u16) << SEQLZ_HASH_BITS` is 2 × 4096 = 8192 bytes. The table lives in `struct seqlz_state`
+`sizeof(u16) << SEQLZ_HASH_BITS` is $2 \times 4096 = 8192$ bytes. The table lives in `struct seqlz_state`
 (see [chapter 6](#ch-header)), which zram allocates once per CPU, and it is reused for every page.
 
 ::: why A cache of 8 KiB, not a map
@@ -612,7 +612,7 @@ class 0 reach the end of the page, see [the format chapter](#ch-format--token). 
 have 0 literals, when a match ran to the end of the page.
 
 How many sequences can there be? Every sequence but the last covers at least 4 bytes, the shortest
-match, so a page of 4096 bytes has at most 4096 / 4 + 1 = 1025, which is `SEQLZ_MAX_SEQUENCES`. The
+match, so a page of 4096 bytes has at most $4096 / 4 + 1 = 1025$, which is `SEQLZ_MAX_SEQUENCES`. The
 bound matters for `seqlz_find()`'s array, and the encoder's proof that its output fits uses it too, see
 [chapter 10](#ch-encoder--layout).
 
@@ -670,7 +670,7 @@ last pointer's 8 bytes become literals, where one literal and a match of 7 would
 **A match found late and extended backwards.** A page of random bytes `R`, with bytes 0 to 63 copied to
 64 to 127, and the 14 bytes at 124 to 137 copied to 398 to 411. Bytes 124 to 127 are the end of the copy
 of `R`, bytes 128 to 137 are random. The matcher finds the copy at 64 at once, a match of 64 bytes at
-offset 64, and inserts position 126 (= 128 - 2) into the table. The positions 64 to 125 are not in it.
+offset 64, and inserts position 126 ($= 128 - 2$) into the table. The positions 64 to 125 are not in it.
 At the second copy:
 
 | `pos` | 5 bytes at `pos` | `h` | `cand` | `cand_hit` |

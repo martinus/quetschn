@@ -184,7 +184,7 @@ is at byte 144, 7 bytes before the end, and goes through `lit_load_tail()`.
 
 `lt` is the decode table of the page's literal table, 1024 entries of a u16 each
 ([chapter 7](#ch-internal--lit-table)), built by `build_lit()` ([chapter 8](#ch-codes)). An entry is
-`length | byte << 8`. A code of `l` bits fills all `2^(10 - l)` entries whose index starts with the
+`length | byte << 8`. A code of $l$ bits fills all $2^{10-l}$ entries whose index starts with the
 code, so one lookup with the next 10 bits finds the code, whatever bits follow it. That is the table
 decoding of [chapter 2](#ch-compression--table-decoding).
 
@@ -355,7 +355,7 @@ Then the sizes and starts, and each stream's pointer at its start with `b[i] = 1
 at bit 0, so the first refill loads from `start[i]` without a shift.
 
 `SEQLZ_LIT_HEADER(width) + total > src_len`: the streams must fit in the input. `total` is a u64 and
-at most `8 * 4095`, so the sum cannot wrap. After this check every `start[i] + sz[i]` is at most `end`,
+at most $8 \times 4095$, so the sum cannot wrap. After this check every `start[i] + sz[i]` is at most `end`,
 which is what makes reading each stream's last byte in `lit_stream_ends()` safe. The bitstream after
 the streams may be empty here; whether it is long enough is the sequence loop's business.
 
@@ -584,7 +584,7 @@ choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.m
 
 The fixed cost per page matters more on that core than the cost per literal: the 2 KiB table has to
 come from memory, and the literals go through the scratch before the sequences copy them into the
-page. That is why the encoder codes literals only where they save 51 bytes and 1/16 of themselves
+page. That is why the encoder codes literals only where they save 51 bytes and $\frac{1}{16}$ of themselves
 ([chapter 11](#ch-literals-enc--rule)). Decoding the literals into the end of the output page instead,
 which would save the scratch's memory, was built: on 4 KiB pages it made cold reads 0.08 to 0.22 µs
 slower in the kernel, and it was not kept ([explored-designs.md, "16 KiB pages,

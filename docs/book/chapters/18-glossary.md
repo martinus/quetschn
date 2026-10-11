@@ -21,7 +21,7 @@ uses them in that sense throughout.
   ones. [Chapter 2](#ch-compression)
 - **code length**: how many bits a symbol's code has. A table is a list of code lengths. [Chapter 2](#ch-compression)
 - **coded literals**: literals written as Huffman codes of one literal table instead of as bytes, in 8
-  streams. Only `seqlz-fast-lit` writes them, and only where they save 1/16 of the literals plus 51
+  streams. Only `seqlz-fast-lit` writes them, and only where they save $\frac{1}{16}$ of the literals plus 51
   bytes. [Chapter 11](#ch-literals-enc), [chapter 13](#ch-literals-dec)
 - **complete**: a prefix code whose codes use up every bit pattern (its Kraft sum is exactly 1), so every
   bit pattern starts some code and a decode table has no empty entry. All of seqlz's tables are
@@ -36,7 +36,7 @@ uses them in that sense throughout.
 - **encoder**: the second half of the compressor: it writes the sequences the matcher finds and the
   literals in the format. In seqlz it runs in the same loop as the matcher. [Chapter 10](#ch-encoder)
 - **entropy**: the least number of bits per symbol any code can reach for given symbol frequencies, the
-  sum of `p × log2(1/p)`. A Huffman code is within one bit per symbol of it. [Chapter 2](#ch-compression)
+  sum of $p \times \log_2 \frac{1}{p}$. A Huffman code is within one bit per symbol of it. [Chapter 2](#ch-compression)
 - **entropy coder**: the part of a codec that writes symbols in codes of their frequency, Huffman codes
   or ANS, instead of in a fixed number of bits. [Chapter 2](#ch-compression--entropy)
 - **escape**: the code shared by all tokens that have no code of their own, followed by the token in 12
@@ -50,12 +50,12 @@ uses them in that sense throughout.
 - **hash table**: the matcher's table of positions, 4096 slots of 2 bytes, 8 KiB, cleared for each page.
   It is a cache, not a map: one position per slot, the newest wins. [Chapter 9](#ch-matcher)
 - **header**: the first bytes of a compressed page: the literal count and a flag, and with coded literals
-  the literal table's number, the width `w` and the 8 stream sizes, `3 + w` bytes in all.
+  the literal table's number, the width $w$ and the 8 stream sizes, $3 + w$ bytes in all.
   [Chapter 6](#ch-header)
 - **Huffman code**: the prefix code with the fewest bits for given symbol frequencies. seqlz's tables are
   Huffman codes limited to 11 bits (tokens), 10 bits (literals) and 8 bits (length values).
   [Chapter 2](#ch-compression)
-- **Kraft sum**: the sum of `2^-l` over the lengths `l` of all codes of a table. It is at most 1 for a
+- **Kraft sum**: the sum of $2^{-l}$ over the lengths $l$ of all codes of a table. It is at most 1 for a
   prefix code, and exactly 1 for a complete one. [Chapter 2](#ch-compression--complete)
 - **k-means**: the clustering the trainer uses for the literal tables: each page goes to the table that
   codes it in the fewest bits, each table is rebuilt from its pages, repeated until nothing moves.
@@ -94,7 +94,7 @@ uses them in that sense throughout.
   count of its bits: the position of that 1 is the count. [Chapter 13](#ch-literals-dec--sentinel)
 - **sequence**: `ll` literals followed by one match; a page is a list of them, and the last one has
   literals only. [Chapter 4](#ch-format)
-- **stream**: one of the 8 parts coded literals are split into, literal `k` into stream `k mod 8`, so the
+- **stream**: one of the 8 parts coded literals are split into, literal $k$ into stream $k \bmod 8$, so the
   decoder can work on 8 at a time. [Chapter 11](#ch-literals-enc)
 - **symbol**: whatever a code stands for: a token, a byte value, a length value symbol. [Chapter 2](#ch-compression)
 - **table**: the code lengths of all symbols of one kind. seqlz has 11, all fixed and part of the format:

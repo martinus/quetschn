@@ -160,8 +160,8 @@ slower
 zram stores the compressed pages with **zsmalloc**, an allocator built for many small objects of
 varied sizes. It does not hand out any number of bytes. It has **size classes**: nominal slot sizes in steps
 of 16 bytes on 4 KiB pages (`ZS_SIZE_CLASS_DELTA`, the page size divided by 256), and a slot also
-holds an 8-byte handle (`ZS_HANDLE_SIZE`). An object of `n` bytes goes into the smallest class that
-holds `n + 8`. Each class packs its slots into a "zspage" of 1 to 8 physical pages, chosen to waste as
+holds an 8-byte handle (`ZS_HANDLE_SIZE`). An object of $n$ bytes goes into the smallest class that
+holds $n + 8$. Each class packs its slots into a "zspage" of 1 to 8 physical pages, chosen to waste as
 little of the last page as possible, and classes that come out with the same packing are merged into
 the larger one. The project ported this setup to C++ (`bench/zsmalloc_cost.cpp`) and checked it
 against the kernel: after merging, the 255 nominal classes are 119 different ones
@@ -224,7 +224,7 @@ Three things follow, and the book comes back to each:
 
 - **Saving less than one class step on a page usually saves nothing.** A format can afford a few
   bytes of header per page, a flag per page, a field that makes the decoder faster. The rule
-  that seqlz codes its literals only if that saves 1/16 of them and 51 bytes more comes from this
+  that seqlz codes its literals only if that saves $\frac{1}{16}$ of them and 51 bytes more comes from this
   ([chapter 11](#ch-literals-enc)).
 - **The cliff is the largest step.** A page moved from 3625 to 3600 bytes saves 455 bytes, 18 times
   the 25 bytes of compression it took. And zram never decompresses a page stored raw, so the decoder
@@ -419,19 +419,19 @@ was 1 µs over the bar, without asking what 1 µs is worth. So designs are judge
 ([`docs/plan.md` §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)):
 
 - **bytes**: the memory zsmalloc spends per stored page, the stored size of the section above.
-- **time**: per page written to zram, `write + r × read`, each the **mean** over all pages, in µs.
-- **score**: `bytes + lambda × time`, lower is better.
+- **time**: per page written to zram, $\text{write} + r \times \text{read}$, each the **mean** over all pages, in µs.
+- **score**: $\text{bytes} + \lambda \times \text{time}$, lower is better.
 
 **Why the mean.** The mean is the total time spent on the pages. When a program that was idle comes
 back, it faults in many pages one after the other, and it waits for the sum. The 99th percentile, p99,
 the time 99% of the pages stay below, stays a guard: a p99 that gets clearly worse means some pages
 are pathological, and they are looked for. It is not a target.
 
-**Why r = 0.34.** Every page written is read back at most once, often never: it is freed, or the
-program exits. `r` is how many reads come per write. On the project's desktop with zram as its only
+**Why $r = 0.34$.** Every page written is read back at most once, often never: it is freed, or the
+program exits. $r$ is how many reads come per write. On the project's desktop with zram as its only
 swap, the kernel's counters `pswpin` and `pswpout` in `/proc/vmstat` were 3 146 179 pages swapped in
 against 9 210 320 swapped out in 27.5 days: 0.34. So the time of a write counts fully and the time of
-a read a third. That is one machine; a phone swaps differently, and its `r` is not measured yet.
+a read a third. That is one machine; a phone swaps differently, and its $r$ is not measured yet.
 
 **lambda** is an exchange rate, in bytes per µs: how many bytes of stored size one µs per page is
 worth to you. It is not fixed. On a phone short of RAM a byte is worth more than on a server with
@@ -529,7 +529,7 @@ with the tables seqlz had before 7th October
 | `zstd` 3 | 1012 / 1197 | 13.49 / 14.40 | 5.29 / 5.53 | 15.29 / 16.28 |
 
 The time per page written is the write plus 0.34 times the cold read, e.g. for `lz4` on the first
-dump 5.28 + 0.34 × 2.53 = 6.14 µs. `seqlz-fast-lit` stores pages 24% and 21% smaller than `lzo-rle`,
+dump $5.28 + 0.34 \times 2.53 = 6.14$ µs. `seqlz-fast-lit` stores pages 24% and 21% smaller than `lzo-rle`,
 29% and 24% smaller than `lz4`, and within 2% and 10% of `zstd` 3, for 22% and 24% more time than `lz4`
 to write a page.
 
@@ -577,7 +577,7 @@ that, and did not pursue it, see [chapter 17](#ch-decisions--not-kept).
 So every design in this book compresses a page once, when it is written, and that one pass is all the
 time it gets.
 
-Two numbers in this chapter rest on one machine each: `r = 0.34` is the desktop's, and a phone's `r`
+Two numbers in this chapter rest on one machine each: $r = 0.34$ is the desktop's, and a phone's $r$
 is not measured; and how large the bursts of swap-ins are, which decides how much a slower read hurts
 a user, is not measured either. With 16 KiB pages, which Android is moving to and which the project
 has only from the Android 17 emulator, not from a phone, seqlz needs more work

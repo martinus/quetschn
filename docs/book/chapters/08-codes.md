@@ -34,8 +34,8 @@ global struct and no caller of this function, and `port.py` cuts it out.
 @listing src/seqlz_codes.c 13-23
 
 A **length value** is the rest of an `ll` or `ml` that does not fit into the token
-([chapter 4](#ch-format--length-values)). Its symbols 0 to 15 are the values 0 to 15. A symbol `s`
-from 16 on stands for the `2^b` values from `2^b` on, `b = s - 12`, and its code is followed by `b`
+([chapter 4](#ch-format--length-values)). Its symbols 0 to 15 are the values 0 to 15. A symbol $s$
+from 16 on stands for the $2^b$ values from $2^b$ on, $b = s - 12$, and its code is followed by $b$
 plain bits that say which one. `length_entry()` computes the part of a decode entry that depends only
 on the symbol, in the layout of [chapter 7](#ch-internal--decode-tables): the base value from bit 8,
 the number of extra bits from bit 4. `build_values()` ORs the code's length into bits 0 to 3.
@@ -172,10 +172,10 @@ Three lists that fail, with `bits = 3`:
 
 | lengths | `k` | why it fails |
 | --- | --- | --- |
-| 1, 1, 1 | `4 + 4 + 4 = 12` | too many codes: there are only two codes of 1 bit |
-| 1, 2, 0 | `4 + 2 = 6` | a gap: the indices starting with `11` belong to no code |
+| 1, 1, 1 | $4 + 4 + 4 = 12$ | too many codes: there are only two codes of 1 bit |
+| 1, 2, 0 | $4 + 2 = 6$ | a gap: the indices starting with `11` belong to no code |
 | 0, 0, 0 | 0 | no code at all |
-| 1, 2, 4 | | `4 > 3`: line 43 returns before `k` is computed |
+| 1, 2, 4 | | $4 > 3$: line 43 returns before `k` is computed |
 
 The test `seqlz: tables that are no prefix code are rejected` in `test/seqlz_test.cpp` builds such
 tables from the real ones: a length one too long, three codes of 1 bit, an empty table, a gap of one
@@ -229,9 +229,9 @@ and `next[11] = 1640`. Its 408 codes of 11 bits are the numbers 1640 to 2047, th
 
 Why are a code's entries one range? Because the decoder reads the bitstream most significant bit
 first: its index is the top 11 bits of its register, the first bit of the stream as the top bit of
-the index. A code `c` of `l` bits is the first `l` bits of the index, and the `11 - l` bits after it
-can be anything. All indices with the first `l` bits equal to `c` are `c * 2^(11 - l)` up to
-`(c + 1) * 2^(11 - l) - 1`, one block. Shifting `c` left by `11 - l` is that multiplication.
+the index. A code $c$ of $l$ bits is the first $l$ bits of the index, and the $11 - l$ bits after it
+can be anything. All indices with the first $l$ bits equal to $c$ are $c \cdot 2^{11-l}$ up to
+$(c + 1) \cdot 2^{11-l} - 1$, one block. Shifting $c$ left by $11 - l$ is that multiplication.
 
 Token 49, one literal and a match of 7 at the repeat offset, has the 4-bit code `0001`, `c = 1`:
 
@@ -346,7 +346,7 @@ function checks that, once, for the lengths given:
 - Lines 160 to 162: each of the 3072 tokens needs a code of its own, or the escape needs one, which
   the encoder then sends with the token in 12 bits.
 - Line 164: the escape's code must be short enough. `SEQLZ_MAX_ESCAPE_LEN` is
-  `31 - 12 - 12 = 7` bits on 4 KiB pages, 5 on 16 KiB pages: an escaped token with class 3's offset
+  $31 - 12 - 12 = 7$ bits on 4 KiB pages, 5 on 16 KiB pages: an escaped token with class 3's offset
   is then at most 31 bits, which the encoder's bound on the compressed size relies on, so that zram's
   two pages are always room enough ([chapter 10](#ch-encoder)). The real escape has 4 bits. If the
   escape has no code, length 0, this line passes, and the token loop above is what fails, unless
@@ -475,7 +475,7 @@ The generator turns counts into lengths:
 - Only the most frequent tokens get a code. The generator tries the 64, 128, 192, ... most frequent
   ones plus the escape, computes the bits each choice costs on the training pages, the escaped tokens
   at their escape code plus 12 bits, and keeps the cheapest whose escape code is at most
-  `31 - 12 - 12 = 7` bits. For 4 KiB pages that is 576 tokens, 9 times 64.
+  $31 - 12 - 12 = 7$ bits. For 4 KiB pages that is 576 tokens, 9 times 64.
 - Before it writes anything, it checks the lengths as `seqlz_tables_init()` and `has_all_symbols()`
   do, and exits if they fail.
 
@@ -498,7 +498,7 @@ print(sum(1 for l in tok[:3072] if l), "tokens with a code, escape", tok[3072], 
 print(sum(2.0 ** -l for l in tok if l))
 ```
 This prints 3073 and the `TOK_4k` hash of `format.md`, `576 tokens with a code, escape 4 bits`, and
-`1.0`: the sum of `2^-l` over all codes, the Kraft sum, which is 1 for a complete code.
+`1.0`: the sum of $2^{-l}$ over all codes, the Kraft sum, which is 1 for a complete code.
 :::
 
 The 4 KiB counts are from 524 912 pages: the resident pages of a desktop, 60 132 pages of that
@@ -522,14 +522,14 @@ Of the 3072 tokens, 576 have a code of their own. With the escape, those are 577
 
 | code length | codes | share of the table's 2048 entries |
 | --- | --- | --- |
-| 4 | 3 tokens and the escape | 4 × 128 = 512 |
-| 5 | 4 | 4 × 64 = 256 |
-| 6 | 5 | 5 × 32 = 160 |
-| 7 | 11 | 11 × 16 = 176 |
-| 8 | 27 | 27 × 8 = 216 |
-| 9 | 42 | 42 × 4 = 168 |
-| 10 | 76 | 76 × 2 = 152 |
-| 11 | 408 | 408 × 1 = 408 |
+| 4 | 3 tokens and the escape | $4 \times 128 = 512$ |
+| 5 | 4 | $4 \times 64 = 256$ |
+| 6 | 5 | $5 \times 32 = 160$ |
+| 7 | 11 | $11 \times 16 = 176$ |
+| 8 | 27 | $27 \times 8 = 216$ |
+| 9 | 42 | $42 \times 4 = 168$ |
+| 10 | 76 | $76 \times 2 = 152$ |
+| 11 | 408 | $408 \times 1 = 408$ |
 
 The entries add up to 2048, the table is complete. The shortest codes say what memory pages are made
 of:
@@ -615,7 +615,7 @@ device has tables of its own. That is a decision of the format, with numbers beh
 The 16 KiB variants, `seqlz_default_tables_16k.inc` and `seqlz_lit_sets_16k.inc`, are the same
 construction with counts from 26 933 pages of a zram dump of the Android 17 emulator with 16 KiB
 pages. They give 512 tokens a code, again with a 4-bit escape, below that page size's limit of
-`31 - 14 - 12 = 5` bits. On a second dump of the emulator they made `seqlz-fast-lit` 2.6% smaller than
+$31 - 14 - 12 = 5$ bits. On a second dump of the emulator they made `seqlz-fast-lit` 2.6% smaller than
 the 16 KiB tables before them, which were trained on desktop pages
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator and no real phone, and the format for 16 KiB pages is not fixed yet; the

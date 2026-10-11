@@ -59,7 +59,7 @@ with what they were measured against. [The glossary](#glossary) is at the end.
 | `src/seqlz.h` | 436 | the format's constants, the public functions | [6](#ch-header) |
 | `src/seqlz_internal.h` | 146 | the layout of the tables in memory, the token table's entries | [7](#ch-internal) |
 | `src/seqlz_codes.c` | 186 | builds codes and decode tables from code lengths | [8](#ch-codes) |
-| `src/seqlz_default_tables.c`, `src/seqlz_lit_sets.c` and their `.inc` files | 19 + 19 + 2 × 213 + 2 × 154 | the trained code lengths, part of the format | [8](#ch-codes) |
+| `src/seqlz_default_tables.c`, `src/seqlz_lit_sets.c` and their `.inc` files | $19 + 19 + 2 \times 213 + 2 \times 154$ | the trained code lengths, part of the format | [8](#ch-codes) |
 | `src/page_lz.h` | 183 | the matcher: finds the repeats in a page | [9](#ch-matcher) |
 | `src/seqlz_compress.c` | 628 | the encoder, and the coding of literals | [10](#ch-encoder), [11](#ch-literals-enc) |
 | `src/seqlz_decompress.c` | 688 | the decoder | [12](#ch-dec-basics), [13](#ch-literals-dec), [14](#ch-decode) |

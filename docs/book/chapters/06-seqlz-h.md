@@ -65,7 +65,7 @@ Lines 38 to 41 describe the **length values**. A token holds `ll` up to 14 and `
 they are; 15 and 31 mean "this or more, the rest follows". The rest, `ll - 15` or `ml - 4 - 31`, is a
 length value: below 16 it is a symbol of its own, above it is sent as the position of its highest bit
 plus the bits below. `bit_width(v)` is the number of bits `v` needs, 7 for 100, so 100 becomes symbol
-`12 + 7 - 1 = 18` and 6 plain bits. `seqlz_len_symbol()` below does exactly this.
+$12 + 7 - 1 = 18$ and 6 plain bits. `seqlz_len_symbol()` below does exactly this.
 
 Lines 43 to 46: everything except the literals goes into one **bitstream**, most significant bit
 first, in the order token, offset bits, `ll` value, `ml` value. There is no count of the sequences; the
@@ -123,9 +123,9 @@ only. The format for 16 KiB pages is not fixed yet
 These two numbers set the size of the decode tables, and the size of a decode table is what the
 decoder pays for on a cold read.
 
-A decoder of a prefix code does not read bit by bit. It takes the next `L` bits, where `L` is the length
-of the longest code, and looks them up in a table of `2^L` entries; a code of `l` bits fills all
-`2^(L - l)` entries that start with its bits ([chapter 2](#ch-compression--table-decoding)). So the
+A decoder of a prefix code does not read bit by bit. It takes the next $L$ bits, where $L$ is the length
+of the longest code, and looks them up in a table of $2^L$ entries; a code of $l$ bits fills all
+$2^{L-l}$ entries that start with its bits ([chapter 2](#ch-compression--table-decoding)). So the
 longest code decides the table's size: 8 bits for length values give 256 entries, 4 bytes each, 1 KiB;
 11 bits for tokens give 2048 entries, 4 bytes each, 8 KiB.
 
@@ -171,18 +171,18 @@ The memory stayed the same, and decoding went from 9400 to 9180 cycles per page 
 Lines 89 to 91 say why the two numbers cannot grow: the decoder's table entry for a token has 4 bits
 for `ll` and 6 bits for `ml`, see `token_entry()` in [chapter 7](#ch-internal). 4 bits hold `ll` up to
 15, so `SEQLZ_LL_BITS` can be at most 4. The entry stores `ml` itself, the cap plus 4: with 5 bits that
-is at most `31 + 4 = 35`, which fits 6 bits; with 6 bits it would be `63 + 4 = 67`, which does not.
+is at most $31 + 4 = 35$, which fits 6 bits; with 6 bits it would be $63 + 4 = 67$, which does not.
 `seqlz_internal.h` checks both with a `static_assert`.
 
 @listing src/seqlz.h 95-101
 
 The six classes take the top of the token, above the 9 bits of the two lengths.
-`SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, `6 * 512 = 3072`. A shift, not a multiplication, because the
+`SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, $6 \cdot 512 = 3072$. A shift, not a multiplication, because the
 class is a bit field: token `t` has `ll` in bits 0 to 3, `ml - 4` in bits 4 to 8 and the class in bits 9
 to 11. [Chapter 4](#ch-format--token) draws the 12 bits of token 2098, the sequence that
 [`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)
 takes apart: 2 literals, a match of 7 bytes, 16 bytes back. 16 is a multiple of 8 below 256, class 4,
-sent as `16 / 8 = 2` in 5 bits.
+sent as $16 / 8 = 2$ in 5 bits.
 
 Why 6 classes and not more: "Offset classes from a histogram" searched 29 539 layouts of classes
 offline, priced with the probabilities of 12.2 million sequences. The best layout with 8 classes saves
@@ -199,34 +199,34 @@ count. With 6 classes the best layout saves 0.03 bits
 3073 symbols, and `struct seqlz_lengths` below has `SEQLZ_TOKEN_SYMBOLS + 1` code lengths.
 
 The reason for the escape is arithmetic. A prefix code with codes of at most 11 bits has room for at most
-2048 codes: each code of `l` bits uses `2^-l` of the code space, and the sum may not exceed 1. 3072
-tokens would need at least `3072 / 2048 = 1.5` times the space. So some tokens get no code. With the 4
+2048 codes: each code of $l$ bits uses $2^{-l}$ of the code space, and the sum may not exceed 1. 3072
+tokens would need at least $\frac{3072}{2048} = 1.5$ times the space. So some tokens get no code. With the 4
 KiB tables, 576 of the 3072 tokens have a code of their own, with the 16 KiB tables 512; all others are
 sent as the escape's code plus the token's number in 12 plain bits. The escape is itself frequent, as a
 whole, and has a 4-bit code in both tables.
 
 Even when it was possible, giving every token a code was worse. In "seqlz, third decoder round" the
-token had 1536 symbols, and with 11 bits each of them needs at least 1/2048 of the code space, 75% of
+token had 1536 symbols, and with 11 bits each of them needs at least $\frac{1}{2048}$ of the code space, 75% of
 it together. Pages took 27.5% of their size instead of the 26.6% the frequencies promised; with the
 escape and the same 11-bit table it was 26.8%
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
 
-`SEQLZ_ESCAPE_BITS` is 12, the fewest bits that hold 3071, the largest token: `2^11 = 2048` is too
-few, `2^12 = 4096` enough. The other 1024 values of 12 bits, 3072 to 4095, are not tokens, and the
+`SEQLZ_ESCAPE_BITS` is 12, the fewest bits that hold 3071, the largest token: $2^{11} = 2048$ is too
+few, $2^{12} = 4096$ enough. The other 1024 values of 12 bits, 3072 to 4095, are not tokens, and the
 decoder rejects a page that sends one.
 
 `SEQLZ_MAX_ESCAPE_LEN` is the longest code the escape may have, and it comes from the encoder, not the
 decoder. The encoder checks that a compressed page fits into zram's two pages with an argument that
 needs at most 31 bits for a token and its offset ([chapter 10](#ch-encoder)). The longest such pair is
 an escaped token with a class 3 offset: the escape's code, 12 bits of token, and `QUETSCHN_PAGE_BITS`
-bits of offset. So the escape may have at most `31 - 12 - 12 = 7` bits on 4 KiB pages and
-`31 - 14 - 12 = 5` bits on 16 KiB pages. The trained tables give it 4 bits, so the longest token and
-offset take `4 + 12 + 12 = 28` bits on 4 KiB pages. `has_all_symbols()` in `seqlz_codes.c` checks
+bits of offset. So the escape may have at most $31 - 12 - 12 = 7$ bits on 4 KiB pages and
+$31 - 14 - 12 = 5$ bits on 16 KiB pages. The trained tables give it 4 bits, so the longest token and
+offset take $4 + 12 + 12 = 28$ bits on 4 KiB pages. `has_all_symbols()` in `seqlz_codes.c` checks
 the limit when the tables are built ([chapter 8](#ch-codes)). Every other token code is at most 11
-bits, and `11 + 12 = 23` on 4 KiB pages, 25 on 16 KiB pages, is far below 31.
+bits, and $11 + 12 = 23$ on 4 KiB pages, 25 on 16 KiB pages, is far below 31.
 
-`SEQLZ_LL_CAP` and `SEQLZ_ML_CAP` are the largest values the two fields hold, `2^4 - 1 = 15` and
-`2^5 - 1 = 31`. `(1U << n) - 1U` is the usual way to write "n ones", which is also the mask for the
+`SEQLZ_LL_CAP` and `SEQLZ_ML_CAP` are the largest values the two fields hold, $2^4 - 1 = 15$ and
+$2^5 - 1 = 31$. `(1U << n) - 1U` is the usual way to write "n ones", which is also the mask for the
 field. They have two meanings at once: the cap and the flag. A token with `ll` field 15 says "15 or
 more, a length value follows", and the length value is `ll - 15`.
 
@@ -239,13 +239,13 @@ can have a run of 2000 literals, or a match of 4000 zero bytes. The code has to 
 table of 4096 symbols.
 
 `SEQLZ_LEN_DIRECT` says that values 0 to 15 are symbols 0 to 15. A value of 16 or more is sent as
-the position of its highest set bit, `b`, plus the `b` bits below it. The symbol for that is
-`SEQLZ_LEN_LOG_BASE + b`. `b` is at least 4 for a value of at least 16 (`16 = 2^4`), so the first such
-symbol is `12 + 4 = 16`, right after the direct ones. That is why the base is
+the position of its highest set bit, $b$, plus the $b$ bits below it. The symbol for that is
+`SEQLZ_LEN_LOG_BASE + b`. $b$ is at least 4 for a value of at least 16 ($16 = 2^4$), so the first such
+symbol is $12 + 4 = 16$, right after the direct ones. That is why the base is
 `SEQLZ_LEN_DIRECT - 4U = 12`: the two kinds of symbols meet without a gap and without overlap.
 
-`SEQLZ_LEN_SYMBOLS` is how many symbols there are: 16 direct ones, then one for each `b` from 4 up to
-`QUETSCHN_PAGE_BITS`, which is `12 + 12 + 1 = 25` on 4 KiB pages and `12 + 14 + 1 = 27` on 16 KiB pages.
+`SEQLZ_LEN_SYMBOLS` is how many symbols there are: 16 direct ones, then one for each $b$ from 4 up to
+`QUETSCHN_PAGE_BITS`, which is $12 + 12 + 1 = 25$ on 4 KiB pages and $12 + 14 + 1 = 27$ on 16 KiB pages.
 Each symbol covers a range of values twice as wide as the one before:
 
 | symbol | `b` | values | plain bits after the code |
@@ -291,7 +291,7 @@ and each length starts where the one before ended, shifted one bit left
 fix for the sequences: one byte per symbol, 0 for a symbol without a code.
 
 `token` has 3073 entries, the 3072 tokens and the escape last. `ll` and `ml` have 25 each, so the struct
-is `3073 + 25 + 25 = 3123` bytes on 4 KiB pages and 3127 on 16 KiB pages. It has only `u8` members, so
+is $3073 + 25 + 25 = 3123$ bytes on 4 KiB pages and 3127 on 16 KiB pages. It has only `u8` members, so
 there is no padding.
 
 `seqlz_default_own`, declared at the end of this file, is the one set the code compiles in
@@ -322,8 +322,8 @@ Worked examples, computed with this function:
 | 100 | `1100100` | 25 | 6 | 18 | 6 bits, 36 |
 | 4059 | `111111011011` | 20 | 11 | 23 | 11 bits, 2011 |
 
-For `v = 100`: the highest bit is bit 6, so the symbol is `12 + 6 = 18`, and the 6 plain bits are the
-bits below it, `100 - 64 = 36`, `100100`. The decoder reverses it: symbol 18 means base `2^6 = 64`, and
+For `v = 100`: the highest bit is bit 6, so the symbol is $12 + 6 = 18$, and the 6 plain bits are the
+bits below it, $100 - 64 = 36$, `100100`. The decoder reverses it: symbol 18 means base $2^6 = 64$, and
 `64 + read(6) = 64 + 36 = 100`. The highest bit is not sent, because the symbol already says where it
 is. The last row is from the format's worked example ([chapter 4](#ch-format--example)): a match of 4094
 bytes has `ml - 4 - 31 = 4059`.
@@ -407,8 +407,8 @@ at offset 1, a run of one repeated byte, is class 0 too.
 
 Offset 8 is class 1, not class 4: it is below 16, and 4 bits are cheaper than 5. The format would
 allow class 4 for it, `read(5) * 8 = 8`, but the encoder never sends that. The value sent is
-`off >> SEQLZ_OFF_SHIFT(cls)`, and the bits above `raw_bits` are always 0: 4095 fits 12 bits, 1000 / 8 =
-125 fits 9.
+`off >> SEQLZ_OFF_SHIFT(cls)`, and the bits above `raw_bits` are always 0: 4095 fits 12 bits, $1000 / 8 = 125$
+fits 9.
 
 gcc compiles the function without a jump: the comparisons become `setcc` instructions, the sum two
 `lea`s, the AND a conditional move, and the bits a shift of the constant. Line 204 is `SEQLZ_RAW_BITS`
@@ -480,7 +480,7 @@ It returns `-EINVAL` when the lengths are not a complete prefix code, and the co
 ways that happens:
 
 - a code longer than its table allows, e.g. a token code of 12 bits, which an 11-bit table cannot hold;
-- more codes than fit, the sum of `2^-l` over all codes above 1, so that two codes would share entries;
+- more codes than fit, the sum of $2^{-l}$ over all codes above 1, so that two codes would share entries;
 - gaps, the sum below 1, so that some patterns of bits are no code;
 - no code at all.
 
@@ -513,7 +513,7 @@ are in [chapter 8](#ch-codes--lit-sets-file).
 
 The coded literals are dealt out to 8 **streams** like cards: literal 0 to stream 0, literal 1 to
 stream 1, ..., literal 8 to stream 0 again. The reason is the decoder. In one stream, the decoder only
-knows where literal `k + 1` starts after it has looked up literal `k` and knows its code length: each
+knows where literal $k + 1$ starts after it has looked up literal $k$ and knows its code length: each
 lookup waits for the one before, a chain. 8 streams are 8 independent chains, and a CPU that runs
 several instructions at once works on them side by side ([chapter 13](#ch-literals-dec)).
 
@@ -527,7 +527,7 @@ Line 269 declares the code lengths of the 8 literal tables, 256 bytes each, defi
 `SEQLZ_LIT_ROUNDS` is `56 / 10 = 5`. The decoder refills a stream by loading 8 bytes at once and then
 decodes several literals from it before the next load. 8 bytes are 64 bits. Up to 7 bits of the first
 byte may already be used, and the decoder keeps one bit as a marker of where the valid bits end
-([chapter 13](#ch-literals-dec)), so at least `64 - 7 - 1 = 56` bits are left. 5 codes of at most 10
+([chapter 13](#ch-literals-dec)), so at least $64 - 7 - 1 = 56$ bits are left. 5 codes of at most 10
 bits need at most 50 of them; 6 could need 60. So each refill is good for 5 literals per stream, 40 for
 all 8.
 
@@ -548,8 +548,8 @@ is 8 to 15 bytes. `SEQLZ_LIT_HEADER(0)` is 3, the offset of the first size byte;
 encoder use it that way.
 
 `w` is chosen per page: the fewest bits that hold the largest of the 8 sizes, at least 5. A page whose
-largest stream has 100 bytes takes 7 bits per size, `100 < 128 = 2^7`, and a header of `3 + 7 = 10`
-bytes. A stream holds every 8th literal, at most 10 bits each, so at most `4096 / 8 * 10 / 8 = 640`
+largest stream has 100 bytes takes 7 bits per size, $100 < 128 = 2^7$, and a header of $3 + 7 = 10$
+bytes. A stream holds every 8th literal, at most 10 bits each, so at most $4096 / 8 \cdot 10 / 8 = 640$
 bytes on 4 KiB pages, which needs 10 bits, and 2560 on 16 KiB pages, which needs 12. That is where
 `SEQLZ_SIZE_BITS_MAX` comes from.
 
@@ -563,12 +563,12 @@ encoder writes `set | (w - 5) << 3`. The decoder reads the width as `(byte >> 3)
 page if `byte >> 6` is not 0: the two top bits are reserved, so that a future format could tell itself
 apart ([format, "No version in the page"](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
 These two are written without `U`; they are small shift counts, and `seqlz_internal.h` checks with
-`static_assert`s that the fields of byte 2 add up to 3 + 3 bits.
+`static_assert`s that the fields of byte 2 add up to $3 + 3$ bits.
 
 @listing src/seqlz.h 296-305
 
 The rule for coding the literals of a page: only where the 8 streams plus `SEQLZ_LIT_CODED_MIN` bytes
-are smaller than 15/16 of the raw literals,
+are smaller than $\frac{15}{16}$ of the raw literals,
 
 ```c
 coded + 51 < n - n / 16      /* coded: the bytes of the 8 streams; n: the literals */
@@ -576,9 +576,9 @@ coded + 51 < n - n / 16      /* coded: the bytes of the 8 streams; n: the litera
 
 E.g. a page with 1000 literals: `1000 - 1000 / 16 = 1000 - 62 = 938`, so the streams must take at most
 886 bytes, 11.4% less than the literals, for the page to get coded literals. With 100 literals the
-streams must stay below `94 - 51 = 43` bytes, less than half; few pages with so few literals qualify.
+streams must stay below $94 - 51 = 43$ bytes, less than half; few pages with so few literals qualify.
 
-Why 1/16 and why 51 bytes, with the measurements on the phone, is in
+Why $\frac{1}{16}$ and why 51 bytes, with the measurements on the phone, is in
 [chapter 11](#ch-literals-enc--rule). In short: zsmalloc's size classes make a saving of a few bytes
 worth little, and a page with coded literals costs a fixed time on every read.
 
@@ -619,7 +619,7 @@ least 4 bytes; its offset is between 1 and the number of bytes of the page befor
 literal and match lengths add up to the page, using all `n_literals` literals. These are the rules the
 decoder checks. The function checks them all before it writes anything, and returns 0 for sequences
 that break one. It did not always: a match shorter than 4 bytes made `ml - 4` wrap around to a number
-near `2^32`, its length value took more than 31 bits, and 1025 such sequences wrote past the two pages
+near $2^{32}$, its length value took more than 31 bits, and 1025 such sequences wrote past the two pages
 of `dst`. The fuzzer `fuzz/seqlz_encode_fuzz.c`, which gives the encoder raw sequences, was added with
 the fix (commit `256768e`).
 
@@ -663,10 +663,10 @@ Worked examples, computed with this function:
 
 | `ll` | `ml` | class | `a` | `b` | token |
 | --- | --- | --- | --- | --- | --- |
-| 2 | 7 | 4 | 2 | 3 | `2 + 48 + 2048 = 2098` |
-| 1 | 7 | 0 | 1 | 3 | `1 + 48 + 0 = 49` |
-| 2 | 4094 | 1 | 2 | 31 | `2 + 496 + 512 = 1010` |
-| 20 | 100 | 3 | 15 | 31 | `15 + 496 + 1536 = 2047` |
+| 2 | 7 | 4 | 2 | 3 | $2 + 48 + 2048 = 2098$ |
+| 1 | 7 | 0 | 1 | 3 | $1 + 48 + 0 = 49$ |
+| 2 | 4094 | 1 | 2 | 31 | $2 + 496 + 512 = 1010$ |
+| 20 | 100 | 3 | 15 | 31 | $15 + 496 + 1536 = 2047$ |
 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 Token 49 is the sequence an array of pointers repeats in `docs/seqlz.md`'s example: one literal, a
@@ -693,7 +693,7 @@ spread them perfectly. 2048 and 8192 entries were measured on the Mi 9T and not 
 The kernel's copy has `12U` there.
 
 `SEQLZ_MAX_SEQUENCES` is the most sequences a page can have. Every sequence but the last has a match of
-at least 4 bytes, so at most `4096 / 4 = 1024` of them fit a page, plus the last: 1025 on 4 KiB pages,
+at least 4 bytes, so at most $4096 / 4 = 1024$ of them fit a page, plus the last: 1025 on 4 KiB pages,
 4097 on 16 KiB pages. `seqlz_encode()` rejects more, `seqlz_find()` needs room for that many, and the
 decoder's work per page is bounded by the same count.
 
@@ -781,7 +781,7 @@ All values computed by compiling this header with `QUETSCHN_PAGE_BITS` 12 and 14
 | `SEQLZ_LIT_HEADER(w)` | 8 to 15 | 8 to 15 | header bytes with coded literals |
 | `SEQLZ_SIZE_BITS_MIN`, `_MAX` | 5, 12 | 5, 12 | bits per stream size |
 | `SEQLZ_LIT_WIDTH_AT`, `SEQLZ_LIT_ZERO_AT` | 3, 6 | 3, 6 | fields of byte 2 |
-| `SEQLZ_LIT_CODED_MIN` | 51 | 51 | bytes coding must save beyond 1/16 |
+| `SEQLZ_LIT_CODED_MIN` | 51 | 51 | bytes coding must save beyond $\frac{1}{16}$ |
 | `SEQLZ_SCRATCH` | 4112 | 16400 | the decoder's buffer for coded literals |
 | `SEQLZ_HASH_BITS` | 12 | 13 | bits of the matcher's hash |
 | `SEQLZ_MAX_SEQUENCES` | 1025 | 4097 | most sequences per page |

@@ -154,9 +154,9 @@ letters of `kworker/0:1`), then 6 zero bytes, the rest of the name's padding and
 first byte, at offset 77, which points into the header's zeros. 77 is not a multiple of 8 and below
 256, so class 2 with 8 offset bits, `01001101`. `ll = 27` is above the token's cap of 15, so the
 token holds 15 and a length value of 12 follows, symbol 12 in the `ll` table, 6 bits. The token is
-`15 + 16 * 2 + 512 * 2 = 1071`, with a code of 10 bits. Sequence 2 is one literal and 6 bytes at
+$15 + 16 \times 2 + 512 \times 2 = 1071$, with a code of 10 bits. Sequence 2 is one literal and 6 bytes at
 offset 32, the record before: 32 is a multiple of 8 from 16 on, so class 4, and the offset goes as
-`32 / 8 = 4` in 5 bits, `00100`.
+$32 / 8 = 4$ in 5 bits, `00100`.
 
 ## All 180 sequences {#ch-trace--sequences}
 
@@ -204,15 +204,15 @@ Some rows worth reading closely:
   match covers `kworker/`, 8 bytes, and ends at the `1` that differs. Then 3 literals and the zeros
   of the padding, again at offset 128, now as the repeat offset.
 - **Sequence 177** is class 5: the 7 zero bytes after the text's last newline match a record's
-  padding 1976 bytes back. `1976 = 8 * 247`, so it goes as 247 in 9 bits.
+  padding 1976 bytes back. $1976 = 8 \times 247$, so it goes as 247 in 9 bits.
 - **Sequence 178** covers the 1864 zeros up to the end of the page, at offset 2. Offset 2 and not 1,
   because offset 1 is not a candidate: the repeat offset is now 1976, from sequence 177, and the 4
   bytes 1976 back are a record's pointer, not zeros. The hash table's candidate is position 2230,
   stored as "2 bytes before the end" of sequence 177's match, and its 5 bytes are zeros like those at
-  2232. Offset 2 is class 1, 4 bits. The length value is `1864 - 4 - 31 = 1829`. That is above 15,
+  2232. Offset 2 is class 1, 4 bits. The length value is $1864 - 4 - 31 = 1829$. That is above 15,
   so it goes as its highest bit's position: 1829 is 11 bits long, its top bit is bit 10, so the
-  symbol is `12 + 10 = 22`, with a 6-bit code in the `ml` table, followed by the 10 bits below the
-  top one, `1829 - 1024 = 805`. 16 bits for the length, 27 for the whole sequence, for 1864 bytes of
+  symbol is $12 + 10 = 22$, with a 6-bit code in the `ml` table, followed by the 10 bits below the
+  top one, $1829 - 1024 = 805$. 16 bits for the length, 27 for the whole sequence, for 1864 bytes of
   the page.
 - **Sequence 179** is the last one. The match before ends exactly at byte 4096, so it has no literals
   and no match: token 0, `ll` 0, `ml - 4 = 0`, class 0, 8 bits. The decoder knows it is the last
@@ -264,10 +264,10 @@ bits are left in the accumulator, and `e.cnt` is 0: no last partial byte to writ
 
 `encoder_finish()` writes the literal count, 674, as the u16 at the start, `a2 02`. Then it copies the
 bitstream from the end of the buffer to right after the literals. The gap between them is
-`(8192 - 271) - 676 = 7245` bytes, much more than 271, so the copy cannot overlap: 33 copies of 8
+$(8192 - 271) - 676 = 7245$ bytes, much more than 271, so the copy cannot overlap: 33 copies of 8
 bytes, each a little-endian load from the back and a big-endian store to the front, which reverses
 the byte order, and 7 single bytes. The bitstream now starts at byte 676 with `31 fe fd 82`, and the
-function returns `2 + 674 + 271 = 947`.
+function returns $2 + 674 + 271 = 947$.
 
 That is the page as `seqlz-fast` stores it, 23.1% of 4096 bytes. `seqlz_compress()` was called with
 `coded = 1`, so it now hands the 947 bytes to `code_literals()`.
@@ -275,9 +275,9 @@ That is the page as `seqlz-fast` stores it, 23.1% of 4096 bytes. `seqlz_compress
 ## code_literals(): 151 bytes less {#ch-trace--literals}
 
 `code_literals()` ([chapter 11](#ch-literals-enc)) reads the count, 674, from the u16 and computes the
-bitstream's length, `947 - 2 - 674 = 271`. Then `lit_cost()` sums, for every stream and every one of
+bitstream's length, $947 - 2 - 674 = 271$. Then `lit_cost()` sums, for every stream and every one of
 the 8 literal tables, the code lengths of that stream's literals. It works on the literals in chunks
-of `8 * 25 = 200`, three full ones and one of 74, each chunk summed in 8-bit lanes of one u64 per
+of $8 \times 25 = 200$, three full ones and one of 74, each chunk summed in 8-bit lanes of one u64 per
 stream and then moved into 16-bit lanes before a lane can overflow. The results, as the trace program
 recomputes them one literal at a time:
 
@@ -298,7 +298,7 @@ value above `0x7f` 10 bits. Each stream's bits are rounded up to whole bytes: th
 59, 65, 64, 64, 65, 66 and 66 bytes, 515 together.
 
 The width of the stream sizes is the bits the largest needs, at least 5: the OR of the 8 sizes and 16
-is `123`, `0b1111011`, so `32 - __builtin_clz(123) = 7` bits each, and the header is `3 + 7 = 10`
+is `123`, `0b1111011`, so `32 - __builtin_clz(123) = 7` bits each, and the header is $3 + 7 = 10$
 bytes.
 
 Then the rule. Coded literals are kept only if `coded + 51 < n - n / 16`:
@@ -319,7 +319,7 @@ accumulator each, flushing every 32 literals. Stream 0 and 1 get 85 literals, th
   `c2 5d 10 08 0c 0a 85`;
 - `memmove()` moves the 271 bytes of bitstream from byte 676 down to byte 525.
 
-The function returns `525 + 271 = 796`. `seqlz_compress()` returns that, and the backend tells zram
+The function returns $525 + 271 = 796$. `seqlz_compress()` returns that, and the backend tells zram
 the page is 796 bytes.
 
 <figure class="diagram">
@@ -384,19 +384,19 @@ up to a size class ([chapter 1](#ch-zram)). The project models this in `bench/zs
 a port of the kernel's class computation; summed over a new device's pages it matched zram's own
 `mem_used_total` to the byte in the kernel VM. For 4 KiB pages:
 
-1. zsmalloc adds a handle of 8 bytes: `796 + 8 = 804`.
+1. zsmalloc adds a handle of 8 bytes: $796 + 8 = 804$.
 2. Classes are 16 bytes apart (`4096 >> 8`) from 32 bytes on, so the class index is
-   `ceil((804 - 32) / 16) = ceil(48.25) = 49`, and the class size `32 + 49 * 16 = 816` bytes.
+   $\lceil (804 - 32) / 16 \rceil = \lceil 48.25 \rceil = 49$, and the class size $32 + 49 \times 16 = 816$ bytes.
 3. A class keeps its objects in a "zspage" of 1 to 8 pages, the number with the least waste at the end.
-   For 816 that is 1 page with 5 objects, since `4096 / 816 = 5.02`. Classes with the same pages and
+   For 816 that is 1 page with 5 objects, since $4096 / 816 = 5.02$. Classes with the same pages and
    objects per zspage are merged into the larger: class 800 also has 1 page and 5 objects, so it is
    merged into 816, and no larger class shares 816's.
-4. So each object costs `4096 / 5 = 819.2` bytes of memory.
+4. So each object costs $4096 / 5 = 819.2$ bytes of memory.
 
 The same page with raw literals, `seqlz-fast`'s 947 bytes, lands in class 960 (`955` rounded up), 4
-pages holding 17 objects, `16 384 / 17 = 963.8` bytes per page. Coding the literals saved 151 bytes of
+pages holding 17 objects, $16\,384 / 17 = 963.8$ bytes per page. Coding the literals saved 151 bytes of
 compressed size and 144.6 bytes of zsmalloc memory. The page could grow by 12 bytes and stay in class
-816 (up to `808 + 8 = 816`); it would have to shrink by 20 bytes, to 776, to reach the next smaller
+816 (up to $808 + 8 = 816$); it would have to shrink by 20 bytes, to 776, to reach the next smaller
 class, 784, because class 800 is part of 816.
 
 ## seqlz_decode(): the literals first {#ch-trace--decode}
@@ -411,10 +411,10 @@ u16, `0x82a2`. The top bit is set, so the literals are coded: `n_lit = 0x02a2 = 
 not `NULL`, and `decode_literals()` runs ([chapter 13](#ch-literals-dec)).
 
 `decode_literals()` reads byte 2, `0x10`: width `5 + ((0x10 >> 3) & 7) = 7`, table `0x10 & 7 = 0`,
-and bits 6 and 7 are zero as they must be. The streams start at byte `3 + 7 = 10`. It prefetches
+and bits 6 and 7 are zero as they must be. The streams start at byte $3 + 7 = 10$. It prefetches
 literal table 0's 2048 bytes of decode table, 32 lines, and `lit_stream_sizes()` copies the 7 bytes of
 sizes out and takes 7 bits at a time: 66, 59, 65, 64, 64, 65, 66, 66, starts 10, 76, 135, 200, 264,
-328, 393, 459, total 515. `10 + 515 = 525` is within the 796 bytes.
+328, 393, 459, total 515. $10 + 515 = 525$ is within the 796 bytes.
 
 The 8 streams are then decoded side by side, `SEQLZ_LIT_ROUNDS = 56 / 10 = 5` literals per stream
 after each refill, 40 literals per round. 674 literals are 16 full rounds, 640 literals. The rest, 34,

@@ -34,9 +34,9 @@ chapter uses their values for 4 KiB pages.
 @listing src/seqlz_internal.h 12-27
 
 The first paragraph is the idea of [table decoding](#ch-compression--table-decoding) in three
-lines. A table whose longest code has `L` bits gets `2^L` entries. A code of `l` bits is the first
-`l` bits of `2^(L - l)` indices, one for each value of the `L - l` bits after it, and all of those
-entries say the same thing: this symbol, `l` bits long. The decoder takes the next `L` bits of the
+lines. A table whose longest code has $L$ bits gets $2^L$ entries. A code of $l$ bits is the first
+$l$ bits of $2^{L-l}$ indices, one for each value of the $L - l$ bits after it, and all of those
+entries say the same thing: this symbol, $l$ bits long. The decoder takes the next $L$ bits of the
 stream as an index, reads one entry, and knows the symbol and how many bits to drop, without looking
 at the bits one by one. [Chapter 8](#ch-codes) shows how `seqlz_codes.c` fills these entries.
 
@@ -55,7 +55,7 @@ Symbol 18 stands for the values 64 to 127: its code is followed by 6 plain bits,
 `64 << 8 | 6 << 4 | 4 = 0x4064`, in the 16 entries 160 to 175 of the 256. The decoder's
 `seqlz_br_value()` ([chapter 12](#ch-dec-basics)) takes these fields apart with `& 15U`,
 `(e >> 4) & 15U` and `(e >> 8) & 0xffffU`. The base needs 16 bits because the largest is
-`2^12 = 4096` on 4 KiB pages and `2^14 = 16384` on 16 KiB pages, so the entry does not fit 16 bits
+$2^{12} = 4096$ on 4 KiB pages and $2^{14} = 16384$ on 16 KiB pages, so the entry does not fit 16 bits
 and is a `u32`.
 
 The third paragraph explains a habit of the encoder that looks odd at first: it masks values that
@@ -157,10 +157,10 @@ least 1.
 
 The two asserts prove the layout:
 
-- `SEQLZ_TOKEN_BITS <= TOK_ENC_LEN_AT`, `11 <= 12`: a code of at most 11 bits fits below bit 12 and
+- `SEQLZ_TOKEN_BITS <= TOK_ENC_LEN_AT`, $11 \le 12$: a code of at most 11 bits fits below bit 12 and
   does not run into the length.
 - `SEQLZ_TOKEN_BITS < 16U`: the length, at most 11, fits into 4 bits, which hold up to 15. And
-  `TOK_ENC_LEN_AT + 4U <= 16U`, `12 + 4 <= 16`: those 4 bits end within the `u16`.
+  `TOK_ENC_LEN_AT + 4U <= 16U`, $12 + 4 \le 16$: those 4 bits end within the `u16`.
 
 ## The literal tables {#ch-internal--lit-table}
 
@@ -199,8 +199,8 @@ and 8 adds per literal. The comment describes the trick that makes it one of eac
 A 64-bit register holds 8 such sums side by side, one per byte, and one add adds all 8 as long as no
 sum passes 255: SWAR, SIMD within a register ([chapter 3](#ch-cpu--swar)).
 
-For each byte value `b`, `lit_cost[b]` is a `u64` whose lane `j`, bits `8 * j` to `8 * j + 7`, is
-`b`'s code length in table `j`. [Chapter 8](#ch-codes) shows the loop in `build_lit_sets()` that
+For each byte value `b`, `lit_cost[b]` is a `u64` whose lane $j$, bits $8 \cdot j$ to $8 \cdot j + 7$, is
+`b`'s code length in table $j$. [Chapter 8](#ch-codes) shows the loop in `build_lit_sets()` that
 packs them. With the real tables:
 
 <figure class="diagram">
@@ -291,18 +291,18 @@ bits 0 to 2, the width `w - 5` of the stream sizes in bits 3 to 5, and two zero 
 
 - `SEQLZ_LIT_SETS == 8U`: 3 bits hold the numbers 0 to 7, so exactly 8 tables. Fewer would leave
   table numbers that a page could name but that do not exist.
-- `SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U`, `12 - 5`: the widths 5 to 12 are the 8 values
+- `SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U`, $12 - 5$: the widths 5 to 12 are the 8 values
   `w - 5 = 0` to `7`, again 3 bits.
-- `SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3`, `6 - 3`: the width field is 3 bits wide, from bit 3
+- `SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3`, $6 - 3$: the width field is 3 bits wide, from bit 3
   up to the zero bits at 6.
 
 `LIT_STREAM_MAX` is the largest a literal stream can be, in bytes. Literal `k` goes to stream
-`k % 8`, so a stream holds at most every 8th literal of a page, `4096 / 8 = 512` literals, and each
+`k % 8`, so a stream holds at most every 8th literal of a page, $4096 / 8 = 512$ literals, and each
 takes at most 10 bits: 5120 bits. `+ 7U` and `/ 8U` round the bits up to whole bytes: `(5120 + 7) /
 8 = 640`. On 16 KiB pages it is 2560. The assert `LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX`,
-`640 < 4096` and `2560 < 4096`, proves that the widest size field, 12 bits, holds any stream. So the
+$640 < 4096$ and $2560 < 4096$, proves that the widest size field, 12 bits, holds any stream. So the
 encoder can always write the sizes, whatever the literals. For 4 KiB pages 10 bits would always do,
-`640 < 1024`; the format allows 12 for the 16 KiB pages.
+$640 < 1024$; the format allows 12 for the 16 KiB pages.
 
 The last assert, `SEQLZ_LIT_STREAMS == 8U`, is of another kind: it guards code, not the format. The
 encoder's `lit_streams()` writes the streams in two halves of 4 with 4 accumulators each, written
@@ -322,7 +322,7 @@ way):
 | --- | --- | --- | --- |
 | `token.decode` | 0 | 8192 | decoder, every sequence |
 | `token.enc` | 8192 | 6146 | encoder, every sequence |
-| `lit[0]` to `lit[7]` | 14 340 | 8 × 3072 = 24 576 | decoder: one `decode`; encoder: one `enc` |
+| `lit[0]` to `lit[7]` | 14 340 | $8 \times 3072 = 24\,576$ | decoder: one `decode`; encoder: one `enc` |
 | (padding) | 38 916 | 4 | |
 | `lit_cost` | 38 920 | 2048 | encoder, every literal |
 | `ll` | 40 968 | 1152 | both, for long literal runs |
@@ -337,7 +337,7 @@ bytes. On 32-bit x86, where a `u64` needs only 4-byte alignment, the struct is 4
 either way.
 
 What a page touches is much less than 43 280 bytes. The decoder reads `token.decode`, the `decode` of
-`ll` and `ml`, and with coded literals the `decode` of one literal table: 8 + 1 + 1 + 2 = 12 KiB,
+`ll` and `ml`, and with coded literals the `decode` of one literal table: $8 + 1 + 1 + 2 = 12$ KiB,
 small enough for the L1 cache, one of the reasons `docs/seqlz.md` gives for the decoder's speed
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#why-it-is-nearly-as-fast-as-lz4)).
 The encoder reads `token.enc`, 6 KiB, the 128-byte `enc` of `ll` and `ml`, `lit_cost`, 2 KiB, and
@@ -362,14 +362,14 @@ fields it is about to describe are wide enough:
 
 Each condition is about one field of the entry, and refers to the layout below:
 
-- `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U`, `11 + 12 = 23`: the field for "how far the
+- `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U`, $11 + 12 = 23$: the field for "how far the
   bitstream moves on" has 5 bits, so it holds up to 31. The most a token with its own code moves is
-  an 11-bit code plus class 3's 12 offset bits. On 16 KiB pages it is `11 + 14 = 25`.
-- `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U`, `11 + 9 = 20`: the same for class 5. Class 5 has 3
+  an 11-bit code plus class 3's 12 offset bits. On 16 KiB pages it is $11 + 14 = 25$.
+- `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U`, $11 + 9 = 20$: the same for class 5. Class 5 has 3
   bits fewer than class 3 by definition, so today this follows from the first line; it would catch a
   change of `SEQLZ_RAW_NIBBLES` that gave class 5 more bits.
 - `SEQLZ_LL_CAP <= 15U`: `ll` goes into a field of 4 bits, and the token's largest `ll` is 15.
-- `SEQLZ_ML_CAP + 4U <= 63U`, `31 + 4 = 35`: the entry stores the match length itself, not
+- `SEQLZ_ML_CAP + 4U <= 63U`, $31 + 4 = 35$: the entry stores the match length itself, not
   `ml - 4`, so it needs 35 in a field of 6 bits.
 - `SEQLZ_OFF_SHIFT(5) <= 3U`: the shift of classes 4 and 5 is 3, in a field of 2 bits.
 
@@ -528,7 +528,7 @@ copy. It also gives the decoder its two tests in the terms it thinks in: a lengt
 **`(64U - raw_bits) & 63U`.** This is `BACK`, the shift that brings the offset bits down. After the
 decoder has shifted the code out on top of its 64-bit register, the offset's `raw_bits` bits are the
 top bits, and shifting right by `64 - raw_bits` leaves exactly them. For class 3 that is
-`64 - 12 = 52`. Class 0 has no offset bits, and `64 - 0 = 64`: a shift of a `u64` by 64 is undefined
+$64 - 12 = 52$. Class 0 has no offset bits, and $64 - 0 = 64$: a shift of a `u64` by 64 is undefined
 in C, and 64 does not fit into 6 bits either. `& 63U` turns 64 into 0, and leaves 52, 55, 56, 59 and
 60 as they are. So class 0's `BACK` is 0, and the decoder uses exactly that as its test for class 0,
 `off = back ? raw : last`: with `back` 0 it ignores whatever `raw` became and takes the repeat
@@ -562,7 +562,7 @@ Build it from the repository's root with
 
 ### Token 49: one literal, a match of 7, the repeat offset
 
-Token 49 is `1 + 16 * 3 + 512 * 0`: `ll` 1, `ml - 4` 3, class 0. It is one of the three tokens with
+Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is one of the three tokens with
 the shortest code, 4 bits, `0001`, and `docs/seqlz.md` shows where it comes from: in an array of
 pointers, each pointing 16 bytes further than the one before, every 8-byte pointer is one literal,
 its low byte, which changes, and a match of its 7 other bytes, 8 bytes back, the same offset as the
@@ -574,7 +574,7 @@ sequence before
 | `N` | `n` | 4 |
 | `BACK` | `(64 - 0) & 63` | 0 |
 | `SHIFT` | `SEQLZ_OFF_SHIFT(0)` | 0 |
-| `DROP` | `4 + 0` | 4 |
+| `DROP` | $4 + 0$ | 4 |
 | `LL` | `49 & 15` | 1 |
 | `ML` | `((49 >> 4) & 31) + 4` | 7 |
 | value bit | `1 == 15 || 3 == 31` | 0 |
@@ -589,15 +589,15 @@ The value bit is 0, so the sequence can take the fast path.
 ### Token 2098: two literals, a match of 7, 16 bytes back
 
 `docs/seqlz.md` uses this sequence as its example: 2 literals, a match of 7 bytes, offset 16. The
-offset is a multiple of 8 below 256, class 4, sent as `16 / 8 = 2` in 5 bits. The token is
-`2 + 16 * 3 + 512 * 4 = 2098`, and its code in the table has 9 bits, `101100111`.
+offset is a multiple of 8 below 256, class 4, sent as $16 / 8 = 2$ in 5 bits. The token is
+$2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has 9 bits, `101100111`.
 
 | field | computation | value |
 | --- | --- | --- |
 | `N` | `n` | 9 |
 | `BACK` | `(64 - 5) & 63` | 59 |
 | `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (4 >> 2) * 3` | 3 |
-| `DROP` | `9 + 5` | 14 |
+| `DROP` | $9 + 5$ | 14 |
 | `LL` | `2098 & 15` | 2 |
 | `ML` | `((2098 >> 4) & 31) + 4` | 7 |
 | value bit | `2 == 15 || 3 == 31` | 0 |
@@ -625,7 +625,7 @@ shifts for every class, with the numbers from the entry.
 
 ### A class 3 token, and one with a length value
 
-Token 1552 is `0 + 16 * 1 + 512 * 3`: no literals, a match of 5, an offset below the page size in 12
+Token 1552 is $0 + 16 \cdot 1 + 512 \cdot 3$: no literals, a match of 5, an offset below the page size in 12
 bits. On the two desktop dumps, 29% and 36% of the matches at a class 3 offset are 5 bytes long
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)),
 and this token has an 8-bit code.
@@ -633,16 +633,16 @@ and this token has an 8-bit code.
 | field | value |
 | --- | --- |
 | `N` | 8 |
-| `BACK` | `64 - 12 = 52` |
+| `BACK` | $64 - 12 = 52$ |
 | `SHIFT` | 0 |
-| `DROP` | `8 + 12 = 20` |
+| `DROP` | $8 + 12 = 20$ |
 | `LL`, `ML` | 0, 5 |
 | value bit | 0 |
 
 The entry is `0x02850d08`. The decoder computes `(br.bits << 8) >> 52`, the 12 bits after the code,
 and moves on by 20 bits.
 
-Token 1567 is the same with `ll` 15: `15 + 16 * 1 + 512 * 3`. Its code has 9 bits, and its entry
+Token 1567 is the same with `ll` 15: $15 + 16 \cdot 1 + 512 \cdot 3$. Its code has 9 bits, and its entry
 `0x42fd4d09` has `LL` 15 and bit 30 set, `ll == SEQLZ_LL_CAP`. The decoder sees bit 30, does not take
 the fast path, and after the offset reads an `ll` value from the `ll` table and adds it to 15. The
 same bit is set for `ml - 4 = 31`, e.g. token 2032, `ML` 35, entry `0x51850d08`.
@@ -655,15 +655,15 @@ handles it before everything else:
 
 @listing src/seqlz_decompress.c 589-601
 
-Take token 1797, `5 + 16 * 16 + 512 * 3`: 5 literals, a match of 20, class 3. It is too rare to have
+Take token 1797, $5 + 16 \cdot 16 + 512 \cdot 3$: 5 literals, a match of 20, class 3. It is too rare to have
 a code, its `enc[]` is 0, so the encoder writes the escape's `0011`, then 1797 in 12 bits,
 `011100000101`, then the offset, say 1000, in 12 bits. The decoder's top 11 bits are
 `00110111000`, index 440, in the escape's range. Bit 31 is set: it drops `TOK_DROP` = 4 bits,
-refills, reads the top 12 bits, 1797, drops them, and checks `1797 < 3072`. Then it calls
+refills, reads the top 12 bits, 1797, drops them, and checks $1797 < 3072$. Then it calls
 `token_entry(1797, 0)`.
 
 With `n = 0`, the entry describes a token whose code is already gone: `N` 0, `BACK` 52, `SHIFT` 0,
-`DROP` `0 + 12 = 12`, `LL` 5, `ML` 20, `0x0a2b0d00`. From here the escaped token goes through the same
+`DROP` $0 + 12 = 12$, `LL` 5, `ML` 20, `0x0a2b0d00`. From here the escaped token goes through the same
 lines as any other: `(br.bits << 0) >> 52` is the next 12 bits, 1000, and the decoder moves on by 12.
 This is the one place where the decoder does take a token apart at run time, by calling
 `token_entry()`: for an escaped token, which is about 14 to 38 of some 200 sequences per page on the

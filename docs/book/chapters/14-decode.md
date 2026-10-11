@@ -74,7 +74,7 @@ and such a load waits.
 For an offset below 8 the function uses the pattern register of `repeat_pattern()`
 ([chapter 12](#ch-dec-basics--pattern)): 8 bytes that repeat every `step` bytes. Lines 461 to 465 store
 it 5 times without a loop, at `d`, `d + step`, up to `d + 4 * step`. The smallest step is 5, for `off =
-5`, and then the 5 stores cover `4 * 5 + 8 = 28` bytes, which is the "at least 28" of the comment. For
+5`, and then the 5 stores cover $4 \times 5 + 8 = 28$ bytes, which is the "at least 28" of the comment. For
 `off` 1, 2 and 4 the step is 8 and the 5 stores cover 40 bytes, every match of the fast path. The loop
 on lines 466 and 467 runs only for a longer match with a step below 8: e.g. `off = 5, len = 34` stores at
 25 and 30 and stops at 35. Over all offsets from 1 to 7 and lengths from 4 to 34, the furthest byte
@@ -417,7 +417,7 @@ The condition on lines 621 to 623 has four parts, and each one is what lets the 
 
 The comment on lines 614 to 620 adds a consequence: the last sequence never takes the fast path. Its
 literals end at the end of the page, and a fast sequence starts 64 bytes or more before the end and
-moves `d` by at most 14 + 34 = 48 bytes, so it ends 16 bytes or more before it. Every page therefore ends
+moves `d` by at most $14 + 34 = 48$ bytes, so it ends 16 bytes or more before it. Every page therefore ends
 on the slow path, where the checks are.
 
 In the body, line 624 looks up the next token first, as explained above. Line 633 copies 16 bytes of
@@ -570,7 +570,7 @@ byte loop only while `count` is from 0 to 56. Pointers are only formed inside th
 that could fall before a buffer are numbers. Counts that may go negative are `int`.
 
 **Time.** Every sequence except the last writes a match of at least 4 bytes, and the checks make sure
-each write is inside the page. So after at most `4096 / 4 = 1024` sequences with a match, the page is
+each write is inside the page. So after at most $4096 / 4 = 1024$ sequences with a match, the page is
 full, and the next sequence is the last: at most `PAGE / 4 + 1` = 1025 rounds of the loop, also for
 input that is not valid, which ends earlier with `-EINVAL`. Each round does a bounded amount of work
 plus copies that are bounded by the bytes they write, and `decode_literals()` is bounded by the 4096

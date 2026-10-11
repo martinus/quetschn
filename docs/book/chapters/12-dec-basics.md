@@ -93,7 +93,7 @@ the A76 the cost did not show again: cold reads in
 
 ::: warn "Every cache line" only if the table starts at a line
 `prefetch_lines()` prefetches the line of `q`, then the lines 64, 128, ... bytes further. If `p` is
-not at the start of a line, the table covers one line more than it has rounds × 8, and the last one is
+not at the start of a line, the table covers one line more than it has $\text{rounds} \times 8$, and the last one is
 not prefetched. In `struct seqlz_tables` on a 64-bit build, the token table is at offset 0, `ll.decode`
 at 40 968 and `ml.decode` at 42 120, both 8 bytes past a multiple of 64, and the literal tables at
 14 340, 17 412 and so on, 4 bytes past one.
@@ -429,11 +429,11 @@ the register; `v >> count` puts the first loaded byte right below them. Of the 6
 count` fit, the rest fall off the bottom.
 
 Line 207 moves `p` on, but only by the bytes that fit in whole: `(63 - count) >> 3`. Line 208 sets the new
-count with `count |= 56`. Both look odd; a worked example makes them plain. Write `count` as `8a + b`,
-with `b` from 0 to 7. Then `63 - count` is `8(7 - a) + (7 - b)`, so `(63 - count) >> 3` is `7 - a`: that
-many bytes fit in whole below the `count` bits. The `8 - b` bits left at the bottom of the register
-hold the first bits of the next byte, which is not counted. The new count is `8a + b + 8(7 - a) = 56 + b`. And `count | 56` is
-`56 + b` too, because `8a` is at most 56 and only has bits that 56 has, 8, 16 and 32. So after a refill
+count with `count |= 56`. Both look odd; a worked example makes them plain. Write `count` as $8a + b$,
+with $b$ from 0 to 7. Then `63 - count` is $8(7 - a) + (7 - b)$, so `(63 - count) >> 3` is $7 - a$: that
+many bytes fit in whole below the `count` bits. The $8 - b$ bits left at the bottom of the register
+hold the first bits of the next byte, which is not counted. The new count is $8a + b + 8(7 - a) = 56 + b$. And `count | 56` is
+$56 + b$ too, because $8a$ is at most 56 and only has bits that 56 has, 8, 16 and 32. So after a refill
 `count` is between 56 and 63, and `p` points to the first byte that did not go in whole. That is the
 "56 to 63" of the comment, and why the rest of the decoder can count on 56 bits after any refill. The
 identity `count + 8 * ((63 - count) >> 3) == (count | 56)` holds for all 64 values of `count`; checked
@@ -513,7 +513,7 @@ Taking `n` bits is a shift left by `n`, so that the next bits are on top, and `c
 `(int)n` keeps the subtraction signed. Without it, `count - n` would be computed in `unsigned int`, and
 a negative result would come back into the `int` through a conversion that C leaves to the
 implementation. `n` is never 64 or more, which would make the shift undefined: the largest drop is a
-token's code with its offset bits, 11 + 14 bits with 16 KiB pages.
+token's code with its offset bits, $11 + 14$ bits with 16 KiB pages.
 
 ### seqlz_br_value(): a length value, with two shifts where one would do
 
@@ -530,7 +530,7 @@ The extra bits come right after the code. The obvious way to get `x` bits after 
 the shift instruction uses only the low 6 bits of the count, so `>> 64` is `>> 0` and gives the whole
 register instead of 0. Line 239 does it in two steps: `>> 1`, then `>> (63 - x)`. For `x = 0` the second
 shift is by 63, and after the first shift bit 63 is 0, so the result is 0. For `x = 11` the two shifts
-are 1 and 52, together 53 = 64 - 11. No branch, and every shift count is from 0 to 63.
+are 1 and 52, together $53 = 64 - 11$. No branch, and every shift count is from 0 to 63.
 
 The worked example is the match length value of the example page, with the 4 KiB tables. After the token
 and the offset, the register is `0xf7edc50000000000` with `count = 25`:
@@ -538,7 +538,7 @@ and the offset, the register is `0xf7edc50000000000` with `count = 25`:
 - The index is the top 8 bits, `0xf7`, 247. `t->ml.decode[247]` is `0x000800b6`.
 - `n = 0xb6 & 15 = 6`: the code is `111101`, 6 bits, the symbol 23.
 - `x = (0xb6 >> 4) & 15 = 11`: symbol 23 has `b = 23 - 12 = 11` extra bits.
-- The base is `(0x000800b6 >> 8) & 0xffff = 0x800 = 2048`, which is `2^11`.
+- The base is `(0x000800b6 >> 8) & 0xffff = 0x800 = 2048`, which is $2^{11}$.
 - `bits << 6` is `0xfb71400000000000`, `>> 1` is `0x7db8a00000000000`, `>> 52` is `0x7db`, 2011: the 11
   bits `11111011011`.
 - The value is `2048 + 2011 = 4059`, and 17 bits are dropped, `count = 8`.
@@ -551,7 +551,7 @@ example says. A direct symbol for comparison: if the top bits are `000...`, `t->
 The comment on lines 226 and 227 states the bits the function may take: at most `SEQLZ_MAX_BITS +
 QUETSCHN_PAGE_BITS`, an 8-bit code and up to 12 extra bits with 4 KiB pages, 20, or 14 extra bits with 16
 KiB pages, 22. The caller refills before each call, which leaves at least 56. The base fits the 16 bits of
-its field: the largest is `2^14` with 16 KiB pages. The cast of the shifted value to `unsigned int`
+its field: the largest is $2^{14}$ with 16 KiB pages. The cast of the shifted value to `unsigned int`
 drops nothing: it has at most 14 bits.
 
 These three functions, `seqlz_br_refill()`, `seqlz_br_drop()` and `seqlz_br_value()`, plus a token

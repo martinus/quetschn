@@ -141,17 +141,17 @@ and needs a `dst` of 847.
    `seqlz.h` as `31 - 12 - 12 = 7`, the longest escape code that keeps this at 31, and
    `seqlz_tables_init()` marks tables with a longer escape as unfit for the encoder (`all_symbols`, see
    [chapter 8](#ch-codes)). The tables of today give the escape 4 bits, so the real maximum is 28.
-3. Length values come on top, but only with long sequences. An `ll` value (at most 8 + 12 = 20 bits)
-   comes only with 15 literals or more, and those 15 bytes alone are worth 15 / 4 × 31 = 116 bits of the
+3. Length values come on top, but only with long sequences. An `ll` value (at most $8 + 12 = 20$ bits)
+   comes only with 15 literals or more, and those 15 bytes alone are worth $15 / 4 \times 31 = 116$ bits of the
    budget; an `ml` value only with a match of 35 bytes or more, worth 271 bits. So "31 bits per 4 bytes
    covered" holds for every sequence, with its length values.
 4. The last sequence has no match and may cover 0 bytes; it gets 31 bits of its own.
 
 | | 4 KiB pages | 16 KiB pages |
 | --- | --- | --- |
-| bits at most, `SEQLZ_PAGE / 4 * 31 + 31` | 1024 × 31 + 31 = 31 775 | 4096 × 31 + 31 = 127 007 |
-| bytes of bitstream at most | 3972 (31 775 / 8 = 3971.9) | 15 876 |
-| the u16 + every byte a literal + that bitstream | 2 + 4096 + 3972 = 8070 | 2 + 16 384 + 15 876 = 32 262 |
+| bits at most, `SEQLZ_PAGE / 4 * 31 + 31` | $1024 \times 31 + 31 = 31\,775$ | $4096 \times 31 + 31 = 127\,007$ |
+| bytes of bitstream at most | 3972 ($31\,775 / 8 = 3971.9$) | 15 876 |
+| the u16 + every byte a literal + that bitstream | $2 + 4096 + 3972 = 8070$ | $2 + 16\,384 + 15\,876 = 32\,262$ |
 | two pages | 8192 | 32 768 |
 | left over, must be ≥ `ENC_ROOM` | 122 | 506 |
 
@@ -209,8 +209,8 @@ shifted left to make room for the extra bits, ORed with the low `n_extra` bits o
 first: the bitstream is read from its most significant bit, and the newest bits are the lowest.
 
 A worked example from the page of `ab` repeated, which has a match of 4094 bytes. `ml - 4` is 4090, more
-than the 31 the token holds, so a length value follows: 4090 - 31 = 4059. Its symbol is 23 with 11 extra
-bits (`seqlz_len_symbol()`, [chapter 6](#ch-header)): 4059 is in the range 2048 to 4095, 2<sup>11</sup>
+than the 31 the token holds, so a length value follows: $4090 - 31 = 4059$. Its symbol is 23 with 11 extra
+bits (`seqlz_len_symbol()`, [chapter 6](#ch-header)): 4059 is in the range 2048 to 4095, $2^{11}$
 plus 11 bits. In the default tables symbol 23 of the `ml` table has the 6-bit code `111101`, so its
 `enc[]` entry is `0x3d | 6 << 16`.
 
@@ -404,8 +404,8 @@ returns without touching `last`: there is no next sequence.
 **The class and the token.** Line 197 asks `seqlz_off_class()` ([chapter 6](#ch-header)) for the offset's
 class and how many of its bits follow the token, without a branch. Line 198 builds the token with that
 class and gets its code. For the first sequence of the page of `ab`: `off` 2, `last` 1, so the offset is
-new and below 16: class 1, 4 bits. The token is `2 + 16 * 31 + 512 * 1 =
-1010` (the match length field is capped at 31), with the 11-bit code `11011100011`.
+new and below 16: class 1, 4 bits. The token is $2 + 16 \times 31 + 512 \times 1 = 1010$
+(the match length field is capped at 31), with the 11-bit code `11011100011`.
 
 **Token and offset in one put.** Lines 203 to 206 shift the code left by the number of offset bits and
 OR the offset's bits in. The offset is shifted right by `SEQLZ_OFF_SHIFT(cls)`, 3 for classes 4 and 5,
@@ -440,8 +440,8 @@ the long comment holds at every put:
 | `ml` value | 38 | 20 | 58 |
 | flush | | | 7 |
 
-`enc_put()` needs `n < 64 - cnt`: 31 < 57, then 20 < 26. Without the flush between them, an `ll` value
-and an `ml` value after a long escaped token could reach 7 + 31 + 20 + 20 = 78 bits, and the top bits
+`enc_put()` needs `n < 64 - cnt`: $31 < 57$, then $20 < 26$. Without the flush between them, an `ll` value
+and an `ml` value after a long escaped token could reach $7 + 31 + 20 + 20 = 78$ bits, and the top bits
 would be lost. On 16 KiB pages the values have 22 bits, and the budget is 60.
 
 Line 214 remembers the offset for the next sequence's class 0. In the matcher, `last` changed at the
@@ -591,7 +591,7 @@ offset 2 that runs to the end of the page, 4094 bytes. The last sequence has 0 l
 | room check | `p - lit` = 8190 ≥ 2 + 32 | | 0 |
 | literals | 16 bytes `abab...` copied to `d + 2`, `lit` moves on by 2 | | 0 |
 | token and offset | class 1, token 1010, code `11011100011`, offset `0010` | `0x6e32` | 15 |
-| `ml` value | 4090 - 31 = 4059: code `111101`, extra `11111011011` | `0xdc65efdb` | 32 |
+| `ml` value | $4090 - 31 = 4059$: code `111101`, extra `11111011011` | `0xdc65efdb` | 32 |
 | flush | `acc << 32` = `0xdc65efdb00000000` stored at `end - 8`: `00 00 00 00 db ef 65 dc`; `p` = `end - 4` | `0xdc65efdb` | 0 |
 | last sequence | token 0, code `10001010` | `0xdc65efdb8a` | 8 |
 | flush | `acc << 56` = `0x8a00000000000000`: `8a` at `end - 5`; `p` = `end - 5` | | 0 |

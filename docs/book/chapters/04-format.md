@@ -88,7 +88,7 @@ the number of literals of the whole page. 15 bits could count up to 32767, but a
 </figure>
 
 **Raw literals.** With the top bit clear, the `n` literals follow as they are, in the order they
-appear in the page, from byte 2 to byte `2 + n - 1`. Everything after them, up to the end of the
+appear in the page, from byte 2 to byte $2 + n - 1$. Everything after them, up to the end of the
 compressed page, is `B`, the bitstream of the sequences. `B` has no length field of its own: it ends
 where the page ends, and zram knows where that is because it stores the length. This is the only
 layout `seqlz-fast` writes, and `seqlz-fast-lit` writes it for every page whose literals do not code
@@ -151,8 +151,8 @@ of `w` bits are exactly `w` bytes, so no bit is left over. Then come the 8 strea
 `s[j]` bytes each, and after the last stream the bitstream `B`.
 
 The coded literals are dealt out to the streams like cards: literal 0 goes to stream 0, literal 1 to
-stream 1, literal 7 to stream 7, and literal 8 to stream 0 again. Stream `j` holds literals `j`,
-`j + 8`, `j + 16` and so on, each as the code of literal table `set`, one after the other, read most
+stream 1, literal 7 to stream 7, and literal 8 to stream 0 again. Stream $j$ holds literals $j$,
+$j + 8$, $j + 16$ and so on, each as the code of literal table `set`, one after the other, read most
 significant bit first, as the bitstream. Its codes must end in its last byte: they take at most
 `8 * s[j]` bits and fewer than 8 bits less, and the bits after the last code are 0. A stream without
 literals has `s[j] = 0`. All 8 streams use the same table; the 8 streams and the 8 tables have
@@ -173,7 +173,7 @@ in 4054 bytes, `seqlz-fast-lit` in 2651. The first 12 bytes of the coded page ar
 - The 9 bytes of sizes are the number `S = 0x9d4ea79389f4f2773e`, the last byte the high one. Its
   lowest 9 bits are `0x13e = 318`, the size of stream 0. The 8 sizes are 318, 315, 316, 318, 312, 316,
   314 and 314 bytes, 2523 together.
-- The streams start at byte `3 + w = 12`, the bitstream at `12 + 2523 = 2535`, and it takes the last
+- The streams start at byte $3 + w = 12$, the bitstream at $12 + 2523 = 2535$, and it takes the last
   116 bytes of the page.
 
 492 literals in about 315 bytes is 5.1 bits per literal, where the raw page spends 8.
@@ -217,10 +217,10 @@ the order of the symbols' numbers. Here is the rule applied to the real token ta
 - `first[6] = (8 + 4) * 2 = 24`, binary `011000`, the code of token 177, the first of 5 symbols with
   6 bits.
 
-Every table is **complete**: its codes use up all bit strings, the sum of `2^-l` over all codes is
+Every table is **complete**: its codes use up all bit strings, the sum of $2^{-l}$ over all codes is
 exactly 1 ([chapter 2](#ch-compression--complete)). For the token table that is 4 codes of 4 bits, 4 of 5, 5 of 6, 11 of 7, 27 of 8, 42 of 9,
-76 of 10 and 408 of 11 bits, 577 codes. Counted in units of `1/2048`: `4 * 128 + 4 * 64 + 5 * 32 + 11 *
-16 + 27 * 8 + 42 * 4 + 76 * 2 + 408 = 2048`. So every string of 11 bits starts with exactly one
+76 of 10 and 408 of 11 bits, 577 codes. Counted in units of $\frac{1}{2048}$:
+$4 \cdot 128 + 4 \cdot 64 + 5 \cdot 32 + 11 \cdot 16 + 27 \cdot 8 + 42 \cdot 4 + 76 \cdot 2 + 408 = 2048$. So every string of 11 bits starts with exactly one
 code, and a decoder never meets bits that are no code. That is what lets `seqlz_decode()` look up 11
 bits in a table of 2048 entries without checking the entry; the table is built in
 [chapter 8](#ch-codes).
@@ -409,10 +409,10 @@ else:       b = s - 12;  value = 2^b + read(b)
 ```
 
 Values below 16 are a symbol of their own. A larger value is sent as the position of its highest
-bit, `b`, as the symbol `12 + b`, followed by the `b` bits below the highest one as plain bits. The
-symbols 16 to 24 stand for `b = 4` to 12, the ranges 16 to 31, 32 to 63, and so on up to 4096 to 8191.
-That is 25 symbols on 4 KiB pages, `13 + P`, and 27 on 16 KiB pages. E.g. the value 100 is in the
-range 64 to 127, so `b = 6`, the symbol is 18, and `read(6)` is `100 - 64 = 36`. In the real `LL`
+bit, $b$, as the symbol $12 + b$, followed by the $b$ bits below the highest one as plain bits. The
+symbols 16 to 24 stand for $b = 4$ to 12, the ranges 16 to 31, 32 to 63, and so on up to 4096 to 8191.
+That is 25 symbols on 4 KiB pages, $13 + P$, and 27 on 16 KiB pages. E.g. the value 100 is in the
+range 64 to 127, so $b = 6$, the symbol is 18, and `read(6)` is $100 - 64 = 36$. In the real `LL`
 table symbol 18 has the code `1010`, so `ll = 115` costs the token, 4 bits of code and 6 plain bits.
 
 The longest code of a length value has 8 bits, so each decode table has 256 entries. A match
@@ -451,7 +451,7 @@ and nothing in the kernel VM on the PC
 Every sequence but the last writes at least 4 bytes, so a decoder stops after at most `PAGE / 4 + 1`
 sequences, 1025 on a 4 KiB page, also on a page that is not valid. That bounds the work per page.
 
-Two facts follow from the rules. A valid page has `n >= 1`: the first match needs at least one byte
+Two facts follow from the rules. A valid page has $n \ge 1$: the first match needs at least one byte
 before it, and a page without matches is all literals. And the first match's offset is at most that
 sequence's `ll`.
 
@@ -658,11 +658,11 @@ Step by step, with the codes of the real 4 KiB tables:
 
 | bits | read as | means |
 | --- | --- | --- |
-| `11011100011` | `symbol(TOK)` = 1010 | `1010 = 2 + 16 * 31 + 512 * 1`: `ll = 2`, `mlf = 31`, class 1 |
+| `11011100011` | `symbol(TOK)` = 1010 | $1010 = 2 + 16 \cdot 31 + 512 \cdot 1$: `ll = 2`, `mlf = 31`, class 1 |
 | `0010` | `read(4)` = 2 | class 1: `off = 2` |
 | | | `ll` is not 15, no `ll` value: append `a b`, the page has 2 bytes |
-| `111101` | `symbol(ML)` = 23 | `mlf` is 31, so a length value: `b = 23 - 12 = 11` |
-| `11111011011` | `read(11)` = 2011 | value `2^11 + 2011 = 4059`, `ml = 35 + 4059 = 4094` |
+| `111101` | `symbol(ML)` = 23 | `mlf` is 31, so a length value: $b = 23 - 12 = 11$ |
+| `11111011011` | `read(11)` = 2011 | value $2^{11} + 2011 = 4059$, `ml = 35 + 4059 = 4094` |
 | | | copy 4094 bytes from 2 back: `abab...`, the page has 4096 bytes |
 | `10001010` | `symbol(TOK)` = 0 | `ll = 0`, `mlf = 0`, class 0, no offset bits |
 | | | no literals to copy, the page is full: the last sequence, valid |
@@ -724,7 +724,7 @@ cannot save 51 bytes.
 | `11011100010` | `symbol(TOK)` = 1009 | `ll = 1`, `mlf = 31`, class 1 |
 | `0001` | `read(4)` = 1 | `off = 1` |
 | | | append `z`; 26 bytes |
-| `111101` | `symbol(ML)` = 23 | `b = 11` |
+| `111101` | `symbol(ML)` = 23 | $b = 11$ |
 | `11111000011` | `read(11)` = 1987 | `ml = 35 + 2^11 + 1987 = 4070`: `z` 4070 more times; 4096 bytes |
 | `10001010` | `symbol(TOK)` = 0 | `ll = 0`, the page is full: the last sequence |
 | `0000000` | | 7 bits left, in the last byte, all 0: valid |
@@ -737,7 +737,7 @@ A few things to see here:
 - **Token 12 has an 11-bit code.** 12 literals and a match of exactly 4 bytes at the repeat offset is
   rare on real pages, so its code is long. A token without any code would have taken 16 bits.
 - **Token 2098 is "2 literals, a match of 7 at offset 16".** 16 is a multiple of 8 from 16 on, so the
-  class is 4 and the offset is sent as 2 in 5 bits. The sequence takes 9 + 5 = 14 bits plus its 2
+  class is 4 and the offset is sent as 2 in 5 bits. The sequence takes $9 + 5 = 14$ bits plus its 2
   literals. In lz4's format the same sequence is a token byte and 2 bytes of offset, 24 bits plus
   the literals.
 - **The third match changes the class but not the bits' meaning.** Offset 1 is not the repeat offset

@@ -243,7 +243,7 @@ counts in
 | 5 | multiple of 8, from 256 | 15.30% |
 
 6 values in a fixed width take 3 bits, and 2 of the 8 patterns are never used. Information theory says
-what they need at least: a value that occurs with probability `p` carries `-log2(p)` bits of
+what they need at least: a value that occurs with probability $p$ carries $-\log_2 p$ bits of
 information, and the average of that over all values, the **entropy**, is the least number of bits per
 value any code can reach on average. Here it is 2.42 bits. (These are shares of all sequences in the
 training counts, which count the pages of a phone's zram dump five times; on the desktop dumps, 18% to 25% of
@@ -257,7 +257,7 @@ code** makes that possible without any separator: no code is the start of anothe
 four symbols, A in half the cases, B in a quarter, C and D in an eighth each, with the codes `0`, `10`,
 `110` and `111`. Reading bit by bit, `0` is complete as A; `1` is not complete, `10` is B; `11` not,
 `110` is C and `111` is D. So `0 10 0 111 0`, written without spaces as `01001110`, can only be
-A B A D A. On average that is `0.5 × 1 + 0.25 × 2 + 0.125 × 3 × 2 = 1.75` bits per symbol, where 4
+A B A D A. On average that is $0.5 \times 1 + 0.25 \times 2 + 0.125 \times 3 \times 2 = 1.75$ bits per symbol, where 4
 symbols in a fixed width take 2. A **symbol** is whatever gets a code: an offset class here, a token,
 a byte value, a length.
 
@@ -276,11 +276,11 @@ Each symbol's code is the path from the root to its leaf, 0 for one branch and 1
 
 | step | joins | weights | new weight |
 | --- | --- | --- | --- |
-| 1 | class 3 and class 2 | 8.12 + 8.82 | 16.94 |
-| 2 | class 1 and class 5 | 13.04 + 15.30 | 28.34 |
-| 3 | {3, 2} and class 4 | 16.94 + 24.17 | 41.11 |
-| 4 | {1, 5} and class 0 | 28.34 + 30.55 | 58.89 |
-| 5 | the two that are left | 41.11 + 58.89 | 100 |
+| 1 | class 3 and class 2 | $8.12 + 8.82$ | 16.94 |
+| 2 | class 1 and class 5 | $13.04 + 15.30$ | 28.34 |
+| 3 | {3, 2} and class 4 | $16.94 + 24.17$ | 41.11 |
+| 4 | {1, 5} and class 0 | $28.34 + 30.55$ | 58.89 |
+| 5 | the two that are left | $41.11 + 58.89$ | 100 |
 
 <figure class="diagram">
 <div class="scroll">
@@ -329,7 +329,7 @@ Each symbol's code is the path from the root to its leaf, 0 for one branch and 1
 </figure>
 
 Classes 0 and 4 get 2 bits, the other four get 3. On average that is
-`2 × (30.55% + 24.17%) + 3 × (13.04% + 8.82% + 8.12% + 15.30%) = 2.45` bits, against 3 for the
+$2 \times (30.55\% + 24.17\%) + 3 \times (13.04\% + 8.82\% + 8.12\% + 15.30\%) = 2.45$ bits, against 3 for the
 fixed width and 2.42 for the entropy. The gap to the entropy is what a Huffman code cannot get: every
 code is a whole number of bits, so a symbol with probability 0.9, which carries 0.15 bits, still costs
 1. Coders with fractional bits exist, arithmetic coding and ANS, which `zstd` uses for its sequences as
@@ -342,7 +342,7 @@ seqlz does not give the offset class a code of its own; it puts the class into o
 The token has 3072, and the same method builds its code.
 
 One more limit matters in practice: a decoder that decodes with a table, as below, needs a table of
-`2^L` entries for a longest code of `L` bits. A Huffman code for 3072 symbols, some of them very rare,
+$2^L$ entries for a longest code of $L$ bits. A Huffman code for 3072 symbols, some of them very rare,
 can have codes of 20 bits and more. So the trainer, the program that builds seqlz's tables from counts
 ([chapter 8](#ch-codes--lengths)), limits the code lengths, 11 bits for tokens, 10 for
 literals, 8 for [length values](#ch-format--length-values), at a small cost in bits, and gives the rarest tokens no code at all; they
@@ -384,13 +384,13 @@ real table of `ll` length values.
 
 ## Complete codes: every bit pattern starts a code {#ch-compression--complete}
 
-A code of `l` bits uses up `1/2^l` of all bit strings: of all strings of 3 bits, the code `01` starts 2,
-`010` and `011`, a quarter. The sum of `2^-l` over all codes, the **Kraft sum**, is at most 1 for any
-prefix code. For the offset classes it is `2/4 + 4/8 = 1`. A code whose Kraft sum is exactly 1 is
+A code of $l$ bits uses up $\frac{1}{2^l}$ of all bit strings: of all strings of 3 bits, the code `01` starts 2,
+`010` and `011`, a quarter. The sum of $2^{-l}$ over all codes, the **Kraft sum**, is at most 1 for any
+prefix code. For the offset classes it is $\frac{2}{4} + \frac{4}{8} = 1$. A code whose Kraft sum is exactly 1 is
 **complete**: it uses up every bit string, so every long enough string of bits starts with exactly one
 code.
 
-An incomplete code leaves gaps. With only A = `0` and B = `10`, the sum is `1/2 + 1/4 = 3/4`, and the
+An incomplete code leaves gaps. With only A = `0` and B = `10`, the sum is $\frac{1}{2} + \frac{1}{4} = \frac{3}{4}$, and the
 bits `11` start no code at all; a decoder has to check for that, and say what happens then. A sum above
 1 cannot be a prefix code: three codes of lengths 1, 1 and 2 would need more than all bit strings.
 Huffman codes are always complete, because every node of the tree has two children. seqlz requires it of
@@ -408,13 +408,13 @@ lengths, offsets and the end of the page, are what catch it ([chapter 14](#ch-de
 ## Table-driven decoding {#ch-compression--table-decoding}
 
 Reading a code bit by bit is a loop with a branch per bit. Decoders do it with one table lookup
-instead. If the longest code has `L` bits, the decoder peeks at the next `L` bits without consuming
-them, uses them as an index into a table of `2^L` entries, and the entry says which symbol it is and how
+instead. If the longest code has $L$ bits, the decoder peeks at the next $L$ bits without consuming
+them, uses them as an index into a table of $2^L$ entries, and the entry says which symbol it is and how
 many bits its code has. The decoder then drops that many bits and peeks again. One lookup per code,
 whatever its length.
 
-For the offset classes, `L` is 3 and the table has 8 entries. A code of `l` bits is the first `l` bits
-of the index, and the bits after it can be anything, so it fills `2^(3-l)` entries in a row: class 0,
+For the offset classes, $L$ is 3 and the table has 8 entries. A code of $l$ bits is the first $l$ bits
+of the index, and the bits after it can be anything, so it fills $2^{3-l}$ entries in a row: class 0,
 code `00`, fills `000` and `001`; class 4, code `01`, fills `010` and `011`; each 3-bit code fills one.
 Decoding the classes 4, 1, 0, 5, whose codes make the bits `01 100 00 111`:
 
@@ -433,7 +433,7 @@ token of code `c` with `l` bits, the indices from `c << (11 - l)` up to, not inc
 seqlz's token table has `SEQLZ_TOKEN_BITS` = 11, 2048 entries of 4 bytes, 8 KiB. Token 49, "1
 literal, a match of 7 bytes, the repeat offset", the sequence of an array of 8-byte pointers that
 differ only in their lowest byte, has a code of 4 bits (how a token's number comes from `ll`, `ml` and
-the offset class is in [chapter 4](#ch-format--token)), so it fills 2^(11-4) = 128 entries, one sixteenth of the table. The longest codes, 11
+the offset class is in [chapter 4](#ch-format--token)), so it fills $2^{11-4} = 128$ entries, one sixteenth of the table. The longest codes, 11
 bits, fill one entry each. [Chapter 7](#ch-internal) shows what an entry holds: for a token not only the
 symbol and the code length, but the two lengths and everything needed to cut the offset bits out of the
 bits that follow.
@@ -457,8 +457,8 @@ of the table.
 
 The other way, least significant bit first, is the one of deflate. The
 decoder then peeks with a mask, `reg & (2^L - 1)`, and the code's first bit is the lowest bit of the
-index. The entries of one code are then not a range: a code of `l` bits fixes the low `l` bits of the
-index, and its entries are every `2^l`-th one, spread over the whole table. And the codes, whose first
+index. The entries of one code are then not a range: a code of $l$ bits fixes the low $l$ bits of the
+index, and its entries are every $2^l$-th one, spread over the whole table. And the codes, whose first
 bit is their most significant digit by the canonical rule, have to be bit-reversed when the table is
 built.
 

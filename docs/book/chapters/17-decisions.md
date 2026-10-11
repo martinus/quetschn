@@ -249,7 +249,7 @@ The rows, one by one, with what the table cannot say.
 
 ### The token: 4 bits, 5 bits and 6 classes
 
-A token is `min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class`, 16 × 32 × 6 = 3072 values
+A token is `min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class`, $16 \times 32 \times 6 = 3072$ values
 ([chapter 6](#ch-header)). The split of bits between the lengths was measured when the token had 3
 classes and codes of at most 11 bits, before the escape existed: 3 and 5 bits gave 26.9% at 8599 decode
 cycles, 4 and 4 gave 27.0% at 8482. The escape then let 4 and 5 bits fit, at 26.8% and 8480 cycles
@@ -322,8 +322,8 @@ A76 nothing and the A55 2 to 2.6 µs of cold reads for the same 4.8 bytes
 
 ### The bit order: most significant bit first
 
-The bitstream was read lowest bit first at first. Then the entries of a code of `l` bits are spread over
-the whole token table, every 2^`l` entries. Read highest bit first, the next token is the top 11 bits of
+The bitstream was read lowest bit first at first. Then the entries of a code of $l$ bits are spread over
+the whole token table, every $2^l$ entries. Read highest bit first, the next token is the top 11 bits of
 the register, and a code's entries are one range of the table: a page touches 42.5 instead of 55 of
 the table's 128 cache lines, counted on 20 000 pages
 ([The sequences' bitstream most significant bit first](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
@@ -404,7 +404,7 @@ Codes of 9 bits instead of 10 made no read faster and the second desktop dump 64
 ([Six choices, item 2](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#2-the-literal-tables-in-9-bits-no-faster-up-to-64-bytes-larger-not-kept)).
 
 Two details of the trainer matter, each found with a table that no page chose: a page whose literals no
-table codes 1/16 smaller counts for no table, and a table without pages starts again from the page whose
+table codes $\frac{1}{16}$ smaller counts for no table, and a table without pages starts again from the page whose
 literals cost the most per byte.
 
 ### 8 streams, which have nothing to do with the 8 tables
@@ -423,8 +423,8 @@ the VM 1.8% slower with gcc and 0.7% with clang
 
 ### Coded only where it saves 1/16 and 51 bytes
 
-The encoder codes a page's literals only if the coded streams plus 51 bytes are less than `n − n/16`,
-for `n` literals (`SEQLZ_LIT_CODED_MIN`, [chapter 11](#ch-literals-enc)). Both parts have a reason.
+The encoder codes a page's literals only if the coded streams plus 51 bytes are less than $n - n/16$,
+for $n$ literals (`SEQLZ_LIT_CODED_MIN`, [chapter 11](#ch-literals-enc)). Both parts have a reason.
 Coding wherever it saves anything gave less than 0.1 points more, for decoding literals on every such
 page
 ([seqlz-fast-lit: one of 8 literal tables per page](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)). And a page with coded literals costs the decoder a fixed time on top of its literals: its literal
@@ -441,7 +441,7 @@ reason than it had"
 
 The 8 stream sizes were 2 bytes each, a header of 19 bytes. Most streams are below 128 bytes, so the
 sizes are now written in `w` bits each, the width the largest needs, 5 to 12, and byte 2 of the header
-holds `w − 5`. The header is `3 + w` bytes, mostly 9 to 11, and pages are 5.2 and 5.5 bytes smaller
+holds $w - 5$. The header is $3 + w$ bytes, mostly 9 to 11, and pages are 5.2 and 5.5 bytes smaller
 ([Stream sizes in as many bits as the largest needs](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
 Letting the smaller header code more pages would have saved 2.7 and 1.7 bytes more on the desktop. On
 the phone's first dump those extra coded pages were worth 2 bytes per page for 251 ns more per page
@@ -658,7 +658,7 @@ depends on the code lengths of the sequences before, which a predictor learns on
 seen
 ([Which branches](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
 
-A refill leaves at least 56 bits, and two fast sequences take at most 2 × (11 + 14) = 50. So a fast
+A refill leaves at least 56 bits, and two fast sequences take at most $2 \times (11 + 14) = 50$. So a fast
 sequence now refills every second time without asking, and a branch that alternates is one any predictor
 gets right. In a swap-in on x86-64 that took `zcomp_decompress()` from 1995 to 2008 ns down to 1936 to
 1942 ns, in 3 boots of the code as it was kept, with gcc; an earlier series of 3 boots gave 2010 to 2011

@@ -423,17 +423,17 @@ rarely pass the rule below.
 @listing src/seqlz_compress.c 562-563
 
 The page keeps its raw literals unless `coded + 51 < n - n / 16`: the 8 streams plus 51 bytes have to
-be smaller than 15/16 of the raw literals. Everything is `unsigned int`; `n - n / 16` cannot wrap,
+be smaller than $\frac{15}{16}$ of the raw literals. Everything is `unsigned int`; `n - n / 16` cannot wrap,
 because `n / 16 <= n`. For `n = 0` the right side is 0 and the page stays raw, which is right:
 there is nothing to code.
 
 What the rule means in bytes: the page with raw literals has `2 + n` bytes before the bitstream, the
 coded one `3 + w + coded`. If the rule holds, the page shrinks by `n - coded - 1 - w`, which is more
-than `51 + n / 16 - 1 - w`: more than 38 bytes plus 1/16 of the literals, with the largest `w` of 12.
+than `51 + n / 16 - 1 - w`: more than 38 bytes plus $\frac{1}{16}$ of the literals, with the largest `w` of 12.
 
 Two different reasons are behind the two terms.
 
-**The 1/16.** zsmalloc stores a page in a size class, and classes are at least 16 bytes apart
+**The $\frac{1}{16}$.** zsmalloc stores a page in a size class, and classes are at least 16 bytes apart
 ([chapter 1](#ch-zram)). A page that is a few bytes smaller often lands in the same class and saves
 nothing, while every read of it pays for decoding the literals. Coding the literals whenever they
 save anything at all gave less than 0.1 points (0.1% of a page) more on the dumps of September 2026,
@@ -447,8 +447,8 @@ core, which has few cache misses in flight, that fixed cost is several µs.
 ::: measured 51 bytes instead of 19, on the Mi 9T and on the PC
 Before 5th October 2026 the minimum was 19 bytes. In the Mi 9T's own kernel, 20 000 pages of the
 second phone dump, clocks fixed, a minimum of 51 coded 24.9% instead of 38.8% of the pages. Pages
-got 7.9 bytes larger on average, and the time per page written (write + 0.34 × cold read) got 2.7 µs
-shorter on the Cortex-A55 and 1.1 µs shorter on the Cortex-A76. 2/16 of the literals instead of 1/16
+got 7.9 bytes larger on average, and the time per page written ($\text{write} + 0.34 \times \text{cold read}$) got 2.7 µs
+shorter on the Cortex-A55 and 1.1 µs shorter on the Cortex-A76. $\frac{2}{16}$ of the literals instead of $\frac{1}{16}$
 coded about as few pages, for 12.3 bytes and less time saved. In the kernel VM on a Ryzen 9 7950X, 51
 costs 11 bytes per page on the whole first desktop dump for 0.1 µs, within what two boots of the same
 build differ. 51 is the best of the three minimums measured, 19, 51 and 115, not a measured optimum.
@@ -575,7 +575,7 @@ chains; each depends only on its own accumulator from the iteration before.
 
 After 4 literals per stream, each stream is flushed: its whole bytes go to memory. 4 codes of at most
 10 bits are 40 bits, plus at most 7 left from the flush before, 47 bits, which fit the 64-bit
-accumulator. 5 codes would fit too, 7 + 50 = 57 bits, 6 would not; the repository does not say why
+accumulator. 5 codes would fit too, $7 + 50 = 57$ bits, 6 would not; the repository does not say why
 the blocks have 4 and not 5. With 4, a block is 32 literals, and `k` moves on by a power of 2.
 
 The loop condition `k + 28U < n_literals` keeps whole blocks only. The highest literal a block uses
@@ -751,7 +751,7 @@ size 1 in the next `width`, and so on (the format's `S` in
 - The inner `for` adds `width` to `cnt` and, while 8 or more bits are waiting, writes the low byte and
   shifts it out.
 
-`cnt` stays below 8 after the inner loop, and below `8 + 12 = 20` after the add, so `acc` never holds
+`cnt` stays below 8 after the inner loop, and below $8 + 12 = 20$ after the add, so `acc` never holds
 more than 20 bits; a u64 is more than enough, and the cast to u64 before the shift keeps the shift in
 64 bits. After 8 sizes, `8 * width` bits have gone in, a whole number of bytes, so the last inner loop
 leaves `cnt` at 0 and nothing behind: exactly `width` bytes, as the comment promises.
@@ -822,8 +822,8 @@ The offsets on the left are hexadecimal. Taken apart by hand:
   Table 0 is the one that gives `e` and the space 4 bits, the table for text.
 - `33 c6 18 63 84` are the 8 sizes. As one little-endian number, `0x846318c633`, cut into 5-bit
   fields from the bottom: 19, 17, 17, 17, 17, 17, 17, 16. Their sum is 137.
-- The streams start at byte `3 + 5 = 8`: stream 0 at 8, stream 1 at 27, then 44, 61, 78, 95, 112 and
-  129, and they end at `8 + 137 = 145`, `0x91`.
+- The streams start at byte $3 + 5 = 8$: stream 0 at 8, stream 1 at 27, then 44, 61, 78, 95, 112 and
+  129, and they end at $8 + 137 = 145$, `0x91`.
 - Stream 0 begins `43 56 4e e0`, in bits `01000011 01010110 01001110 11100000`. Table 0's codes cut it
   into `01000` (`o`), `011010` (`d`), `1011001` (`h`), `00111` (`n`), `011100` (`l`): literals 0, 8, 16,
   24 and 32 of the page.

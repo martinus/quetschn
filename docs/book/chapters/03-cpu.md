@@ -123,19 +123,19 @@ project carries a kernel patch for it. And the Mi 9T's 4.14 kernel says that arm
 ## Which cache lines a lookup touches {#ch-cpu--msb-first}
 
 A decode table is indexed by the next 11 bits of the bitstream
-([chapter 2](#ch-compression--table-decoding)). A code of `l` bits fills
-`2^(11 - l)` entries: all indices that start with its bits, whatever bits come after it. Which
+([chapter 2](#ch-compression--table-decoding)). A code of $l$ bits fills
+$2^{11-l}$ entries: all indices that start with its bits, whatever bits come after it. Which
 entries those are depends on the order the bits are read in, and that decides how many cache lines a
 page touches.
 
 seqlz reads its bitstream **most significant bit first** ([chapter 4](#ch-format--bitstream)). The
-next code is then the top bits of the index, and the `2^(11 - l)` entries of a code are one range.
+next code is then the top bits of the index, and the $2^{11-l}$ entries of a code are one range.
 Token 49's code is `0001`: its entries are the indices `0001xxxxxxx`, 128 to 255. At 4 bytes per entry
 and 16 entries per line, that is lines 8 to 15. Token 0's code `10001010` has the 8 entries 1104 to
 1111, all in line 69.
 
 Read **least significant bit first**, as seqlz did until 6th October 2026, the code is in the low
-bits of the index, and its entries are every `2^l`-th entry of the table. Token 49's 128 entries are
+bits of the index, and its entries are every $2^l$-th entry of the table. Token 49's 128 entries are
 then indices 8, 24, 40, and so on, one in every one of the 128 lines, and token 0's 8 entries are
 in 8 lines, 5, 21, 37 and so on, 16 lines apart:
 

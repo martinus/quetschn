@@ -8,7 +8,9 @@ rl.on("line", (line) => {
   const [tex, display] = JSON.parse(line);
   let out;
   try {
-    out = katex.renderToString(tex, { displayMode: display, throwOnError: true, output: "htmlAndMathml" });
+    out = katex.renderToString(tex, { displayMode: display, throwOnError: true, output: "htmlAndMathml",
+      // fractions in the text at full size: the small ones of KaTeX's text style are hard to read
+      macros: { "\\frac": "\\dfrac" } });
   } catch (e) {
     out = { error: String(e.message || e) };
   }
