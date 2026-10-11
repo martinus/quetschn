@@ -93,6 +93,8 @@ BookAnim.define('hash', function (ctx) {
     if (e.t === 'emit') for (i = 0; i < e.len; i++) inMatch[e.pos + i] = true;
     if (cur >= 0 && e.cand !== null && e.cand !== undefined) for (i = 0; i < span; i++) candSet[e.cand + i] = true;
     var cmp = cur >= 0 ? (e.t === 'lit' ? (e.cand === null ? 0 : MINM) : span) : 0;
+    if (ctx.narrow) { narrow(e, s, cur, decided, inMatch, candSet); return say(e, s); }
+    root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
 
     // the arc from the candidate to the cursor
     if (cur >= 0 && e.cand !== null) {
@@ -189,6 +191,93 @@ BookAnim.define('hash', function (ctx) {
     say(e, s);
   }
 
+  /*
+   * The narrow layout, about one unit per pixel on a phone: the bytes in rows of 20, the compare
+   * below them, the table as 2 rows of 8 slots, one sequence per line. No arc: the offset and the
+   * candidate stand at the compare.
+   */
+  var NW = 350, PER = 20, NC = 16.5, NX = 10, RP = 50, CC = 19;
+  function narrow(e, s, cur, decided, inMatch, candSet) {
+    var n = s.length, rows = Math.ceil(n / PER), i;
+    function nx(j) { return NX + (j % PER) * NC; }
+    function ny(j) { return 6 + Math.floor(j / PER) * RP; }
+    var CY = 6 + rows * RP + 6, TY = CY + 134, QY = TY + 128, NH = QY + 20 + (ev[ev.length - 1].seqs.length - 1) * 18 + 10;
+    root.setAttribute('viewBox', '0 0 ' + NW + ' ' + NH);
+    // the bytes, in rows
+    for (i = 0; i < n; i++) {
+      var cls = 'hs-todo';
+      if (inMatch[i]) cls = 'hs-match';
+      else if (i < decided && i !== cur) cls = 'hs-lit';
+      if (e.t === 'len' && i >= cur && i < cur + e.len) cls = 'hs-match';
+      ctx.svg('rect', { x: nx(i), y: ny(i), width: NC, height: 24, class: 'hs-cell ' + cls }, layer);
+      text(nx(i) + NC / 2, ny(i) + 17, show(s[i]), { 'text-anchor': 'middle', 'font-size': 13, class: s[i] === ' ' ? 'hs-mut' : cls === 'hs-match' ? 'hs-acc' : '' });
+    }
+    for (i in candSet) ctx.svg('rect', { x: nx(+i) + 1.5, y: ny(+i) + 1.5, width: NC - 3, height: 21, class: 'hs-cand' }, layer);
+    var box = e.t === 'emit' ? e.pos + e.len : cur;
+    if (box >= 0 && box < n) ctx.svg('rect', { x: nx(box) + 1.5, y: ny(box) + 1.5, width: NC - 3, height: 21, class: 'hs-cur' }, layer);
+    // the 5 bytes the hash covers, one bracket per row they are in
+    if (cur >= 0 && (e.t === 'lit' || e.t === 'hit')) {
+      for (var b0 = cur; b0 < cur + HBYTES; ) {
+        var b1 = Math.min(cur + HBYTES, (Math.floor(b0 / PER) + 1) * PER), hy = ny(b0) + 27;
+        ctx.svg('path', { d: 'M' + (nx(b0) + 2) + ',' + hy + ' V' + (hy + 4) + ' H' + (nx(b1 - 1) + NC - 2) + ' V' + hy, class: 'hs-brace' }, layer);
+        b0 = b1;
+      }
+    }
+    var marks = {};
+    if (cur >= 0) marks[cur] = 'hs-acc';
+    if (e.t === 'emit' && box < n) marks[box] = 'hs-acc';
+    if (cur >= 0 && e.cand !== null && e.cand !== undefined) marks[e.cand] = e.t === 'lit' ? 'hs-mark' : 'hs-acc';
+    for (i = 0; i < n; i++) {
+      var near = false;
+      for (var m in marks) if (+m !== i && Math.abs(+m - i) <= 1) near = true;
+      if (marks[i]) text(nx(i) + NC / 2, ny(i) + 44, String(i), { 'text-anchor': 'middle', 'font-size': 11, class: marks[i] + ' hs-bold' });
+      else if (i % 5 === 0 && !near) text(nx(i) + NC / 2, ny(i) + 44, String(i), { 'text-anchor': 'middle', 'font-size': 11, class: 'hs-mut' });
+    }
+
+    // the compare: the bytes here above, the candidate's below
+    if (cur >= 0 && e.cand !== null && e.t !== 'emit') {
+      var shown = e.t === 'lit' || e.t === 'hit' ? MINM : Math.min(e.len + 1, n - cur), bad = e.t === 'lit' ? 'hs-mark' : 'hs-acc';
+      text(NX, CY + 12, 'here, ' + cur, { 'font-size': 12, class: 'hs-acc' });
+      if (e.t !== 'lit') text(NW - NX, CY + 12, 'offset ' + (cur - e.cand), { 'text-anchor': 'end', 'font-size': 12, class: 'hs-acc hs-bold' });
+      text(NX, CY + 102, 'candidate, ' + e.cand, { 'font-size': 12, class: bad });
+      for (i = 0; i < shown; i++) {
+        var x2 = NX + i * CC, A = s[cur + i], B = s[e.cand + i];
+        var same = A === B, counted = e.t === 'lit' ? i <= e.eq : true;
+        var c2 = !counted ? 'hs-todo' : same ? 'hs-match' : 'hs-bad';
+        ctx.svg('rect', { x: x2, y: CY + 18, width: CC, height: 24, class: 'hs-cell ' + c2 }, layer);
+        ctx.svg('rect', { x: x2, y: CY + 62, width: CC, height: 24, class: 'hs-cell ' + c2 }, layer);
+        text(x2 + CC / 2, CY + 35, show(A), { 'text-anchor': 'middle', 'font-size': 13, class: A === ' ' ? 'hs-mut' : '' });
+        text(x2 + CC / 2, CY + 79, show(B), { 'text-anchor': 'middle', 'font-size': 13, class: B === ' ' ? 'hs-mut' : '' });
+        if (counted) text(x2 + CC / 2, CY + 57, same ? '=' : '≠', { 'text-anchor': 'middle', 'font-size': 13, class: same ? 'hs-acc hs-bold' : 'hs-mark hs-bold' });
+      }
+      var note = e.t === 'lit' ? (e.eq === 0 ? 'the first byte differs' : 'byte ' + (e.eq + 1) + ' of 4 differs') :
+        e.t === 'hit' ? 'the first 4 bytes are equal' : e.len + ' bytes equal';
+      text(NW - NX, CY + 102, note, { 'text-anchor': 'end', 'font-size': 12, class: bad });
+    } else if (cur >= 0 && e.t !== 'emit') {
+      text(NX, CY + 56, 'slot ' + e.h + ' is empty: nothing to compare', { 'font-size': 12, class: 'hs-mut' });
+    }
+
+    // the table, 2 rows of 8 slots
+    var SW = 41, SX = (NW - 8 * SW) / 2, hotRow = cur >= 0 && (e.t === 'lit' || e.t === 'hit');
+    text(NX, TY, 'hash table, 16 slots', { 'font-size': 12, class: 'hs-mut' });
+    if (hotRow) text(NW - NX, TY, 'hash of ' + q(s.substr(cur, HBYTES)) + ' = ' + e.h, { 'text-anchor': 'end', 'font-size': 12, class: 'hs-acc' });
+    for (i = 0; i < SLOTS; i++) {
+      var sx = SX + (i % 8) * SW, sy = TY + 25 + Math.floor(i / 8) * 50, hot = hotRow && i === e.h;
+      text(sx + SW / 2, sy - 5, String(i), { 'text-anchor': 'middle', 'font-size': 11, class: hot ? 'hs-acc hs-bold' : 'hs-mut' });
+      ctx.svg('rect', { x: sx + 2, y: sy, width: SW - 4, height: 28, rx: 3, class: 'hs-slot' + (hot ? ' hs-slot-hot' : '') }, layer);
+      var val = hot ? (e.cand === null ? '-' : e.cand) + '→' + e.pos : e.tab[i] === null ? '-' : String(e.tab[i]);
+      text(sx + SW / 2, sy + 19, val, { 'text-anchor': 'middle', 'font-size': hot ? 11 : 13, class: hot ? 'hs-acc hs-bold' : e.tab[i] === null ? 'hs-mut' : '' });
+    }
+
+    // the sequences so far, one per line
+    text(NX, QY, 'sequences:', { 'font-size': 12, class: 'hs-mut' });
+    if (!e.seqs.length) text(NX + 86, QY, 'none yet', { 'font-size': 12, class: 'hs-mut' });
+    e.seqs.forEach(function (sq, j) {
+      var str = (j + 1) + ': ll ' + sq.ll + (sq.ll ? ' ' + q(sq.lit) : '') + (sq.ml ? ', ml ' + sq.ml + ', offset ' + sq.off : ', no match');
+      text(NX, QY + 20 + j * 18, str, { 'font-size': 12, class: (e.t === 'emit' || e.t === 'end') && j === e.seqs.length - 1 ? 'hs-acc hs-bold' : '' });
+    });
+  }
+
   function say(e, s) {
     var n = s.length, c = e.cand;
     if (e.t === 'start') return ctx.say('The text has ' + n + ' bytes and the table 16 empty slots. At each position the matcher hashes the next 5 bytes to a slot, takes the position stored there as a candidate, compares 4 bytes, and stores its own position in the slot.');
@@ -215,5 +304,5 @@ BookAnim.define('hash', function (ctx) {
       e.fails + ' of ' + e.tries + ' candidates failed the compare: collisions. Without the compare, each would have been a wrong match.');
   }
 
-  return { steps: function () { return ev.length; }, draw: draw, interval: 1100 };
+  return { steps: function () { return ev.length; }, draw: draw, interval: 1100, narrow: true };
 });

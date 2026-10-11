@@ -15,5 +15,5 @@
 .an-stage svg text.hs-mut { fill: var(--muted); }
 .an-stage svg text.hs-bold { font-weight: 600; }
 .an-stage svg text.hs-halo { paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
-/* on a phone the drawing keeps its size and scrolls sideways, its labels are small already */
-#anim-hash .an-stage > svg { min-width: 880px; }
+/* between the phone's layout and a wide screen the drawing keeps its size and scrolls sideways */
+#anim-hash:not(.narrow) .an-stage > svg { min-width: 880px; }

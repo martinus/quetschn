@@ -5,7 +5,13 @@
  */
 BookAnim.define('huffman', function (ctx) {
   var SHARE = [30.55, 13.04, 8.82, 8.12, 24.17, 15.30];
-  var W = 720, H = 362, SL = 110, XL = 30, YC = 226, DY = 62, BW = 86, BH = 50, PW = 64, PH = 20;
+  var W, H, SL, XL, YC, DY, BW, BH, PW, PH, TY, BY, SC, mode = null;
+  // the sizes of the wide layout, or of the narrow one, one unit about one pixel on a phone, with
+  // leaves of two lines more: "class" and its number, and the code without the word
+  function sizes(narrow) {
+    if (narrow) { W = 350; H = 326; SL = 55; XL = 10; YC = 182; DY = 56; BW = 51; BH = 64; PW = 46; PH = 20; TY = 258; BY = 250; SC = 55; }
+    else { W = 720; H = 362; SL = 110; XL = 30; YC = 226; DY = 62; BW = 86; BH = 50; PW = 64; PH = 20; TY = 300; BY = 282; SC = 150; }
+  }
 
   // the merges, computed: each joins the two lightest, the lighter one on the left (bit 0)
   var nodes = {}, forest = [], merges = [], i;
@@ -59,13 +65,20 @@ BookAnim.define('huffman', function (ctx) {
     return { pos: pos, forest: f, mcount: mcount };
   }
 
-  var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'The six offset classes joined into a Huffman tree, two lightest nodes at a time, then their codes and the average code length' }, ctx.stage);
+  var root = ctx.svg('svg', { role: 'img', 'aria-label': 'The six offset classes joined into a Huffman tree, two lightest nodes at a time, then their codes and the average code length' }, ctx.stage);
   var gEdges = ctx.svg('g', {}, root), gNodes = ctx.svg('g', {}, root), gTop = ctx.svg('g', {}, root);
 
   function top(n, p) { return n.leaf ? p.y : p.y - PH / 2; }
   function bottom(n, p) { return p.y + PH / 2; }
 
   function draw(k) {
+    if (mode !== ctx.narrow) {
+      // the nodes are made for one layout: a change of layout makes them anew
+      mode = ctx.narrow; sizes(mode);
+      root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      while (gEdges.firstChild) gEdges.removeChild(gEdges.firstChild);
+      while (gNodes.firstChild) gNodes.removeChild(gNodes.firstChild);
+    }
     var L = layout(k), pos = L.pos, pick = null, made = null, path = {}, codeShown = {};
     if (k >= 1 && k <= 2 * NM) { var mg = merges[Math.floor((k - 1) / 2)]; if (k % 2) pick = mg; else made = mg; }
     var reading = k >= S_CODE && k < S_AVG ? 'c' + readOrder[k - S_CODE] : null;
@@ -96,7 +109,13 @@ BookAnim.define('huffman', function (ctx) {
       var n = nodes[id], p = pos[id];
       var g = ctx.keyed(gNodes, id, function () {
         var g2 = ctx.svg('g', { class: 'an-move' });
-        if (n.leaf) {
+        if (n.leaf && mode) {
+          ctx.svg('rect', { x: -BW / 2, y: 0, width: BW, height: BH, rx: 4, class: 'hf-leaf' }, g2);
+          ctx.svg('text', { x: 0, y: 14, 'text-anchor': 'middle', 'font-size': 12, text: 'class' }, g2);
+          ctx.svg('text', { x: 0, y: 28, 'text-anchor': 'middle', 'font-size': 12, text: String(n.cls) }, g2);
+          ctx.svg('text', { x: 0, y: 43, 'text-anchor': 'middle', 'font-size': 12, text: wt(n.w) + '%' }, g2);
+          ctx.svg('text', { x: 0, y: 58, 'text-anchor': 'middle', 'font-size': 12, class: 'hf-code' }, g2);
+        } else if (n.leaf) {
           ctx.svg('rect', { x: -BW / 2, y: 0, width: BW, height: BH, rx: 4, class: 'hf-leaf' }, g2);
           ctx.svg('text', { x: 0, y: 14, 'text-anchor': 'middle', 'font-size': 12, text: 'class ' + n.cls }, g2);
           ctx.svg('text', { x: 0, y: 29, 'text-anchor': 'middle', 'font-size': 12, text: wt(n.w) + '%' }, g2);
@@ -112,19 +131,24 @@ BookAnim.define('huffman', function (ctx) {
       g.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px)';
       var hot = pick && (id === pick.a || id === pick.b) || made && id === made.id || reading === id;
       g.setAttribute('class', 'an-move' + (hot ? ' hf-hot' : '') + (path[id] ? ' hf-onpath' : ''));
-      if (n.leaf) g.querySelector('.hf-code').textContent = codeShown[id] ? 'code ' + n.code : '';
+      if (n.leaf) g.querySelector('.hf-code').textContent = codeShown[id] ? (mode ? '' : 'code ') + n.code : '';
     });
 
     // below the tree: the row of the step, or the result
-    var ty = 300;
+    var ty = TY;
     if (k < S_FLIP) {
       ctx.svg('text', { x: XL, y: ty, 'font-size': 12, class: 'hf-mut', text: 'nodes left: ' + L.forest.length + ', lightest on the left' }, gTop);
+    } else if (k < S_AVG && mode) {
+      // the same as the wide layout's line, in lines that fit, and where a leaf shows its code
+      ['depth = code length', '0 for the left branch, 1 for the right'].concat(k >= S_CODE ? ['the last line of a leaf is its code'] : []).forEach(function (line, j) {
+        ctx.svg('text', { x: XL, y: ty + j * 18, 'font-size': 12, class: 'hf-mut', text: line }, gTop);
+      });
     } else if (k < S_AVG) {
       ctx.svg('text', { x: XL, y: ty, 'font-size': 12, class: 'hf-mut', text: 'depth = code length; 0 for the left branch, 1 for the right' }, gTop);
     } else {
-      var bars = [['fixed width', 3], ['Huffman', avg], ['entropy', ent]], sc = 150;
+      var bars = [['fixed width', 3], ['Huffman', avg], ['entropy', ent]], sc = SC;
       bars.forEach(function (bar, j) {
-        var y = 282 + j * 26;
+        var y = BY + j * 26;
         ctx.svg('text', { x: XL + 96, y: y + 13, 'text-anchor': 'end', 'font-size': 12, text: bar[0] }, gTop);
         ctx.svg('rect', { x: XL + 106, y: y, width: bar[1] * sc, height: 18, rx: 2, class: j === 1 ? 'hf-bar-on' : 'hf-bar' }, gTop);
         ctx.svg('text', { x: XL + 114 + bar[1] * sc, y: y + 13, 'font-size': 12, class: j === 1 ? 'hf-acc' : '', text: (bar[1] === 3 ? '3' : bar[1].toFixed(2)) + ' bits' }, gTop);
@@ -153,5 +177,5 @@ BookAnim.define('huffman', function (ctx) {
     ctx.say('On average 2 × (' + two.join(' + ') + ') + 3 × (' + three.join(' + ') + ') = ' + avg.toFixed(2) + ' bits per offset class, against 3 for the fixed width. The entropy, ' + ent.toFixed(2) + ' bits, is the least any code can reach.');
   }
 
-  return { steps: S_AVG + 1, draw: draw, interval: 1300 };
+  return { steps: S_AVG + 1, draw: draw, interval: 1300, narrow: true };
 });

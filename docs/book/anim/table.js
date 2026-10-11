@@ -27,7 +27,7 @@ BookAnim.define('table', function (ctx) {
 
   var N = order.length, S_COUNT = 1, S_FIRST = 2, S_CODE = 3, S_FILL = S_CODE + N, S_LOOK = S_FILL + N, S_END = S_LOOK + looks.length;
 
-  var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'The canonical codes of the six offset classes, the 8 entries of a 3-bit decode table, and a bitstream decoded with it' }, ctx.stage);
+  var root = ctx.svg('svg', { role: 'img', 'aria-label': 'The canonical codes of the six offset classes, the 8 entries of a 3-bit decode table, and a bitstream decoded with it' }, ctx.stage);
   var g = ctx.svg('g', {}, root);
   function t(x, y, s, cls, a) {
     var at2 = { x: x, y: y, 'font-size': 13, text: s };
@@ -38,6 +38,10 @@ BookAnim.define('table', function (ctx) {
 
   function draw(k) {
     while (g.firstChild) g.removeChild(g.firstChild);
+    // narrow, about one unit per pixel on a phone: count and first beside the codes, the decode table
+    // below them, the bits below that
+    var nw = ctx.narrow;
+    root.setAttribute('viewBox', nw ? '0 0 350 482' : '0 0 ' + W + ' ' + H);
     var codesKnown = k < S_CODE ? 0 : Math.min(N, k - S_CODE + 1), filled = k < S_FILL ? 0 : Math.min(N, k - S_FILL + 1);
     var nowCode = k >= S_CODE && k < S_FILL ? order[k - S_CODE] : -1;
     var nowFill = k >= S_FILL && k < S_LOOK ? fills[k - S_FILL] : null;
@@ -56,7 +60,7 @@ BookAnim.define('table', function (ctx) {
       if (known[i]) t(X1 + 140, y + 16, bin(code[i], LEN[i]), 'tb-acc tb-bold');
     }
     // middle: count and first
-    var X2 = 268;
+    var X2 = nw ? 232 : 268;
     if (k >= S_COUNT) {
       t(X2, Y1 + 26, 'count[2] = ' + count[2], 'tb-mark', { 'font-size': 12 });
       t(X2, Y1 + 46, 'count[3] = ' + count[3], null, { 'font-size': 12 });
@@ -66,10 +70,10 @@ BookAnim.define('table', function (ctx) {
       t(X2, Y1 + 100, 'first[3] = ' + first[3], null, { 'font-size': 12 });
     }
     // right: the decode table
-    var X3 = 456, RH3 = 20;
-    t(X3, Y1, 'index', 'tb-mut', { 'font-size': 12 }); t(X3 + 70, Y1, 'entry', 'tb-mut', { 'font-size': 12 });
+    var X3 = nw ? 63 : 456, RH3 = 20, Y3 = nw ? 214 : Y1;
+    t(X3, Y3, 'index', 'tb-mut', { 'font-size': 12 }); t(X3 + 70, Y3, 'entry', 'tb-mut', { 'font-size': 12 });
     for (i = 0; i < (1 << L); i++) {
-      var y3 = Y1 + 10 + i * RH3, isFilled = false, isNow = nowFill && i >= nowFill.lo && i < nowFill.hi, isLook = look && look.idx === i;
+      var y3 = Y3 + 10 + i * RH3, isFilled = false, isNow = nowFill && i >= nowFill.lo && i < nowFill.hi, isLook = look && look.idx === i;
       for (var f = 0; f < filled; f++) if (i >= fills[f].lo && i < fills[f].hi) isFilled = true;
       ctx.svg('rect', { x: X3 - 6, y: y3, width: 236, height: RH3 - 3, rx: 3, class: isNow || isLook ? 'tb-row-hot' : 'tb-row' }, g);
       var ib = bin(i, L);
@@ -82,7 +86,7 @@ BookAnim.define('table', function (ctx) {
       if (isFilled) t(X3 + 70, y3 + 13, 'class ' + table[i] + ', ' + LEN[table[i]] + ' bits', isNow || isLook ? 'tb-acc tb-bold' : null, { 'font-size': 12 });
     }
     // bottom: the bits and the window of 3
-    var Y4 = 262, BX = 140, BWd = 26;
+    var Y4 = nw ? 418 : 262, BX = nw ? 50 : 140, BWd = 26;
     if (k >= S_LOOK) {
       t(BX - 14, Y4 + 18, 'bits', 'tb-mut', { 'text-anchor': 'end', 'font-size': 12 });
       var used = look ? look.at : k >= S_END ? bits.length : 0;
@@ -125,5 +129,5 @@ BookAnim.define('table', function (ctx) {
     ctx.say(looks.length + ' lookups for ' + looks.length + ' codes, ' + bits.length + ' bits: the classes ' + MSG.join(', ') + '. One lookup per code, whatever its length.');
   }
 
-  return { steps: S_END + 1, draw: draw, interval: 1300 };
+  return { steps: S_END + 1, draw: draw, interval: 1300, narrow: true };
 });
