@@ -227,9 +227,9 @@ static __always_inline void encoder_init(struct seqlz_encoder *e,
 }
 
 /*
- * Writes the last bits and the u16, and copies the bitstream from the back of
- * dst to right after the literals, the right way round. Returns the length of
- * the page, or 0 if it did not fit into the dst_cap bytes at d.
+ * Writes the u16, and copies the bitstream from the back of dst to right after
+ * the literals, the right way round. Returns the length of the page, or 0 if
+ * it did not fit into the dst_cap bytes at d.
  */
 static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 				   unsigned int dst_cap)
@@ -241,10 +241,13 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 
 	if (e->p == e->lit)
 		return 0;
-	if (e->cnt > 0) {
-		put_unaligned_le64(e->acc << ((64U - e->cnt) & 63U), e->p - 8);
+	/*
+	 * Every sequence ends with enc_flush(), which already wrote the bits
+	 * left over on top of the byte below p, zeros below them: that byte is
+	 * the bitstream's last.
+	 */
+	if (e->cnt > 0)
 		e->p--;
-	}
 	in = e->p;
 	bytes = (unsigned int)(end - in);
 	put_unaligned_le16((u16)n_lit, d);
