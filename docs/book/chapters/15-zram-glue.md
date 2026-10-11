@@ -4,7 +4,7 @@ Everything up to here is a library: functions that take a page and tables and wo
 nothing about who calls them. zram calls a compressor through a small table of function pointers, and
 something has to sit between the two: keep the tables, hand out the work memory per CPU, check the
 lengths, and turn seqlz's return values into zram's. `src/zram_seqlz.c` is that piece for the
-project's benchmark harness. It is the last file of `src/`, 147 lines, and the only one that knows
+project's benchmark harness. It is the last file of `src/`, {{ch15.zram_lines}} lines, and the only one that knows
 zram exists.
 
 The kernel does not get this file. What a kernel tree gets is written by a script,
@@ -94,8 +94,8 @@ Line 1 is the licence line every file of the project starts with ([chapter 5](#c
 Lines 3 and 4 name the two codecs this file defines. Both write the
 same format and both are read by the same decoder. They differ in one argument to
 `seqlz_compress()`: `seqlz-fast` keeps the literals raw, `seqlz-fast-lit` lets
-`code_literals()` ([chapter 11](#ch-literals-enc)) Huffman code them when that saves at least $\frac{1}{16}$ of
-them plus 51 bytes. In the kernel's copy these are levels 1 and 2 of one backend called `seqlz`; the
+`code_literals()` ([chapter 11](#ch-literals-enc)) Huffman code them when that saves more than $\frac{1}{16}$ of
+them plus {{ch15.coded_min}} bytes. In the kernel's copy these are levels 1 and 2 of one backend called `seqlz`; the
 harness names them as two codecs, so that it can compare them side by side with the others in one run.
 
 Lines 5 and 6 are a design decision. zram can give a compressor a dictionary, a blob of bytes the
@@ -124,12 +124,12 @@ size is `PAGE_SIZE`, and the kernel's copy refuses to build for anything but 4 K
 [below](#ch-zram-glue--port).
 
 Line 17 allocates the tables. `seqlz_tables_size()` returns `sizeof(struct seqlz_tables)`, which is
-43 280 bytes for 4 KiB pages: the token table, 8 literal tables, the cost table `lit_cost` and two
+{{size.tables|grp}} bytes for 4 KiB pages: the token table, 8 literal tables, the cost table `lit_cost` and two
 tables of length values, laid out in [chapter 7](#ch-internal). The glue cannot write `sizeof`
 itself, because it never sees the struct's definition; that is what the function is for.
 `quetschn_zalloc()` stands in for the kernel's `kvzalloc()` ([below](#ch-zram-glue--backend)): it returns zeroed memory, aligned to a
 page for blocks of a page or more, and it adds the size to `p->allocated`. So the harness reports
-43 280 bytes per device for seqlz. Line 18 turns a failed allocation into `-1`, the harness's error.
+{{size.tables|grp}} bytes per device for seqlz. Line 18 turns a failed allocation into `-1`, the harness's error.
 
 Lines 20 to 27 build the tables. `seqlz_tables_init()` ([chapter 8](#ch-codes)) turns the code
 lengths compiled into `seqlz_default_own` into canonical codes and decode tables, and returns
@@ -149,7 +149,7 @@ success.
 
 ::: why One set of tables per device here, one for the whole kernel there
 The harness builds the tables once per device, in `setup()`. The kernel's copy builds them once at boot into one global struct that all devices and CPUs read, see
-[The tables, built once at boot](#ch-zram-glue--init). Building 43 KB of tables in `setup_params()`
+[The tables, built once at boot](#ch-zram-glue--init). Building {{ch15.tables_kb}} KB of tables in `setup_params()`
 for every zram device and priority, from constant data, was what the kernel copy did until commit
 `aaa381e`; the review asked for the global.
 :::
@@ -169,13 +169,15 @@ directions: both codecs use it as `destroy_cctx`, and `seqlz-fast-lit` also as `
 
 The work memory of compression is one `struct seqlz_state` per CPU ([chapter 6](#ch-header)): a union
 of the matcher's hash table, `u16 table[1U << SEQLZ_HASH_BITS]`, and a page of bytes,
-`u8 literals[SEQLZ_PAGE]`. With 4 KiB pages the table has 4096 entries of 2 bytes, 8192 bytes, and
-the page fits into the same 8192 bytes, so `sizeof(struct seqlz_state)` is 8192. The union is there
+`u8 literals[SEQLZ_PAGE]`. With 4 KiB pages the table has {{ch17.hash_slots}} entries of 2 bytes, {{size.state}} bytes, and
+the page fits into the same {{size.state}} bytes, so `sizeof(struct seqlz_state)` is {{size.state}}.
+@assert ch17.hash_slots * 2 == size.state and size.state >= 4096
+The union is there
 because `code_literals()` copies the raw literals into the hash table's memory once the matcher is
 done with it ([chapter 11](#ch-literals-enc)), so coding the literals needs no memory of its own.
 
 "For both" in the comment means for both codecs: `seqlz-fast` and `seqlz-fast-lit` compress with the
-same 8192 bytes. The second sentence is the reason `seqlz-fast` has no decompression context at all,
+same {{size.state}} bytes. The second sentence is the reason `seqlz-fast` has no decompression context at all,
 which we see in `fast_decompress()`.
 
 Line 50, `(void)p;`, marks the parameter as unused on purpose. With `-Wextra` a compiler warns about
@@ -220,19 +222,7 @@ the scratch` in `test/kernel_codecs_test.cpp` decodes every test page that way.
 Line 79 is a prefetch, the one line of this file that is about speed. `quetschn_prefetch_page()` is
 in the harness's header:
 
-```c
-static inline void quetschn_prefetch_page(const void *src, unsigned int src_len,
-					  void *dst, unsigned int dst_len)
-{
-	const char *q;
-	char *o;
-
-	for (q = (const char *)src + 64; q < (const char *)src + src_len; q += 64)
-		__builtin_prefetch(q);
-	for (o = (char *)dst; o < (char *)dst + dst_len; o += 64)
-		__builtin_prefetch(o, 1);
-}
-```
+@listing bench/kernel_codecs/zram_codec.h {{ch15.prefetch_page.a}}-{{ch15.prefetch_page.b}}
 
 The first loop asks for every cache line of the compressed page from its second line on. The second
 asks for every line of the 4096-byte destination, with the second argument `1`, which means "for
@@ -279,13 +269,13 @@ declaration in `zram_codec.h`.
 
 Coded literals are decoded into a buffer first, 8 streams side by side, and the sequence loop then
 reads them from there as if they were raw ([chapter 13](#ch-literals-dec)). That buffer is the
-scratch, `SEQLZ_SCRATCH` bytes: a page plus 16, 4112 bytes for 4 KiB pages. The 16 bytes are there
+scratch, `SEQLZ_SCRATCH` bytes: a page plus 16, {{const.SCRATCH}} bytes for 4 KiB pages. The 16 bytes are there
 because the decoder copies literals 16 bytes at a time and may read up to 15 bytes past the last one,
 and because the last, partial round of `decode_literals()` writes up to 8 decoded bytes past the end
 of the literals that no one reads.
 
-So `seqlz-fast-lit` has two contexts per CPU: 8192 bytes for compression and 4112 for decompression,
-12 304 bytes together. That is exactly what it had with one context before the split, so the split
+So `seqlz-fast-lit` has two contexts per CPU: {{size.state}} bytes for compression and {{const.SCRATCH}} for decompression,
+{{ch15.state_plus_scratch|grp}} bytes together. That is exactly what it had with one context before the split, so the split
 costs seqlz no memory in the harness.
 
 @listing src/zram_seqlz.c 108-122
@@ -294,7 +284,7 @@ costs seqlz no memory in the harness.
 coded literals is `code_literals()`'s decision, per page. `seqlz_compress()` writes the page with raw
 literals first and then, if coding saves enough, codes them over the raw ones in the same buffer, so
 the same 2 pages of output suffice. `s->context` is the compression context here too, the same
-8192-byte `struct seqlz_state` that `code_literals()` borrows to hold the raw literals.
+{{size.state}}-byte `struct seqlz_state` that `code_literals()` borrows to hold the raw literals.
 
 @listing src/zram_seqlz.c 124-135
 
@@ -338,7 +328,7 @@ What it writes into a Linux tree:
 | `lib/Kconfig`, `lib/Makefile`, `lib/seqlz/Makefile` | `CONFIG_SEQLZ` and `CONFIG_SEQLZ_KUNIT_TEST`, `-O3` as `lib/lz4` |
 | `drivers/block/zram/backend_seqlz.[ch]`, `Kconfig`, `Makefile`, `zcomp.c` | the backend, `CONFIG_ZRAM_BACKEND_SEQLZ` |
 | `Documentation/staging/seqlz.rst` | `docs/format.md`, by `format_rst.py` |
-| `MAINTAINERS`, `Documentation/admin-guide/blockdev/zram.rst` | an entry each |
+| `MAINTAINERS`, `Documentation/admin-guide/blockdev/zram.rst`, `Documentation/staging/index.rst` | an entry each |
 | `arch/x86/include/asm/processor.h` | `x86-prefetcht0.patch`, unless the tree has it |
 
 The kernel copy is generated, never edited. A fix goes into `src/` or into `tools/kernel-port/`, and
@@ -389,7 +379,7 @@ Each change, and why:
 - **`PAGE_SHIFT` instead of `QUETSCHN_PAGE_BITS`,** in code and in comments. The block that defaults
   `QUETSCHN_PAGE_BITS` to 12 is cut. `lib/seqlz/seqlz.h` gets `#if PAGE_SHIFT != 12` and an
   `#error "seqlz is for 4 KiB pages only"`, and the values for 16 KiB pages are cut from the
-  constants, e.g. `SEQLZ_RAW_NIBBLES` becomes the literal `0x95c840U`. The format for 16 KiB pages is
+  constants, e.g. `SEQLZ_RAW_NIBBLES` becomes the literal `{{ch15.raw_nibbles}}`. The format for 16 KiB pages is
   not fixed yet, and with 16 KiB pages `seqlz-fast-lit` needs more work memory than the project
   allows itself ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 - **`static` and kernel-doc.** `seqlz_decode()`, `seqlz_tables_init()` and `seqlz_compress()` of
@@ -420,12 +410,9 @@ After writing everything into memory, and before writing anything to disk, `port
 line of every file it produced against three regular expressions:
 
 ```python
-HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|"
-                          r"\bSEQLZ_MAX_SEQUENCES\b|\bseqlz_tables_size\b|\ball_symbols\b")
-CPU_MODEL = re.compile(r"read_cpuid|\bMIDR_|boot_cpu_data|x86_model")
-FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|"
-                       r"#\d{2,3}\b|seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
-                       r"4\.14|Mi 9T|Fedora|kernel VM|\bthe phone|\bthe PC\b")
+{{ch15.port.harness_only}}
+{{ch15.port.cpu_model}}
+{{ch15.port.forbidden}}
 ```
 
 `HARNESS_ONLY` catches a harness function that is still named somewhere, e.g. in a comment.
@@ -450,68 +437,7 @@ one matched nothing: a rewrite for a comment that no longer exists is stale and 
 The kernel's interface to seqlz is not `src/seqlz.h`. It is a separate header,
 `tools/kernel-port/seqlz.h`, which `port.py` copies to `include/linux/seqlz.h` as it is:
 
-```c
-/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
-/*
- * seqlz: compression of single memory pages of 4 KiB, for zram. An LZ format
- * whose sequences and literals are Huffman coded with tables that are part of
- * the format, so a page carries none. Documentation/staging/seqlz.rst specifies
- * the format.
- */
-#ifndef _LINUX_SEQLZ_H
-#define _LINUX_SEQLZ_H
-
-#include <asm/page.h>
-
-/* the work memory of seqlz_compress(): the matcher's table of positions */
-#define SEQLZ_MEM_COMPRESS 8192
-/* the work memory of seqlz_decompress(): the decoded literals of a page */
-#define SEQLZ_MEM_DECOMPRESS (PAGE_SIZE + 16)
-
-/* the literals as they are, or Huffman coded where that saves enough */
-#define SEQLZ_LEVEL_RAW 1
-#define SEQLZ_LEVEL_CODED 2
-
-/**
- * seqlz_compress() - Compress one page
- * @src: the page, PAGE_SIZE bytes
- * @dst: where the compressed page goes
- * @dst_len: the bytes at @dst; every page fits into 2 * PAGE_SIZE
- * @wrkmem: SEQLZ_MEM_COMPRESS bytes, as kmalloc() aligns them
- * @level: SEQLZ_LEVEL_RAW or SEQLZ_LEVEL_CODED
- *
- * Context: Any context. It does not sleep and allocates nothing.
- *
- * Return: the length of the compressed page, -E2BIG if it does not fit into
- * @dst_len bytes, or -EINVAL for another @level. The page is written with its
- * literals raw first, also at SEQLZ_LEVEL_CODED, and -E2BIG comes as soon as
- * that is within 32 bytes of @dst_len, even where the page with coded literals
- * would be smaller.
- */
-int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
-		   void *wrkmem, int level);
-
-/**
- * seqlz_decompress() - Decompress one page
- * @src: the compressed page
- * @src_len: its length
- * @dst: PAGE_SIZE bytes for the page
- * @wrkmem: SEQLZ_MEM_DECOMPRESS bytes, or NULL if every page it gets was
- *          compressed at SEQLZ_LEVEL_RAW
- *
- * Safe for any input: it never reads outside @src and @src_len, and never
- * writes outside @dst and @wrkmem, and its time is bounded by the page size.
- *
- * Context: Any context. It does not sleep and allocates nothing.
- *
- * Return: 0, or -EINVAL if @src is not a valid page, or a page with coded
- * literals and @wrkmem is NULL.
- */
-int seqlz_decompress(const void *src, unsigned int src_len, void *dst,
-		     void *wrkmem);
-
-#endif
-```
+@listing tools/kernel-port/seqlz.h 1-{{ch15.kport.seqlz_h}}
 
 This is the shape of `include/linux/lz4.h`: work memory sizes as constants, and functions that take
 the work memory as a `void *`. The tables are not in it; they are the library's business. Before
@@ -533,7 +459,7 @@ Some details of the text:
   would allow sleeping, so zram does not need the promise; another caller might. It holds because the
   codec never calls anything that sleeps or allocates.
 - The `Return:` of `seqlz_compress()` spells out a subtlety of [chapter 10](#ch-encoder): the encoder
-  stops as soon as fewer than 32 bytes (`ENC_ROOM`) plus the next literals are free, so a page can be
+  stops as soon as fewer than {{ch15.enc_room}} bytes (`ENC_ROOM`) plus the next literals are free, so a page can be
   refused although its final size, with coded literals, would have fit. With zram's 2 pages it never
   happens.
 - "Safe for any input" is constraint C6 of the plan, the one that stopped the last codec proposed for
@@ -543,22 +469,7 @@ Some details of the text:
 
 `port.py` appends `tools/kernel-port/api_compress.c` to the compressor:
 
-```c
-/* ---- the kernel's interface, include/linux/seqlz.h ---- */
-
-int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
-		   void *wrkmem, int level)
-{
-	unsigned int len;
-
-	if (level != SEQLZ_LEVEL_RAW && level != SEQLZ_LEVEL_CODED)
-		return -EINVAL;
-	len = seqlz_compress_page(&seqlz_fixed_tables, wrkmem, src, dst,
-				  dst_len, level == SEQLZ_LEVEL_CODED);
-	return len ? (int)len : -E2BIG;
-}
-EXPORT_SYMBOL_GPL(seqlz_compress);
-```
+@listing tools/kernel-port/api_compress.c 1-{{ch15.kport.api_compress}}
 
 It checks the level, calls the compressor of `src/` with the global tables, and maps its 0 to the
 kernel's error code for "output too small". The cast `(int)len` is safe because a compressed page is
@@ -581,40 +492,9 @@ so it needs the export to call `seqlz_compress()`.
 
 `port.py` appends `tools/kernel-port/api_codes.c` to `seqlz_codes.c`:
 
-```c
-/* ---- the kernel's interface, include/linux/seqlz.h ---- */
+@listing tools/kernel-port/api_codes.c 1-{{ch15.kport.api_codes}}
 
-/*
- * The codes and decode tables, built once from the code lengths compiled in,
- * and only read after that, by every CPU.
- */
-struct seqlz_tables seqlz_fixed_tables __ro_after_init;
-
-/* subsys_initcall: the tables are there before a zram that is built in */
-static int __init seqlz_init(void)
-{
-	BUILD_BUG_ON(sizeof(struct seqlz_state) != SEQLZ_MEM_COMPRESS);
-	BUILD_BUG_ON(SEQLZ_MEM_DECOMPRESS != SEQLZ_SCRATCH);
-	/*
-	 * Does not fail: before scripts/gen-seqlz-tables.py writes
-	 * seqlz_tables.c, it checks the lengths as seqlz_tables_init() does,
-	 * every table a complete prefix code with a code for every symbol, and
-	 * the KUnit tests check that the lengths are the format's.
-	 */
-	return seqlz_tables_init(&seqlz_fixed_tables, &seqlz_default_own);
-}
-subsys_initcall(seqlz_init);
-
-static void __exit seqlz_exit(void)
-{
-}
-module_exit(seqlz_exit);
-
-MODULE_LICENSE("Dual MIT/GPL");
-MODULE_DESCRIPTION("seqlz: LZ compression of memory pages with static Huffman codes");
-```
-
-`seqlz_fixed_tables` is the one `struct seqlz_tables` of the whole kernel, 43 280 bytes, shared by
+`seqlz_fixed_tables` is the one `struct seqlz_tables` of the whole kernel, {{size.tables|grp}} bytes, shared by
 every zram device and every CPU. It is global and not per CPU because it is only read after boot, and
 read-only data can be shared by any number of CPUs without cost: each core keeps its own copy of the
 cache lines it reads.
@@ -628,7 +508,7 @@ Calling an `__init` function later would jump into freed memory, so the build ch
 **`__ro_after_init`** puts a variable into a section that is writable during boot and becomes
 read-only when boot is done (for a module, when its init function has returned). After that, a stray
 write to the tables faults instead of corrupting every page compressed later. The section is
-initialized data, so the 43 280 bytes are zeros in the kernel image until `seqlz_init()` fills them.
+initialized data, so the {{size.tables|grp}} bytes are zeros in the kernel image until `seqlz_init()` fills them.
 
 **Initcalls** are the kernel's way to run setup functions at boot, in a fixed order of levels:
 `core`, `postcore`, `arch`, `subsys`, `fs`, `device`, `late`. A driver that is built in uses
@@ -683,54 +563,7 @@ The kernel's zram backend is `tools/kernel-port/backend_seqlz.c`, modelled on zr
 `backend_lz4.c`. It is a template: zram trees with and without the October 2026 series need different
 code, and `port.py` keeps one of the two variants.
 
-```c
-#define pr_fmt(fmt) "seqlz: " fmt
-
-#include <linux/kernel.h>
-#include <linux/seqlz.h>
-#include <linux/slab.h>
-
-#include "backend_seqlz.h"
-
-#ifndef ZCOMP_RW_SPLIT
-/*
- * The work memory of compression and of decompression, per CPU. zram holds
- * the stream's mutex for either, and neither keeps anything in it from one
- * page to the next, so they share it: kmalloc() gives 8 KiB for the larger,
- * 16 KiB for both together.
- */
-union seqlz_ctx {
-	u8 cmem[SEQLZ_MEM_COMPRESS];
-	u8 dmem[SEQLZ_MEM_DECOMPRESS];
-};
-#endif
-
-static void seqlz_release_params(struct zcomp_params *params)
-{
-}
-
-/*
- * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
- * them where that saves enough: smaller pages for more time.
- * The tables are the library's, built once.
- */
-static int seqlz_setup_params(struct zcomp_params *params)
-{
-	if (params->dict_sz) {
-		pr_err("dictionary is not supported\n");
-		return -EOPNOTSUPP;
-	}
-	if (params->level == ZCOMP_PARAM_NOT_SET)
-		params->level = SEQLZ_LEVEL_CODED;
-	if (params->level != SEQLZ_LEVEL_RAW &&
-	    params->level != SEQLZ_LEVEL_CODED) {
-		pr_err("compression level %d is not supported\n",
-		       params->level);
-		return -EINVAL;
-	}
-	return 0;
-}
-```
+@listing tools/kernel-port/backend_seqlz.c {{ch15.backend.head.a}}-{{ch15.backend.head.b}}
 
 `pr_fmt` must be defined before the first include: the kernel's `pr_err()` and friends expand it
 around their format string, so every message of this file starts with `seqlz: `.
@@ -753,26 +586,10 @@ levels. An administrator selects the level per device:
 echo "algo=seqlz level=1" > /sys/block/zram0/algorithm_params
 ```
 
-Then the contexts, in the form without the split:
+Then the contexts, in the form without the split, the `#else` part of the template, and
+`seqlz_destroy()`, which both forms share:
 
-```c
-static int seqlz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
-{
-	union seqlz_ctx *c;
-
-	BUILD_BUG_ON(sizeof(*c) > KMALLOC_MAX_CACHE_SIZE);
-	c = kvzalloc_obj(*c);
-	if (!c)
-		return -ENOMEM;
-	ctx->context = c;
-	return 0;
-}
-
-static void seqlz_destroy(struct zcomp_ctx *ctx)
-{
-	kvfree(ctx->context);
-}
-```
+@listing tools/kernel-port/backend_seqlz.c {{ch15.backend.create.a}}-{{ch15.backend.create.b}}
 
 ::: kernel kmalloc(), slabs, and what an allocation really costs
 `kmalloc(size)` does not hand out `size` bytes. It takes an object from one of a fixed set of
@@ -791,9 +608,11 @@ when a CPU comes up or a device is set up, not in the path of a page.
 :::
 
 So the bytes that count per CPU are what the allocator hands out. Without the union, a struct of the
-hash table and the scratch side by side was $8192 + 4112 = 12\,304$ bytes, above `KMALLOC_MAX_CACHE_SIZE`,
-and `kvzalloc()` took 16 KiB for it. As a union it is 8192 bytes, the larger member, and comes from
-`kmalloc-8k`: 8 KiB per CPU. For comparison, `lz4` asks `vmalloc()` for 16 416 bytes, which is 5 pages,
+hash table and the scratch side by side was {{size.state}} + {{const.SCRATCH}} = {{ch15.state_plus_scratch|grp}} bytes, above `KMALLOC_MAX_CACHE_SIZE`,
+and `kvzalloc()` took 16 KiB for it. As a union it is {{size.state}} bytes, the larger member, and comes from
+`kmalloc-8k`: 8 KiB per CPU.
+@assert const.SCRATCH <= size.state <= 8192 < ch15.state_plus_scratch <= 16384
+For comparison, `lz4` asks `vmalloc()` for 16 416 bytes, which is 5 pages,
 20 480 bytes
 ([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
 Against `lz4`'s 20 KiB, that is 12 KiB less per CPU; on the Mi 9T with its 8 cores, 96 KiB less memory,
@@ -813,26 +632,9 @@ million at level 1, 0 different.
 
 With the split, the backend has two functions, and the union is not compiled:
 
-```c
-static int seqlz_create_cctx(struct zcomp_params *params,
-			     struct zcomp_ctx *ctx)
-{
-	ctx->context = kvzalloc(SEQLZ_MEM_COMPRESS, GFP_KERNEL);
-	return ctx->context ? 0 : -ENOMEM;
-}
+@listing tools/kernel-port/backend_seqlz.c {{ch15.backend.split.a}}-{{ch15.backend.split.b}}
 
-/* level 1 decompresses without work memory, its pages have no coded literals */
-static int seqlz_create_dctx(struct zcomp_params *params,
-			     struct zcomp_ctx *ctx)
-{
-	if (params->level == SEQLZ_LEVEL_RAW)
-		return 0;
-	ctx->context = kvzalloc(SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
-	return ctx->context ? 0 : -ENOMEM;
-}
-```
-
-Here the two contexts are separate allocations, 8192 and 4112 bytes, both from `kmalloc-8k`: 16 KiB
+Here the two contexts are separate allocations, {{size.state}} and {{const.SCRATCH}} bytes, both from `kmalloc-8k`: 16 KiB
 per CPU at level 2, 8 KiB at level 1, which has no decompression context at all. `seqlz_destroy()`
 serves both, and `kvfree(NULL)` does nothing, so a level-1 decompression context needs no special
 case. Which of the two contexts the plan's memory limit, C5, applies to after the split is an open
@@ -840,46 +642,7 @@ question of the plan.
 
 The page functions:
 
-```c
-static int seqlz_zcomp_compress(struct zcomp_params *params,
-				struct zcomp_ctx *ctx, struct zcomp_req *req)
-{
-#ifdef ZCOMP_RW_SPLIT
-	void *wrkmem = ctx->context;
-#else
-	void *wrkmem = ((union seqlz_ctx *)ctx->context)->cmem;
-#endif
-	int ret;
-
-	if (req->src_len != PAGE_SIZE)
-		return -EINVAL;
-	ret = seqlz_compress(req->src, req->dst, req->dst_len, wrkmem,
-			     params->level);
-	if (ret < 0)
-		return ret;
-	req->dst_len = ret;
-	return 0;
-}
-
-static int seqlz_zcomp_decompress(struct zcomp_params *params,
-				  struct zcomp_ctx *ctx, struct zcomp_req *req)
-{
-#ifdef ZCOMP_RW_SPLIT
-	void *wrkmem = ctx->context;
-#else
-	void *wrkmem = ((union seqlz_ctx *)ctx->context)->dmem;
-#endif
-	int ret;
-
-	if (req->dst_len < PAGE_SIZE)
-		return -EINVAL;
-	ret = seqlz_decompress(req->src, req->src_len, req->dst, wrkmem);
-	if (ret)
-		return ret;
-	req->dst_len = PAGE_SIZE;
-	return 0;
-}
-```
+@listing tools/kernel-port/backend_seqlz.c {{ch15.backend.pages.a}}-{{ch15.backend.pages.b}}
 
 They are the harness's functions in the kernel's types. zram passes a `struct zcomp_req` with
 `src`, `src_len`, `dst` and `dst_len`; `zcomp_compress()` sets `dst_len` to `2 * PAGE_SIZE`, and
@@ -973,15 +736,15 @@ all with clang; the CI machine's compilers give a little different numbers, e.g.
 ### KUnit tests in UML
 
 `port.py` also writes `lib/seqlz/tests/seqlz_kunit.c` from `tools/kernel-port/seqlz_kunit.c`, the
-codec's tests in the kernel's own test framework. Six cases:
+codec's tests in the kernel's own test framework, {{ch15.kunit.cases}} cases:
 
 - `seqlz_test_tables`: the SHA-256 of each table's code lengths against the one `docs/format.md`
   gives. The template has placeholders like `"@TOK_4k@"`, which `port.py` fills from the
   specification's table, so the kernel's tests check against the specification, not against a copy.
-- `seqlz_test_example`: the specification's worked example, 8 bytes that decode to a page of `ab`
+- `seqlz_test_example`: the specification's worked example, {{ab.len}} bytes that decode to a page of `ab`
   2048 times. The same bytes without the last one, and with one zero byte more, must both be
   `-EINVAL`: a page ends where its bits end.
-- `seqlz_test_round_trip`: generated pages of 7 kinds, compressed and decompressed at both levels.
+- `seqlz_test_round_trip`: generated pages of {{ch15.kunit.kinds}} kinds, compressed and decompressed at both levels.
 - `seqlz_test_damaged`: damaged pages are rejected or decode, but never read or write out of bounds.
 - `seqlz_test_one_sequence`: pages built by hand from the specification's rules, each valid or
   invalid by one rule.
@@ -1096,10 +859,10 @@ again, and hashes all compressed bytes with FNV-1a. It is plain C without the te
 that it builds in seconds under qemu. Its output on x86-64, and the same with `-m32`:
 
 ```text
-pages 600, coded 200, failed 0, hash fda8f1567c2bb3a1
+{{ch15.endian.line}}
 ```
 
-`coded 200` counts the compressions whose page came out with coded literals, out of 1200. CI's
+`coded {{ch15.endian.coded}}` counts the compressions whose page came out with coded literals, out of 1200. CI's
 `same-bytes` job builds it three times, for x86-64, 32-bit x86 and s390x in a qemu container, and
 `diff`s the three output lines. If any CPU writes one byte differently, the hashes differ.
 

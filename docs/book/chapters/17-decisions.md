@@ -179,10 +179,10 @@ greedy matcher ([chapter 9](#ch-matcher)) and spends its effort on the format ([
 
 `zstd` writes a description of its Huffman tables into the compressed data, or picks predefined ones. A
 page of 4 KiB that compresses to 1000 bytes has no room for that, and building a table from a
-description costs the decoder time on every read. So seqlz's 11 tables are fixed, trained once on many
+description costs the decoder time on every read. So seqlz's {{ch17.tables}} tables are fixed, trained once on many
 pages, and part of the format: the token table, two tables for length values, and 8 literal tables
 ([chapter 8](#ch-codes)). The encoder's codes and the decoder's lookup tables are built from them once,
-43 280 bytes shared by all CPUs.
+{{size.tables|grp}} bytes shared by all CPUs.
 
 What fixed tables cost was measured from both sides. Tables trained on the very dump they are measured
 on, which no real table can be, are only 1.5% and 2.5% smaller on the desktop dumps and 0.7% on the
@@ -191,11 +191,12 @@ A literal table built for each page saves 0.3% and 4.6% for writes 13% and 15% s
 [below](#ch-decisions--not-kept).
 
 The training: k-means over the literal histograms of pages, 32 starts and up to 60 rounds, on a corpus of
-524 912 pages, the desktop's resident pages, 60 132 swapped pages of the desktop and the first phone dump
+{{ch17.train_pages|grp}} pages, the desktop's resident pages, 60 132 swapped pages of the desktop and the first phone dump
 5 times. Each copy of the phone dump gives some of the desktop's gain back for the phone; with 5 the
 phone is within 0.07% of the tables before and the second desktop dump 4% smaller. Training on more
 starts did not help: the start with the fewest bits on the training pages is not the one with the
-fewest on other pages.
+fewest on other pages
+([The tables trained again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 
 Tables per device were measured too, sent as zram's dictionary
 ([The format written down](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
@@ -238,8 +239,8 @@ column, with the entry that has the numbers.
 | 4 bits of `ll`, 5 of `ml` in the token | 4 and 4 | a length value after 8.5% of the matches instead of 18.7%, 9180 instead of 9400 decode cycles | a larger token alphabet | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | one repeat offset | three, as `zstd` | 17% fewer decode cycles, 89 instead of 124 mispredictions per page | 26.6% instead of 26.4% | [third decoder round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow) |
 | two classes for multiples of 8 | plain offsets only | 24 and 1.9 bytes per page in the kernel | 0.20 µs per page written, over both dumps | [by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8) |
-| token codes of at most 11 bits | 12 bits | cold p99 4350 instead of 5070 ns, measured with entries of 2 bytes | 576 of 3072 tokens have a code, the rest is escaped | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
-| the bitstream read most significant bit first | least significant first | a page touches 42.5 instead of 55 of the token table's 128 cache lines | none, the same bytes | [bit order](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept) |
+| token codes of at most 11 bits | 12 bits | cold p99 4350 instead of 5070 ns, measured with entries of 2 bytes | {{ch17.tok_own}} of {{const.TOKEN_SYMBOLS}} tokens have a code, the rest is escaped | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
+| the bitstream read most significant bit first | least significant first | a page touches 42.5 instead of 55 of the token table's {{ch17.tok_lines}} cache lines | none, the same bytes | [bit order](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept) |
 | only complete prefix codes | a check for invalid codes | 6% of the decoder's instructions | | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | trained codes for length values | the symbol in 5 plain bits | 1.6 to 2.8 bytes per page | two more tables in the format | [5 plain bits again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept) |
 | a page ends exactly where its bits end | trailing bytes ignored | a damaged page is rejected | 0.07 to 0.10 µs per warm read on the A55 | [strict end](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept) |
@@ -250,11 +251,13 @@ The rows, one by one, with what the table cannot say.
 ### The token: 4 bits, 5 bits and 6 classes
 
 A token is `min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class`, $16 \times 32 \times 6 = 3072$ values
-([chapter 6](#ch-header)). The split of bits between the lengths was measured when the token had 3
+([chapter 6](#ch-header)).
+@assert const.TOKEN_SYMBOLS == 16 * 32 * 6
+The split of bits between the lengths was measured when the token had 3
 classes and codes of at most 11 bits, before the escape existed: 3 and 5 bits gave 26.9% at 8599 decode
 cycles, 4 and 4 gave 27.0% at 8482. The escape then let 4 and 5 bits fit, at 26.8% and 8480 cycles
 ([seqlz, third decoder round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
-With 5 bits for the match length, a match of up to 34 bytes is the token alone. Earlier, with a token
+With 5 bits for the match length, a match of up to {{ch17.ml_alone_max}} bytes is the token alone. Earlier, with a token
 of 512 symbols, 5 bits for the match length instead of 4 had cut the matches with a length value from
 18.7% to 8.5%, at the same memory, and decoding went from 9400 to 9180 cycles per page
 ([Second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
@@ -301,7 +304,7 @@ start.
 
 ### 11-bit token codes, and the escape
 
-The decoder finds a token's code by looking up the next 11 bits in a table of 2048 entries of 4 bytes,
+The decoder finds a token's code by looking up the next {{ch18.bits.token}} bits in a table of {{ch17.tok_entries}} entries of {{ch17.tok_entry_bytes}} bytes,
 8 KiB ([chapter 12](#ch-dec-basics)). The limit comes from the cache: a table of 12-bit codes had 4096
 entries, and with the other tables it no longer stayed in L1. Measured with the token entries of 2 bytes
 of that time, the 11-bit table took the cold p99 from 5070 to 4350 ns
@@ -310,8 +313,10 @@ building the code, is what decides the bits: package-merge, the optimal length-l
 same token bits as halving the counts
 ([seqlz, third decoder round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
 
-2048 codes are fewer than 3072 tokens. Only 576 tokens have a code of their own; the others share one
-code, the escape, followed by the token in 12 plain bits, 16 bits for a rare token. On the phone 10 bits
+{{ch17.tok_entries}} codes are fewer than {{const.TOKEN_SYMBOLS}} tokens. Only {{ch17.tok_own}} tokens have a code of their own; the others share one
+code, the escape, followed by the token in {{ch17.escape_bits}} plain bits, {{ch17.rare_token_bits}} bits for a rare token.
+@assert ch17.tok_entries * ch17.tok_entry_bytes == 8192
+On the phone 10 bits
 were measured again: cold reads 2.0 and 2.3 µs faster on the A76 and 2.4 and 2.3 on the A55, for 4.8
 bytes per page on the phone's pages
 ([Six choices made on the PC, item 1](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#1-the-token-table-in-10-bits-cold-reads-2-to-3-µs-faster-on-both-cores-for-3-to-6-bytes)).
@@ -325,7 +330,7 @@ A76 nothing and the A55 2 to 2.6 µs of cold reads for the same 4.8 bytes
 The bitstream was read lowest bit first at first. Then the entries of a code of $l$ bits are spread over
 the whole token table, every $2^l$ entries. Read highest bit first, the next token is the top 11 bits of
 the register, and a code's entries are one range of the table: a page touches 42.5 instead of 55 of
-the table's 128 cache lines, counted on 20 000 pages
+the table's {{ch17.tok_lines}} cache lines, counted on 20 000 pages
 ([The sequences' bitstream most significant bit first](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
 The bytes of every page are the same. On the PC it cost nothing, 7370 against 7410 decode cycles per
 page. On the A76, with the token table not prefetched there as it was then, it made a faster cold read
@@ -343,8 +348,8 @@ completeness, see [chapter 8](#ch-codes).
 
 ### Length values: trained codes, measured twice
 
-A literal run of 15 or more bytes, or a match of 35 or more, needs a length value after the token: a
-symbol from a small table and some plain bits. Two tables of 24 symbols each, 26 with 16 KiB pages, are
+A literal run of {{ch17.ll_value_from}} or more bytes, or a match of {{ch17.ml_value_from}} or more, needs a length value after the token: a
+symbol from a small table and some plain bits. Two tables of {{const.LEN_SYMBOLS}} symbols each, {{k16.const.LEN_SYMBOLS}} with 16 KiB pages, are
 part of the format for that. Replacing their codes with the symbol in 5 plain bits would take two tables out of the format, the
 trainer and the decoder's prefetch. It was measured twice. The first time the pages grew by 3.2 and 2.8
 bytes ([Length values in 5 plain bits](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)).
@@ -397,7 +402,9 @@ that codes it in the fewest bits
 | 16, 11 bits | 10.6% | 13.1% |
 | 64, 11 bits | 11.4% | 14.4% |
 
-8 tables of 10 bits get most of it. Each has a decode table of 1024 entries of 2 bytes, 2 KiB, and a
+8 tables of 10 bits get most of it. Each has a decode table of {{ch17.lit_entries}} entries of {{ch17.lit_entry_bytes}} bytes, 2 KiB,
+@assert ch17.lit_entries * ch17.lit_entry_bytes == 2048 and ch18.bits.lit == 10
+and a
 page reads only the one it uses. 16 tables were measured three times, in userspace, in the kernel VM and on
 the phone. In the kernel VM the twice larger decode
 tables made cold reads 0.26 and 0.28 µs slower, on the hull only for lambda 10 to 13
@@ -427,7 +434,8 @@ the VM 1.8% slower with gcc and 0.7% with clang
 
 ### Coded only where it saves 1/16 and 51 bytes
 
-The encoder codes a page's literals only if the coded streams plus 51 bytes are less than $n - n/16$,
+@assert ch15.coded_min == 51
+The encoder codes a page's literals only if the coded streams plus {{ch15.coded_min}} bytes are less than $n - n/16$,
 for $n$ literals (`SEQLZ_LIT_CODED_MIN`, [chapter 11](#ch-literals-enc)). Both parts have a reason.
 Coding wherever it saves anything gave less than 0.1 points more, for decoding literals on every such
 page
@@ -444,7 +452,7 @@ reason than it had"
 ### Stream sizes in `w` bits
 
 The 8 stream sizes were 2 bytes each, a header of 19 bytes. Most streams are below 128 bytes, so the
-sizes are now written in `w` bits each, the width the largest needs, 5 to 12, and byte 2 of the header
+sizes are now written in `w` bits each, the width the largest needs, {{ch17.width_min}} to {{ch17.width_max}}, and byte 2 of the header
 holds $w - 5$. The header is $3 + w$ bytes, mostly 9 to 11, and pages are 5.2 and 5.5 bytes smaller
 ([Stream sizes in as many bits as the largest needs](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
 Letting the smaller header code more pages would have saved 2.7 and 1.7 bytes more on the desktop. On
@@ -456,7 +464,7 @@ real one. That 19 later became the minimum of 51 above.
 
 To pick the table, the encoder needs the bits of all literals in all 8 tables. Each byte's code lengths
 in all 8 tables are packed into the 8 bytes of one 64-bit word, so one add per literal prices all 8 tables
-at once, and every 25 literals of a stream the sums move into wider lanes before a byte can overflow
+at once, and every {{ch17.lit_cost_run}} literals of a stream the sums move into wider lanes before a byte can overflow
 (SWAR, [chapter 11](#ch-literals-enc)). In the kernel that pricing costs 30 to 40 ns per write. Writing the
 streams is what costs. Pricing only a sample of the literals could save 400 cycles at most, because the
 exact stream sizes are needed anyway
@@ -549,7 +557,9 @@ it replaces, and the greedy matcher then skips the longer match behind it
 ([Six choices, item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)). A hash of 6 bytes made
 pages 27.9% instead of 27.0% ([zram: prefetch the compressed data](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)). Matches of 4 bytes still come from the repeat offset.
 
-The table has 4096 slots of 2 bytes, 8 KiB. 2048 slots: 939.6 instead of 936.9 bytes per page on the
+The table has {{ch17.hash_slots}} slots of 2 bytes, 8 KiB. 2048 slots:
+@assert ch17.hash_slots * 2 == 8192
+939.6 instead of 936.9 bytes per page on the
 phone, no faster. 8192 slots: 937.1 bytes, 1.6 µs slower per write on the A55, and 16 KiB per CPU, right
 at C5 ([Six choices, item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)). "A page has 4096 positions, and a table of 4096 entries already keeps nearly every candidate that
 helps" ([seqlz-fast on the phone](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-on-the-phone-time-goes-per-sequence-and-code-layout-moves-reads-by-130-ns)).
@@ -657,7 +667,7 @@ the branch predictor on the page. In a real swap-in `seqlz-fast-lit` mispredicts
 page more than right after decoding the same page, and
 `zcomp_decompress()` takes 2.0 µs against 1.4 µs for `lz4`
 ([The decoder in a fault, found](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
-The largest source of them was the refill check: are fewer than 23 bits left in the register? That
+The largest source of them was the refill check: are fewer than {{ch17.refill_below}} bits left in the register? That
 depends on the code lengths of the sequences before, which a predictor learns only for a page it has
 seen
 ([Which branches](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
@@ -699,8 +709,9 @@ it at first; with it the A55's warm reads got 2.3 µs faster, 15%
 ([Six choices, item 7](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#7-the-phones-module-did-not-prefetch-the-compressed-data-23-µs-faster-warm-reads-on-the-a55)).
 Prefetching the destination page did not help in the kernel.
 
-The decoder also prefetches its tables at the start: the token table, 128 lines, the two length tables,
-16 lines each, and the page's literal table, 32 lines, 8 lines per loop iteration
+The decoder also prefetches its tables at the start: the token table, {{ch17.tok_lines}} lines, the two length tables,
+{{ch17.len_lines}} lines each, and the page's literal table, {{ch17.lit_lines}} lines, {{ch17.prefetch_lines}} lines per loop iteration
+@assert ch17.len_lines * 2 == 32
 (`PREFETCH_STEP`, [chapter 12](#ch-dec-basics)). The A55 needs every one of them: without any, its cold
 reads were 14.5 µs slower and 30 µs at p99, and even the 32 lines of the length tables were worth 2.8 µs
 ([Six choices, item 4](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#4-prefetching-the-tables-the-a55-needs-it-the-a76-is-faster-without)). A
@@ -749,18 +760,20 @@ KiB per CPU, and a budget of 4 KiB costs the matcher speed or ratio
 cores, every 4 KiB below `lz4` is 32 KiB, resident for good.
 
 What counts is what `kmalloc()` and `vmalloc()` hand out, not what is asked for. `lz4` asks `vmalloc()`
-for 16 416 bytes and gets 5 pages, 20 480 bytes. seqlz needs the 8192 bytes of the hash table to compress
-and the 4112 bytes of the literal scratch, a page plus 16, to decompress
+for 16 416 bytes and gets 5 pages, 20 480 bytes. seqlz needs the {{size.state}} bytes of the hash table to compress
+and the {{const.SCRATCH}} bytes of the literal scratch, a page plus 16, to decompress
 ([chapter 6](#ch-header)). zram holds the stream's mutex for either, and neither keeps anything from one
 page to the next: the matcher clears its table, the decoder writes the scratch before it reads it. So
-the kernel's backend gives each CPU one union of both, 8192 bytes from `kmalloc()`
-([chapter 15](#ch-zram-glue)). Asked as one struct of 12 304 bytes, it would have come as 16 KiB. With
+the kernel's backend gives each CPU one union of both, {{ch15.mem.union}} bytes from `kmalloc()`
+([chapter 15](#ch-zram-glue)). Asked as one struct of {{ch15.state_plus_scratch|grp}} bytes, it would have come as 16 KiB. With
 zram's contexts split into one for compression and one for decompression, as a series of 5th October
-2026 proposes, it is two allocations of 8 KiB each, 16 KiB; that split changed no codec's time in the VM
+2026 proposes, it is two allocations of 8 KiB each, 16 KiB;
+@assert ch15.mem.union_gets == ch15.mem.cctx_gets == ch15.mem.dctx_gets == 8192 and ch15.mem.struct_gets == ch15.mem.split_gets == 16384
+that split changed no codec's time in the VM
 ([zram's contexts split](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zrams-contexts-split-into-compression-and-decompression-the-same-time-in-the-vm-the-same-memory-for-seqlz)).
 At level 1 there is no decompression context at all, since pages with raw literals need no scratch.
 
-The tables are not work memory: 43 280 bytes, built once and shared by every CPU.
+The tables are not work memory: {{size.tables|grp}} bytes, built once and shared by every CPU.
 
 ### 16 KiB pages: why the kernel copy is 4 KiB only
 
@@ -768,10 +781,11 @@ seqlz is written for both page sizes: `QUETSCHN_PAGE_BITS` is 12 or 14, the offs
 bits as the page, and 16 KiB pages have their own tables, trained on the Android 17 emulator's zram and
 2.6% smaller on a second dump than tables from desktop pages
 ([Android 17 in the emulator](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
-But the work memory doubles with the page: the union asks for 16 400 bytes and gets 32 768, the split
-contexts ask for 32 784 and get 49 152. `lz4` gets 32 768 with 16 KiB pages. Each split context alone stays at or below
+But the work memory doubles with the page: the union asks for {{k16.ch15.mem.union|grp}} bytes and gets {{k16.ch15.mem.union_gets|grp}}, the split
+contexts ask for {{k16.ch15.state_plus_scratch|grp}} and get {{k16.ch15.mem.split_gets|grp}}. `lz4` gets 32 768 with 16 KiB pages. Each split context alone stays at or below
 `lz4`'s 32 KiB, their sum of 48 KiB does not, and whether C5 limits each context or the sum is not
 decided
+@assert k16.ch15.mem.cctx_gets <= 32768 and k16.ch15.mem.dctx_gets <= 32768 and k16.ch15.mem.split_gets == 48 * 1024
 ([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
 
 Decoding the coded literals into the end of the output page instead of a scratch removes the scratch.
@@ -861,7 +875,7 @@ The assembly is in the history as commit `0288b1e`, and the same pull request we
 
 The word model was the hope of the plan's Phase 2b, the decoder latency spike: control flow that barely depends on the data might
 win the p99 of a read. It did win it, by 350 ns, with a format that needs 55.7% of the page against
-`lz4`'s 34.5%. Local tricks on 8 or 64 bytes do not get the ratio; it has to come from repeats across the
+`lz4`'s 34.5% ([word model](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#word-model-wkdm-style-64-bit-words)). Local tricks on 8 or 64 bytes do not get the ratio; it has to come from repeats across the
 whole page.
 
 ### Other ways to code the literals and the offsets
@@ -976,5 +990,7 @@ The design rests on measurements of few machines, and seqlz.md says so
 
 The merge argument the project ends up with is not the one it started with. The plan hoped for a decoder
 faster than `lz4`'s at p99. In a real swap-in it is 17% to 25% slower cold on the Mi 9T, and about 20% on the PC. What it has is memory: about 28%
-less than `lz4` for a small cost in time, measured in the kernel, with a decoder that is fuzzed, bounded
+less than `lz4` for a small cost in time, measured in the kernel
+([The tables trained again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same),
+[The whole page fault](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)), with a decoder that is fuzzed, bounded
 and specified in a document two independent decoders were written from.

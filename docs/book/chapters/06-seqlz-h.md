@@ -128,6 +128,7 @@ of the longest code, and looks them up in a table of $2^L$ entries; a code of $l
 $2^{L-l}$ entries that start with its bits ([chapter 2](#ch-compression--table-decoding)). So the
 longest code decides the table's size: 8 bits for length values give 256 entries, 4 bytes each, 1 KiB;
 11 bits for tokens give 2048 entries, 4 bytes each, 8 KiB.
+@assert ch06.MAX_BITS == 8 and ch06.TOKEN_BITS == 11
 
 "A table twice as large made cold reads slower": the codes of length values were once allowed 9 bits,
 and the comment that preceded this one said "With 9 bits a cold read took 80 ns longer"
@@ -181,7 +182,7 @@ is at most $31 + 4 = 35$, which fits 6 bits; with 6 bits it would be $63 + 4 = 6
 @listing src/seqlz.h 97-103
 
 The six classes take the top of the token, above the 9 bits of the two lengths.
-`SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, $6 \cdot 512 = 3072$. A shift, not a multiplication, because the
+`SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, $6 \cdot 512 = {{const.TOKEN_SYMBOLS}}$. A shift, not a multiplication, because the
 class is a bit field: token `t` has `ll` in bits 0 to 3, `ml - 4` in bits 4 to 8 and the class in bits 9
 to 11. [Chapter 4](#ch-format--token) draws the 12 bits of token 2098, the sequence that
 [chapter 7](#ch-internal--examples)
@@ -199,15 +200,16 @@ count. With 6 classes the best layout saves 0.03 bits
 
 @listing src/seqlz.h 104-123
 
-`SEQLZ_ESCAPE` is symbol 3072, the first number after the last token. The token table therefore has
-3073 symbols, and `struct seqlz_lengths` below has `SEQLZ_TOKEN_SYMBOLS + 1` code lengths.
+`SEQLZ_ESCAPE` is symbol {{ch06.ESCAPE}}, the first number after the last token. The token table therefore has
+{{tok.symbols}} symbols, and `struct seqlz_lengths` below has `SEQLZ_TOKEN_SYMBOLS + 1` code lengths.
 
 The reason for the escape is arithmetic. A prefix code with codes of at most 11 bits has room for at most
 2048 codes: each code of $l$ bits uses $2^{-l}$ of the code space, and the sum may not exceed 1. 3072
 tokens would need at least $\frac{3072}{2048} = 1.5$ times the space. So some tokens get no code. With the 4
-KiB tables, 576 of the 3072 tokens have a code of their own, with the 16 KiB tables 512; all others are
+KiB tables, {{ch04.tok_coded}} of the 3072 tokens have a code of their own, with the 16 KiB tables {{k16.ch04.tok_coded}}; all others are
 sent as the escape's code plus the token's number in 12 plain bits. The escape is itself frequent, as a
-whole, and has a 4-bit code in both tables.
+whole, and has a {{ch06.esc_len}}-bit code in both tables.
+@assert ch06.esc_len == k16.ch06.esc_len
 
 Even when it was possible, giving every token a code was worse. In "seqlz, third decoder round" the
 token had 1536 symbols, and with 11 bits each of them needs at least $\frac{1}{2048}$ of the code space, 75% of
@@ -223,11 +225,12 @@ decoder rejects a page that sends one.
 decoder. The encoder checks that a compressed page fits into zram's two pages with an argument that
 needs at most 31 bits for a token and its offset ([chapter 10](#ch-encoder)). The longest such pair is
 an escaped token with a class 3 offset: the escape's code, 12 bits of token, and `QUETSCHN_PAGE_BITS`
-bits of offset. So the escape may have at most $31 - 12 - 12 = 7$ bits on 4 KiB pages and
-$31 - 14 - 12 = 5$ bits on 16 KiB pages. The trained tables give it 4 bits, so the longest token and
-offset take $4 + 12 + 12 = 28$ bits on 4 KiB pages. `has_all_symbols()` in `seqlz_codes.c` checks
+bits of offset. So the escape may have at most $31 - 12 - 12 = {{ch06.MAX_ESCAPE_LEN}}$ bits on 4 KiB pages and
+$31 - 14 - 12 = {{k16.ch06.MAX_ESCAPE_LEN}}$ bits on 16 KiB pages. The trained tables give it {{ch06.esc_len}} bits, so the longest token and
+offset take ${{ch06.esc_len}} + 12 + 12 = {{ch06.esc_pair}}$ bits on 4 KiB pages. `has_all_symbols()` in `seqlz_codes.c` checks
 the limit when the tables are built ([chapter 8](#ch-codes)). Every other token code is at most 11
 bits, and $11 + 12 = 23$ on 4 KiB pages, 25 on 16 KiB pages, is far below 31.
+@assert ch06.esc_len <= ch06.MAX_ESCAPE_LEN and k16.ch06.esc_len <= k16.ch06.MAX_ESCAPE_LEN and ch04.longest.tok == 11
 
 `SEQLZ_LL_CAP` and `SEQLZ_ML_CAP` are the largest values the two fields hold, $2^4 - 1 = 15$ and
 $2^5 - 1 = 31$. `(1U << n) - 1U` is the usual way to write "n ones", which is also the mask for the
@@ -249,7 +252,7 @@ symbol is $12 + 4 = 16$, right after the direct ones. That is why the base is
 `SEQLZ_LEN_DIRECT - 4U = 12`: the two kinds of symbols meet without a gap and without overlap.
 
 `SEQLZ_LEN_SYMBOLS` is how many symbols there are: 16 direct ones, then one for each $b$ from 4 up to
-`QUETSCHN_PAGE_BITS - 1`, which is $12 + 12 = 24$ on 4 KiB pages and $12 + 14 = 26$ on 16 KiB pages.
+`QUETSCHN_PAGE_BITS - 1`, which is $12 + 12 = {{ch06.LEN_SYMBOLS}}$ on 4 KiB pages and $12 + 14 = {{k16.ch06.LEN_SYMBOLS}}$ on 16 KiB pages.
 Each symbol covers a range of values twice as wide as the one before:
 
 | symbol | `b` | values | plain bits after the code |
@@ -259,12 +262,14 @@ Each symbol covers a range of values twice as wide as the one before:
 | 17 | 5 | 32 to 63 | 5 |
 | 18 | 6 | 64 to 127 | 6 |
 | ... | | | |
-| 23 | 11 | 2048 to 4095 | 11 |
+| {{ch06.last_sym}} | 11 | 2048 to 4095 | 11 |
+@assert ch06.last_sym == 23
 
-The largest length value a 4 KiB page can produce is `ll - 15` for a page of 4096 literals, 4081, or
-`ml - 35` for a match of 4095 bytes, 4060. Both are symbol 23, the last one. The comment says why no
+The largest length value a 4 KiB page can produce is `ll - 15` for 4092 literals before a match of 4
+bytes, {{ch06.max_ll_value}}, or `ml - 35` for a match of 4095 bytes after 1 literal, {{ch06.max_ml_value}}. Both are symbol {{ch06.max_ll_sym}}, the last one. The comment says why no
 symbol for a higher bit is needed: the largest length value is below the page size, so its highest bit
-is at most `QUETSCHN_PAGE_BITS - 1`, 11. On 16 KiB pages values reach 16 369, symbol 25, the last.
+is at most `QUETSCHN_PAGE_BITS - 1`, 11. On 16 KiB pages values reach {{k16.ch06.max_ll_value|grp}}, symbol {{k16.ch06.max_ll_sym}}, the last.
+@assert ch06.max_ll_sym == ch06.max_ml_sym == ch06.last_sym and k16.ch06.max_ll_sym == k16.ch06.max_ml_sym == k16.ch06.last_sym
 
 Until 11th October 2026 the symbols went up to the page's bits, one more: symbol 24 on 4 KiB pages,
 4096 to 8191, which no valid page sent. The trained tables still gave it a code of 8 bits in both
@@ -294,8 +299,8 @@ and each length starts where the one before ended, shifted one bit left
 ([chapter 2](#ch-compression--canonical-codes)). So `struct seqlz_lengths` is all the format needs to
 fix for the sequences: one byte per symbol, 0 for a symbol without a code.
 
-`token` has 3073 entries, the 3072 tokens and the escape last. `ll` and `ml` have 24 each, so the struct
-is $3073 + 24 + 24 = 3121$ bytes on 4 KiB pages and 3125 on 16 KiB pages. It has only `u8` members, so
+`token` has {{tok.symbols}} entries, the 3072 tokens and the escape last. `ll` and `ml` have {{ll.symbols}} each, so the struct
+is ${{tok.symbols}} + {{ll.symbols}} + {{ml.symbols}} = {{size.lengths}}$ bytes on 4 KiB pages and {{k16.size.lengths}} on 16 KiB pages. It has only `u8` members, so
 there is no padding.
 
 `seqlz_default_own`, declared at the end of this file, is the one set the code compiles in
@@ -320,11 +325,12 @@ Worked examples, computed with this function:
 
 | `v` | binary | `__builtin_clz(v)` | `b` | symbol | plain bits, value |
 | --- | --- | --- | --- | --- | --- |
-| 5 | `101` | | | 5 | none |
-| 16 | `10000` | 27 | 4 | 16 | 4 bits, 0 |
-| 31 | `11111` | 27 | 4 | 16 | 4 bits, 15 |
-| 100 | `1100100` | 25 | 6 | 18 | 6 bits, 36 |
-| 4059 | `111111011011` | 20 | 11 | 23 | 11 bits, 2011 |
+| 5 | `{{ch06.lensym.5.bin}}` | | | {{ch06.lensym.5.sym}} | none |
+| 16 | `{{ch06.lensym.16.bin}}` | {{ch06.lensym.16.clz}} | {{ch06.lensym.16.extra}} | {{ch06.lensym.16.sym}} | {{ch06.lensym.16.extra}} bits, {{ch06.lensym.16.low}} |
+| 31 | `{{ch06.lensym.31.bin}}` | {{ch06.lensym.31.clz}} | {{ch06.lensym.31.extra}} | {{ch06.lensym.31.sym}} | {{ch06.lensym.31.extra}} bits, {{ch06.lensym.31.low}} |
+| 100 | `{{ch06.lensym.100.bin}}` | {{ch06.lensym.100.clz}} | {{ch06.lensym.100.extra}} | {{ch06.lensym.100.sym}} | {{ch06.lensym.100.extra}} bits, {{ch06.lensym.100.low}} |
+| 4059 | `{{ch06.lensym.4059.bin}}` | {{ch06.lensym.4059.clz}} | {{ch06.lensym.4059.extra}} | {{ch06.lensym.4059.sym}} | {{ch06.lensym.4059.extra}} bits, {{ch06.lensym.4059.low}} |
+@assert ch06.lensym[5].extra == 0 and ch04.ab.s[0].mlval == 4059 and ch04.ab.s[0].ml == 4094
 
 For `v = 100`: the highest bit is bit 6, so the symbol is $12 + 6 = 18$, and the 6 plain bits are the
 bits below it, $100 - 64 = 36$, `100100`. The decoder reverses it: symbol 18 means base $2^6 = 64$, and
@@ -348,12 +354,13 @@ class:        5     4     3     2     1     0
 nibble:       9     5     C     8     4     0      SEQLZ_RAW_NIBBLES = 0x95C840 (4 KiB)
 nibble:       B     5     E     8     4     0      SEQLZ_RAW_NIBBLES = 0xB5E840 (16 KiB)
 ```
+@assert ch06.RAW_NIBBLES == "0x95C840" and k16.ch06.RAW_NIBBLES == "0xB5E840"
 
 Lines 183 and 184 build it from its parts, so that the page size goes in where it belongs: class 3
 gets `QUETSCHN_PAGE_BITS << 12`, 12 or 14 in the fourth nibble, and class 5 gets
 `(QUETSCHN_PAGE_BITS - 3U) << 20`, 9 or 11 in the sixth. `<<` binds more tightly than `|` in C, so the
 expression needs no parentheses around each term. The result is computed by the compiler; gcc's code
-for `seqlz_off_class()` loads `$9816128`, which is `0x95C840`.
+for `seqlz_off_class()` loads `${{ch06.RAW_NIBBLES_dec}}`, which is `{{ch06.RAW_NIBBLES}}`.
 
 `SEQLZ_RAW_BITS(cls)` shifts the constant right by `4 * cls` and keeps the low 4 bits. For class 3:
 `0x95C840 >> 12 = 0x95C`, and `0x95C & 15 = 0xC = 12`. For class 5: `0x95C840 >> 20 = 0x9`, 9 bits.
@@ -394,16 +401,16 @@ The whole thing, for several offsets, with `last` different from `off`:
 
 | `off` | `off >= 16` | `off >= 256` | `aligned` | `1 + a + b + 2 * aligned` | class | offset bits | value sent |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 0 | 0 | 0 | 1 | 1 | 4 | 1 |
-| 8 | 0 | 0 | 0 | 1 | 1 | 4 | 8 |
-| 15 | 0 | 0 | 0 | 1 | 1 | 4 | 15 |
-| 16 | 1 | 0 | 1 | 4 | 4 | 5 | 2 |
-| 24 | 1 | 0 | 1 | 4 | 4 | 5 | 3 |
-| 255 | 1 | 0 | 0 | 2 | 2 | 8 | 255 |
-| 256 | 1 | 1 | 1 | 5 | 5 | 9 | 32 |
-| 264 | 1 | 1 | 1 | 5 | 5 | 9 | 33 |
-| 1000 | 1 | 1 | 1 | 5 | 5 | 9 | 125 |
-| 4095 | 1 | 1 | 0 | 3 | 3 | 12 | 4095 |
+| 1 | {{ch06.off.1.ge16}} | {{ch06.off.1.ge256}} | {{ch06.off.1.aligned}} | {{ch06.off.1.sum}} | {{ch06.off.1.cls}} | {{ch06.off.1.raw}} | {{ch06.off.1.sent}} |
+| 8 | {{ch06.off.8.ge16}} | {{ch06.off.8.ge256}} | {{ch06.off.8.aligned}} | {{ch06.off.8.sum}} | {{ch06.off.8.cls}} | {{ch06.off.8.raw}} | {{ch06.off.8.sent}} |
+| 15 | {{ch06.off.15.ge16}} | {{ch06.off.15.ge256}} | {{ch06.off.15.aligned}} | {{ch06.off.15.sum}} | {{ch06.off.15.cls}} | {{ch06.off.15.raw}} | {{ch06.off.15.sent}} |
+| 16 | {{ch06.off.16.ge16}} | {{ch06.off.16.ge256}} | {{ch06.off.16.aligned}} | {{ch06.off.16.sum}} | {{ch06.off.16.cls}} | {{ch06.off.16.raw}} | {{ch06.off.16.sent}} |
+| 24 | {{ch06.off.24.ge16}} | {{ch06.off.24.ge256}} | {{ch06.off.24.aligned}} | {{ch06.off.24.sum}} | {{ch06.off.24.cls}} | {{ch06.off.24.raw}} | {{ch06.off.24.sent}} |
+| 255 | {{ch06.off.255.ge16}} | {{ch06.off.255.ge256}} | {{ch06.off.255.aligned}} | {{ch06.off.255.sum}} | {{ch06.off.255.cls}} | {{ch06.off.255.raw}} | {{ch06.off.255.sent}} |
+| 256 | {{ch06.off.256.ge16}} | {{ch06.off.256.ge256}} | {{ch06.off.256.aligned}} | {{ch06.off.256.sum}} | {{ch06.off.256.cls}} | {{ch06.off.256.raw}} | {{ch06.off.256.sent}} |
+| 264 | {{ch06.off.264.ge16}} | {{ch06.off.264.ge256}} | {{ch06.off.264.aligned}} | {{ch06.off.264.sum}} | {{ch06.off.264.cls}} | {{ch06.off.264.raw}} | {{ch06.off.264.sent}} |
+| 1000 | {{ch06.off.1000.ge16}} | {{ch06.off.1000.ge256}} | {{ch06.off.1000.aligned}} | {{ch06.off.1000.sum}} | {{ch06.off.1000.cls}} | {{ch06.off.1000.raw}} | {{ch06.off.1000.sent}} |
+| 4095 | {{ch06.off.4095.ge16}} | {{ch06.off.4095.ge256}} | {{ch06.off.4095.aligned}} | {{ch06.off.4095.sum}} | {{ch06.off.4095.cls}} | {{ch06.off.4095.raw}} | {{ch06.off.4095.sent}} |
 
 And with `off == last`, e.g. `off = last = 24`: `is_new` is 0, so the class is `4 & 0 = 0` and
 `SEQLZ_RAW_BITS(0)` is 0: no offset bits at all. At the start of a page `last` is 1, so a first match
@@ -435,8 +442,9 @@ function that uses it.
 `struct seqlz_tables;` declares the struct without defining it. Code that includes `seqlz.h` can hold a
 pointer to it and pass it on, but cannot look inside or know its size: an **opaque** type. The
 definition is in `seqlz_internal.h`, which only the codec's own files include ([chapter 7](#ch-internal)).
-It holds the codes for the encoder and the decode tables for the decoder, 43 280 bytes, the same on both
+It holds the codes for the encoder and the decode tables for the decoder, {{size.tables|grp}} bytes, the same on both
 page sizes.
+@assert size.tables == k16.size.tables
 
 "Read only once built, one for all CPUs": the tables are built once from the code lengths and then
 only read. Every CPU that compresses or decompresses uses the same copy. In the kernel's copy they
@@ -581,6 +589,8 @@ coded + 51 < n - n / 16      /* coded: the bytes of the 8 streams; n: the litera
 E.g. a page with 1000 literals: `1000 - 1000 / 16 = 1000 - 62 = 938`, so the streams must take at most
 886 bytes, 11.4% less than the literals, for the page to get coded literals. With 100 literals the
 streams must stay below $94 - 51 = 43$ bytes, less than half; few pages with so few literals qualify.
+<!-- undated: arithmetic on the rule of SEQLZ_LIT_CODED_MIN, no measurement -->
+@assert ch06.LIT_CODED_MIN == 51
 
 Why $\frac{1}{16}$ and why 51 bytes, with the measurements on the phone, is in
 [chapter 11](#ch-literals-enc--rule). In short: zsmalloc's size classes make a saving of a few bytes
@@ -596,7 +606,7 @@ literals over the raw ones in place and relies on them ending before the bitstre
 The decoder decodes coded literals into a buffer first, and the loop over the sequences then reads them
 from there as if they had been stored raw ([chapter 13](#ch-literals-dec)). That buffer is the
 **scratch**, `SEQLZ_SCRATCH` bytes, one per CPU, part of the work memory. It is a page plus 16 bytes,
-4112 bytes on 4 KiB pages and 16 400 on 16 KiB pages. The 16 bytes are for the decoder's fast path, which
+{{const.SCRATCH}} bytes on 4 KiB pages and {{k16.const.SCRATCH|grp}} on 16 KiB pages. The 16 bytes are for the decoder's fast path, which
 copies literals 16 at a time and moves on by the real count ([chapter 14](#ch-decode)): when the last
 literals are copied, those copies may read up to 16 bytes past the last literal. In the scratch those
 bytes are there; for raw literals, the bytes after them in the compressed page are. The comment names
@@ -667,14 +677,14 @@ Worked examples, computed with this function:
 
 | `ll` | `ml` | class | `a` | `b` | token |
 | --- | --- | --- | --- | --- | --- |
-| 2 | 7 | 4 | 2 | 3 | $2 + 48 + 2048 = 2098$ |
-| 1 | 7 | 0 | 1 | 3 | $1 + 48 + 0 = 49$ |
-| 2 | 4094 | 1 | 2 | 31 | $2 + 496 + 512 = 1010$ |
-| 20 | 100 | 3 | 15 | 31 | $15 + 496 + 1536 = 2047$ |
-| 0 | 4 | 0 | 0 | 0 | 0 |
+| 2 | 7 | 4 | {{ch06.tok.0.a}} | {{ch06.tok.0.b}} | ${{ch06.tok.0.a}} + {{ch06.tok.0.b16}} + {{ch06.tok.0.c512}} = {{ch06.tok.0.tok}}$ |
+| 1 | 7 | 0 | {{ch06.tok.1.a}} | {{ch06.tok.1.b}} | ${{ch06.tok.1.a}} + {{ch06.tok.1.b16}} + {{ch06.tok.1.c512}} = {{ch06.tok.1.tok}}$ |
+| 2 | 4094 | 1 | {{ch06.tok.2.a}} | {{ch06.tok.2.b}} | ${{ch06.tok.2.a}} + {{ch06.tok.2.b16}} + {{ch06.tok.2.c512}} = {{ch06.tok.2.tok}}$ |
+| 20 | 100 | 3 | {{ch06.tok.3.a}} | {{ch06.tok.3.b}} | ${{ch06.tok.3.a}} + {{ch06.tok.3.b16}} + {{ch06.tok.3.c512}} = {{ch06.tok.3.tok}}$ |
+| 0 | 4 | 0 | {{ch06.tok.4.a}} | {{ch06.tok.4.b}} | {{ch06.tok.4.tok}} |
 
 Token 49 is the sequence an array of pointers repeats in [chapter 9](#ch-matcher--back)'s example: one
-literal, a match of 7 bytes, the repeat offset; it has a 4-bit code. Token 1010 is the first sequence of
+literal, a match of 7 bytes, the repeat offset; it has a {{tok.len.49}}-bit code. Token 1010 is the first sequence of
 the format's worked example, a page of `ab` repeated. Token 2047 has both fields at their caps, so both
 length values follow it: `ll - 15 = 5` and `ml - 35 = 65`. Token 0 is no literals and a match of 4
 bytes at the repeat offset.
@@ -697,8 +707,8 @@ spread them perfectly. 2048 and 8192 entries were measured on the Mi 9T and not 
 The kernel's copy has `12U` there.
 
 `SEQLZ_MAX_SEQUENCES` is the most sequences a page can have. Every sequence but the last has a match of
-at least 4 bytes, so at most $4096 / 4 = 1024$ of them fit a page, plus the last: 1025 on 4 KiB pages,
-4097 on 16 KiB pages. `seqlz_encode()` rejects more, `seqlz_find()` needs room for that many, and the
+at least 4 bytes, so at most $4096 / 4 = 1024$ of them fit a page, plus the last: {{const.MAX_SEQUENCES}} on 4 KiB pages,
+{{k16.const.MAX_SEQUENCES}} on 16 KiB pages. `seqlz_encode()` rejects more, `seqlz_find()` needs room for that many, and the
 decoder's work per page is bounded by the same count.
 
 @listing src/seqlz.h 387-397
@@ -710,9 +720,9 @@ page survives into the next.
 The union gives the same memory a second use. Once the matcher has gone through the page, the hash
 table is not needed any more, and `code_literals()` needs a page of room for a copy of the raw literals
 while it writes the coded ones over their old place in the output ([chapter 11](#ch-literals-enc)). A
-union of `u16 table[4096]` and `u8 literals[4096]` is 8192 bytes, the larger of the two; a
+union of `u16 table[4096]` and `u8 literals[4096]` is {{size.state}} bytes, the larger of the two; a
 `static_assert` in `seqlz_compress.c` checks that the table alone has room for a page of literals, so
-the union costs no byte more than the table. On 16 KiB pages both members are 16 384 bytes. The members
+the union costs no byte more than the table. On 16 KiB pages both members are {{k16.size.state|grp}} bytes. The members
 of an anonymous union are used as if they were the struct's own, `st->table` and `st->literals`, which
 C11 and C++ both allow.
 
@@ -725,7 +735,7 @@ has the numbers. In the kernel, the hash table and the scratch of the decoder sh
 
 `seqlz_find()` runs the compressor's matcher alone and returns the sequences instead of writing them,
 "for tests and tools", e.g. to compare matchers, or to feed `seqlz_encode()`. `seq` needs room for
-`SEQLZ_MAX_SEQUENCES` entries, 1025 of 6 bytes, which is why that constant is public. The last sequence
+`SEQLZ_MAX_SEQUENCES` entries, {{const.MAX_SEQUENCES}} of {{ch06.sequence}} bytes, which is why that constant is public. The last sequence
 has no match, and the literals are the bytes no match covers; the function does not copy them, a tool
 that needs them takes them from the page. Like `seqlz_encode()`, it is not in the kernel's copy.
 
@@ -761,37 +771,37 @@ All values computed by compiling this header with `QUETSCHN_PAGE_BITS` 12 and 14
 
 | name | 4 KiB pages | 16 KiB pages | what it is |
 | --- | --- | --- | --- |
-| `SEQLZ_PAGE` | 4096 | 16384 | bytes of a page |
-| `SEQLZ_MAX_BITS` | 8 | 8 | longest code of a length value |
-| `SEQLZ_TOKEN_BITS` | 11 | 11 | longest code of a token |
-| `SEQLZ_LL_BITS`, `SEQLZ_ML_BITS` | 4, 5 | 4, 5 | bits of `ll` and `ml - 4` in a token |
-| `SEQLZ_OFF_CLASSES` | 6 | 6 | offset classes |
-| `SEQLZ_TOKEN_SYMBOLS` | 3072 | 3072 | tokens |
-| `SEQLZ_ESCAPE` | 3072 | 3072 | the escape's symbol |
-| `SEQLZ_ESCAPE_BITS` | 12 | 12 | plain bits of an escaped token |
-| `SEQLZ_MAX_ESCAPE_LEN` | 7 | 5 | longest code of the escape |
-| `SEQLZ_LL_CAP`, `SEQLZ_ML_CAP` | 15, 31 | 15, 31 | largest `ll` and `ml - 4` in a token |
-| `SEQLZ_LEN_DIRECT` | 16 | 16 | length values that are their own symbol |
-| `SEQLZ_LEN_LOG_BASE` | 12 | 12 | symbol of a length value minus its highest bit |
-| `SEQLZ_LEN_SYMBOLS` | 24 | 26 | symbols of length values |
-| `SEQLZ_HEADER` | 2 | 2 | the `u16` of every page |
-| `SEQLZ_LIT_CODED` | `0x8000` | `0x8000` | the flag for coded literals |
-| `SEQLZ_RAW_NIBBLES` | `0x95C840` | `0xB5E840` | offset bits per class, a nibble each |
-| `SEQLZ_RAW_BITS(0..5)` | 0, 4, 8, 12, 5, 9 | 0, 4, 8, 14, 5, 11 | offset bits per class |
-| `SEQLZ_OFF_SHIFT(0..5)` | 0, 0, 0, 0, 3, 3 | the same | shift of the offset sent |
-| `SEQLZ_LIT_BITS` | 10 | 10 | longest literal code |
-| `SEQLZ_LIT_SETS`, `SEQLZ_LIT_STREAMS` | 8, 8 | 8, 8 | literal tables, literal streams |
-| `SEQLZ_LIT_ROUNDS` | 5 | 5 | literals per stream per refill |
-| `SEQLZ_LIT_HEADER(w)` | 8 to 15 | 8 to 15 | header bytes with coded literals |
-| `SEQLZ_SIZE_BITS_MIN`, `_MAX` | 5, 12 | 5, 12 | bits per stream size |
-| `SEQLZ_LIT_WIDTH_AT`, `SEQLZ_LIT_ZERO_AT` | 3, 6 | 3, 6 | fields of byte 2 |
-| `SEQLZ_LIT_CODED_MIN` | 51 | 51 | bytes coding must save beyond $\frac{1}{16}$ |
-| `SEQLZ_SCRATCH` | 4112 | 16400 | the decoder's buffer for coded literals |
-| `SEQLZ_HASH_BITS` | 12 | 13 | bits of the matcher's hash |
-| `SEQLZ_MAX_SEQUENCES` | 1025 | 4097 | most sequences per page |
-| `sizeof(struct seqlz_lengths)` | 3121 | 3125 | the code lengths of the sequence tables |
-| `sizeof(struct seqlz_state)` | 8192 | 16384 | the compressor's work memory |
-| `seqlz_tables_size()` | 43280 | 43280 | the built tables |
+| `SEQLZ_PAGE` | {{ch06.PAGE}} | {{k16.ch06.PAGE}} | bytes of a page |
+| `SEQLZ_MAX_BITS` | {{ch06.MAX_BITS}} | {{k16.ch06.MAX_BITS}} | longest code of a length value |
+| `SEQLZ_TOKEN_BITS` | {{ch06.TOKEN_BITS}} | {{k16.ch06.TOKEN_BITS}} | longest code of a token |
+| `SEQLZ_LL_BITS`, `SEQLZ_ML_BITS` | {{ch06.LL_BITS}}, {{ch06.ML_BITS}} | {{k16.ch06.LL_BITS}}, {{k16.ch06.ML_BITS}} | bits of `ll` and `ml - 4` in a token |
+| `SEQLZ_OFF_CLASSES` | {{ch06.OFF_CLASSES}} | {{k16.ch06.OFF_CLASSES}} | offset classes |
+| `SEQLZ_TOKEN_SYMBOLS` | {{const.TOKEN_SYMBOLS}} | {{k16.const.TOKEN_SYMBOLS}} | tokens |
+| `SEQLZ_ESCAPE` | {{ch06.ESCAPE}} | {{k16.ch06.ESCAPE}} | the escape's symbol |
+| `SEQLZ_ESCAPE_BITS` | {{ch06.ESCAPE_BITS}} | {{k16.ch06.ESCAPE_BITS}} | plain bits of an escaped token |
+| `SEQLZ_MAX_ESCAPE_LEN` | {{ch06.MAX_ESCAPE_LEN}} | {{k16.ch06.MAX_ESCAPE_LEN}} | longest code of the escape |
+| `SEQLZ_LL_CAP`, `SEQLZ_ML_CAP` | {{ch06.LL_CAP}}, {{ch06.ML_CAP}} | {{k16.ch06.LL_CAP}}, {{k16.ch06.ML_CAP}} | largest `ll` and `ml - 4` in a token |
+| `SEQLZ_LEN_DIRECT` | {{ch06.LEN_DIRECT}} | {{k16.ch06.LEN_DIRECT}} | length values that are their own symbol |
+| `SEQLZ_LEN_LOG_BASE` | {{ch06.LEN_LOG_BASE}} | {{k16.ch06.LEN_LOG_BASE}} | symbol of a length value minus its highest bit |
+| `SEQLZ_LEN_SYMBOLS` | {{ch06.LEN_SYMBOLS}} | {{k16.ch06.LEN_SYMBOLS}} | symbols of length values |
+| `SEQLZ_HEADER` | {{ch06.HEADER}} | {{k16.ch06.HEADER}} | the `u16` of every page |
+| `SEQLZ_LIT_CODED` | `{{ch06.LIT_CODED}}` | `{{k16.ch06.LIT_CODED}}` | the flag for coded literals |
+| `SEQLZ_RAW_NIBBLES` | `{{ch06.RAW_NIBBLES}}` | `{{k16.ch06.RAW_NIBBLES}}` | offset bits per class, a nibble each |
+| `SEQLZ_RAW_BITS(0..5)` | {{ch06.RAW_BITS}} | {{k16.ch06.RAW_BITS}} | offset bits per class |
+| `SEQLZ_OFF_SHIFT(0..5)` | {{ch06.OFF_SHIFT}} | {{k16.ch06.OFF_SHIFT}} | shift of the offset sent |
+| `SEQLZ_LIT_BITS` | {{ch06.LIT_BITS}} | {{k16.ch06.LIT_BITS}} | longest literal code |
+| `SEQLZ_LIT_SETS`, `SEQLZ_LIT_STREAMS` | {{ch06.LIT_SETS}}, {{ch06.LIT_STREAMS}} | {{k16.ch06.LIT_SETS}}, {{k16.ch06.LIT_STREAMS}} | literal tables, literal streams |
+| `SEQLZ_LIT_ROUNDS` | {{ch06.LIT_ROUNDS}} | {{k16.ch06.LIT_ROUNDS}} | literals per stream per refill |
+| `SEQLZ_LIT_HEADER(w)` | {{ch06.LIT_HEADER_MIN}} to {{ch06.LIT_HEADER_MAX}} | {{k16.ch06.LIT_HEADER_MIN}} to {{k16.ch06.LIT_HEADER_MAX}} | header bytes with coded literals |
+| `SEQLZ_SIZE_BITS_MIN`, `_MAX` | {{ch06.SIZE_BITS_MIN}}, {{ch06.SIZE_BITS_MAX}} | {{k16.ch06.SIZE_BITS_MIN}}, {{k16.ch06.SIZE_BITS_MAX}} | bits per stream size |
+| `SEQLZ_LIT_WIDTH_AT`, `SEQLZ_LIT_ZERO_AT` | {{ch06.LIT_WIDTH_AT}}, {{ch06.LIT_ZERO_AT}} | {{k16.ch06.LIT_WIDTH_AT}}, {{k16.ch06.LIT_ZERO_AT}} | fields of byte 2 |
+| `SEQLZ_LIT_CODED_MIN` | {{ch06.LIT_CODED_MIN}} | {{k16.ch06.LIT_CODED_MIN}} | bytes coding must save beyond $\frac{1}{16}$ |
+| `SEQLZ_SCRATCH` | {{const.SCRATCH}} | {{k16.const.SCRATCH}} | the decoder's buffer for coded literals |
+| `SEQLZ_HASH_BITS` | {{ch06.HASH_BITS}} | {{k16.ch06.HASH_BITS}} | bits of the matcher's hash |
+| `SEQLZ_MAX_SEQUENCES` | {{const.MAX_SEQUENCES}} | {{k16.const.MAX_SEQUENCES}} | most sequences per page |
+| `sizeof(struct seqlz_lengths)` | {{size.lengths}} | {{k16.size.lengths}} | the code lengths of the sequence tables |
+| `sizeof(struct seqlz_state)` | {{size.state}} | {{k16.size.state}} | the compressor's work memory |
+| `seqlz_tables_size()` | {{size.tables}} | {{k16.size.tables}} | the built tables |
 
 ::: try Print them yourself
 ```c
@@ -808,6 +818,11 @@ int main(void)
 	return 0;
 }
 ```
-`gcc -O2 -Isrc t.c && ./a.out` prints `0x95C840 24 7` and `off 264: class 5, 9 bits; v 100: symbol 18,
-6 bits`; with `-DQUETSCHN_PAGE_BITS=14` the first line is `0xB5E840 26 5`, and class 5 has 11 bits.
+@program ch06-print
+
+`gcc -O2 -Isrc t.c && ./a.out` prints
+
+@output ch06-print
+
+With `-DQUETSCHN_PAGE_BITS=14` the first line is `{{k16.ch06.RAW_NIBBLES}} {{k16.ch06.LEN_SYMBOLS}} {{k16.ch06.MAX_ESCAPE_LEN}}`, and class 5 has {{k16.ch06.RAW_BITS5}} bits.
 :::

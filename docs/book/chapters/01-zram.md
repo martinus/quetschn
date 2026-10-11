@@ -224,7 +224,7 @@ Three things follow, and the book comes back to each:
 
 - **Saving less than one class step on a page usually saves nothing.** A format can afford a few
   bytes of header per page, a flag per page, a field that makes the decoder faster. The rule
-  that seqlz codes its literals only if that saves $\frac{1}{16}$ of them and 51 bytes more comes from this
+  that seqlz codes its literals only if that saves $\frac{1}{16}$ of them and {{ch01.LIT_CODED_MIN}} bytes more comes from this
   ([chapter 11](#ch-literals-enc)).
 - **The cliff is the largest step.** A page moved from 3625 to 3600 bytes saves 455 bytes, 18 times
   the 25 bytes of compression it took. And zram never decompresses a page stored raw, so the decoder
@@ -312,7 +312,7 @@ and kept as long as it exists, whether that CPU ever swaps or not.
 
 The kernel has two main allocators. `kmalloc()` hands out physically contiguous memory from caches of
 fixed sizes, powers of 2 up to `KMALLOC_MAX_CACHE_SIZE`, which is 2 pages, 8 KiB, with 4 KiB pages: a
-request of 4112 bytes gets an object of 8192. A larger request gets whole pages straight from the page
+request of {{const.SCRATCH}} bytes gets an object of {{ch01.dctx_kmalloc}}. A larger request gets whole pages straight from the page
 allocator, again a power of 2 of them: 16 384 bytes are 4 pages, 61 440 bytes get 16 pages, 65 536.
 `vmalloc()` maps whole pages into a contiguous range of addresses, so it rounds up to whole pages: a
 request of 16 416 bytes takes 5 pages, 20 480 bytes. `kvmalloc()` tries the first and falls back to the
@@ -334,12 +334,14 @@ The project's limit, called **C5**, is `lz4`'s: at most 16 416 bytes per CPU. Th
 on the project's test phone, with 8 cores, every 4 KiB of work memory per CPU is 32 KiB of RAM that
 is never free, on the device where RAM is shortest
 ([`docs/plan.md` §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
-seqlz needs an 8192-byte table for the matcher while it compresses and a 4112-byte buffer for the
-decoded literals while it decompresses. zram holds the stream's mutex for either, and neither keeps
-anything from one page to the next, so the kernel backend puts both into one union of 8192 bytes,
-which `kmalloc()` hands out as exactly 8 KiB. With the split streams they are two allocations, 8 KiB
-each after rounding, 16 KiB per CPU, still below `lz4`'s 20 KiB. The tables seqlz decodes with,
-43 280 bytes, are not per CPU: they are built once when the kernel starts and shared by all CPUs.
+seqlz needs a table of {{size.state}} bytes for the matcher while it compresses and a buffer of
+{{const.SCRATCH}} bytes for the decoded literals while it decompresses. zram holds the stream's mutex for either, and neither
+keeps anything from one page to the next, so the kernel backend puts both into one union of
+{{ch01.union}} bytes, which `kmalloc()` hands out as exactly {{ch01.union_kib}} KiB. With the split streams they
+are two allocations, {{ch01.cctx_kib}} KiB each after rounding, {{ch01.split_kib}} KiB per CPU, still below `lz4`'s
+20 KiB. The tables seqlz decodes with, {{size.tables|grp}} bytes, are not per CPU: they are built once
+when the kernel starts and shared by all CPUs.
+@assert ch01.union == 1024 * ch01.union_kib and ch01.cctx_kib == ch01.dctx_kib and ch01.split_kib < 20
 [Chapter 6](#ch-header) and [chapter 15](#ch-zram-glue) have the details, and why 16 KiB pages break
 the limit.
 
@@ -485,7 +487,8 @@ the benchmark logs.
 <figcaption>The four codecs of the table below on the first desktop dump; the dashed line is the hull, and the slopes are the exchange rates between its neighbours.</figcaption>
 </figure>
 
-Read the figure from the right. Going from `zstd` 3 to `seqlz-fast-lit` saves 7.93 µs per page written
+Read the figure from the right; its numbers are the ones of the table in the next section, measured
+on 5th October 2026. Going from `zstd` 3 to `seqlz-fast-lit` saves 7.93 µs per page written
 and costs 23 bytes per page, 2.9 bytes per µs: whoever values a µs at less than 2.9 bytes should run
 `zstd`. Going from `seqlz-fast-lit` to `lzo-rle` saves 1.32 µs and costs 326 bytes, 247 bytes per µs:
 whoever values a µs at more than that should run `lzo-rle`. In between, `seqlz-fast-lit` has the
@@ -529,9 +532,9 @@ with the tables seqlz had before 7th October
 | `zstd` 3 | 1012 / 1197 | 13.49 / 14.40 | 5.29 / 5.53 | 15.29 / 16.28 |
 
 The time per page written is the write plus 0.34 times the cold read, e.g. for `lz4` on the first
-dump $5.28 + 0.34 \times 2.53 = 6.14$ µs. `seqlz-fast-lit` stores pages 24% and 21% smaller than `lzo-rle`,
-29% and 24% smaller than `lz4`, and within 2% and 10% of `zstd` 3, for 22% and 24% more time than `lz4`
-to write a page.
+dump $5.28 + 0.34 \times 2.53 = 6.14$ µs. In these runs of 5th October 2026, `seqlz-fast-lit` stores
+pages 24% and 21% smaller than `lzo-rle`, 29% and 24% smaller than `lz4`, and within 2% and 10% of
+`zstd` 3, for 22% and 24% more time than `lz4` to write a page.
 
 ::: warn The read times in this table flatter the decoder
 The project's read benchmark in the VM reads every page several times in a row in each run, warm and
@@ -556,7 +559,7 @@ might be unreachable; a design is judged by how much closer it gets
 
 The plan writes the merge argument as six criteria. Their status on 9th October 2026:
 
-| | criterion | status |
+| | criterion | status, as in [`docs/plan.md` §1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#1-goal-and-success-criteria) |
 | --- | --- | --- |
 | C1 | at least 8% less Σ zsmalloc cost than the better of `lzo-rle` and `lz4` | met: 24% and 21% less than `lzo-rle` on two desktop dumps, 28% less than `lz4` on the phone |
 | C2 | a lower p99 cold read time than `lz4`, on x86-64 and on an arm64 little core | not met |
@@ -583,3 +586,4 @@ a user, is not measured either. With 16 KiB pages, which Android is moving to an
 has only from the Android 17 emulator, not from a phone, seqlz needs more work
 memory than `lz4` once the streams are split, and whether C5 limits the compression context alone or
 the sum of both is still open.
+@assert k16.size.state + k16.const.SCRATCH > 16416 and k16.size.state <= 16416

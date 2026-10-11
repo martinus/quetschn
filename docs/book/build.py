@@ -15,9 +15,10 @@ Directives, each on a line of its own, outside fenced code:
   $$ tex $$
       a formula of its own, on a line of its own
 
-  @anim <name> [wide] Caption
+  @anim <name> [wide] [facts=<prefix>,...] Caption
       an animation, anim/<name>.js on anim/core.js; if anim/<name>.c exists, it is built with src/
-      and its output, JSON, is the animation's data. "wide" lets it use the width beside the column
+      and its output, JSON, is the animation's data. "wide" lets it use the width beside the column.
+      facts= adds the facts under those prefixes to the data, as data.facts["ch02.cls.0.share"]
 
   @stepper decode | match
       the step-through of seqlz_decode() or seqlz_match_page(): stepper/instrument.py puts hooks
@@ -25,14 +26,36 @@ Directives, each on a line of its own, outside fenced code:
       stepper/stepper.js or match.js plays it; needs a C compiler. The C programs of anim/ and
       stepper/ get their pages from pages.h
 
+  ```c
+  ... a whole program ...
+  ```
+  @program <name> [-D... flags] [with=dec_counted]
+      the program above is built with src/ and run at build time; @output shows what it printed.
+      with=dec_counted links src/seqlz_decompress.c with chapter 16's two counters instead
+
+  @output <name> [lines]
+      what the program <name> printed, as a text block; lines is e.g. 3-4 or 1-2,24-25
+
+  {{key}}, {{key|grp}}
+      a value the facts programs compute, anywhere in a chapter, also in code and figures: each
+      facts/*.c is built with src/ and prints a JSON object, nested objects give dotted keys, list
+      items their index (ab.bytes, tok.code.34). |grp writes a number in groups of 3 digits,
+      524 912. An unknown key fails the build. A facts file with the line "// facts: also 16k" is
+      built for 16 KiB pages too, its keys then start with k16.
+
+  @assert <python expression>
+      fails the build when false, for a sentence that depends on the code without quoting a
+      number: the facts are its names (tok.len[0] == 0), and F("tok.len.0") reads a dotted key
+
 $tex$ in a line is a formula in the text, outside code spans; \$ is a dollar sign. KaTeX renders
 them at build time (math.mjs, `npm install` in docs/book first), so the page needs no script.
 
 Fenced code (```c, ```text, ```python) is highlighted the same way, without
 line numbers. Raw HTML (figures with inline SVG) passes through.
 
-python3 build.py [--check]  --check fails if a line of src/ is in no listing, an id is twice on
-                            the page, or a link goes to an id that is not
+python3 build.py [--check] [--out DIR]
+    --check fails if a line of src/ is in no listing, an id is twice on the page, or a link goes to
+    an id that is not; --out writes the two pages into DIR instead of next to this script
 """
 import base64
 import html
@@ -61,8 +84,10 @@ def git(*args):
 # the commit of the last change to src/: the listings are src/ as it is in the checkout, and their
 # links on GitHub point to that commit
 SRC_COMMIT = git("log", "-1", "--format=%H", "--", "src")
-OUT = HERE / "seqlz-line-by-line.html"
-STANDALONE = HERE / "seqlz-line-by-line.standalone.html"
+OUT_DIR = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else HERE
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT = OUT_DIR / "seqlz-line-by-line.html"
+STANDALONE = OUT_DIR / "seqlz-line-by-line.standalone.html"
 
 BOOK = json.loads((HERE / "book.json").read_text())
 
@@ -124,6 +149,17 @@ def src_lines(path):
 
 COVERED = {}  # path -> set of line numbers
 LISTINGS = []
+FILE_COMMIT = {}
+LANG = {".c": "c", ".h": "c", ".inc": "c", ".py": "python", ".sh": "bash", ".patch": "diff", ".cpp": "cpp"}
+
+
+def file_commit(path):
+    """the last commit that changed path, which its link on GitHub shows; src/ files share SRC_COMMIT"""
+    if path.startswith("src/"):
+        return SRC_COMMIT
+    if path not in FILE_COMMIT:
+        FILE_COMMIT[path] = git("log", "-1", "--format=%H", "--", path) or SRC_COMMIT
+    return FILE_COMMIT[path]
 
 
 def render_listing(path, a, b):
@@ -133,13 +169,13 @@ def render_listing(path, a, b):
     COVERED.setdefault(path, set()).update(range(a, b + 1))
     LISTINGS.append((path, a, b))
     body = "\n".join(lines[a - 1:b])
-    hl = highlight_lines(body, "c")
+    hl = highlight_lines(body, LANG.get(pathlib.Path(path).suffix, "text"))
     rows = "".join(
         f'<span class="line"><span class="ln" data-n="{a + i}"></span><span class="lc">{h}</span></span>'
         for i, h in enumerate(hl))
     rng = f"line {a}" if a == b else f"lines {a}&ndash;{b}"
     return (f'<figure class="listing" id="L-{path.replace("/", "-").replace(".", "-")}-{a}">'
-            f'<figcaption><a class="lfile" href="{GITHUB}/{SRC_COMMIT}/{path}#L{a}-L{b}">{html.escape(path)}</a>'
+            f'<figcaption><a class="lfile" href="{GITHUB}/{file_commit(path)}/{path}#L{a}-L{b}">{html.escape(path)}</a>'
             f'<span class="lrange">{rng}</span></figcaption>'
             f'<pre class="code numbered"><code>{rows}</code></pre></figure>')
 
@@ -162,7 +198,7 @@ STEPPER_CSS = [False]
 SRC_C = ("codes", "compress", "decompress", "default_tables", "lit_sets")
 
 
-def run_c(main, include_dirs=(), link=SRC_C):
+def run_c(main, include_dirs=(), link=SRC_C, flags=(), extra=()):
     """main built with the codec of src/ and run, its stdout. A file of src/ that main #includes, to
     reach its static functions, is not linked a second time. Variables start at 0: the step-throughs
     record theirs before the function first sets them."""
@@ -170,9 +206,187 @@ def run_c(main, include_dirs=(), link=SRC_C):
     srcs = [str(REPO / f"src/seqlz_{n}.c") for n in link if f'#include "seqlz_{n}.c"' not in text]
     incs = [a for d in [*include_dirs, HERE, REPO / "src"] for a in ("-I", str(d))]
     with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run(["cc", "-O1", "-ftrivial-auto-var-init=zero", *incs, str(main), *srcs, "-o", f"{tmp}/a"],
-                       check=True)
+        subprocess.run(["cc", "-O1", "-ftrivial-auto-var-init=zero", *flags, *incs, str(main), *srcs, *extra,
+                        "-o", f"{tmp}/a"], check=True)
         return subprocess.run([f"{tmp}/a"], capture_output=True, text=True, check=True).stdout
+
+
+# ---- programs, facts and asserts: what the text says that the code computes, computed at build time
+
+def counted_decoder(path):
+    """src/seqlz_decompress.c with two counters, n_fast and n_slow, and seqlz_decode() renamed to
+    seqlz_decode_counted(): what the sed command of chapter 16 makes"""
+    t = (REPO / "src" / "seqlz_decompress.c").read_text()
+    for pat, sub in [(r'^#include "seqlz_internal.h"$',
+                      '#include "seqlz_internal.h"\nunsigned int n_fast, n_slow;\n#define seqlz_decode seqlz_decode_counted'),
+                     (r"^\t\t\ttok = next_token_fast\(", "\t\t\tn_fast++;\n\\g<0>"),
+                     (r"^\t\t/\* the slow path: length values, and every check \*/$", "\\g<0>\n\t\tn_slow++;")]:
+        t, n = re.subn(pat, sub, t, flags=re.M)
+        if n != 1:
+            sys.exit(f"counted_decoder: {pat} matched {n} times in src/seqlz_decompress.c")
+    path.write_text(t)
+
+
+def run_program(name, code, args, where):
+    """a program of a chapter, built with src/ and run: its stdout"""
+    flags = [a for a in args if a.startswith("-D")]
+    unknown = [a for a in args if not a.startswith("-D") and a != "with=dec_counted"]
+    if unknown:
+        sys.exit(f"{where}: @program {name}: unknown {' '.join(unknown)}")
+    with tempfile.TemporaryDirectory() as tmp:
+        main = pathlib.Path(tmp) / f"{name}.c"
+        main.write_text(code)
+        extra = []
+        if "with=dec_counted" in args:
+            counted_decoder(pathlib.Path(tmp) / "dec_counted.c")
+            extra.append(str(pathlib.Path(tmp) / "dec_counted.c"))
+        try:
+            return run_c(main, flags=flags, extra=extra)
+        except subprocess.CalledProcessError as e:
+            sys.exit(f"{where}: @program {name} failed: {e}")
+
+
+def programs_of(text, where):
+    """the chapter's ```c blocks with an @program line right after them: (name, code, args, where)"""
+    lines, out = text.split("\n"), []
+    for i, line in enumerate(lines):
+        m = re.match(r"^@program\s+(\S+)(.*)$", line)
+        if not m:
+            continue
+        if i == 0 or lines[i - 1] != "```":
+            sys.exit(f"{where}:{i + 1}: @program must follow a ```c block")
+        j = i - 2
+        while j >= 0 and lines[j] != "```c":
+            j -= 1
+        if j < 0:
+            sys.exit(f"{where}:{i + 1}: @program without its ```c block")
+        out.append((m.group(1), "\n".join(lines[j + 1:i - 1]) + "\n", m.group(2).split(), f"{where}:{i + 1}"))
+    return out
+
+
+PROGRAMS = {}
+
+
+def flatten(obj, prefix, out, where):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            flatten(v, f"{prefix}{k}.", out, where)
+    elif isinstance(obj, list):
+        out[prefix[:-1]] = obj
+        for k, v in enumerate(obj):
+            flatten(v, f"{prefix}{k}.", out, where)
+    else:
+        key = prefix[:-1]
+        if key in out:
+            sys.exit(f"{where}: fact {key} is defined twice")
+        out[key] = obj
+
+
+class Facts(dict):
+    """the facts as names for @assert: tok.len[0] and ab.len for the keys tok.len.0 and ab.len"""
+
+    def __getattr__(self, k):
+        try:
+            return self[k]
+        except KeyError:
+            raise AttributeError(k) from None
+
+    def __getitem__(self, k):
+        return super().__getitem__(str(k))
+
+
+FACTS, FACT_TREE = {}, Facts()
+
+
+def fact_tree():
+    """the dotted keys as nested Facts; a key that is also the start of others stays a value there"""
+    for key, v in FACTS.items():
+        node, parts = FACT_TREE, key.split(".")
+        for part in parts[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, Facts):
+                nxt = node[part] = Facts()
+            node = nxt
+        if not isinstance(node.get(parts[-1]), Facts):
+            dict.__setitem__(node, parts[-1], v)
+
+
+def facts_of(c, flags=()):
+    out = run_c(c, flags=flags)
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        sys.exit(f"facts/{c.name}: not JSON: {e}")
+
+
+def load_facts(pool):
+    # what the repository has, which no program of src/ can print
+    FACTS["src.lines"] = sum((REPO / "src" / f.name).read_text().count("\n") for f in (REPO / "src").iterdir()
+                             if f.suffix in (".c", ".h"))
+    files = sorted((HERE / "facts").glob("*.c"))
+    # a facts file with the line "// facts: also 16k" is built a second time for 16 KiB pages, its
+    # keys then start with k16.
+    k16 = [c for c in files if "// facts: also 16k" in c.read_text()]
+    runs = [(c, "", pool.submit(facts_of, c)) for c in files]
+    runs += [(c, "k16.", pool.submit(facts_of, c, ("-DQUETSCHN_PAGE_BITS=14",))) for c in k16]
+    for c, prefix, fut in runs:
+        flatten(fut.result(), prefix, FACTS, f"facts/{c.name}")
+    fact_tree()
+
+
+def fact_text(v):
+    if isinstance(v, list):
+        return " ".join(str(x) for x in v)
+    return str(v)
+
+
+def substitute(text, where):
+    """{{key}} and {{key|grp}} in a chapter replaced by the facts"""
+    def one(m):
+        key, fmt = m.group(1), m.group(2)
+        if key not in FACTS:
+            line = text[:m.start()].count("\n") + 1
+            sys.exit(f"{where}:{line}: unknown fact {{{{{key}}}}}")
+        v = FACTS[key]
+        if fmt == "grp":
+            return f"{v:,}".replace(",", " ")
+        if fmt:
+            sys.exit(f"{where}: unknown format |{fmt}")
+        return fact_text(v)
+    return re.sub(r"\{\{([A-Za-z0-9_.-]+)(?:\|(\w+))?\}\}", one, text)
+
+
+def check_assert(expr, where):
+    names = dict(FACT_TREE)
+    names["F"] = lambda key: FACTS[key]
+    try:
+        ok = eval(expr, {"__builtins__": {"len": len, "sum": sum, "min": min, "max": max, "all": all,
+                                          "any": any, "abs": abs, "sorted": sorted, "range": range,
+                                          "int": int, "str": str, "round": round}}, names)
+    except Exception as e:  # noqa: BLE001 the expression is the chapter's
+        sys.exit(f"{where}: @assert {expr}: {type(e).__name__}: {e}")
+    if not ok:
+        FAILED.append(f"{where}: @assert {expr} is false; the sentence next to it needs a look")
+
+
+FAILED = []  # the false asserts, all reported at the end of the build
+
+
+def render_output(args, where):
+    m = re.match(r"(\S+)(?:\s+([\d,-]+))?\s*$", args)
+    if not m or m.group(1) not in PROGRAMS:
+        sys.exit(f"{where}: @output <program> [lines]: no program {args.split()[0] if args else ''}")
+    out = PROGRAMS[m.group(1)].result().rstrip("\n").split("\n")
+    if m.group(2):
+        sel = []
+        for r in m.group(2).split(","):
+            a, _, b = r.partition("-")
+            a, b = int(a), int(b or a)
+            if not 1 <= a <= b <= len(out):
+                sys.exit(f"{where}: @output {args}: the program printed {len(out)} lines")
+            sel += out[a - 1:b]
+        out = sel
+    return render_fence("text", "\n".join(out))
 
 
 def run_trace(kind):
@@ -281,7 +495,13 @@ def prebuild(texts):
     """starts the C builds that the chapters' @anim and @stepper lines need, in parallel: each
     compiles src/ again, and one after another they took 2 of the build's 3 seconds"""
     pool = ThreadPoolExecutor()
-    for text in texts:
+    for where, text in texts:
+        for name, code, args, at in programs_of(text, where):
+            if name in PROGRAMS:
+                sys.exit(f"{at}: program {name} twice")
+            PROGRAMS[name] = pool.submit(run_program, name, code, args, at)
+    load_facts(pool)
+    for where, text in texts:
         for m in re.finditer(r"^@anim\s+(\w[\w-]*)", text, re.M):
             PREBUILT.setdefault(("anim", m.group(1)), pool.submit(anim_data, m.group(1)))
         for m in re.finditer(r"^@stepper\s+(\w+)\s*$", text, re.M):
@@ -291,10 +511,10 @@ def prebuild(texts):
 
 
 def render_anim(args, where):
-    m = re.match(r"(\w[\w-]*)(\s+wide)?\s*(.*)$", args)
+    m = re.match(r"(\w[\w-]*)(\s+wide)?(?:\s+facts=(\S+))?\s*(.*)$", args)
     if not m:
-        sys.exit(f"{where}: @anim <name> [wide] caption")
-    name, wide, caption = m.group(1), bool(m.group(2)), m.group(3)
+        sys.exit(f"{where}: @anim <name> [wide] [facts=<prefix>,...] caption")
+    name, wide, caption = m.group(1), bool(m.group(2)), m.group(4)
     d = HERE / "anim"
     if not (d / f"{name}.js").exists():
         sys.exit(f"{where}: anim/{name}.js does not exist")
@@ -305,6 +525,16 @@ def render_anim(args, where):
     if (d / f"{name}.css").exists():
         out += f'<style>{(d / f"{name}.css").read_text()}</style>'
     data = PREBUILT[("anim", name)].result() if ("anim", name) in PREBUILT else anim_data(name)
+    if m.group(3):
+        # the facts under these prefixes, as data.facts, so the figure shows the numbers the text does
+        prefixes = m.group(3).split(",")
+        picked = {k: v for k, v in FACTS.items() if any(k == p or k.startswith(p + ".") for p in prefixes)
+                  and not isinstance(v, list)}
+        if not picked:
+            sys.exit(f"{where}: @anim {name}: no facts under {m.group(3)}")
+        obj = json.loads(data) if data is not None else {}
+        obj["facts"] = picked
+        data = json.dumps(obj)
     fid = f"anim-{name}"
     out += (f'<figure class="anim{" wide" if wide else ""}" id="{fid}" data-anim="{name}" tabindex="-1">'
             f'<div class="an-bar"></div><p class="an-say" aria-live="polite"></p><div class="an-stage"></div>'
@@ -409,8 +639,10 @@ def md(text):
                              output_format="html5")
 
 
-def preprocess(text, where):
+def preprocess(text, where, first=1):
+    """first: the line of the chapter that text starts at, for the messages"""
     out, i = [], 0
+    at = lambda k: f"{where}:{first + k}"  # noqa: E731
     lines = text.split("\n")
     while i < len(lines):
         line = lines[i]
@@ -420,7 +652,7 @@ def preprocess(text, where):
             while j < len(lines) and not lines[j].startswith("```"):
                 j += 1
             if j == len(lines):
-                sys.exit(f"{where}: unclosed fence at line {i + 1}")
+                sys.exit(f"{at(i)}: unclosed fence")
             out.append(stash(render_fence(m.group(1), "\n".join(lines[i + 1:j]))))
             i = j + 1
             continue
@@ -433,21 +665,34 @@ def preprocess(text, where):
             continue
         m = re.match(r"^@anim\s+(.*)$", line)
         if m:
-            out.append(stash(render_anim(m.group(1).strip(), f"{where}:{i + 1}")))
+            out.append(stash(render_anim(m.group(1).strip(), at(i))))
             i += 1
             continue
         m = re.match(r"^@stepper\s+(\w+)\s*$", line)
         if m:
-            out.append(stash(render_stepper(m.group(1), f"{where}:{i + 1}")))
+            out.append(stash(render_stepper(m.group(1), at(i))))
+            i += 1
+            continue
+        if line.startswith("@program"):  # built by prebuild(), the code is shown by its fence
+            i += 1
+            continue
+        m = re.match(r"^@output\s+(.*)$", line)
+        if m:
+            out.append(stash(render_output(m.group(1).strip(), at(i))))
+            i += 1
+            continue
+        m = re.match(r"^@assert\s+(.+)$", line)
+        if m:
+            check_assert(m.group(1).strip(), at(i))
             i += 1
             continue
         if line.startswith("@listing"):
-            sys.exit(f"{where}:{i + 1}: bad listing line: {line}")
+            sys.exit(f"{at(i)}: bad listing line: {line}")
         m = re.match(r"^:::\s*(\w+)\s*(.*)$", line)
         if m:
             kind, title = m.group(1), m.group(2).strip()
             if kind not in BOX_TITLES:
-                sys.exit(f"{where}:{i + 1}: unknown box kind {kind}")
+                sys.exit(f"{at(i)}: unknown box kind {kind}")
             j, depth = i + 1, 1
             while j < len(lines):
                 if re.match(r"^:::\s*\w", lines[j]):
@@ -458,8 +703,8 @@ def preprocess(text, where):
                         break
                 j += 1
             if j == len(lines):
-                sys.exit(f"{where}:{i + 1}: unclosed box")
-            inner = unstash(md(preprocess("\n".join(lines[i + 1:j]), where)))
+                sys.exit(f"{at(i)}: unclosed box")
+            inner = unstash(md(preprocess("\n".join(lines[i + 1:j]), where, first + i + 1)))
             label = BOX_TITLES[kind]
             head = f'<span class="boxkind">{label}</span>'
             if title:
@@ -467,7 +712,7 @@ def preprocess(text, where):
             out.append(stash(f'<aside class="box box-{kind}"><div class="boxhead">{head}</div>{inner}</aside>'))
             i = j + 1
             continue
-        out.append(math_line(line, f"{where}:{i + 1}"))
+        out.append(math_line(line, at(i)))
         i += 1
     return "\n".join(out)
 
@@ -489,8 +734,8 @@ def warn(msg):
 
 def build():
     parts_html, toc = [], []
-    prebuild((HERE / "chapters" / ch["file"]).read_text() for part in BOOK["parts"] for ch in part["chapters"]
-             if (HERE / "chapters" / ch["file"]).exists())
+    prebuild([(ch["file"], (HERE / "chapters" / ch["file"]).read_text()) for part in BOOK["parts"]
+              for ch in part["chapters"] if (HERE / "chapters" / ch["file"]).exists()])
     ids = set()
     chap_no = 0
     for part in BOOK["parts"]:
@@ -504,7 +749,7 @@ def build():
             if not f.exists():
                 parts_html.append(f'<section class="chapter missing"><h1>{ch["file"]} is not written yet</h1></section>')
                 continue
-            text = f.read_text()
+            text = substitute(f.read_text(), ch["file"])
             body = unstash(md(preprocess(text, ch["file"])))
             numbered = ch.get("numbered", True)
             if numbered:
@@ -623,6 +868,9 @@ def check_coverage():
 
 if __name__ == "__main__":
     build()
+    if FAILED:
+        print("\n".join(FAILED))
+        sys.exit(f"{len(FAILED)} @assert false: read those paragraphs again, then fix them or the assert")
     ok = check_coverage()
     if "--check" in sys.argv and (not ok or WARNINGS):
         sys.exit(1)

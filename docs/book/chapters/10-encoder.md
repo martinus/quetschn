@@ -11,8 +11,8 @@ That gives it a problem. A compressed page is the u16 with the number of literal
 then the bitstream. Where the bitstream starts depends on how many literals there are, and that is known
 only after the last sequence. The encoder's answer is to write from both ends of its output buffer: the
 literals from the front, the bitstream backwards from the back, and at the end it copies the bitstream,
-turned around, to right after the literals. This chapter goes through that machinery: lines 1 to 318 of
-the file, and the three functions at its end, lines 594 to 628, that tie it together. Lines 320 to 593
+turned around, to right after the literals. This chapter goes through that machinery: lines 1 to 321 of
+the file, and the three functions at its end, lines 597 to 631, that tie it together. Lines 323 to 595
 code the literals with Huffman codes, which is [chapter 11](#ch-literals-enc).
 
 ## The file's head, and seqlz_find() {#ch-encoder--find}
@@ -33,7 +33,7 @@ a `void *` and line 21 turns it back into the struct it is; in C that conversion
 
 `seqlz_find()` sets up the context with a designated initializer, `{ .seq = seq }`, which sets every
 field it does not name to 0, so `n` starts at 0. It runs the matcher on the page and returns how many
-sequences it found. Its array must have room for `SEQLZ_MAX_SEQUENCES`, 1025 on 4 KiB pages; chapter 9
+sequences it found. Its array must have room for `SEQLZ_MAX_SEQUENCES`, {{const.MAX_SEQUENCES}} on 4 KiB pages; chapter 9
 shows why no page has more. As said [there](#ch-matcher--emit), `find_emit()` is inlined into the matcher's
 loop, so this costs no call per sequence.
 
@@ -136,8 +136,9 @@ the comment said the flushes "move the bitstream down by at most 16 bytes, writi
 which read that way adds up to 40 and not to 32 (#180). "It can happen up to `ENC_ROOM` bytes before dst is full" means that a page can fail
 although its compressed form would have fit with up to 32 bytes to spare. Running the compressor on
 about 22 500 made-up pages, each into the smallest `dst` it would take, that smallest `dst` was at most
-31 bytes larger than the compressed page; the page of pointers from chapter 9 compresses to 817 bytes
-and needs a `dst` of 847.
+31 bytes larger than the compressed page; the page of pointers from chapter 9 compresses to {{pointers.len}} bytes
+and needs a `dst` of {{ch10.ptr.min_dst}}.
+@assert ch10.ptr.min_dst - pointers.len < ch10.enc_room and ch10.slab.min_dst - slab.len < ch10.enc_room
 
 **Why two pages are always enough.** Lines 59 to 64 are a proof, and it is worth doing the arithmetic.
 
@@ -147,8 +148,9 @@ and needs a `dst` of 847.
    escape's code, then the token in 12 bits, then the offset: `SEQLZ_MAX_ESCAPE_LEN` is defined in
    `seqlz.h` as `31 - 12 - 12 = 7`, the longest escape code that keeps this at 31, and
    `seqlz_tables_init()` marks tables with a longer escape as unfit for the encoder (`all_symbols`, see
-   [chapter 8](#ch-codes)). The tables of today give the escape 4 bits, so the real maximum is 28.
-3. Length values come on top, but only with long sequences. An `ll` value (at most $8 + 12 = 20$ bits)
+   [chapter 8](#ch-codes)). The tables of today give the escape {{tok.len.3072}} bits, so the real maximum is
+   {{ch10.max_tok_off}}.
+3. Length values come on top, but only with long sequences. An `ll` value (at most $8 + {{ch10.len_extra_max}} = {{ch10.len_bits_max}}$ bits)
    comes only with 15 literals or more, and those 15 bytes alone are worth $15 / 4 \times 31 = 116$ bits of the
    budget; an `ml` value only with a match of 35 bytes or more, worth 271 bits. So "31 bits per 4 bytes
    covered" holds for every sequence, with its length values.
@@ -157,11 +159,12 @@ and needs a `dst` of 847.
 
 | | 4 KiB pages | 16 KiB pages |
 | --- | --- | --- |
-| bits at most, `SEQLZ_PAGE / 4 * 31` | $1024 \times 31 = 31\,744$ | $4096 \times 31 = 126\,976$ |
-| bytes of bitstream at most | 3968 | 15 872 |
-| the u16 + every byte a literal + that bitstream | $2 + 4096 + 3968 = 8066$ | $2 + 16\,384 + 15\,872 = 32\,258$ |
-| two pages | 8192 | 32 768 |
-| left over, must be ≥ `ENC_ROOM` | 126 | 510 |
+| bits at most, `SEQLZ_PAGE / 4 * 31` | ${{ch10.bound.seqs.tex}} \times 31 = {{ch10.bound.bits.tex}}$ | ${{k16.ch10.bound.seqs.tex}} \times 31 = {{k16.ch10.bound.bits.tex}}$ |
+| bytes of bitstream at most | {{ch10.bound.bytes|grp}} | {{k16.ch10.bound.bytes|grp}} |
+| the u16 + every byte a literal + that bitstream | $2 + {{ch10.bound.page.tex}} + {{ch10.bound.bytes.tex}} = {{ch10.bound.total.tex}}$ | $2 + {{k16.ch10.bound.page.tex}} + {{k16.ch10.bound.bytes.tex}} = {{k16.ch10.bound.total.tex}}$ |
+| two pages | {{ch10.bound.two|grp}} | {{k16.ch10.bound.two|grp}} |
+| left over, must be ≥ `ENC_ROOM` | {{ch10.bound.left}} | {{k16.ch10.bound.left}} |
+@assert min(F("ch10.bound.left"), F("k16.ch10.bound.left")) >= ch10.enc_room
 
 The bound adds the most literals and the most bits, which no page has at once, so the real margin is
 larger. A page of random bytes, the worst case for literals, has almost no sequences.
@@ -170,9 +173,12 @@ larger. A page of random bytes, the worst case for literals, has almost no seque
 line by line: bits are collected in a 64-bit variable and written 8 bytes at a time; then `p` moves down
 by the whole bytes, and the at most 7 bits left over are written again with the next ones. The numbers at
 the end of the comment are the budget of one sequence: at most 7 bits left over, plus at most 31 for
-token and offset, plus at most 20 for a match length value (8 bits of code and 12 extra bits on 4 KiB
-pages), is 58 bits, which fits into 64. On 16 KiB pages the extra bits are 14, and it is 60. A literal
-length value would add 20 or 22 more and could overflow, so it gets a flush of its own.
+token and offset, plus at most 20 for a match length value, is 58 bits, which fits into 64; on 16 KiB
+pages the comment counts 22 for a value, and it is 60. The 20 has a bit to spare: a value is a code of
+at most 8 bits and at most {{ch10.len_extra_max}} extra bits on 4 KiB pages, {{ch10.len_bits_max}}, and
+{{k16.ch10.len_bits_max}} on 16 KiB pages. The tables had a symbol with one extra bit more, which no page
+needs, until 11th October 2026 (#182). A literal length value would add as many bits again and could
+overflow, so it gets a flush of its own.
 
 ## The encoder's state {#ch-encoder--state}
 
@@ -214,18 +220,19 @@ shifted left to make room for the extra bits, ORed with the low `n_extra` bits o
 `(1U << n_extra) - 1U` is a mask of `n_extra` ones. The code goes first because the decoder reads it
 first: the bitstream is read from its most significant bit, and the newest bits are the lowest.
 
-A worked example from the page of `ab` repeated, which has a match of 4094 bytes. `ml - 4` is 4090, more
-than the 31 the token holds, so a length value follows: $4090 - 31 = 4059$. Its symbol is 23 with 11 extra
+A worked example from the page of `ab` repeated, which has a match of {{ch10.ab.s1.ml}} bytes. `ml - 4` is {{ch10.ab.s1.ml4}}, more
+than the 31 the token holds, so a length value follows: ${{ch10.ab.s1.ml4}} - 31 = {{ch10.ab.s1.mlv.v}}$. Its symbol is {{ch10.ab.s1.mlv.sym}} with {{ch10.ab.s1.mlv.extra}} extra
 bits (`seqlz_len_symbol()`, [chapter 6](#ch-header)): 4059 is in the range 2048 to 4095, $2^{11}$
-plus 11 bits. In the default tables symbol 23 of the `ml` table has the 6-bit code `111101`, so its
-`enc[]` entry is `0x3d | 6 << 16`.
+plus 11 bits. In the default tables symbol {{ch10.ab.s1.mlv.sym}} of the `ml` table has the {{ch10.ab.s1.mlv.len}}-bit code `{{ch10.ab.s1.mlv.code}}`, so its
+`enc[]` entry is `{{ch10.ab.s1.mlv.codehex}} | {{ch10.ab.s1.mlv.len}} << 16`.
+@assert ch10.ab.s1.mlv.v == 4059 and ch10.ab.s1.mlv.code == ml.code[23]
 
 | | value |
 | --- | --- |
-| `len` | `0x6003d >> 16 & 15` = 6 |
-| `extra & ((1U << 11) - 1U)` | 4059 & 2047 = 2011 = `11111011011` |
-| `(u64)0x3d << 11` | `0x1e800` |
-| value put | <code>0x1e800 &#124; 2011</code> = `0x1efdb`, 17 bits: `111101 11111011011` |
+| `len` | `{{ch10.ab.s1.mlv.entry}} >> 16 & 15` = {{ch10.ab.s1.mlv.len}} |
+| `extra & ((1U << 11) - 1U)` | {{ch10.ab.s1.mlv.v}} & 2047 = {{ch10.ab.s1.mlv.x}} = `{{ch10.ab.s1.mlv.xbits}}` |
+| `(u64){{ch10.ab.s1.mlv.codehex}} << 11` | `{{ch10.ab.s1.mlv.shifted}}` |
+| value put | <code>{{ch10.ab.s1.mlv.shifted}} &#124; {{ch10.ab.s1.mlv.x}}</code> = `{{ch10.ab.s1.mlv.put}}`, {{ch10.ab.s1.mlv.n}} bits: `{{ch10.ab.s1.mlv.bits}}` |
 
 The top bit of 4059, the 2048, is not sent: the symbol says it.
 
@@ -248,29 +255,30 @@ the byte at `p - 1` with those bits and the ones after them. The store also writ
 the last full one; those are zeros or partial bits, below `p`, and the next flush overwrites them.
 
 The first sequences of the page of pointers from chapter 9 show it with real numbers. The first sequence
-is 9 literals and a match of 7 at offset 8. Its token (`ll` 9, `ml - 4` 3, class 1) is 569, with the
-11-bit code `11011000101`, and the offset 8 in class 1 is `1000` in 4 bits: 15 bits,
-`110110001011000`, so `acc = 0x6c58` and `cnt = 15`.
+is {{ch10.ptr.s1.ll}} literals and a match of {{ch10.ptr.s1.ml}} at offset {{ch10.ptr.s1.off}}. Its token (`ll` {{ch10.ptr.s1.ll}}, `ml - 4` {{ch10.ptr.s1.ml4}}, class {{ch10.ptr.s1.cls}}) is {{ch10.ptr.s1.tok}}, with the
+{{ch10.ptr.s1.tlen}}-bit code `{{ch10.ptr.s1.code}}`, and the offset {{ch10.ptr.s1.off}} in class {{ch10.ptr.s1.cls}} is `{{ch10.ptr.s1.offbits}}` in {{ch10.ptr.s1.raw}} bits: {{ch10.ptr.s1.putn}} bits,
+`{{ch10.ptr.s1.putbits}}`, so `acc = {{ch10.ptr.s1.acc}}` and `cnt = {{ch10.ptr.s1.cnt}}`.
 
-- Flush 1: `acc << 49` is `0xd8b0000000000000`. Stored little endian at `p - 8`, the bytes are `00 00
-  00 00 00 00 b0 d8`: `d8` at `p - 1`, `11011000`, the first 8 bits; `b0` at `p - 2`, `1011000` and a
-  0, the 7 bits left. `p` moves down by `15 >> 3 = 1`, `cnt` is 7.
-- The second sequence, 1 literal and 7 bytes at offset 8 again, is token 49 in class 0, which has the
-  4-bit code `0001` and no offset bits. `cnt` is 11, `acc` ends in the bits `1011000 0001`.
-- Flush 2: `acc << 53` is `0xb020000000000000`. The store writes `b0` at the new `p - 1` (the same
-  byte as before, now with all its bits) and `20` below it, `001` and zeros. `p` moves down by 1,
-  `cnt` is 3.
+- Flush 1: `acc << {{ch10.ptr.f1.shift}}` is `{{ch10.ptr.f1.word}}`. Stored little endian at `p - 8`, the bytes are `{{ch10.ptr.f1.stored}}`:
+  `{{ch10.ptr.f1.e1}}` at `p - 1`, `11011000`, the first 8 bits; `{{ch10.ptr.f1.e2}}` at `p - 2`, `1011000` and a
+  0, the 7 bits left. `p` moves down by `{{ch10.ptr.f1.cnt0}} >> 3 = {{ch10.ptr.f1.moved}}`, `cnt` is {{ch10.ptr.f1.cnt1}}.
+- The second sequence, {{ch10.ptr.s2.ll}} literal and {{ch10.ptr.s2.ml}} bytes at offset {{ch10.ptr.s2.off}} again, is token {{ch10.ptr.s2.tok}} in class {{ch10.ptr.s2.cls}}, which has the
+  {{ch10.ptr.s2.tlen}}-bit code `{{ch10.ptr.s2.code}}` and no offset bits. `cnt` is {{ch10.ptr.s2.cnt}}, `acc` ends in the bits `{{ch10.ptr.s2.accbits}}`.
+- Flush 2: `acc << {{ch10.ptr.f2.shift}}` is `{{ch10.ptr.f2.word}}`. The store writes `{{ch10.ptr.f2.e2}}` at the new `p - 1` (the same
+  byte as before, now with all its bits) and `{{ch10.ptr.f2.e3}}` below it, `001` and zeros. `p` moves down by {{ch10.ptr.f2.moved}},
+  `cnt` is {{ch10.ptr.f2.cnt1}}.
+@assert ch10.ptr.s1.code + ch10.ptr.s1.offbits == "11011000" + "1011000" and ch10.ptr.s2.code == tok.code[49] and ch10.ptr.f1.cnt1 == 7 and ch10.ptr.f2.cnt1 == 3
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 256" role="img" aria-label="The last 10 bytes of dst after the first, second and fourth flush of the page of pointers: d8 at end-1 first, then b0, then 22, each byte written once partly and again fully by the next flush.">
+<svg viewBox="0 0 720 256" role="img" aria-label="The last 10 bytes of dst after the first, second and fourth flush of the page of pointers: {{ch10.ptr.f1.e1}} at end-1 first, then {{ch10.ptr.f2.e2}}, then {{ch10.ptr.f4.e3}}, each byte written once partly and again fully by the next flush.">
   <g font-size="11" text-anchor="middle">
     <text x="130" y="26">end-10</text><text x="190" y="26">end-9</text><text x="250" y="26">end-8</text><text x="310" y="26">end-7</text><text x="370" y="26">end-6</text><text x="430" y="26">end-5</text><text x="490" y="26">end-4</text><text x="550" y="26">end-3</text><text x="610" y="26">end-2</text><text x="670" y="26">end-1</text>
   </g>
   <g font-size="11">
-    <text x="10" y="50">flush 1</text><text x="10" y="64">cnt 15 → 7</text>
-    <text x="10" y="120">flush 2</text><text x="10" y="134">cnt 11 → 3</text>
-    <text x="10" y="190">flush 4</text><text x="10" y="204">cnt 11 → 3</text>
+    <text x="10" y="50">flush 1</text><text x="10" y="64">cnt {{ch10.ptr.f1.cnt0}} → {{ch10.ptr.f1.cnt1}}</text>
+    <text x="10" y="120">flush 2</text><text x="10" y="134">cnt {{ch10.ptr.f2.cnt0}} → {{ch10.ptr.f2.cnt1}}</text>
+    <text x="10" y="190">flush 4</text><text x="10" y="204">cnt {{ch10.ptr.f4.cnt0}} → {{ch10.ptr.f4.cnt1}}</text>
   </g>
   <g fill="none" stroke="currentColor" stroke-width="1">
     <rect x="100" y="36" width="60" height="32" stroke-dasharray="4 3"/><rect x="160" y="36" width="60" height="32" stroke-dasharray="4 3"/>
@@ -290,9 +298,9 @@ is 9 literals and a match of 7 at offset 8. Its token (`ll` 9, `ml - 4` 3, class
     <rect class="fill-sheet" x="520" y="176" width="60" height="32"/><rect class="fill-sheet" x="580" y="176" width="60" height="32"/><rect class="fill-sheet" x="640" y="176" width="60" height="32"/>
   </g>
   <g font-size="13" text-anchor="middle">
-    <text x="130" y="57">?</text><text x="190" y="57">?</text><text x="250" y="57">00</text><text x="310" y="57">00</text><text x="370" y="57">00</text><text x="430" y="57">00</text><text x="490" y="57">00</text><text x="550" y="57">00</text><text x="610" y="57">b0</text><text x="670" y="57">d8</text>
-    <text x="130" y="127">?</text><text x="190" y="127">00</text><text x="250" y="127">00</text><text x="310" y="127">00</text><text x="370" y="127">00</text><text x="430" y="127">00</text><text x="490" y="127">00</text><text x="550" y="127">20</text><text x="610" y="127">b0</text><text x="670" y="127">d8</text>
-    <text x="130" y="197">00</text><text x="190" y="197">00</text><text x="250" y="197">00</text><text x="310" y="197">00</text><text x="370" y="197">00</text><text x="430" y="197">00</text><text x="490" y="197">20</text><text x="550" y="197">22</text><text x="610" y="197">b0</text><text x="670" y="197">d8</text>
+    <text x="130" y="57">{{ch10.ptr.f1.e10}}</text><text x="190" y="57">{{ch10.ptr.f1.e9}}</text><text x="250" y="57">{{ch10.ptr.f1.e8}}</text><text x="310" y="57">{{ch10.ptr.f1.e7}}</text><text x="370" y="57">{{ch10.ptr.f1.e6}}</text><text x="430" y="57">{{ch10.ptr.f1.e5}}</text><text x="490" y="57">{{ch10.ptr.f1.e4}}</text><text x="550" y="57">{{ch10.ptr.f1.e3}}</text><text x="610" y="57">{{ch10.ptr.f1.e2}}</text><text x="670" y="57">{{ch10.ptr.f1.e1}}</text>
+    <text x="130" y="127">{{ch10.ptr.f2.e10}}</text><text x="190" y="127">{{ch10.ptr.f2.e9}}</text><text x="250" y="127">{{ch10.ptr.f2.e8}}</text><text x="310" y="127">{{ch10.ptr.f2.e7}}</text><text x="370" y="127">{{ch10.ptr.f2.e6}}</text><text x="430" y="127">{{ch10.ptr.f2.e5}}</text><text x="490" y="127">{{ch10.ptr.f2.e4}}</text><text x="550" y="127">{{ch10.ptr.f2.e3}}</text><text x="610" y="127">{{ch10.ptr.f2.e2}}</text><text x="670" y="127">{{ch10.ptr.f2.e1}}</text>
+    <text x="130" y="197">{{ch10.ptr.f4.e10}}</text><text x="190" y="197">{{ch10.ptr.f4.e9}}</text><text x="250" y="197">{{ch10.ptr.f4.e8}}</text><text x="310" y="197">{{ch10.ptr.f4.e7}}</text><text x="370" y="197">{{ch10.ptr.f4.e6}}</text><text x="430" y="197">{{ch10.ptr.f4.e5}}</text><text x="490" y="197">{{ch10.ptr.f4.e4}}</text><text x="550" y="197">{{ch10.ptr.f4.e3}}</text><text x="610" y="197">{{ch10.ptr.f4.e2}}</text><text x="670" y="197">{{ch10.ptr.f4.e1}}</text>
   </g>
   <g stroke="currentColor" stroke-width="2.5">
     <line x1="640" y1="30" x2="640" y2="76"/><line x1="580" y1="100" x2="580" y2="146"/><line x1="520" y1="170" x2="520" y2="216"/>
@@ -306,11 +314,13 @@ is 9 literals and a match of 7 at offset 8. Its token (`ll` 9, `ml - 4` 3, class
 </div>
 <figcaption>The last bytes of dst after flushes 1, 2 and 4 of the page of pointers; p moves down one byte per 8 bits.</figcaption>
 </figure>
+@assert [ch10.ptr.f1.p, ch10.ptr.f2.p, ch10.ptr.f4.p] == [1, 2, 3] and [F(f"ch10.ptr.f{f}.e{k}") == "?" for f in (1, 2, 4) for k in (9, 10)] == [True, True, False, True, False, False]
 
-The next sequences are the same token, 4 bits each: flush 3 leaves `cnt` at 7 and `p` where it was, with
-the partial byte `0x22` at `p - 1`, and flush 4 completes it. The page's bitstream starts `d8 b0 22 22
-22`, which is what `seqlz_compress()` writes for this page: 817 bytes with raw literals, of which 258 are
-the bitstream for 511 sequences.
+The next sequences are the same token, {{ch10.ptr.s3.tlen}} bits each: flush 3 leaves `cnt` at {{ch10.ptr.f3.cnt1}} and `p` where it was, with
+the partial byte `0x{{ch10.ptr.f3.e3}}` at `p - 1`, and flush 4 completes it. The page's bitstream starts `{{ch10.ptr.head8}}`,
+which is what `seqlz_compress()` writes for this page: {{pointers.len}} bytes with raw literals, of which {{pointers.b.bytes}} are
+the bitstream for its {{pointers.seqs}} sequences.
+@assert ch10.ptr.s3.tok == ch10.ptr.s2.tok == ch10.ptr.s4.tok and ch10.ptr.f3.moved == 0
 
 The same, put by put and flush by flush, for the first sequences of chapter 16's page:
 
@@ -332,7 +342,7 @@ The byte swap moved to `encoder_finish()`, one per 8 bytes of the finished bitst
 @listing src/seqlz_compress.c 125-152
 
 `put_len_value()` writes a length value `v` with the table `t`, the one for `ll` or the one for `ml`.
-`seqlz_len_symbol()` from `seqlz.h` gives the symbol, 0 to 24 on 4 KiB pages, and the number of extra
+`seqlz_len_symbol()` from `seqlz.h` gives the symbol, 0 to {{ch10.len_sym_max}} on 4 KiB pages, and the number of extra
 bits; the mask `& (ENC_LEN_SYMBOLS - 1U)`, 31, keeps the index into the 32 entries of `enc[]` provably in
 range, for UBSan again. Then `enc_put_code()` puts the code and the extra bits. The extra bits are the
 bits of `v` below its highest one, and `enc_put_code()` masks `v` to them, so `put_len_value()` can pass
@@ -347,18 +357,20 @@ top bits, even if its code is 0. So line 145 tests for the common case, a token 
 A token without a code is **escaped** (lines 149 to 151): the escape's code, followed by the token's own
 number in 12 bits (`SEQLZ_ESCAPE_BITS`). Both go out as one code: the escape's code shifted left by 12,
 ORed with the token, of the escape's length plus 12 bits. In the default tables the escape's code is
-`0011`, 4 bits, and 576 of the 3072 tokens have a code of their own. Token 10, `ll` 10 with a match of 4
+`{{tok.code.3072}}`, {{tok.len.3072}} bits, and {{ch10.tok_codes}} of the {{const.TOKEN_SYMBOLS}} tokens have a code of their own. Token 10, `ll` 10 with a match of 4
 bytes at the repeat offset, is one without:
+@assert ch10.esc10.enc == 0 and tok.len[10] == 0
 
 | | value |
 | --- | --- |
-| `t->token.enc[10]` | 0, no code |
-| `ee = t->token.enc[3072]` | `0x4003`: length 4, code `0x3` |
-| `*len` | 4 + 12 = 16 |
-| returned | <code>0x3 &lt;&lt; 12 &#124; 10</code> = `0x300a`: `0011 000000001010` |
+| `t->token.enc[10]` | {{ch10.esc10.enc}}, no code |
+| `ee = t->token.enc[3072]` | `{{ch10.esc.entry}}`: length {{ch10.esc.len}}, code `{{ch10.esc.codehex}}` |
+| `*len` | {{ch10.esc.len}} + 12 = {{ch10.esc10.len}} |
+| returned | <code>{{ch10.esc.codehex}} &lt;&lt; 12 &#124; 10</code> = `{{ch10.esc10.ret}}`: `{{ch10.esc10.bits}}` |
 
 The decoder reads the escape's code, then 12 bits, and has the token, see [chapter 14](#ch-decode). A
-token with a code is cheaper, `0001` for token 49, the pointer array's sequence.
+token with a code is cheaper, `{{tok.code.49}}` for token 49, the pointer array's sequence.
+@assert ch10.ptr.s2.tok == 49
 
 Both functions are `__always_inline`: they run for every sequence, and inlined, the table loads and the
 branch on line 145 sit in the encoder's code directly.
@@ -377,7 +389,7 @@ Line 162 turns `ctx` back into the encoder. Line 164 declares the locals: `k` co
 **The room check.** Line 171 is the check of the comment on lines 50 to 56. `e->p - e->lit` is the free
 room in bytes, a pointer difference, signed. The cast to `size_t` makes the compare unsigned; the
 difference is never negative, because `p` never goes below `lit` (see `encoder_init()` and the callers'
-check that `dst_cap` is at least 34). If the room is too small, line 172 sets `p` to `lit` and the
+check that `dst_cap` is at least {{ch10.dst_min}}). If the room is too small, line 172 sets `p` to `lit` and the
 function returns. That is the failure state, and it sticks: the free room is now 0, so every later
 sequence fails the same check, writes nothing and returns, and `encoder_finish()` recognises `p == lit`
 and returns 0. The matcher does not know; it runs to the end of the page. A page that does not fit takes
@@ -388,7 +400,7 @@ as long as one that does, which is fine, because with zram's two pages it never 
 **The literals.** Lines 180 to 183 copy the first 16 bytes without a loop, if the input has 16 bytes
 left. That copy happens even if the sequence has 1 literal or none: `dst` has room for it (the 16 bytes of
 `ENC_ROOM`), and the bytes past `ll` are overwritten by the next sequence's literals or are not part of
-the page. Most sequences have few literals: in the page of pointers, 1. For them this is one fixed copy,
+the page. Most sequences have few literals: in the page of pointers, {{ch10.ptr.s2.ll}}. For them this is one fixed copy,
 one 16-byte or two 8-byte moves depending on the CPU and the compiler flags, and no loop, whose exit branch would depend on `ll` and could mispredict, as the
 comment says. `__builtin_memcpy()` with a constant 16 is always inlined; `seqlz.h` explains why seqlz
 uses the builtin and not `memcpy()`, which can become a function call per copy with
@@ -414,9 +426,10 @@ page.
 
 **The class and the token.** Line 197 asks `seqlz_off_class()` ([chapter 6](#ch-header)) for the offset's
 class and how many of its bits follow the token, without a branch. Line 198 builds the token with that
-class and gets its code. For the first sequence of the page of `ab`: `off` 2, `last` 1, so the offset is
-new and below 16: class 1, 4 bits. The token is $2 + 16 \times 31 + 512 \times 1 = 1010$
-(the match length field is capped at 31), with the 11-bit code `11011100011`.
+class and gets its code. For the first sequence of the page of `ab`: `off` {{ch10.ab.s1.off}}, `last` 1, so the offset is
+new and below 16: class {{ch10.ab.s1.cls}}, {{ch10.ab.s1.raw}} bits. The token is $2 + 16 \times 31 + 512 \times 1 = {{ch10.ab.s1.tok}}$
+(the match length field is capped at 31), with the {{ch10.ab.s1.tlen}}-bit code `{{ch10.ab.s1.code}}`.
+@assert ch10.ab.s1.ll == 2 and ch10.ab.s1.cls == 1 and ch10.ab.s1.tok == 2 + 16 * 31 + 512
 
 **Token and offset in one put.** Lines 203 to 206 shift the code left by the number of offset bits and
 OR the offset's bits in. The offset is shifted right by `SEQLZ_OFF_SHIFT(cls)`, 3 for classes 4 and 5,
@@ -432,7 +445,7 @@ the low bits of the token's code. Classes 1 to 5 need no mask: `seqlz_off_class(
 bits hold the offset, e.g. an offset of 24 with a repeat offset of 8 is class 4, and `24 >> 3 = 3` fits
 its 5 bits. The comment on lines 200 and 201 says this. Masking only class 0, instead of masking every
 offset to `raw_bits` bits, came with the change that loaded the matcher's values one position ahead
-(commit `996248b`); the repository gives no number for this part on its own. For the page of `ab`: `0x6e3 << 4 | 2 = 0x6e32`, 15 bits.
+(commit `996248b`); the repository gives no number for this part on its own. For the page of `ab`: `{{ch10.ab.s1.codehex}} << {{ch10.ab.s1.raw}} | {{ch10.ab.s1.off}} = {{ch10.ab.s1.put}}`, {{ch10.ab.s1.putn}} bits.
 
 Putting token and offset together saves a shift and an OR per sequence against two puts. In the second
 round of work on the compressor, "token and offset in one put" took 21 786 to 21 233 cycles per page on
@@ -453,7 +466,7 @@ the long comment holds at every put:
 
 `enc_put()` needs `n < 64 - cnt`: $31 < 57$, then $20 < 26$. Without the flush between them, an `ll` value
 and an `ml` value after a long escaped token could reach $7 + 31 + 20 + 20 = 78$ bits, and the top bits
-would be lost. On 16 KiB pages the values have 22 bits, and the budget is 60.
+would be lost. On 16 KiB pages the comment counts 22 bits per value, and the budget is 60.
 
 Line 214 remembers the offset for the next sequence's class 0. In the matcher, `last` changed at the
 same moment, so both agree on what the repeat offset is.
@@ -484,8 +497,8 @@ that byte a second time; without it the bytes were the same on 6000 made-up page
 and only `seqlz_compress()`'s machine code changed (#180).
 
 Line 251 is where the bitstream starts in memory, line 252 how many bytes it has. Line 253 writes the
-u16 at the front, now that the count is known, little endian: for the page of pointers 557 literals,
-`2d 02`. The top bit, `SEQLZ_LIT_CODED`, stays 0: the literals are raw. If they get coded,
+u16 at the front, now that the count is known, little endian: for the page of pointers {{pointers.lits}} literals,
+`{{ch10.ptr.u16}}`. The top bit, `SEQLZ_LIT_CODED`, stays 0: the literals are raw. If they get coded,
 `code_literals()` rewrites the u16 later.
 
 @listing src/seqlz_compress.c 254-277
@@ -498,9 +511,9 @@ store writes the top byte to the lowest address. So the byte at `end - 1 - k` go
 byte at `end - 2 - k` to `out + k + 1`, and so on: the 8 bytes are reversed. Compiled with `gcc -O2` for
 x86-64 the loop is a load, a `bswap` and a store; `clang -O2` for arm64 uses `rev` for the swap.
 
-For the page of pointers, the last 8 bytes of `dst` are `22 22 22 22 22 22 b0 d8`.
-`get_unaligned_le64()` reads them as `0xd8b0222222222222`, and `put_unaligned_be64()` writes `d8 b0 22 22
-22 22 22 22` at `out`: the bitstream's first 8 bytes in order. Lines 263 and 264 copy the 0 to 7 bytes
+For the page of pointers, the last 8 bytes of `dst` are `{{ch10.ptr.last8}}`.
+`get_unaligned_le64()` reads them as `{{ch10.ptr.le64}}`, and `put_unaligned_be64()` writes `{{ch10.ptr.head8}}`
+at `out`: the bitstream's first 8 bytes in order. Lines 263 and 264 copy the 0 to 7 bytes
 left one at a time, the same reversal.
 
 If the two places overlap, which happens only when the page nearly fills `dst` (the free room left is
@@ -514,6 +527,7 @@ Line 276 returns the length of the page: the u16, the literals, the bitstream.
 
 The last steps of the [animation above](#ch-encoder--layout) do all of this for chapter 16's page; its
 smallest `dst` takes the in-place path.
+@assert ch10.slab.min_dst - slab.len < slab.b.bytes
 
 `encoder_finish()` is `static` but not inline. It runs once per page, so the call costs nothing that
 matters, and it is called from both `compress_page()` and `encode_raw()`.
@@ -525,7 +539,7 @@ matchers or check the format. Its first half is `encode_raw()`.
 
 @listing src/seqlz_compress.c 279-311
 
-Line 289: `dst_cap` must be at least 34 bytes, the u16 and `ENC_ROOM`. That matters for more than
+Line 289: `dst_cap` must be at least {{ch10.dst_min}} bytes, the u16 and `ENC_ROOM`. That matters for more than
 speed: with a smaller `dst`, `p` would start below `lit + 32`, or even below `lit`, and the room check's
 `(size_t)` cast would turn a negative room into a huge one. The tables must have a code for every symbol
 (`all_symbols`), there must be at least one sequence, at most `SEQLZ_MAX_SEQUENCES`, and at most a page
@@ -539,8 +553,8 @@ before the match (lines 305 to 307). At the end the sequences must fill the page
 literal (line 310).
 
 ::: warn Why a match below 4 bytes is not only invalid but dangerous
-`encode_emit()` computes `ml - 4` in unsigned arithmetic. For `ml` 3 that wraps to 4 294 967 295, far above
-31, so a length value follows, and `seqlz_len_symbol()` gives it 31 extra bits. That breaks the bit
+`encode_emit()` computes `ml - 4` in unsigned arithmetic. For `ml` 3 that wraps to {{ch10.wrap.ml4|grp}}, far above
+31, so a length value follows, and `seqlz_len_symbol()` gives it {{ch10.wrap.extra}} extra bits. That breaks the bit
 budget of the accumulator and the 31 bits per 4 bytes of the room proof. Before commit `256768e` the
 encoder checked only that the literals were there, and 1025 such sequences wrote past the two pages of
 `dst`; AddressSanitizer, the compiler's check that stops a program at its first read or write outside
@@ -573,7 +587,7 @@ writes the coded ones over the raw ones in `dst`.
 @listing src/seqlz_compress.c 609-631
 
 `compress_page()` is the compressor's version of `encode_raw()` without the checks: its sequences come
-from the matcher and are valid by construction. Line 615 rejects a `dst` below 34 bytes and tables that
+from the matcher and are valid by construction. Line 615 rejects a `dst` below {{ch10.dst_min}} bytes and tables that
 cannot write every symbol. Line 617 sets up the encoder with the end of the page as `src_end`, line 618
 runs the matcher with `encode_emit()` as its receiver, and that one line is the whole compression loop
 once the compiler has inlined it. Line 619 finishes the page.
@@ -592,34 +606,37 @@ the kernel's tables are checked when they are generated ([chapter 15](#ch-zram-g
 
 ## The page of ab, bit by bit {#ch-encoder--example}
 
-The format chapter takes the 8 bytes `02 00 61 62 dc 65 ef db` apart, a page of `ab` 2048 times; see
+The format chapter takes the {{ab.len}} bytes `{{ab.hex}}` apart, a page of `ab` 2048 times; see
 [the example](#ch-format--example). Here they come into being. The numbers are from running
 `seqlz_compress()` with raw literals into two pages, and from a copy of `seqlz_compress.c` with a
 `printf()` in `enc_put()` and `enc_flush()`.
 
-The matcher finds two sequences. Position 1 misses. At position 2, the slot of the 5 bytes `ababa` was
-never written and holds 0, the 4 bytes at 0 are `abab`, and they match: 2 literals, `ab`, then a match at
-offset 2 that runs to the end of the page, 4094 bytes. The last sequence has 0 literals.
+The matcher finds {{ab.seqs}} sequences. Position 1 misses. At position 2, the slot of the 5 bytes `ababa` was
+never written and holds 0, the 4 bytes at 0 are `abab`, and they match: {{ch10.ab.s1.ll}} literals, `ab`, then a match at
+offset {{ch10.ab.s1.off}} that runs to the end of the page, {{ch10.ab.s1.ml}} bytes. The last sequence has 0 literals.
+@assert ab.seqs == 2 and ab.lits == ch10.ab.s1.ll == 2 and ch10.ab.s1.ml == 4094
 
 | step | what happens | `acc` after | `cnt` |
 | --- | --- | --- | --- |
 | room check | `p - lit` = 8190 ≥ 2 + 32 | | 0 |
 | literals | 16 bytes `abab...` copied to `d + 2`, `lit` moves on by 2 | | 0 |
-| token and offset | class 1, token 1010, code `11011100011`, offset `0010` | `0x6e32` | 15 |
-| `ml` value | $4090 - 31 = 4059$: code `111101`, extra `11111011011` | `0xdc65efdb` | 32 |
-| flush | `acc << 32` = `0xdc65efdb00000000` stored at `end - 8`: `00 00 00 00 db ef 65 dc`; `p` = `end - 4` | `0xdc65efdb` | 0 |
-| last sequence | 0 literals, then the return of line 195: no token, nothing put | `0xdc65efdb` | 0 |
-| finish | `cnt` is 0, no partial byte; 4 bytes of bitstream; u16 = 2 | | |
+| token and offset | class {{ch10.ab.s1.cls}}, token {{ch10.ab.s1.tok}}, code `{{ch10.ab.s1.code}}`, offset `{{ch10.ab.s1.offbits}}` | `{{ch10.ab.s1.acc}}` | {{ch10.ab.s1.cnt}} |
+| `ml` value | ${{ch10.ab.s1.ml4}} - 31 = {{ch10.ab.s1.mlv.v}}$: code `{{ch10.ab.s1.mlv.code}}`, extra `{{ch10.ab.s1.mlv.xbits}}` | `{{ch10.ab.s1.mlv.acc}}` | {{ch10.ab.s1.mlv.cnt}} |
+| flush | `acc << {{ch10.ab.f1.shift}}` = `{{ch10.ab.f1.word}}` stored at `end - 8`: `{{ch10.ab.f1.stored}}`; `p` = `end - {{ch10.ab.f1.p}}` | `{{ch10.ab.s1.mlv.acc}}` | {{ch10.ab.f1.cnt1}} |
+| last sequence | 0 literals, then the return of line 195: no token, nothing put | `{{ch10.ab.s1.mlv.acc}}` | {{ch10.ab.f1.cnt1}} |
+| finish | `cnt` is 0, no partial byte; {{ab.b.bytes}} bytes of bitstream; u16 = {{ab.lits}} | | |
 
-The flush is 32 bits, 4 whole bytes, so on this page no byte is ever partial. The old bits `dc65efdb`
+The flush is {{ab.b.bits}} bits, {{ab.b.bytes}} whole bytes, so on this page no byte is ever partial. The old bits `{{ch10.ab.s1.mlv.acc}}`
 are still in `acc` after it, which does not matter: the next put shifts them out, and here no put comes.
-The last 4 bytes of `dst` are now `db ef 65 dc`. `encoder_finish()` writes `02 00` at the front, and
-since 4 is less than 8, it copies byte by byte from `end - 1` down: `dc 65 ef db`, right after `61 62`.
-8 bytes. The 14 more bytes of `abab` that the literal copy wrote past `d + 4` are overwritten by the
-bitstream or lie beyond the 8 bytes returned.
+The last {{ab.b.bytes}} bytes of `dst` are now `{{ch10.ab.f1.e4}} {{ch10.ab.f1.e3}} {{ch10.ab.f1.e2}} {{ch10.ab.f1.e1}}`. `encoder_finish()` writes `{{ch10.ab.u16}}` at the front, and
+since {{ab.b.bytes}} is less than 8, it copies byte by byte from `end - 1` down: `{{ab.b.hex}}`, right after `61 62`.
+{{ab.len}} bytes. The 14 more bytes of `abab` that the literal copy wrote past `d + 4` are overwritten by the
+bitstream or lie beyond the {{ab.len}} bytes returned.
+@assert ch10.ab.f1.cnt1 == 0 and ab.b.bytes == 4 and ab.b.pad == 0
 
-The 32 bits, in the order the decoder reads them: `11011100011` (token 1010) `0010` (offset 2) `111101`
-(symbol 23 of the `ml` table) `11111011011` (2011).
+The {{ab.b.bits}} bits, in the order the decoder reads them: `{{ch10.ab.s1.code}}` (token {{ch10.ab.s1.tok}}) `{{ch10.ab.s1.offbits}}` (offset {{ch10.ab.s1.off}}) `{{ch10.ab.s1.mlv.code}}`
+(symbol {{ch10.ab.s1.mlv.sym}} of the `ml` table) `{{ch10.ab.s1.mlv.xbits}}` ({{ch10.ab.s1.mlv.x}}).
+@assert ch10.ab.s1.putbits + ch10.ab.s1.mlv.code + ch10.ab.s1.mlv.xbits == ab.b.bin
 
 ::: try Compress a page yourself
 In the repository, save this as `ab.c` and build it with `gcc -O2 -Isrc -o ab ab.c src/seqlz_compress.c
@@ -649,9 +666,15 @@ int main(void)
 	return 0;
 }
 ```
+@program ch10-ab
 
-It prints `02 00 61 62 dc 65 ef db`. With `true` instead of `false` the result is the same: 2 literals
-are too few to save the 51 bytes coded literals must save.
+It prints:
+
+@output ch10-ab
+
+With `true` instead of `false` the result is the same: {{ab.lits}} literals are too few to save the {{ch11.coded_min}} bytes
+coded literals must save.
+@assert ab.coded.len == ab.len
 :::
 
 What this design gives up is the buffer of one page. The page is written with raw literals first, so a

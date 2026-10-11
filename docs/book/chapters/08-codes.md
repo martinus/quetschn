@@ -1,14 +1,14 @@
 # seqlz_codes.c: from code lengths to lookup tables {#ch-codes}
 
-The format defines its 11 tables by their code lengths alone: one byte per symbol, 3073 for the
-token table, 25 each for the two tables of length values, 256 for each of the 8 literal tables.
-That is 5171 bytes, and they are compiled into the codec. Neither the encoder nor the decoder can
-use them as they are. `src/seqlz_codes.c` turns them into `struct seqlz_tables`, the 43 280 bytes
+The format defines its 11 tables by their code lengths alone: one byte per symbol, {{tok.symbols}} for the
+token table, {{ll.symbols}} each for the two tables of length values, 256 for each of the 8 literal tables.
+That is {{ch08.length_bytes}} bytes, and they are compiled into the codec. Neither the encoder nor the decoder can
+use them as they are. `src/seqlz_codes.c` turns them into `struct seqlz_tables`, the {{size.tables|grp}} bytes
 of codes and decode tables that [chapter 7](#ch-internal) took apart: the encoder's code for every
 symbol, the decoder's table entries for every index, and the literal costs the encoder uses to
 pick a literal table. It runs once, at boot in the kernel, and never again.
 
-The file is 186 lines and does three things. `first_codes()` computes the
+The file is {{ch08.lines}} lines and does three things. `first_codes()` computes the
 [canonical codes](#ch-compression--canonical-codes) from the lengths and checks that they are a
 complete prefix code. `build_token()`, `build_values()` and `build_lit()` write each code into the
 encoder's table and into the range of decode entries that starts with it. `seqlz_tables_init()`
@@ -23,7 +23,7 @@ The SPDX line is the licence, as in every file of `src/` ([chapter 5](#ch-compat
 names the file's main function, the one that callers build the tables with. Line 6 includes
 `seqlz_internal.h`, which brings `seqlz.h` and the layout of the tables.
 
-`seqlz_tables_size()` returns `sizeof(struct seqlz_tables)`, 43 280 on x86-64. It exists because
+`seqlz_tables_size()` returns `sizeof(struct seqlz_tables)`, {{size.tables|grp}} on x86-64. It exists because
 `seqlz.h` only declares the struct, `struct seqlz_tables;`, without its fields. A file that includes
 only `seqlz.h`, e.g. `src/zram_seqlz.c` or the C++ test harness, has an incomplete type and cannot
 write `sizeof`. It calls this function and allocates that many bytes. The kernel's copy has one
@@ -40,19 +40,21 @@ plain bits that say which one. `length_entry()` computes the part of a decode en
 on the symbol, in the layout of [chapter 7](#ch-internal--decode-tables): the base value from bit 8,
 the number of extra bits from bit 4. `build_values()` ORs the code's length into bits 0 to 3.
 
-- `s < SEQLZ_LEN_DIRECT`, below 16: the base is `s`, no extra bits. Symbol 5 gives `5 << 8 = 0x500`.
+- `s < SEQLZ_LEN_DIRECT`, below 16: the base is `s`, no extra bits. Symbol 5 gives `5 << 8 = {{ch08.le.5}}`.
 - otherwise: the base is `1U << (s - SEQLZ_LEN_LOG_BASE)`, `SEQLZ_LEN_LOG_BASE` being 12, and
   `s - 12` extra bits.
 
 | symbol | values | base | extra bits | `length_entry()` |
 | --- | --- | --- | --- | --- |
-| 5 | 5 | 5 | 0 | `0x500` |
-| 16 | 16 to 31 | 16 | 4 | `0x1040` |
-| 18 | 64 to 127 | 64 | 6 | `0x4060` |
-| 23 | 2048 to 4095 | 2048 | 11 | `0x800b0` |
+| 5 | 5 | 5 | 0 | `{{ch08.le.5}}` |
+| 16 | 16 to 31 | 16 | 4 | `{{ch08.le.16}}` |
+| 18 | 64 to 127 | 64 | 6 | `{{ch08.le.18}}` |
+| 23 | 2048 to 4095 | 2048 | 11 | `{{ch08.le.23}}` |
 
-Symbol 23 is the largest for 4 KiB pages, `SEQLZ_LEN_SYMBOLS - 1`, and its 11 extra bits fit the
-field of 4 bits; on 16 KiB pages symbol 25 has 13. The decoder's `seqlz_br_value()` ([chapter 12](#ch-dec-basics)) adds the base
+@assert ch08.le_last_symbol == 23
+
+Symbol 23 is the largest for 4 KiB pages, `SEQLZ_LEN_SYMBOLS - 1`, and its {{ch08.le_last_extra}} extra bits fit the
+field of 4 bits; on 16 KiB pages symbol {{k16.ch08.le_last_symbol}} has {{k16.ch08.le_last_extra}}. The decoder's `seqlz_br_value()` ([chapter 12](#ch-dec-basics)) adds the base
 and the extra bits; for the value 100 that is symbol 18, base 64, and the 6 bits `100100`, 36.
 
 ## first_codes(): the first code of each length {#ch-codes--first-codes}
@@ -184,27 +186,31 @@ code of 12 bits. The loop at lines 47 and 48 counts lengths up to 11 only, so `k
 
 ### The real tables
 
-The `ll` table has 24 lengths: `4 4 3 4 4 5 5 5 5 5 5 5 6 6 6 6 3 3 4 6 8 8 8 8`. Three codes of 3
+The `ll` table has {{ll.symbols}} lengths: `{{ch08.ll.lengths}}`. Three codes of 3
 bits, five of 4, seven of 5, five of 6, none of 7, four of 8:
 
 ```text
-k = 3 * 32 + 5 * 16 + 7 * 8 + 5 * 4 + 0 * 2 + 4 * 1 = 96 + 80 + 56 + 20 + 4 = 256 = 1 << 8
+k = {{ll.codes_of.3}} * 32 + {{ll.codes_of.4}} * 16 + {{ll.codes_of.5}} * 8 + {{ll.codes_of.6}} * 4 + {{ll.codes_of.7}} * 2 + {{ll.codes_of.8}} * 1 = {{ch08.ll.fill.3}} + {{ch08.ll.fill.4}} + {{ch08.ll.fill.5}} + {{ch08.ll.fill.6}} + {{ch08.ll.fill.8}} = 256 = 1 << 8
 
-next[1] = 0       next[5] = (6 + 5) << 1 = 22
-next[2] = 0       next[6] = (22 + 7) << 1 = 58
-next[3] = 0       next[7] = (58 + 5) << 1 = 126
-next[4] = (0 + 3) << 1 = 6                   next[8] = (126 + 0) << 1 = 252
+next[1] = {{ch08.ll.next.1}}       next[5] = ({{ch08.ll.next.4}} + {{ll.codes_of.4}}) << 1 = {{ch08.ll.next.5}}
+next[2] = {{ch08.ll.next.2}}       next[6] = ({{ch08.ll.next.5}} + {{ll.codes_of.5}}) << 1 = {{ch08.ll.next.6}}
+next[3] = {{ch08.ll.next.3}}       next[7] = ({{ch08.ll.next.6}} + {{ll.codes_of.6}}) << 1 = {{ch08.ll.next.7}}
+next[4] = ({{ch08.ll.next.3}} + {{ll.codes_of.3}}) << 1 = {{ch08.ll.next.4}}                   next[8] = ({{ch08.ll.next.7}} + {{ll.codes_of.7}}) << 1 = {{ch08.ll.next.8}}
 ```
 
-The three 3-bit codes go to symbols 2, 16 and 17, `000`, `001` and `010`: the value 2, a literal run
+@assert (ll.codes_of[1], ll.codes_of[2], ll.codes_of[3], ll.codes_of[4], ll.codes_of[5], ll.codes_of[6], ll.codes_of[7], ll.codes_of[8]) == (0, 0, 3, 5, 7, 5, 0, 4) and ll.len[2] == ll.len[16] == ll.len[17] == 3 and ll.len[0] == ll.len[1] == ll.len[3] == ll.len[4] == ll.len[18] == 4
+
+The three 3-bit codes go to symbols 2, 16 and 17, `{{ll.code.2}}`, `{{ll.code.16}}` and `{{ll.code.17}}`: the value 2, a literal run
 of 17 bytes, and the values 16 to 63, which are the literal runs of 31 to 78 bytes. The 4-bit codes
-start at 6, `0110`, for symbols 0, 1, 3, 4 and 18. The four 8-bit codes are 252 to 255, `11111100` to
-`11111111`, the last four entries of the table. `next[7]` is 126 although no code has 7 bits;
+start at {{ch08.ll.next.4}}, `{{ll.code.0}}`, for symbols 0, 1, 3, 4 and 18. The four 8-bit codes are {{ch08.ll.next.8}} to 255, `{{ll.code.20}}` to
+`{{ll.code.23}}`, the last four entries of the table. `next[7]` is {{ch08.ll.next.7}} although no code has 7 bits;
 `next[8]` then continues from it.
 
 The token table, with `bits = 11`, has no code shorter than 4 bits: `next[1]` to `next[4]` are 0, then
-`next[5] = 8`, `next[6] = 24`, `next[7] = 58`, `next[8] = 140`, `next[9] = 330`, `next[10] = 744`
-and `next[11] = 1638`. Its 410 codes of 11 bits are the numbers 1638 to 2047, the last 410 entries.
+`next[5] = {{ch08.tok.next.5}}`, `next[6] = {{ch08.tok.next.6}}`, `next[7] = {{ch08.tok.next.7}}`, `next[8] = {{ch08.tok.next.8}}`, `next[9] = {{ch08.tok.next.9}}`, `next[10] = {{ch08.tok.next.10}}`
+and `next[11] = {{ch08.tok.next.11}}`. Its {{tok.codes_of.11}} codes of 11 bits are the numbers {{ch08.tok.next.11}} to 2047, the last {{tok.codes_of.11}} entries.
+
+@assert tok.codes_of[3] == 0 and tok.codes_of[4] > 0 and ch08.tok.next[11] + tok.codes_of[11] == 2048
 
 ## build_token(): a code is one range of the table {#ch-codes--build-token}
 
@@ -213,7 +219,7 @@ and `next[11] = 1638`. Its 410 codes of 11 bits are the numbers 1638 to 2047, th
 `build_token()` fills `struct token_table` ([chapter 7](#ch-internal--token-table)):
 
 - Line 66: `next[16]` is filled by `first_codes()` for the lengths 1 to 11, the only ones read.
-- Lines 68 and 69: the canonical codes of all 3073 symbols, the escape included, with codes of at
+- Lines 68 and 69: the canonical codes of all {{tok.symbols}} symbols, the escape included, with codes of at
   most `SEQLZ_TOKEN_BITS`. If they are not a complete code, the token table stays empty and the
   function fails.
 - Lines 70 to 74: each symbol in order, 0 to 3072, `<=` because the escape is symbol 3072. A symbol
@@ -233,17 +239,21 @@ the index. A code $c$ of $l$ bits is the first $l$ bits of the index, and the $1
 can be anything. All indices with the first $l$ bits equal to $c$ are $c \cdot 2^{11-l}$ up to
 $(c + 1) \cdot 2^{11-l} - 1$, one block. Shifting $c$ left by $11 - l$ is that multiplication.
 
-Token 49, one literal and a match of 7 at the repeat offset, has the 4-bit code `0001`, `c = 1`:
+Token 49, one literal and a match of 7 at the repeat offset, has the {{tok.len.49}}-bit code `{{tok.code.49}}`, `c = {{ch07.tok.49.c}}`:
 
 ```text
-first index   1 << (11 - 4)        = 128   0001 0000000
-last index    (2 << (11 - 4)) - 1  = 255   0001 1111111
-128 entries of 0x03890004, bytes 512 to 1023 of the table: 8 cache lines of 64 bytes
+first index   {{ch07.tok.49.c}} << (11 - {{tok.len.49}})        = {{ch07.tok.49.first}}   {{tok.code.49}} 0000000
+last index    (2 << (11 - {{tok.len.49}})) - 1  = {{ch07.tok.49.last}}   {{tok.code.49}} 1111111
+{{ch07.tok.49.entries}} entries of {{ch07.tok.49.entry}}, bytes {{ch08.tok49.byte_first}} to {{ch08.tok49.byte_last}} of the table: {{ch08.tok49.lines}} cache lines of 64 bytes
 ```
 
-The four codes of 4 bits are tokens 34, 49 and 2097 and the escape, `0000` to `0011`. They take the
-entries 0 to 511 in that order, the first 2 KiB of the table, a quarter of it, in 32 cache lines.
-Token 2098, with its 9-bit code `101100111`, `c = 359`, has the 4 entries 1436 to 1439.
+@assert tok.len[49] == 4 and ch07.tok[49].c == 1
+
+The four codes of 4 bits are tokens 34, 49 and 2097 and the escape, `{{tok.code.34}}` to `{{tok.code.3072}}`. They take the
+entries 0 to {{ch08.tok.len4.last}} in that order, the first 2 KiB of the table, a quarter of it, in {{ch08.tok.len4.lines}} cache lines.
+Token 2098, with its {{tok.len.2098}}-bit code `{{tok.code.2098}}`, `c = {{ch07.tok.2098.c}}`, has the {{ch07.tok.2098.entries}} entries {{ch07.tok.2098.first}} to {{ch07.tok.2098.last}}.
+
+@assert tok.codes_of[4] == 4 and tok.len[34] == tok.len[2097] == tok.len[3072] == 4 and ch08.tok.len4.bytes == 2048
 
 The codes are ranges because the bitstream is read most significant bit first, since 6th October
 2026; read the other way, a code's entries were spread over every cache line of the table.
@@ -261,15 +271,17 @@ entries in all, because the ranges of a complete code cover the table exactly on
 
 @listing src/seqlz_codes.c 84-103
 
-The same steps for the `ll` and `ml` tables, with three differences: 24 symbols (26 on 16 KiB pages),
+The same steps for the `ll` and `ml` tables, with three differences: {{const.LEN_SYMBOLS}} symbols ({{k16.const.LEN_SYMBOLS}} on 16 KiB pages),
 codes of at most `SEQLZ_MAX_BITS`, 8, and the entries of [chapter 7](#ch-internal--value-table). The
 encoder's entry is `c | l << 16` in a `u32`, no cast needed. The decode entry is
 `length_entry(s) | l`, the base and extra bits with the code's length in bits 0 to 3.
 
-Symbol 18 of the `ll` table has the 4-bit code `1010`, `c = 10`: `enc[18] = 10 | 4 << 16 = 0x4000a`,
-and the 16 entries `10 << 4 = 160` to 175 get `0x4060 | 4 = 0x4064`.
+Symbol 18 of the `ll` table has the {{ll.len.18}}-bit code `{{ll.code.18}}`, `c = {{ch07.ll18.c}}`: `enc[18] = {{ch07.ll18.c}} | {{ll.len.18}} << 16 = {{ch07.ll18.enc}}`,
+and the {{ch07.ll18.entries}} entries `{{ch07.ll18.c}} << 4 = {{ch07.ll18.first}}` to {{ch07.ll18.last}} get `{{ch08.le.18}} | {{ll.len.18}} = {{ch07.ll18.entry}}`.
 
-The loop runs to `SEQLZ_LEN_SYMBOLS`, so `enc[24]` to `enc[31]`, which the encoder's array has for its
+@assert ll.len[18] == 4
+
+The loop runs to `SEQLZ_LEN_SYMBOLS`, so `enc[{{const.LEN_SYMBOLS}}]` to `enc[31]`, which the encoder's array has for its
 mask ([chapter 7](#ch-internal--decode-tables)), are not written here. They stay 0 from the
 `memset()` in `seqlz_tables_init()`.
 
@@ -282,10 +294,12 @@ The third builder fills one `struct lit_table`: 256 symbols, the byte values, co
 above it, because that is the order `lit_put()` needs ([chapter 7](#ch-internal--lit-table)). The
 decode entry is `(u16)(l | s << 8)`, the length and the byte itself, cast to the 2 bytes of an entry.
 
-In table 0, the space, `0x20`, and the letter `e`, `0x65`, have the first two 4-bit codes, `0000` and
-`0001`: no code in table 0 is shorter than 4 bits, so `next[4]` is 0, and `0x20` comes first in
-symbol order. The space fills the entries 0 to 63 with `0x2004`, `e` the entries 64 to 127 with
-`0x6504`, and `enc[0x65]` is `4 | 1 << 8 = 0x104`.
+In table 0, the space, `0x20`, and the letter `e`, `0x65`, have the first two 4-bit codes, `{{lit.0.code.32}}` and
+`{{lit.0.code.101}}`: no code in table 0 is shorter than 4 bits, so `next[4]` is 0, and `0x20` comes first in
+symbol order. The space fills the entries {{ch07.lit_space.first}} to {{ch07.lit_space.last}} with `{{ch07.lit_space.entry}}`, `e` the entries {{ch07.lit_e.first}} to {{ch07.lit_e.last}} with
+`{{ch07.lit_e.entry}}`, and `enc[0x65]` is `{{lit.0.len.101}} | {{ch07.lit_e.c}} << 8 = {{ch07.lit_e.enc}}`.
+
+@assert ch08.lit[0].min == 4 and lit[0].len[32] == lit[0].len[101] == 4 and lit[0].codes_of[4] >= 2
 
 The comment is about bit order. The literals' 8 streams are read most significant bit first, like
 the sequences' bitstream and like `zstd` reads its Huffman coded literals, so the codes go into the
@@ -324,14 +338,16 @@ these lanes together:
 
 ```text
 table j                  0    1    2    3    4    5    6    7
-code length of 0x65      4    9   10    5    9    9   10   10
-as a byte, at bit 8 * j  04   09   0a   05   09   09   0a   0a
+code length of 0x65{{ch08.lit101_row}}
+as a byte, at bit 8 * j  {{ch07.lit_lane.101.0}}   {{ch07.lit_lane.101.1}}   {{ch07.lit_lane.101.2}}   {{ch07.lit_lane.101.3}}   {{ch07.lit_lane.101.4}}   {{ch07.lit_lane.101.5}}   {{ch07.lit_lane.101.6}}   {{ch07.lit_lane.101.7}}
 
-lit_cost[0x65][0] = 0x0a0a0909050a0904    table 7 in the top byte, table 0 in the low byte
-lit_cost[0x00][0] = 0x0803090202020208
+lit_cost[0x65][0] = {{ch07.lit_cost.101}}    table 7 in the top byte, table 0 in the low byte
+lit_cost[0x00][0] = {{ch07.lit_cost.0}}
 ```
 
-The zero byte has a 2-bit code in tables 1 to 4 and an 8-bit one in table 0, which is for text.
+The zero byte has a 2-bit code in tables 1 to 4 and an {{lit.0.len.0}}-bit one in table 0, which is for text.
+
+@assert lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2
 
 ## has_all_symbols(): can the encoder write every page {#ch-codes--all-symbols}
 
@@ -348,7 +364,7 @@ function checks that, once, for the lengths given:
 - Line 164: the escape's code must be short enough. `SEQLZ_MAX_ESCAPE_LEN` is
   $31 - 12 - 12 = 7$ bits on 4 KiB pages, 5 on 16 KiB pages: an escaped token with class 3's offset
   is then at most 31 bits, which the encoder's bound on the compressed size relies on, so that zram's
-  two pages are always room enough ([chapter 10](#ch-encoder)). The real escape has 4 bits. If the
+  two pages are always room enough ([chapter 10](#ch-encoder)). The real escape has {{tok.len.3072}} bits. If the
   escape has no code, length 0, this line passes, and the token loop above is what fails, unless
   every token has a code.
 - Lines 165 and 166: every length value needs a code in both tables. There is no escape for them.
@@ -370,12 +386,12 @@ decoder can use them, `seqlz_all_symbols()` is false, and `seqlz_compress()` ret
 `seqlz_tables_init()` is the function that builds the tables. `seqlz.h` declares it with its
 kernel-doc, next to the two small ones above, `seqlz_tables_size()` and `seqlz_all_symbols()`.
 
-Line 179 sets all 43 280 bytes to 0 first. The comment gives two reasons, and the code relies on two
+Line 179 sets all {{size.tables|grp}} bytes to 0 first. The comment gives two reasons, and the code relies on two
 more:
 
 - a token without a code must have `enc[]` 0, which is how `token_code()` knows to send it escaped
   ([chapter 7](#ch-internal--token-table)); the builders skip such symbols and write nothing for them;
-- the entries behind the last symbol, `enc[25]` to `enc[31]` of the length values, must be defined,
+- the entries behind the last symbol, `enc[{{const.LEN_SYMBOLS}}]` to `enc[31]` of the length values, must be defined,
   because the encoder's masked index could in principle reach them;
 - `lit_cost` is built with `|=`, so it must start at 0;
 - if a function is called twice on the same memory, as the tests do with other lengths, nothing of
@@ -405,8 +421,8 @@ appends `tools/kernel-port/api_codes.c`:
 `subsys_initcall()` has the kernel call `seqlz_init()` at boot, before zram starts;
 [chapter 15](#ch-zram-glue--init) explains all three.
 
-So there is one `struct seqlz_tables` in the whole kernel, `seqlz_fixed_tables`, 43 280 bytes that
-all CPUs share. `__ro_after_init` data takes room in the kernel image, so the image carries 43 280
+So there is one `struct seqlz_tables` in the whole kernel, `seqlz_fixed_tables`, {{size.tables|grp}} bytes that
+all CPUs share. `__ro_after_init` data takes room in the kernel image, so the image carries {{size.tables|grp}}
 bytes of zeros until `seqlz_init()` fills them at boot. `docs/plan.md` notes this as a point for the cover letter to the
 kernel's maintainers, and tables built at compile time as an open question, issue
 [#153](https://github.com/martinus/quetschn/issues/153) of the project's GitHub repository.
@@ -455,10 +471,12 @@ Lines 1 to 8 are the generator's: the SPDX line in the kernel's order, `GPL-2.0-
 
 `const struct seqlz_lengths seqlz_default_own = { .token = {...}, .ll = {...}, .ml = {...} };` is a C99
 designated initializer, each field by name; being `const`, the compiler puts it in read-only data.
-There are 16 lengths per line, so token `s` is at line `11 + s / 16`, column `s % 16`. Line 13 has
-tokens 32 to 47, and its third number, token 34, is 4. Line 14 has tokens 48 to 63, and token 49 is 4
-as well. Line 203 is the escape, 4. The `ll` and `ml` lines are the 24 lengths each that
+There are 16 lengths per line, so token `s` is at line `{{ch08.inc.tok_line}} + s / 16`, column `s % 16`. Line {{ch08.inc.tok34_line}} has
+tokens 32 to 47, and its third number, token 34, is {{tok.len.34}}. Line {{ch08.inc.tok49_line}} has tokens 48 to 63, and token 49 is {{tok.len.49}}
+as well. Line {{ch08.inc.esc_line}} is the escape, {{tok.len.3072}}. The `ll` and `ml` lines are the {{const.LEN_SYMBOLS}} lengths each that
 `first_codes()` turned into codes above.
+
+@assert ch08.inc.tok_line + 3 == 14 and 200 <= ch08.inc.esc_line <= 213 - 7
 
 ### Training: counts, then lengths
 
@@ -475,16 +493,18 @@ The generator turns counts into lengths:
 - Only the most frequent tokens get a code. The generator tries the 64, 128, 192, ... most frequent
   ones plus the escape, computes the bits each choice costs on the training pages, the escaped tokens
   at their escape code plus 12 bits, and keeps the cheapest whose escape code is at most
-  $31 - 12 - 12 = 7$ bits. For 4 KiB pages that is 576 tokens, 9 times 64.
+  $31 - 12 - 12 = 7$ bits. For 4 KiB pages that is {{ch08.tok.coded}} tokens, {{ch08.tok.coded_64}} times 64.
 - Before it writes anything, it checks the lengths as `seqlz_tables_init()` and `has_all_symbols()`
   do, and exits if they fail.
+
+@assert ch08.tok.coded % 64 == 0
 
 Three checks keep the generated files honest. `tools/seqlz-ref/check.sh`, which CI runs, regenerates
 all four `.inc` files from the counts and fails if one differs by a byte, and checks that the
 generator refuses lengths that `seqlz_tables_init()` refuses. `tools/seqlz-ref/seqlz_ref.py`, the
 decoder written from the spec, checks the SHA-256 of every table's lengths against the table in
 [format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#where-the-tables-come-from),
-e.g. `8348c354...` for the 4 KiB token table. And `quetschn-seqlz-train --from-counts` in C++ must give
+e.g. `{{ch08.tok4k_sha}}...` for the 4 KiB token table. And `quetschn-seqlz-train --from-counts` in C++ must give
 the same tables, which the test `seqlz_train` checks.
 
 ::: try Check a table's hash yourself
@@ -497,11 +517,11 @@ print(len(tok), hashlib.sha256(bytes(tok)).hexdigest())
 print(sum(1 for l in tok[:3072] if l), "tokens with a code, escape", tok[3072], "bits")
 print(sum(2.0 ** -l for l in tok if l))
 ```
-This prints 3073 and the `TOK_4k` hash of `format.md`, `576 tokens with a code, escape 4 bits`, and
+This prints {{tok.symbols}} and the `TOK_4k` hash of `format.md`, `{{ch08.tok.coded}} tokens with a code, escape {{tok.len.3072}} bits`, and
 `1.0`: the sum of $2^{-l}$ over all codes, the Kraft sum, which is 1 for a complete code.
 :::
 
-The 4 KiB counts are from 524 912 pages: the resident pages of a desktop, 60 132 pages of that
+The 4 KiB counts are from {{ch08.counts4k.pages|grp}} pages: the resident pages of a desktop, 60 132 pages of that
 desktop's zram dump of 28th September 2026, and the first zram dump of a Xiaomi Mi 9T, five times.
 Swapped pages made the second desktop dump 5% smaller than tables trained without them, and each copy
 more of the phone dump gave some of that back to the phone; with five, the phone was within 0.07% of
@@ -511,45 +531,49 @@ which no real table can be, the tables would be only 1.5% and 2.5% smaller on th
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 
 The pages themselves are not in the repository, because memory pages hold keys and passwords. The
-counts are, and they cannot give those back: the token and length counts are sums over all 524 912
-pages, each literal table's over at least 845 pages (the phone's counted five times), and a count says
+counts are, and they cannot give those back: the token and length counts are sums over all {{ch08.counts4k.pages|grp}}
+pages, each literal table's over at least {{ch08.counts4k.lit_min_pages}} pages (the phone's counted five times), and a count says
 nothing about which symbol came after which or on
 which page ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#where-the-tables-come-from)).
 
 ### What the token table looks like
 
-Of the 3072 tokens, 576 have a code of their own. With the escape, those are 577 codes:
+Of the 3072 tokens, {{ch08.tok.coded}} have a code of their own. With the escape, those are {{tok.with_code}} codes:
 
 | code length | codes | share of the table's 2048 entries |
 | --- | --- | --- |
-| 4 | 3 tokens and the escape | $4 \times 128 = 512$ |
-| 5 | 4 | $4 \times 64 = 256$ |
-| 6 | 5 | $5 \times 32 = 160$ |
-| 7 | 11 | $11 \times 16 = 176$ |
-| 8 | 27 | $27 \times 8 = 216$ |
-| 9 | 42 | $42 \times 4 = 168$ |
-| 10 | 76 | $76 \times 2 = 152$ |
-| 11 | 408 | $408 \times 1 = 408$ |
+| 4 | 3 tokens and the escape | ${{tok.codes_of.4}} \times 128 = {{ch08.tok.fill.4}}$ |
+| 5 | {{tok.codes_of.5}} | ${{tok.codes_of.5}} \times 64 = {{ch08.tok.fill.5}}$ |
+| 6 | {{tok.codes_of.6}} | ${{tok.codes_of.6}} \times 32 = {{ch08.tok.fill.6}}$ |
+| 7 | {{tok.codes_of.7}} | ${{tok.codes_of.7}} \times 16 = {{ch08.tok.fill.7}}$ |
+| 8 | {{tok.codes_of.8}} | ${{tok.codes_of.8}} \times 8 = {{ch08.tok.fill.8}}$ |
+| 9 | {{tok.codes_of.9}} | ${{tok.codes_of.9}} \times 4 = {{ch08.tok.fill.9}}$ |
+| 10 | {{tok.codes_of.10}} | ${{tok.codes_of.10}} \times 2 = {{ch08.tok.fill.10}}$ |
+| 11 | {{tok.codes_of.11}} | ${{tok.codes_of.11}} \times 1 = {{ch08.tok.fill.11}}$ |
+
+@assert tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0 and tok.codes_of[12] + tok.codes_of[13] + tok.codes_of[14] + tok.codes_of[15] + tok.codes_of[16] == 0 and tok.len[3072] == 4
 
 The entries add up to 2048, the table is complete. The shortest codes say what memory pages are made
 of:
 
 | token | `ll` | `ml` | class | code |
 | --- | --- | --- | --- | --- |
-| 34 | 2 | 6 | 0, the repeat offset | `0000` |
-| 49 | 1 | 7 | 0 | `0001` |
-| 2097 | 1 | 7 | 4, a multiple of 8 below 256 | `0010` |
-| 576 | 0 | 8 | 1, below 16 | `01000` |
-| 2082 | 2 | 6 | 4 | `01001` |
-| 2112 | 0 | 8 | 4 | `01010` |
-| 2624 | 0 | 8 | 5, a multiple of 8 from 256 | `01011` |
+| 34 | 2 | 6 | 0, the repeat offset | `{{tok.code.34}}` |
+| 49 | 1 | 7 | 0 | `{{tok.code.49}}` |
+| 2097 | 1 | 7 | 4, a multiple of 8 below 256 | `{{tok.code.2097}}` |
+| 576 | 0 | 8 | 1, below 16 | `{{tok.code.576}}` |
+| 2082 | 2 | 6 | 4 | `{{tok.code.2082}}` |
+| 2112 | 0 | 8 | 4 | `{{tok.code.2112}}` |
+| 2624 | 0 | 8 | 5, a multiple of 8 from 256 | `{{tok.code.2624}}` |
+
+@assert tok.codes_of[4] == tok.codes_of[5] == 4 and tok.len[3072] == tok.len[34] == tok.len[49] == tok.len[2097] == 4 and tok.len[576] == tok.len[2082] == tok.len[2112] == tok.len[2624] == 5
 
 In each of these 7 tokens, `ll + ml` is 8. That fits one sequence per 8-byte value, a pointer or a
 field of 8 bytes, whose low 1 or 2 bytes differ from a value 8 or more bytes before, or none do. The
 format's offset classes for multiples of 8 are there for the same reason
 ([chapter 4](#ch-format--offsets)).
 
-The escape has a 4-bit code, as short as the most frequent tokens. Each of the 2496 tokens without a
+The escape has a {{tok.len.3072}}-bit code, as short as the most frequent tokens. Each of the {{ch08.tok.escaped}} tokens without a
 code is rare, but together they are frequent: 14 to 38 of about 200 sequences per page on the
 project's dumps take the escape, at 16 bits each before the offset
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
@@ -572,11 +596,13 @@ the fewest bits on the training pages. The tables are then sorted by how many pa
 
 @listing src/seqlz_lit_sets_4k.inc 1-17
 
-Table 0 starts at line 11, 16 bytes per line: byte `0x00` is 8 bits, `0x0a`, the newline, 6, and line
-13 has `0x20`, the space, at 4. Line 17 is the bytes `0x60` to `0x6f`, the backtick and the letters
-`a` to `o`: 4 to 7 bits, except the backtick and `j`, with `e` at 4. Table 0 is a table for text. The
-other 7 differ: tables 1 to 4 give `0x00` 2 bits, table 6 gives `0xff` 4 bits. The shortest code is
-2 bits in 5 of the tables and 3 or 4 bits in the other 3, and every table has codes of 10 bits.
+Table 0 starts at line {{ch08.litinc.line}}, 16 bytes per line: byte `0x00` is {{lit.0.len.0}} bits, `0x0a`, the newline, {{lit.0.len.10}}, and line
+{{ch08.litinc.line20}} has `0x20`, the space, at {{lit.0.len.32}}. Line {{ch08.litinc.line60}} is the bytes `0x60` to `0x6f`, the backtick and the letters
+`a` to `o`: 4 to 7 bits, except the backtick and `j`, with `e` at {{lit.0.len.101}}. Table 0 is a table for text. The
+other 7 differ: tables 1 to 4 give `0x00` 2 bits, table 6 gives `0xff` {{lit.6.len.255}} bits. The shortest code is
+2 bits in {{ch08.lit.min2}} of the tables and 3 or 4 bits in the other {{ch08.lit.min34}}, and every table has codes of 10 bits.
+
+@assert ch08.litinc.line60 <= 17 and min(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 4 and max(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 7 and lit[0].len[0x60] > 7 and lit[0].len[0x6a] > 7 and lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2 and ch08.lit[0].max == ch08.lit[1].max == ch08.lit[2].max == ch08.lit[3].max == ch08.lit[4].max == ch08.lit[5].max == ch08.lit[6].max == ch08.lit[7].max == 10
 
 ::: measured 8 literal tables, not 1, 16 or 64
 k-means trained on the resident pages and priced on the two desktop dumps, as the share of
@@ -613,8 +639,8 @@ device has tables of its own. That is a decision of the format, with numbers beh
   set of tables only needs new hashes in `format.md`.
 
 The 16 KiB variants, `seqlz_default_tables_16k.inc` and `seqlz_lit_sets_16k.inc`, are the same
-construction with counts from 26 933 pages of a zram dump of the Android 17 emulator with 16 KiB
-pages. They give 512 tokens a code, again with a 4-bit escape, below that page size's limit of
+construction with counts from {{ch08.counts16k.pages|grp}} pages of a zram dump of the Android 17 emulator with 16 KiB
+pages. They give {{k16.ch08.tok.coded}} tokens a code, again with a {{k16.tok.len.3072}}-bit escape, below that page size's limit of
 $31 - 14 - 12 = 5$ bits. On a second dump of the emulator they made `seqlz-fast-lit` 2.6% smaller than
 the 16 KiB tables before them, which were trained on desktop pages
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).

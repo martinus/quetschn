@@ -21,7 +21,7 @@ where every other codec in zram hashes 4.
 
 @listing src/page_lz.h 1-11
 
-Line 1 is the licence and lines 2, 3 and 185 are the include guard, as in every header of `src/`
+Line 1 is the licence and lines 2, 3 and {{ch09.lines}} are the include guard, as in every header of `src/`
 ([chapter 5](#ch-compat)).
 
 The comment on lines 5 to 9 says why this is a header and not a `.c` file. Every function in it is
@@ -66,7 +66,7 @@ arm64 store it, goes through it like this:
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 262" role="img" aria-label="The 8 bytes at p loaded as a number, shifted left by 24 so that only the 5 lowest bytes remain, multiplied by zstd's prime, and the top 12 bits of the product taken as the slot 1533.">
+<svg viewBox="0 0 720 262" role="img" aria-label="The 8 bytes at p loaded as a number, shifted left by 24 so that only the 5 lowest bytes remain, multiplied by zstd's prime, and the top 12 bits of the product taken as the slot {{ch09.h1.slot}}.">
   <g font-size="11">
     <text x="276" y="30" text-anchor="middle">p+0</text><text x="328" y="30" text-anchor="middle">p+1</text><text x="380" y="30" text-anchor="middle">p+2</text><text x="432" y="30" text-anchor="middle">p+3</text><text x="484" y="30" text-anchor="middle">p+4</text><text x="536" y="30" text-anchor="middle">p+5</text><text x="588" y="30" text-anchor="middle">p+6</text><text x="640" y="30" text-anchor="middle">p+7</text>
   </g>
@@ -97,20 +97,20 @@ arm64 store it, goes through it like this:
     <text x="276" y="57">10</text><text x="328" y="57">00</text><text x="380" y="57">56</text><text x="432" y="57">34</text><text x="484" y="57">12</text><text x="536" y="57">7f</text><text x="588" y="57">00</text><text x="640" y="57">00</text>
     <text x="276" y="107">00</text><text x="328" y="107">00</text><text x="380" y="107">7f</text><text x="432" y="107">12</text><text x="484" y="107">34</text><text x="536" y="107">56</text><text x="588" y="107">00</text><text x="640" y="107">10</text>
     <text x="276" y="157">12</text><text x="328" y="157">34</text><text x="380" y="157">56</text><text x="432" y="157">00</text><text x="484" y="157">10</text><text x="536" y="157">00</text><text x="588" y="157">00</text><text x="640" y="157">00</text>
-    <text x="276" y="207">5f</text><text x="315" y="207">d</text><text x="341" y="207">e</text><text x="380" y="207">9f</text><text x="432" y="207">cb</text><text x="484" y="207">b0</text><text x="536" y="207">00</text><text x="588" y="207">00</text><text x="640" y="207">00</text>
+    <text x="276" y="207">{{ch09.h1.prod.0}}</text><text x="315" y="207">{{ch09.h1.prod.1hi}}</text><text x="341" y="207">{{ch09.h1.prod.1lo}}</text><text x="380" y="207">{{ch09.h1.prod.2}}</text><text x="432" y="207">{{ch09.h1.prod.3}}</text><text x="484" y="207">{{ch09.h1.prod.4}}</text><text x="536" y="207">{{ch09.h1.prod.5}}</text><text x="588" y="207">{{ch09.h1.prod.6}}</text><text x="640" y="207">{{ch09.h1.prod.7}}</text>
   </g>
   <g class="acc" fill="none" stroke="currentColor" stroke-width="1.5">
     <path d="M 250 224 L 250 230 L 328 230 L 328 224"/>
   </g>
-  <g class="acc" font-size="12"><text x="250" y="248">top 12 bits: 0x5fd = slot 1533</text></g>
+  <g class="acc" font-size="12"><text x="250" y="248">top 12 bits: {{ch09.h1.slot_hex}} = slot {{ch09.h1.slot}}</text></g>
 </svg>
 </div>
-<figcaption>The 5 bytes 10 00 56 34 12 become slot 1533; the 3 bytes after them do not count.</figcaption>
+<figcaption>The 5 bytes 10 00 56 34 12 become slot {{ch09.h1.slot}}; the 3 bytes after them do not count.</figcaption>
 </figure>
 
-The bytes `20 00 56 34 12`, the start of the next pointer, give the product `0x519a6d9760000000` and
-slot `0x519`, 1305. Both numbers come from a few lines of C against `src/page_lz.h`. One byte of
-difference moves the slot from 1533 to 1305, and that is what a hash has to do: similar inputs land far
+The bytes `20 00 56 34 12`, the start of the next pointer, give the product `{{ch09.h2.prod}}` and
+slot `{{ch09.h2.slot_hex}}`, {{ch09.h2.slot}}. Both numbers come from a few lines of C against `src/page_lz.h`. One byte of
+difference moves the slot from {{ch09.h1.slot}} to {{ch09.h2.slot}}, and that is what a hash has to do: similar inputs land far
 apart, so that the table is used evenly.
 
 **Why the top bits.** In a multiplication, bit `k` of the product depends only on bits 0 to `k` of the
@@ -171,13 +171,13 @@ difference is byte 11, `L` against `x`:
 | | value |
 | --- | --- |
 | `x1`, bytes 0 to 7 | `0x0000000000000000`, all equal |
-| `x2`, bytes 8 to 15 | `0x0000000034000000`: byte 3 of it is `'L' ^ 'x'` = `0x4c ^ 0x78` = `0x34` |
+| `x2`, bytes 8 to 15 | `{{ch09.mlen.x2}}`: byte 3 of it is `'L' ^ 'x'` = `0x4c ^ 0x78` = `0x34` |
 | `x = x1 ? x1 : x2` | `x2` |
 | <code>x &#124; x2</code> | not 0, so the function returns |
-| <code>__builtin_ctzll(x &#124; 1ULL &lt;&lt; 63)</code> | 26: `0x34` is `00110100`, its lowest set bit is bit 2 of byte 3, $3 \times 8 + 2$ |
-| result | `8 + (26 >> 3)` = 8 + 3 = 11 |
+| <code>__builtin_ctzll(x &#124; 1ULL &lt;&lt; 63)</code> | {{ch09.mlen.ctz}}: `0x34` is `00110100`, its lowest set bit is bit 2 of byte 3, $3 \times 8 + 2$ |
+| result | `8 + ({{ch09.mlen.ctz}} >> 3)` = 8 + 3 = {{ch09.mlen.len}} |
 
-11 bytes are equal, and the program that checked this, compiled against `src/page_lz.h`, returns 11.
+{{ch09.mlen.len}} bytes are equal, and the program that checked this, compiled against `src/page_lz.h`, returns {{ch09.mlen.len}}.
 
 **One branch for 16 bytes.** Line 44 picks the first word that differs. `x1 ? x1 : x2` is a select, which
 compilers turn into a conditional move (`cmov` on x86-64, `csel` on arm64), not a jump. Line 46 asks
@@ -304,7 +304,7 @@ other is the last position whose 5 bytes had the same hash, from the table.
 time on data that does not compress. seqlz tries every position.
 
 ::: measured Without `lz4`'s step: writes 3% faster, incompressible pages slower
-The step was `1 + (pos - anchor) >> 6`, as in `lz4`. Without it, in the kernel in a VM (Ryzen 9 7950X,
+The step was `1 + (pos - anchor) >> 6`, as in `lz4`. Without it, on 30th September 2026, in the kernel in a VM (Ryzen 9 7950X,
 CPU fixed at 4.5 GHz, 20 000 pages of each of two desktop dumps), `seqlz-fast-lit` wrote a page 0.21 and
 0.25 µs faster, 3%, at 3.2 bytes more and 2.4 bytes less per page, and the write p99 went from 12 200 to
 11 330 ns and from 12 400 to 11 460 ns. Pages that zram stores raw, because they do not compress, take
@@ -329,7 +329,7 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 270" role="img" aria-label="At position 400 of the page the matcher reads two candidates: position 336, 64 bytes back at the repeat offset, and position 126, which the table's slot 3830 holds for the hash of the 5 bytes at 400.">
+<svg viewBox="0 0 720 270" role="img" aria-label="At position 400 of the page the matcher reads two candidates: position 336, {{ch09.rnd.400.last}} bytes back at the repeat offset, and position {{ch09.rnd.400.cand}}, which the table's slot {{ch09.rnd.400.h}} holds for the hash of the 5 bytes at 400.">
   <text x="20" y="40" font-size="12">page</text>
   <rect class="fill-paper" x="20" y="50" width="680" height="34" stroke="currentColor" stroke-width="1"/>
   <text x="20" y="100" font-size="11">0</text>
@@ -342,7 +342,7 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
     <rect class="fill-sheet" x="580" y="50" width="40" height="34"/>
   </g>
   <g font-size="12" text-anchor="middle">
-    <text x="160" y="72">126</text>
+    <text x="160" y="72">{{ch09.rnd.400.cand}}</text>
     <text x="485" y="72">336</text>
   </g>
   <g class="acc" font-size="12" text-anchor="middle"><text x="600" y="72">400</text></g>
@@ -350,7 +350,7 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
     <path d="M 600 50 C 590 18, 495 18, 485 46"/>
     <polygon class="fill-mark" points="485,50 481,41 489,42"/>
   </g>
-  <g class="mark" font-size="12"><text x="542" y="14" text-anchor="middle">repeat offset: pos - last, last = 64</text></g>
+  <g class="mark" font-size="12"><text x="542" y="14" text-anchor="middle">repeat offset: pos - last, last = {{ch09.rnd.400.last}}</text></g>
   <g class="acc" fill="none" stroke="currentColor" stroke-width="1.5">
     <line x1="600" y1="84" x2="600" y2="196"/>
     <polygon class="fill-acc" points="600,200 596,190 604,190"/>
@@ -358,7 +358,7 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
   <g class="acc" font-size="12">
     <text x="610" y="134">seqlz_hash5()</text>
     <text x="610" y="150">of 5 bytes</text>
-    <text x="610" y="166">= 3830</text>
+    <text x="610" y="166">= {{ch09.rnd.400.h}}</text>
   </g>
   <text x="20" y="194" font-size="12">table: 4096 slots of u16, 8 KiB</text>
   <rect class="fill-paper" x="20" y="200" width="680" height="34" stroke="currentColor" stroke-width="1"/>
@@ -370,8 +370,8 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
   <g class="acc" stroke="currentColor" stroke-width="2">
     <rect class="fill-sheet" x="580" y="200" width="40" height="34"/>
   </g>
-  <g class="acc" font-size="12" text-anchor="middle"><text x="600" y="222">126</text></g>
-  <text x="600" y="252" font-size="11" text-anchor="middle">slot 3830</text>
+  <g class="acc" font-size="12" text-anchor="middle"><text x="600" y="222">{{ch09.rnd.400.cand}}</text></g>
+  <text x="600" y="252" font-size="11" text-anchor="middle">slot {{ch09.rnd.400.h}}</text>
   <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3">
     <line x1="582" y1="200" x2="166" y2="90"/>
   </g>
@@ -380,14 +380,16 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
   <text x="40" y="166" font-size="12">only: 4 bytes are compared</text>
 </svg>
 </div>
-<figcaption>Two candidates at position 400: the repeat offset, 64 bytes back, and the position the table's slot holds.</figcaption>
+<figcaption>Two candidates at position 400: the repeat offset, {{ch09.rnd.400.last}} bytes back, and the position the table's slot holds.</figcaption>
 </figure>
+
+@assert ch09.rnd[400].last == 64 and ch09.rnd[400].cand_hit == 1
 
 ## The state of the loop, and why reading a candidate is always safe {#ch-matcher--state}
 
 @listing src/page_lz.h 98-124
 
-**Positions, not pointers.** Line 103 sets `limit` to 4088, the first position that is not tried. All
+**Positions, not pointers.** Line 103 sets `limit` to {{ch09.limit}}, the first position that is not tried. All
 the matcher's places are `unsigned int` positions in the page, not pointers: the limit is then a
 constant the compiler can put into the compare instruction, and the table stores positions anyway.
 Changing the loop from pointers to positions took 21 916 to 21 786 cycles per page, a small step of the
@@ -414,14 +416,14 @@ instruction of its own on every position. `long` because it is negative and is a
 `unsigned int` would wrap around to a large positive number.
 
 **Loaded one position ahead.** Lines 117 and 118 declare two more values, and the comment on lines 110
-to 114 says what they are for: `v` holds the 8 bytes at `pos`, `h` their hash, `cand` the table's
+to 116 says what they are for: `v` holds the 8 bytes at `pos`, `h` their hash, `cand` the table's
 entry and `cand_bytes` the 4 bytes at that entry. "Each of them needs the one before": the hash needs
 `v`, the table load needs `h`, the candidate's bytes need `cand`. Lines 121 to 124 compute them for
 position 1 before the loop, and the loop always computes them for the next position before it needs
 them. Why that helps is in the [next section](#ch-matcher--position).
 
 **The table: 4096 positions of 2 bytes, cleared for each page.** Line 120 sets the table to zeros:
-`sizeof(u16) << SEQLZ_HASH_BITS` is $2 \times 4096 = 8192$ bytes. The table lives in `struct seqlz_state`
+`sizeof(u16) << SEQLZ_HASH_BITS` is $2 \times 4096 = {{ch09.table_bytes}}$ bytes. The table lives in `struct seqlz_state`
 (see [chapter 6](#ch-header)), which zram allocates once per CPU, and it is reused for every page.
 
 ::: why A cache of 8 KiB, not a map
@@ -458,7 +460,7 @@ bytes at 2.
 The other candidate is safe for a similar reason: `last` starts at 1 and `pos` at 1, so the first load
 at the repeat offset reads position 0. After a match, `last` is that match's offset, which is at most
 the match's start, and `pos` only grows, so `pos - last` stays at 0 or more. The comment on lines 135 to
-135 says this in one sentence: both candidates point into the page, before `pos`.
+137 says this in one sentence: both candidates point into the page, before `pos`.
 
 ## One position: two candidates, one branch {#ch-matcher--position}
 
@@ -469,7 +471,7 @@ the path taken most often: on the phone's pages, a run without a match is 4 posi
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept)).
 
 Line 126 runs while `pos < limit`. Each position reads 8 bytes at `pos + 1` (line 127), so the last one
-tried, 4087, reads up to byte 4095, the last byte of the page. That is the reason for `limit`: "every
+tried, {{ch09.limit_last}}, reads up to byte 4095, the last byte of the page. That is the reason for `limit`: "every
 try reads 8 bytes". The last 8 bytes of a page are never the start of a match; they end up in the last
 sequence's literals unless a match runs over them.
 
@@ -602,13 +604,13 @@ the loop. Note the order again: the insert on line 174 comes before the load of 
 so if the new position has the same hash as `pos - 2`, it finds `pos - 2`.
 
 When the loop ends, the bytes from `anchor` to the end of the page are not in any sequence yet. Line
-180 emits them as the last sequence: literals only, `ml` 0 and offset 0. The format has no count of
+182 emits them as the last sequence: literals only, `ml` 0 and offset 0. The format has no count of
 sequences, and the last one has no token: the decoder knows it has come when the literals left are as
 many as the bytes the page still needs, see [the format chapter](#ch-format--end). That last sequence can
 have 0 literals, when a match ran to the end of the page.
 
 How many sequences can there be? Every sequence but the last covers at least 4 bytes, the shortest
-match, so a page of 4096 bytes has at most $4096 / 4 + 1 = 1025$, which is `SEQLZ_MAX_SEQUENCES`. The
+match, so a page of 4096 bytes has at most $4096 / 4 + 1 = {{const.MAX_SEQUENCES}}$, which is `SEQLZ_MAX_SEQUENCES`. The
 bound matters for `seqlz_find()`'s array, and the encoder's proof that its output fits uses it too, see
 [chapter 10](#ch-encoder--layout).
 
@@ -633,23 +635,25 @@ the loop tries:
 
 | `pos` | 5 bytes at `pos` | `h` | `cand` | repeat offset | `rep_hit` | `cand_hit` |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `00 56 34 12 7f` | 3974 | 0 | 1 | 0 | 0 |
-| 2 | `56 34 12 7f 00` | 4063 | 0 | 1 | 0 | 0 |
+| 1 | `{{ch09.ptr.1.bytes}}` | {{ch09.ptr.1.h}} | {{ch09.ptr.1.cand}} | {{ch09.ptr.1.last}} | {{ch09.ptr.1.rep_hit}} | {{ch09.ptr.1.cand_hit}} |
+| 2 | `{{ch09.ptr.2.bytes}}` | {{ch09.ptr.2.h}} | {{ch09.ptr.2.cand}} | {{ch09.ptr.2.last}} | {{ch09.ptr.2.rep_hit}} | {{ch09.ptr.2.cand_hit}} |
 | 3 to 7 | ... | ... | 0 | 1 | 0 | 0 |
-| 8 | `20 00 56 34 12` | 1305 | 0 | 1 | 0 | 0 |
-| 9 | `00 56 34 12 7f` | 3974 | **1** | 1 | 0 | **1** |
-| 16 | `30 00 56 34 12` | 1077 | 0 | 8 | 0 | 0 |
-| 17 | `00 56 34 12 7f` | 3974 | 9 | **8** | **1** | 1 |
-| 24 | `40 00 56 34 12` | 849 | 0 | 8 | 0 | 0 |
-| 25 | `00 56 34 12 7f` | 3974 | 17 | **8** | **1** | 1 |
+| 8 | `{{ch09.ptr.8.bytes}}` | {{ch09.ptr.8.h}} | {{ch09.ptr.8.cand}} | {{ch09.ptr.8.last}} | {{ch09.ptr.8.rep_hit}} | {{ch09.ptr.8.cand_hit}} |
+| 9 | `{{ch09.ptr.9.bytes}}` | {{ch09.ptr.9.h}} | **{{ch09.ptr.9.cand}}** | {{ch09.ptr.9.last}} | {{ch09.ptr.9.rep_hit}} | **{{ch09.ptr.9.cand_hit}}** |
+| 16 | `{{ch09.ptr.16.bytes}}` | {{ch09.ptr.16.h}} | {{ch09.ptr.16.cand}} | {{ch09.ptr.16.last}} | {{ch09.ptr.16.rep_hit}} | {{ch09.ptr.16.cand_hit}} |
+| 17 | `{{ch09.ptr.17.bytes}}` | {{ch09.ptr.17.h}} | {{ch09.ptr.17.cand}} | **{{ch09.ptr.17.last}}** | **{{ch09.ptr.17.rep_hit}}** | {{ch09.ptr.17.cand_hit}} |
+| 24 | `{{ch09.ptr.24.bytes}}` | {{ch09.ptr.24.h}} | {{ch09.ptr.24.cand}} | {{ch09.ptr.24.last}} | {{ch09.ptr.24.rep_hit}} | {{ch09.ptr.24.cand_hit}} |
+| 25 | `{{ch09.ptr.25.bytes}}` | {{ch09.ptr.25.h}} | {{ch09.ptr.25.cand}} | **{{ch09.ptr.25.last}}** | **{{ch09.ptr.25.rep_hit}}** | {{ch09.ptr.25.cand_hit}} |
+
+@assert ch09.ptr.miss3to7 == 0 and ch09.ptr[9].cand_hit == 1 and ch09.ptr[17].rep_hit == 1 and ch09.h2.slot == ch09.ptr[8].h
 
 At positions 1 to 8 every slot is still 0, so every `cand` is 0 and its 4 bytes are `10 00 56 34`, which
-match nothing. Position 8 is where the 5 bytes `20 00 56 34 12` get slot 1305, the second example of
-[the hash](#ch-matcher--hash). (The first example, slot 1533, never comes up here: it is the hash of
-position 0, which is never tried.) At position 9 the 5 bytes `00 56 34 12 7f` come again, slot 3974 holds
+match nothing. Position 8 is where the 5 bytes `20 00 56 34 12` get slot {{ch09.ptr.8.h}}, the second example of
+[the hash](#ch-matcher--hash). (The first example, slot {{ch09.h1.slot}}, never comes up here: it is the hash of
+position 0, which is never tried.) At position 9 the 5 bytes `00 56 34 12 7f` come again, slot {{ch09.ptr.9.h}} holds
 1 from position 1, and the 4 bytes match: offset 8. Extending backwards fails at once, `20` is not `10`.
-Forwards, the match covers `00 56 34 12 7f 00 00` and stops at `30` against `20`: 7 bytes. The first
-sequence is 9 literals and a match of 7 at offset 8.
+Forwards, the match covers `00 56 34 12 7f 00 00` and stops at `30` against `20`: {{ch09.ptr.seq.0.ml}} bytes. The first
+sequence is {{ch09.ptr.seq.0.ll}} literals and a match of {{ch09.ptr.seq.0.ml}} at offset {{ch09.ptr.seq.0.off}}.
 
 From then on it repeats: position 16 (`30`, the low byte of the third pointer) misses, position 17 hits
 at the repeat offset 8, and the table's candidate hits too, at the same place. What `seqlz_find()`
@@ -657,39 +661,46 @@ returns:
 
 | sequence | starts at | `ll` | `ml` | offset |
 | --- | --- | --- | --- | --- |
-| 0 | 0 | 9 | 7 | 8 |
-| 1 to 13 | 16, 24, ..., 112 | 1 | 7 | 8 |
-| 14 | 120 | 2 | 6 | 8 |
-| 15 to 29 | 128, ..., 240 | 1 | 7 | 8 |
-| 30 | 248 | 2 | 6 | 8 |
+| 0 | {{ch09.ptr.seq.0.at}} | {{ch09.ptr.seq.0.ll}} | {{ch09.ptr.seq.0.ml}} | {{ch09.ptr.seq.0.off}} |
+| 1 to 13 | {{ch09.ptr.seq.1.at}}, 24, ..., {{ch09.ptr.seq.13.at}} | {{ch09.ptr.seq.1.ll}} | {{ch09.ptr.seq.1.ml}} | {{ch09.ptr.seq.1.off}} |
+| 14 | {{ch09.ptr.seq.14.at}} | {{ch09.ptr.seq.14.ll}} | {{ch09.ptr.seq.14.ml}} | {{ch09.ptr.seq.14.off}} |
+| 15 to 29 | {{ch09.ptr.seq.15.at}}, ..., {{ch09.ptr.seq.29.at}} | {{ch09.ptr.seq.15.ll}} | {{ch09.ptr.seq.15.ml}} | {{ch09.ptr.seq.15.off}} |
+| 30 | {{ch09.ptr.seq.30.at}} | {{ch09.ptr.seq.30.ll}} | {{ch09.ptr.seq.30.ml}} | {{ch09.ptr.seq.30.off}} |
 | ... | | | | |
-| 509 | 4080 | 1 | 7 | 8 |
-| 510 | 4088 | 8 | 0 | 0 |
+| {{ch09.ptr.before_last}} | {{ch09.ptr.seq.509.at}} | {{ch09.ptr.seq.509.ll}} | {{ch09.ptr.seq.509.ml}} | {{ch09.ptr.seq.509.off}} |
+| {{ch09.ptr.last}} | {{ch09.ptr.seq.510.at}} | {{ch09.ptr.seq.510.ll}} | {{ch09.ptr.seq.510.ml}} | {{ch09.ptr.seq.510.off}} |
 
-511 sequences. Every 16th pointer carries into its second byte (`0x...00f0 + 0x10 = 0x...0100`), and
+@assert ch09.ptr.odd == 0 and ch09.ptr.seqs == 511 == pointers.seqs
+
+{{ch09.ptr.seqs}} sequences. Every 16th pointer carries into its second byte (`0x...00f0 + 0x10 = 0x...0100`), and
 then 2 bytes differ from the pointer before: sequence 14 has the literals `00 01` and a match of 6. The
-last sequence shows `limit` at work: the match of sequence 509 ends at 4088, the loop stops there, and the
+last sequence shows `limit` at work: the match of sequence {{ch09.ptr.before_last}} ends at {{ch09.ptr.seq.510.at}}, the loop stops there, and the
 last pointer's 8 bytes become literals, where one literal and a match of 7 would have done.
 
-**A match found late and extended backwards.** A page of random bytes `R`, with bytes 0 to 63 copied to
+**A match found late and extended backwards.** A page of random bytes `R`, bits 16 to 23 of the C
+library's classic linear congruential generator from seed 12345, with bytes 0 to 63 copied to
 64 to 127, and the 14 bytes at 124 to 137 copied to 398 to 411. Bytes 124 to 127 are the end of the copy
-of `R`, bytes 128 to 137 are random. The matcher finds the copy at 64 at once, a match of 64 bytes at
-offset 64, and inserts position 126 ($= 128 - 2$) into the table. The positions 64 to 125 are not in it.
+of `R`, bytes 128 to 137 are random. The matcher finds the copy at 64 at once, a match of {{ch09.rnd.first.ml}} bytes at
+offset {{ch09.rnd.first.off}}, and inserts position {{ch09.rnd.first.inserted}} ($= 128 - 2$) into the table. The positions 64 to 125 are not in it.
 At the second copy:
 
 | `pos` | 5 bytes at `pos` | `h` | `cand` | `cand_hit` |
 | --- | --- | --- | --- | --- |
-| 398 | `3c f9 35 fd f3` | 1099 | 0 | 0 |
-| 399 | `f9 35 fd f3 ce` | 3419 | 139 | 0 |
-| 400 | `35 fd f3 ce b3` | 3830 | 126 | 1 |
+| 398 | `{{ch09.rnd.398.bytes}}` | {{ch09.rnd.398.h}} | {{ch09.rnd.398.cand}} | {{ch09.rnd.398.cand_hit}} |
+| 399 | `{{ch09.rnd.399.bytes}}` | {{ch09.rnd.399.h}} | {{ch09.rnd.399.cand}} | {{ch09.rnd.399.cand_hit}} |
+| 400 | `{{ch09.rnd.400.bytes}}` | {{ch09.rnd.400.h}} | {{ch09.rnd.400.cand}} | {{ch09.rnd.400.cand_hit}} |
+
+@assert ch09.rnd.first.at == 64 and ch09.rnd[398].cand_hit == ch09.rnd[399].cand_hit == 0 and ch09.rnd[400].cand == ch09.rnd.first.inserted and ch09.rnd[399].cand not in (0, 125)
 
 The copy starts at 398, but 398 and 399 miss: their 5 bytes were last at 124 and 125, inside the match,
-never inserted. Slot 3419 even holds 139, a collision with other bytes. Position 400 has the bytes of
+never inserted. Slot {{ch09.rnd.399.h}} even holds {{ch09.rnd.399.cand}}, a collision with other bytes. Position 400 has the bytes of
 126, the one position the match inserted, and hits. Then lines 157 to 160 step back: `src[399]` is
-`f9` and `src[125]` is `f9`, `src[398]` is `3c` and `src[124]` is `3c`, `src[397]` is `fe` and
-`src[123]` is not. The sequence `seqlz_find()` returns is 270 literals (128 to 397) and a match of 14 at
-offset 274, starting at 398, as if it had been found there. Without the backward extension the 2 bytes
+`f9` and `src[125]` is `f9`, `src[398]` is `3c` and `src[124]` is `3c`, `src[397]` is `{{ch09.rnd.b397}}` and
+`src[123]` is not. The sequence `seqlz_find()` returns is {{ch09.rnd.seq.ll}} literals ({{ch09.rnd.seq.lit_first}} to {{ch09.rnd.seq.lit_last}}) and a match of {{ch09.rnd.seq.ml}} at
+offset {{ch09.rnd.seq.off}}, starting at {{ch09.rnd.seq.at}}, as if it had been found there. Without the backward extension the 2 bytes
 would be literals, and a match of 12 would follow them.
+
+@assert ch09.rnd.seq.at == 398 and ch09.rnd.seq.ml == 14 and ch09.rnd.b397 != ch09.rnd.b123
 
 ::: try The sequences of the page of pointers
 In the repository, save this as `find.c` and build it with `gcc -O2 -Isrc -o find find.c
@@ -719,9 +730,13 @@ int main(void)
 	return 0;
 }
 ```
+@program ch09-find
 
-It prints `511 sequences` and the sequences of the table above. Fill `page` with your own bytes to see
-what the matcher makes of them.
+It prints `{{ch09.ptr.seqs}} sequences` and the sequences of the table above, these among them:
+
+@output ch09-find 1-4,15-17,510-512
+
+Fill `page` with your own bytes to see what the matcher makes of them.
 :::
 
 What the matcher misses is older places. The table keeps one position per slot, the newest, so when the

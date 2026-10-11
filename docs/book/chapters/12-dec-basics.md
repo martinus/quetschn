@@ -1,11 +1,11 @@
 # The decoder's tools: prefetches, copies and a bit reader {#ch-dec-basics}
 
-`src/seqlz_decompress.c` is the decoder, 688 lines. Its last function, `seqlz_decode()`, is the loop
+`src/seqlz_decompress.c` is the decoder, {{ch12.lines}} lines. Its last function, `seqlz_decode()`, is the loop
 over the sequences of a page, and [chapter 14](#ch-decode) goes through it. Before it, the file has two
-groups of helpers. The first 243 lines, this chapter, are what every decoder of an LZ format needs in
+groups of helpers. The first 249 lines, this chapter, are what every decoder of an LZ format needs in
 some form: a way to get the tables into the cache before they are used, copies of 8 and 16 bytes,
 a copy for the literals, a copy for matches that may overlap the bytes they write, and a reader that
-takes bits off the bitstream. Lines 245 to 427 decode the coded literals, see
+takes bits off the bitstream. Lines 251 to 433 decode the coded literals, see
 [chapter 13](#ch-literals-dec).
 
 Every function here is `static` and `inline` or `__always_inline`. With `-O2` and `-O3`, and the
@@ -60,13 +60,14 @@ The sizes, with the tables of [chapter 7](#ch-internal):
 
 | table | entries | bytes | rounds of 512 bytes | lines |
 | --- | --- | --- | --- | --- |
-| token, `t->token.decode` | 2048 of 4 bytes | 8192 | 16 | 128 |
-| `ll` length values, `t->ll.decode` | 256 of 4 bytes | 1024 | 2 | 16 |
-| `ml` length values, `t->ml.decode` | 256 of 4 bytes | 1024 | 2 | 16 |
-| one literal table, `t->lit[i].decode` | 1024 of 2 bytes | 2048 | 4 | 32 |
+| token, `t->token.decode` | {{ch12.tok.entries}} of {{ch12.tok.esize}} bytes | {{ch12.tok.bytes}} | {{ch12.tok.rounds}} | {{ch12.tok.cachelines}} |
+| `ll` length values, `t->ll.decode` | {{ch12.ll.entries}} of {{ch12.ll.esize}} bytes | {{ch12.ll.bytes}} | {{ch12.ll.rounds}} | {{ch12.ll.cachelines}} |
+| `ml` length values, `t->ml.decode` | {{ch12.ml.entries}} of {{ch12.ml.esize}} bytes | {{ch12.ml.bytes}} | {{ch12.ml.rounds}} | {{ch12.ml.cachelines}} |
+| one literal table, `t->lit[i].decode` | {{ch12.lit.entries}} of {{ch12.lit.esize}} bytes | {{ch12.lit.bytes}} | {{ch12.lit.rounds}} | {{ch12.lit.cachelines}} |
 
-That is 160 lines for a page with raw literals and 192, 12 KiB, for a page with coded literals. The
+That is {{ch12.lines_raw}} lines for a page with raw literals and {{ch12.lines_coded}}, {{ch12.kib_coded}} KiB, for a page with coded literals. The
 same with 16 KiB pages: the tables do not grow with the page.
+@assert F("k16.ch12.lines_coded") == ch12.lines_coded
 
 ::: why 8 lines per round, not 1, not 128
 The comment on lines 11 to 13 gives the reason: with one line per round, the loop's own instructions,
@@ -97,20 +98,22 @@ the A76 the cost did not show again: cold reads in
 ::: warn Why line 31 asks for the last line again
 The loop prefetches the line of `q`, then the lines 64, 128, ... bytes further. If `p` is not at the
 start of a line, the table covers one line more than $\text{rounds} \times 8$, and the loop does not
-reach the last one. In `struct seqlz_tables` on a 64-bit build, the token table is at offset 0,
-`ll.decode` at 40 968 and `ml.decode` at 42 120, both 8 bytes past a multiple of 64, and the literal
-tables at 14 340, 17 412 and so on, 4 bytes past one.
+reach the last one. In `struct seqlz_tables` on a 64-bit build, the token table is at offset {{ch12.tok.off}},
+`ll.decode` at {{ch12.ll.off|grp}} and `ml.decode` at {{ch12.ml.off|grp}}, both {{ch12.ll.mod}} bytes past a multiple of 64, and the literal
+tables at {{ch12.lit.off|grp}}, {{ch12.lit1.off|grp}} and so on, {{ch12.lit.mod}} bytes past one.
+@assert ch12.ml.mod == ch12.ll.mod and ch12.tok.mod == 0
 
 Where the struct starts decides the rest. The harness allocates it with `quetschn_zalloc()`, which
-aligns a block of 4096 bytes or more to a page. There the token table starts at a line, the last 8
-bytes of each length table, entries 254 and 255, are in a 17th line, and the last 4 bytes of a literal
-table, entries 1022 and 1023, in a 33rd. In the kernel, the tables are one static object,
+aligns a block of 4096 bytes or more to a page. There the token table starts at a line, the last {{ch12.ll.mod}}
+bytes of each length table, entries {{ch12.ll.first_extra}} and {{ch12.ll.last_entry}}, are in a {{ch12.ll.extra_ord}} line, and the last {{ch12.lit.mod}} bytes of a literal
+table, entries {{ch12.lit.first_extra}} and {{ch12.lit.last_entry}}, in a {{ch12.lit.extra_ord}}. In the kernel, the tables are one static object,
 `seqlz_fixed_tables` in `tools/kernel-port/api_codes.c`, and C only promises it the alignment of its
 widest member, the `u64` of `lit_cost`, 8 bytes. The object files of a kernel build have its section
 aligned to 32 bytes with gcc for x86-64, and to 8 with gcc for arm64 and with clang for x86-64. So in
 the kernel any of the tables, the token table too, can start inside a line. The literal tables do in
-every build: 4 bytes past a multiple of 64, in a struct that starts at a multiple of 8, is never the
+every build: {{ch12.lit.mod}} bytes past a multiple of 64, in a struct that starts at a multiple of 8, is never the
 start of a line.
+@assert ch12.ll.last_entry - ch12.ll.first_extra == 1 and ch12.lit.last_entry - ch12.lit.first_extra == 1 and ch12.lit.mod % 8 != 0
 
 Until 11th October the decoder left that last line out (#179). With canonical codes, the entries at
 the end of a table belong to the longest codes, the rarest symbols ([chapter 2](#ch-compression)), so it
@@ -133,7 +136,7 @@ the condition, and if it is 0, it stops with the message. Nothing of it is in th
 `sizeof_field(type, member)` is the kernel's macro for the size of a struct member without an object
 of the struct: `sizeof(((type *)0)->member)`. `sizeof` does not evaluate its operand, so the null
 pointer is never read; the expression only has a type. For the token table that is
-`sizeof(u32[2048])`, 8192, and 8192 % 512 is 0. If someone made the length values' codes at most 6 bits,
+`sizeof(u32[{{ch12.tok.entries}}])`, {{ch12.tok.bytes}}, and {{ch12.tok.bytes}} % 512 is 0. If someone made the length values' codes at most 6 bits,
 `SEQLZ_MAX_BITS` 6, their tables would have 64 entries of 4 bytes, 256 bytes, and the second assert
 would stop the build with "the length values' tables".
 
@@ -243,26 +246,27 @@ register first.
 loads 8 bytes from `d - off`, as a little-endian number, so that the byte at `d - off` is the lowest byte.
 Of these 8 bytes, the first `off` are the pattern, and the other `8 - off` are at `d` and after,
 not written yet, whatever the page buffer held before. `~0ULL >> (64U - 8U * off)` is a mask of the low
-`8 * off` bits: for `off = 3`, `~0ULL >> 40` is `0xffffff`. The `&` keeps the pattern and clears the
+`8 * off` bits: for `off = 3`, `~0ULL >> {{ch12.rep.3.shift}}` is `{{ch12.rep.3.mask}}`. The `&` keeps the pattern and clears the
 rest. Then the multiply by `repeat[off]` puts a copy of the pattern at every byte where the constant has
 a 1.
 
-`repeat[3]` is `0x0001000001000001`: ones in bytes 0, 3 and 6. The pattern `abc` is `0x636261` as a
+`repeat[3]` is `{{ch12.rep.3.mul}}`: ones in bytes 0, 3 and 6. The pattern `abc` is `0x636261` as a
 little-endian number. The product is `0x636261 + (0x636261 << 24) + (0x636261 << 48)`; the three
 copies do not overlap, so there is no carry from one byte into the next, and the third copy's `c`, at
 byte 8, falls off the top of the 64 bits, which unsigned arithmetic in C allows. The result is
-`0x6261636261636261`, bytes `a b c a b c a b`. All offsets, each with the `off` bytes before `d` being
-`a`, `ab`, up to `abcdefg`, and other bytes after it, computed with Python:
+`{{ch12.rep.3.prod}}`, bytes `a b c a b c a b`. All offsets, each with the `off` bytes before `d` being
+`a`, `ab`, up to `abcdefg`, and other bytes after it, computed with `repeat_pattern()` itself:
 
 | `off` | pattern | mask | `repeat[off]` | product | bytes at `d` | `repeat_step[off]` |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `a` | `0xff` | `0x0101010101010101` | `0x6161616161616161` | `aaaaaaaa` | 8 |
-| 2 | `ab` | `0xffff` | `0x0001000100010001` | `0x6261626162616261` | `abababab` | 8 |
-| 3 | `abc` | `0xffffff` | `0x0001000001000001` | `0x6261636261636261` | `abcabcab` | 6 |
-| 4 | `abcd` | `0xffffffff` | `0x0000000100000001` | `0x6463626164636261` | `abcdabcd` | 8 |
-| 5 | `abcde` | `0xffffffffff` | `0x0000010000000001` | `0x6362616564636261` | `abcdeabc` | 5 |
-| 6 | `abcdef` | `0xffffffffffff` | `0x0001000000000001` | `0x6261666564636261` | `abcdefab` | 6 |
-| 7 | `abcdefg` | `0xffffffffffffff` | `0x0100000000000001` | `0x6167666564636261` | `abcdefga` | 7 |
+| 1 | `{{ch12.rep.1.pat}}` | `{{ch12.rep.1.mask}}` | `{{ch12.rep.1.mul}}` | `{{ch12.rep.1.prod}}` | `{{ch12.rep.1.bytes}}` | {{ch12.rep.1.step}} |
+| 2 | `{{ch12.rep.2.pat}}` | `{{ch12.rep.2.mask}}` | `{{ch12.rep.2.mul}}` | `{{ch12.rep.2.prod}}` | `{{ch12.rep.2.bytes}}` | {{ch12.rep.2.step}} |
+| 3 | `{{ch12.rep.3.pat}}` | `{{ch12.rep.3.mask}}` | `{{ch12.rep.3.mul}}` | `{{ch12.rep.3.prod}}` | `{{ch12.rep.3.bytes}}` | {{ch12.rep.3.step}} |
+| 4 | `{{ch12.rep.4.pat}}` | `{{ch12.rep.4.mask}}` | `{{ch12.rep.4.mul}}` | `{{ch12.rep.4.prod}}` | `{{ch12.rep.4.bytes}}` | {{ch12.rep.4.step}} |
+| 5 | `{{ch12.rep.5.pat}}` | `{{ch12.rep.5.mask}}` | `{{ch12.rep.5.mul}}` | `{{ch12.rep.5.prod}}` | `{{ch12.rep.5.bytes}}` | {{ch12.rep.5.step}} |
+| 6 | `{{ch12.rep.6.pat}}` | `{{ch12.rep.6.mask}}` | `{{ch12.rep.6.mul}}` | `{{ch12.rep.6.prod}}` | `{{ch12.rep.6.bytes}}` | {{ch12.rep.6.step}} |
+| 7 | `{{ch12.rep.7.pat}}` | `{{ch12.rep.7.mask}}` | `{{ch12.rep.7.mul}}` | `{{ch12.rep.7.prod}}` | `{{ch12.rep.7.bytes}}` | {{ch12.rep.7.step}} |
+@assert ch12.rep[3].step == 6 and [ch12.rep[k].step for k in (1, 2, 4)] == [8, 8, 8]
 
 `repeat_step[off]` is the largest multiple of `off` up to 8. The same 8 bytes fit again that far on:
 for `off = 3`, the bytes at `d + 6` start with `a` again, because 6 is a multiple of 3. So after the first
@@ -287,7 +291,7 @@ same. CI checks that on s390x under qemu, with the same bytes out of `test/seqlz
     <text x="96" y="14" font-size="11">d - 3</text><text x="160" y="14" font-size="11">d</text>
     <text x="10" y="78">pat</text>
     <g class="acc"><rect x="160" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="166" y="78">a</text><rect x="180" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="186" y="78">b</text><rect x="200" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="206" y="78">c</text><rect x="220" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="226" y="78">a</text><rect x="240" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="246" y="78">b</text><rect x="260" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="266" y="78">c</text><rect x="280" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="286" y="78">a</text><rect x="300" y="64" width="20" height="20" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="306" y="78">b</text></g>
-    <text x="330" y="78" font-size="11">repeat_pattern(d, 3) = 0x6261636261636261</text>
+    <text x="330" y="78" font-size="11">repeat_pattern(d, 3) = {{ch12.rep.3.prod}}</text>
     <text x="10" y="122">k = 0</text><rect x="160" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="166" y="122">a</text><rect x="180" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="186" y="122">b</text><rect x="200" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="206" y="122">c</text><rect x="220" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="226" y="122">a</text><rect x="240" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="246" y="122">b</text><rect x="260" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="266" y="122">c</text><rect x="280" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="286" y="122">a</text><rect x="300" y="108" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="306" y="122">b</text>
     <text x="10" y="152">k = 6</text><rect x="280" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="286" y="152">a</text><rect x="300" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="306" y="152">b</text><rect x="320" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="326" y="152">c</text><rect x="340" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="346" y="152">a</text><rect x="360" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="366" y="152">b</text><rect x="380" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="386" y="152">c</text><rect x="400" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="406" y="152">a</text><rect x="420" y="138" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="426" y="152">b</text>
     <text x="10" y="182">k = 12</text><rect x="400" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="406" y="182">a</text><rect x="420" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="426" y="182">b</text><rect x="440" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="446" y="182">c</text><rect x="460" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="466" y="182">a</text><rect x="480" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="486" y="182">b</text><rect x="500" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="506" y="182">c</text><rect x="520" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="526" y="182">a</text><rect x="540" y="168" width="20" height="20" class="fill-sheet" stroke="currentColor"/><text x="546" y="182">b</text>
@@ -345,6 +349,7 @@ Line 152 stores the pattern at `d`. The loop on lines 154 to 157 stores it again
 len = 4094`, the match of the example page in [chapter 4](#ch-format--example), it ends at `k = 4088`
 because `4094 >= 4096` is false: 8 more bytes would not fit. Then the byte loop at the end copies the last
 6 bytes, `k = 4088` to `4093`, each from 2 places back.
+@assert ch10.ab.s1.ml == 4094 and ch10.ab.s1.off == 2
 
 ::: measured Stores only, no loads, for short offsets
 Before 24th September 2026, the code built the first 8 bytes in a register as now, and then copied
@@ -368,7 +373,7 @@ If 16 bytes fit into the page, lines 169 and 170 copy the first 16 without a loo
 the second copy reads bytes the first wrote, or that were there before: with `off = 10` it reads `d - 2`
 to `d + 5`, the worked example of the copies above. `k = 16` then marks 16 bytes as done, also if `len` was
 shorter; those extra bytes are inside the page and the next sequence overwrites them. The loop on lines
-167 to 170 copies 8 more bytes per round while `k < len` and 8 bytes fit before `d_end`. The byte loop on
+173 to 176 copies 8 more bytes per round while `k < len` and 8 bytes fit before `d_end`. The byte loop on
 lines 178 and 179 is shared by both branches: it copies what is left, one byte at a time, `d[k] = *(d + k
 - off)`, which is the format's definition of a match. It runs only within the last 7 bytes of the page,
 or for all of a short match when the page had fewer than 8 or 16 bytes left.
@@ -453,20 +458,21 @@ They are the first bits of the byte at `p`. The next refill loads from `p` again
 to exactly the same position, so the OR writes the same bits over them. The OR needs no mask.
 
 A numeric example, with a stream of the made-up bytes `dc 65 ef db 8a 11 22 33 44 55 66 77 88 99 aa bb
-...`, simulated in Python:
+...`, run through `seqlz_br_refill()` and `seqlz_br_drop()`:
 
 | step | `bits` | `count` | `p` |
 | --- | --- | --- | --- |
 | start | `0x0000000000000000` | 0 | 0 |
-| refill: `v = 0xdc65efdb8a112233`, `v >> 0` | `0xdc65efdb8a112233` | 0 \| 56 = 56 | 0 + 63 / 8 = 7 |
-| drop 15 bits | `0xf7edc50891198000` | 41 | 7 |
-| refill: `v = 0x33445566778899aa`, `v >> 41 = 0x19a22a` | `0xf7edc5089119a22a` | 41 \| 56 = 57 | 7 + 22 / 8 = 9 |
-| drop 23 bits | `0x84488cd115000000` | 34 | 9 |
-| refill: `v = 0x5566778899aabbcc`, `v >> 34` | `0x84488cd115599de2` | 34 \| 56 = 58 | 9 + 29 / 8 = 12 |
+| refill: `v = {{ch12.br.1.v}}`, `v >> {{ch12.br.1.c0}}` | `{{ch12.br.1.bits}}` | {{ch12.br.1.c0}} \| 56 = {{ch12.br.1.count}} | {{ch12.br.1.p0}} + {{ch12.br.1.num}} / 8 = {{ch12.br.1.p}} |
+| drop 15 bits | `{{ch12.br.drop1.bits}}` | {{ch12.br.drop1.count}} | {{ch12.br.drop1.p}} |
+| refill: `v = {{ch12.br.2.v}}`, `v >> {{ch12.br.2.c0}} = {{ch12.br.2.vs}}` | `{{ch12.br.2.bits}}` | {{ch12.br.2.c0}} \| 56 = {{ch12.br.2.count}} | {{ch12.br.2.p0}} + {{ch12.br.2.num}} / 8 = {{ch12.br.2.p}} |
+| drop 23 bits | `{{ch12.br.drop2.bits}}` | {{ch12.br.drop2.count}} | {{ch12.br.drop2.p}} |
+| refill: `v = {{ch12.br.3.v}}`, `v >> {{ch12.br.3.c0}}` | `{{ch12.br.3.bits}}` | {{ch12.br.3.c0}} \| 56 = {{ch12.br.3.count}} | {{ch12.br.3.p0}} + {{ch12.br.3.num}} / 8 = {{ch12.br.3.p}} |
 
 The first refill loads 8 bytes and counts 7: the byte `0x33` is in the register, at the bottom, but not
-counted. After dropping 15 bits it sits at bits 22 to 15, `0x198000`. The second refill loads from `p = 7`,
-so `v` starts with `0x33`, and `v >> 41` puts it at bits 22 to 15 again: `0x19a22a` is `0x33 << 15`,
+counted. After dropping 15 bits it sits at bits 22 to 15, `{{ch12.br.drop1.low}}`. The second refill loads from `p = {{ch12.br.2.p0}}`,
+so `v` starts with `0x33`, and `v >> {{ch12.br.2.c0}}` puts it at bits 22 to 15 again: `{{ch12.br.2.vs}}` is `0x33 << 15`,
+@assert ch12.br[1].p == 7 and ch12.br.drop1.low == "0x198000" and ch12.br[2].vs == "0x19a22a" and ch12.br[2].p == 9
 `0x44 << 7` and the top 7 bits of `0x55`. `p` moves on by 2, over `0x33` and `0x44`, and stops at `0x55`,
 of which only 7 bits went in.
 
@@ -485,9 +491,10 @@ count` from the bottom, and counts 8 more. It stops when the register has no roo
 condition is not only about meaning: with `count` negative, `56 - count` would be more than 56, and
 for `count` below -7 a shift by 64 or more, undefined.
 
-The example page of [chapter 4](#ch-format--example) has a bitstream of 4 bytes, `dc 65 ef db`, so its
-first refill is the byte half: 4 rounds, `bits = 0xdc65efdb00000000`, `count = 32`, `p = end`. Every later
-refill on that page finds `p == end` and does nothing; the 32 bits are all there is.
+The example page of [chapter 4](#ch-format--example) has a bitstream of {{ab.b.bytes}} bytes, `{{ab.b.hex}}`, so its
+first refill is the byte half: {{ab.b.bytes}} rounds, `bits = {{ch12.ab.bits}}`, `count = {{ch12.ab.count}}`, `p = end`. Every later
+refill on that page finds `p == end` and does nothing; the {{ch12.ab.count}} bits are all there is.
+@assert ab.b.bytes < 8 and ch12.ab.at_end == 1
 
 ### seqlz_br_drop(): taking bits
 
@@ -517,26 +524,30 @@ shift is by 63, and after the first shift bit 63 is 0, so the result is 0. For `
 are 1 and 52, together $53 = 64 - 11$. No branch, and every shift count is from 0 to 63.
 
 The worked example is the match length value of the example page, with the 4 KiB tables. After the token
-and the offset, the register is `0xf7edc50000000000` with `count = 25`:
+and the offset, {{ch12.ab.tokdrop}} bits, the register is `{{ch12.ab.bits2}}` with `count = {{ch12.ab.count2}}`:
 
-- The index is the top 8 bits, `0xf7`, 247. `t->ml.decode[247]` is `0x000800b6`.
-- `n = 0xb6 & 15 = 6`: the code is `111101`, 6 bits, the symbol 23.
-- `x = (0xb6 >> 4) & 15 = 11`: symbol 23 has `b = 23 - 12 = 11` extra bits.
-- The base is `(0x000800b6 >> 8) & 0xffff = 0x800 = 2048`, which is $2^{11}$.
-- `bits << 6` is `0xfb71400000000000`, `>> 1` is `0x7db8a00000000000`, `>> 52` is `0x7db`, 2011: the 11
-  bits `11111011011`.
-- The value is `2048 + 2011 = 4059`, and 17 bits are dropped, `count = 8`.
+- The index is the top 8 bits, `{{ch12.ab.idxhex}}`, {{ch12.ab.idx}}. `t->ml.decode[{{ch12.ab.idx}}]` is `{{ch12.ab.entry}}`.
+- `n = {{ch12.ab.low}} & 15 = {{ch12.ab.n}}`: the code is `{{ch12.ab.code}}`, {{ch12.ab.n}} bits, the symbol {{ch12.ab.sym}}.
+- `x = ({{ch12.ab.low}} >> 4) & 15 = {{ch12.ab.x}}`: symbol {{ch12.ab.sym}} has `b = {{ch12.ab.sym}} - 12 = {{ch12.ab.x}}` extra bits.
+- The base is `({{ch12.ab.entry}} >> 8) & 0xffff = {{ch12.ab.basehex}} = {{ch12.ab.base}}`, which is $2^{ {{ch12.ab.x}} }$.
+- `bits << {{ch12.ab.n}}` is `{{ch12.ab.shl}}`, `>> 1` is `{{ch12.ab.shr1}}`, `>> {{ch12.ab.shr2}}` is `{{ch12.ab.xhex}}`, {{ch12.ab.xval}}: the {{ch12.ab.x}}
+  bits `{{ch12.ab.xbits}}`.
+- The value is `{{ch12.ab.base}} + {{ch12.ab.xval}} = {{ch12.ab.value}}`, and {{ch12.ab.dropped}} bits are dropped, `count = {{ch12.ab.count3}}`.
+@assert ch12.ab.code == ml.code[ch12.ab.sym] and ch12.ab.base == 2 ** ch12.ab.x and ch12.ab.count3 == 0
 
-`seqlz_decode()` adds that to the 35 of the token, and the match is 4094 bytes long, as the format's
-example says. A direct symbol for comparison: if the top bits are `000...`, `t->ml.decode[0]` is
-`0x00000403`, `n = 3`, `x = 0`, base 4: the symbol 4 with the code `000`, value 4, and the second shift by
-63 gives 0 for the extra bits. All numbers here were printed by a small program compiled against `src/`.
+`seqlz_decode()` adds that to the {{ch12.ml_tok}} of the token, and the match is {{ch12.ab.match}} bytes long, as the format's
+example says. The page's {{ab.b.bits}} bits are used up. A direct symbol for comparison: if the top bits are `000...`, `t->ml.decode[0]` is
+`{{ch12.ml0.entry}}`, `n = {{ch12.ml0.n}}`, `x = {{ch12.ml0.x}}`, base {{ch12.ml0.base}}: the symbol {{ch12.ml0.base}} with the code `{{ch12.ml0.code}}`, value {{ch12.ml0.base}}, and the second shift by
+63 gives 0 for the extra bits. All numbers here come from the real functions and tables, through a facts program.
+@assert ch12.ml0.x == 0 and ml.code[ch12.ml0.base] == ch12.ml0.code and ch12.ab.match == 4094
 
 The comment on lines 232 and 233 states the bits the function may take: at most `SEQLZ_MAX_BITS +
-QUETSCHN_PAGE_BITS`, an 8-bit code and up to 12 extra bits with 4 KiB pages, 20, or 14 extra bits with 16
-KiB pages, 22. The caller refills before each call, which leaves at least 56. The base fits the 16 bits of
-its field: the largest is $2^{14}$ with 16 KiB pages. The cast of the shifted value to `unsigned int`
-drops nothing: it has at most 14 bits.
+QUETSCHN_PAGE_BITS`, 20 with 4 KiB pages and 22 with 16 KiB pages. That has a bit to spare: a code has
+at most 8 bits, and a value has at most {{ch10.len_extra_max}} extra bits with 4 KiB pages and {{k16.ch10.len_extra_max}} with 16 KiB pages,
+{{ch10.len_bits_max}} and {{k16.ch10.len_bits_max}} bits. The caller refills before each call, which leaves at least 56. The base fits the 16 bits of
+its field: the largest is {{k16.ch12.base_max|grp}} with 16 KiB pages. The cast of the shifted value to `unsigned int`
+drops nothing: it has at most {{k16.ch10.len_extra_max}} bits.
+@assert F("k16.ch12.base_max") < 65536
 
 These three functions, `seqlz_br_refill()`, `seqlz_br_drop()` and `seqlz_br_value()`, plus a token
 lookup that [chapter 14](#ch-decode) writes inline, are all the decoder does with the bitstream. The

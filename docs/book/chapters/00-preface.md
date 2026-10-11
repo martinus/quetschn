@@ -9,8 +9,9 @@ real kernel in a virtual machine on a Ryzen 9 7950X fixed at 4.5 GHz, on 5th Oct
 tables seqlz had before 7th October; the setup is in
 [`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost).
 
-All of that is about 2600 lines of C in one directory, `src/`, plus the trained code lengths in four
-`.inc` files, two for each page size.
+All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code lengths in
+four `.inc` files, two for each page size.
+@assert ch00.inc_files == 4
 This book goes through every one of those lines. It shows the code in pieces, as it is in the
 repository, and after each piece says what it does, how it does it at the level of C and the CPU,
 and why it is written this way and not another. The "why" is the part that is usually missing: most
@@ -55,15 +56,17 @@ with what they were measured against. [The glossary](#glossary) is at the end.
 
 | file | lines | what it is | chapter |
 | --- | --- | --- | --- |
-| `src/seqlz_compat.h` | 193 | the kernel's types and helpers, also outside the kernel | [5](#ch-compat) |
-| `src/seqlz.h` | 436 | the format's constants, the public functions | [6](#ch-header) |
-| `src/seqlz_internal.h` | 146 | the layout of the tables in memory, the token table's entries | [7](#ch-internal) |
-| `src/seqlz_codes.c` | 186 | builds codes and decode tables from code lengths | [8](#ch-codes) |
-| `src/seqlz_default_tables.c`, `src/seqlz_lit_sets.c` and their `.inc` files | $19 + 19 + 2 \times 213 + 2 \times 154$ | the trained code lengths, part of the format | [8](#ch-codes) |
-| `src/page_lz.h` | 183 | the matcher: finds the repeats in a page | [9](#ch-matcher) |
-| `src/seqlz_compress.c` | 628 | the encoder, and the coding of literals | [10](#ch-encoder), [11](#ch-literals-enc) |
-| `src/seqlz_decompress.c` | 688 | the decoder | [12](#ch-dec-basics), [13](#ch-literals-dec), [14](#ch-decode) |
-| `src/zram_seqlz.c` | 147 | seqlz as a zram backend, for the benchmarks | [15](#ch-zram-glue) |
+| `src/seqlz_compat.h` | {{ch00.lines.seqlz_compat_h}} | the kernel's types and helpers, also outside the kernel | [5](#ch-compat) |
+| `src/seqlz.h` | {{ch00.lines.seqlz_h}} | the format's constants, the public functions | [6](#ch-header) |
+| `src/seqlz_internal.h` | {{ch00.lines.seqlz_internal_h}} | the layout of the tables in memory, the token table's entries | [7](#ch-internal) |
+| `src/seqlz_codes.c` | {{ch00.lines.seqlz_codes_c}} | builds codes and decode tables from code lengths | [8](#ch-codes) |
+| `src/seqlz_default_tables.c`, `src/seqlz_lit_sets.c` and their `.inc` files | ${{ch00.lines.seqlz_default_tables_c}} + {{ch00.lines.seqlz_lit_sets_c}} + 2 \times {{ch00.lines.seqlz_default_tables_4k_inc}} + 2 \times {{ch00.lines.seqlz_lit_sets_4k_inc}}$ | the trained code lengths, part of the format | [8](#ch-codes) |
+| `src/page_lz.h` | {{ch00.lines.page_lz_h}} | the matcher: finds the repeats in a page | [9](#ch-matcher) |
+| `src/seqlz_compress.c` | {{ch00.lines.seqlz_compress_c}} | the encoder, and the coding of literals | [10](#ch-encoder), [11](#ch-literals-enc) |
+| `src/seqlz_decompress.c` | {{ch00.lines.seqlz_decompress_c}} | the decoder | [12](#ch-dec-basics), [13](#ch-literals-dec), [14](#ch-decode) |
+| `src/zram_seqlz.c` | {{ch00.lines.zram_seqlz_c}} | seqlz as a zram backend, for the benchmarks | [15](#ch-zram-glue) |
+@assert len(ch00.lines) == 14
+@assert ch00.lines.seqlz_default_tables_4k_inc == ch00.lines.seqlz_default_tables_16k_inc and ch00.lines.seqlz_lit_sets_4k_inc == ch00.lines.seqlz_lit_sets_16k_inc
 
 How the pieces call each other, for the compressor on the left and the decompressor on the right:
 
@@ -76,7 +79,7 @@ flowchart TB
     CP --> F["encoder_finish()<br/>bitstream behind<br/>the literals"]
     C --> L["code_literals()<br/>Huffman codes<br/>the literals<br/>if that saves enough"]
     R["zram: a page to read"] --> D["seqlz_decode()"]
-    D --> DL["decode_literals()<br/>8 streams side by side"]
+    D --> DL["decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
     D --> LOOP["the loop over<br/>the sequences,<br/>one table lookup each"]
     T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C
     T -.->|"read only"| D
@@ -86,9 +89,9 @@ flowchart TB
 
 **Listings are the real files.** Every listing names its file and its line numbers, and the build
 script takes the lines from the repository at the commit named on the title page. If you open the
-file at that commit, the line numbers match. That commit is the last one that changed `src/`,
-`a7a6313` of 10th October 2026. A few chapters name `a2d57dd`, a later commit that changed only
-files outside `src/`, so `src/` is the same at both. The kernel's coding style indents with tabs of 8
+file at that commit, the line numbers match. That commit is the last one that changed `src/`. A few
+chapters name `a2d57dd` of 10th October 2026, an older commit, for a count or a layout taken there.
+The kernel's coding style indents with tabs of 8
 columns and keeps lines within 80 columns, and the listings show it that way.
 
 **4 KiB pages unless said otherwise.** seqlz is written for pages of 4 KiB and of 16 KiB; the

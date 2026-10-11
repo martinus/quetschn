@@ -150,6 +150,10 @@ Martin's voice, blog-post register. These rules are hard:
 ## Facts and secrets
 
 - Facts about the code come from the code. Check them by reading and, where cheap, by running.
+- A value the code computes is never typed: bytes, bit strings, codes, counts, sizes, what a program
+  prints. Quote it as `{{key}}` from a program of `facts/`, show a program's output with `@program`
+  and `@output`, and put an `@assert` next to a sentence that depends on the code without a number in
+  it (README.md has the syntax). A measured number is typed, with a date or a link in its paragraph.
 - Never include contents of corpus files (`corpus/`, `*.pages`): they hold keys and passwords. Pages
   you construct yourself (zeros, `ab` repeated, an array of pointers you make up) are fine.
 - Do not edit anything outside `docs/book/`. Test programs go into a scratch directory, not the repository.

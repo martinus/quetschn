@@ -8,7 +8,7 @@ a page with Huffman coded literals: it prices the literals in all 8 literal tabl
 cheapest, decides whether coding them saves enough, and if so rewrites `dst` in place. The sequences'
 bitstream does not change at all; it only moves down, behind the coded literals.
 
-This chapter covers lines 320 to 593 of `src/seqlz_compress.c`. The helpers come first in the file,
+This chapter covers lines 323 to 595 of `src/seqlz_compress.c`. The helpers come first in the file,
 `lit_put()` at the top and `code_literals()` at the bottom. We go through them in the order
 `code_literals()` uses them instead, because each helper makes sense only once you know what its
 caller needs. The format of a page with coded literals is in
@@ -56,34 +56,35 @@ The declarations:
   `= { 0 }` clears all of them; `lit_cost()` adds into them.
 - `q[]` has 9 pointers: the start of each of the 8 streams, and in `q[8]` the end of the last one.
 
-Here is the whole operation on a page we will take apart at the end of the chapter: 200 letters
-drawn at random from `etaoinshrdlu` and a space, then 3896 zero bytes. The matcher finds 201
-literals (the 200 letters and the first zero) and one match that copies the zero byte to the end of
+Here is the whole operation on a page we will take apart at the end of the chapter: {{ch11.letters}} letters
+drawn at random from `etaoinshrdlu` and a space, then {{ch11.zeros}} zero bytes. The matcher finds {{ch11.n}}
+literals (the {{ch11.letters}} letters and the first zero) and one match that copies the zero byte to the end of
 the page.
+@assert ch11.n == ch11.letters + 1 and ch11.off == 1
 
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 280" font-size="12" role="img" aria-label="dst before and after code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
-  <text x="20" y="22">dst after compress_page(): 209 bytes, raw literals</text>
+  <text x="20" y="22">dst after compress_page(): {{letters.len}} bytes, raw literals</text>
   <rect x="20" y="30" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
-  <text x="50" y="50" text-anchor="middle">c9 00</text>
+  <text x="50" y="50" text-anchor="middle">{{ch11.raw.u16}}</text>
   <rect x="80" y="30" width="440" height="30" fill="none" stroke="currentColor"/>
-  <text x="300" y="50" text-anchor="middle">201 raw literals</text>
+  <text x="300" y="50" text-anchor="middle">{{ch11.n}} raw literals</text>
   <g class="acc">
     <rect x="520" y="30" width="80" height="30" class="fill-acc" stroke="currentColor" fill-opacity="0.25"/>
     <text x="560" y="50" text-anchor="middle">bitstream</text>
   </g>
   <text x="20" y="74" text-anchor="middle">0</text>
   <text x="80" y="74" text-anchor="middle">2</text>
-  <text x="520" y="74" text-anchor="middle">203</text>
-  <text x="600" y="74" text-anchor="middle">209</text>
+  <text x="520" y="74" text-anchor="middle">{{ch11.raw.bs}}</text>
+  <text x="600" y="74" text-anchor="middle">{{letters.len}}</text>
 
   <line x1="300" y1="78" x2="300" y2="106" stroke="currentColor"/>
   <path d="M296 100 L300 108 L304 100 Z" fill="currentColor"/>
   <text x="308" y="96">memcpy()</text>
   <text x="20" y="104">spare = st-&gt;literals</text>
   <rect x="170" y="110" width="270" height="30" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
-  <text x="305" y="130" text-anchor="middle">a copy of the 201 raw literals</text>
+  <text x="305" y="130" text-anchor="middle">a copy of the {{ch11.n}} raw literals</text>
 
   <line x1="300" y1="140" x2="300" y2="196" stroke="currentColor"/>
   <path d="M296 190 L300 198 L304 190 Z" fill="currentColor"/>
@@ -95,11 +96,11 @@ the page.
     <text x="536" y="130">memmove()</text>
   </g>
 
-  <text x="20" y="194">dst after code_literals(): 151 bytes</text>
+  <text x="20" y="194">dst after code_literals(): {{letters.coded.len}} bytes</text>
   <rect x="20" y="200" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
-  <text x="50" y="220" text-anchor="middle">c9 80</text>
+  <text x="50" y="220" text-anchor="middle">{{ch11.u16}}</text>
   <rect x="80" y="200" width="30" height="30" class="fill-sheet" stroke="currentColor"/>
-  <text x="95" y="220" text-anchor="middle">00</text>
+  <text x="95" y="220" text-anchor="middle">{{ch11.byte2}}</text>
   <rect x="110" y="200" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="140" y="220" text-anchor="middle">sizes</text>
   <rect x="170" y="200" width="35" height="30" fill="none" stroke="currentColor"/>
@@ -127,16 +128,16 @@ the page.
   <text x="20" y="244" text-anchor="middle">0</text>
   <text x="80" y="244" text-anchor="middle">2</text>
   <text x="110" y="244" text-anchor="middle">3</text>
-  <text x="170" y="244" text-anchor="middle">8</text>
-  <text x="205" y="244" text-anchor="middle">27</text>
-  <text x="240" y="244" text-anchor="middle">44</text>
-  <text x="275" y="244" text-anchor="middle">61</text>
-  <text x="310" y="244" text-anchor="middle">78</text>
-  <text x="345" y="244" text-anchor="middle">95</text>
-  <text x="380" y="244" text-anchor="middle">112</text>
-  <text x="415" y="244" text-anchor="middle">129</text>
-  <text x="450" y="244" text-anchor="middle">145</text>
-  <text x="530" y="244" text-anchor="middle">151</text>
+  <text x="170" y="244" text-anchor="middle">{{ch11.q.0}}</text>
+  <text x="205" y="244" text-anchor="middle">{{ch11.q.1}}</text>
+  <text x="240" y="244" text-anchor="middle">{{ch11.q.2}}</text>
+  <text x="275" y="244" text-anchor="middle">{{ch11.q.3}}</text>
+  <text x="310" y="244" text-anchor="middle">{{ch11.q.4}}</text>
+  <text x="345" y="244" text-anchor="middle">{{ch11.q.5}}</text>
+  <text x="380" y="244" text-anchor="middle">{{ch11.q.6}}</text>
+  <text x="415" y="244" text-anchor="middle">{{ch11.q.7}}</text>
+  <text x="450" y="244" text-anchor="middle">{{ch11.q.8}}</text>
+  <text x="530" y="244" text-anchor="middle">{{letters.coded.len}}</text>
   <text x="170" y="262" text-anchor="middle">q[0]</text>
   <text x="450" y="262" text-anchor="middle">q[8]</text>
 </svg>
@@ -145,8 +146,8 @@ the page.
 </figure>
 
 The offsets under the second row are the values of `q[0]` to `q[8]` for this page, measured from
-`d`. Bytes 2 to 150 of the first row are overwritten: by byte 2, by the 5 bytes of sizes, by the
-streams, and by the bitstream at its new place. Bytes 151 to 208 keep what they held, but they are no
+`d`. Bytes 2 to {{ch11.cod.last}} of the first row are overwritten: by byte 2, by the {{ch11.width}} bytes of sizes, by the
+streams, and by the bitstream at its new place. Bytes {{letters.coded.len}} to {{ch11.raw.last}} keep what they held, but they are no
 longer part of the page.
 
 ## Pricing all 8 tables with one add per literal {#ch-literals-enc--pricing}
@@ -211,39 +212,40 @@ The outer loop walks over the literals in chunks of `SEQLZ_LIT_STREAMS * LIT_COS
   sums of tables 1, 3, 5 and 7 sit where 0, 2, 4 and 6 were, then keeps those. Both are added into the
   running sums. `>>` binds tighter than `&` in C, so the second expression is `(x >> 8) & lanes`.
 
-A 16-bit lane holds up to 65535. A stream has at most every 8th literal of a page: 512 literals of
-at most 10 bits on 4 KiB pages, 5120 bits, and 2048 of them on 16 KiB pages, 20480 bits. Both fit.
+A 16-bit lane holds up to 65535. A stream has at most every 8th literal of a page: {{ch11.stream_lits}} literals of
+at most 10 bits on 4 KiB pages, {{ch11.stream_bits}} bits, and {{k16.ch11.stream_lits}} of them on 16 KiB pages, {{k16.ch11.stream_bits}} bits. Both fit.
+@assert F("k16.ch11.stream_bits") <= 65535
 
 ### A worked example with real code lengths
 
 Take the 4 literals `65 20 65 00`, the letter `e`, a space, `e` again and a zero
-byte. Here are their `lit_cost` entries from the tables of this commit, printed by a test program,
+byte. Here are their `lit_cost` entries from the tables of this commit,
 with table 7 in the top byte:
 
 ```text
-byte 65: lengths 4 9 10 5 9 9 10 10   lit_cost 0x0a0a0909050a0904
-byte 20: lengths 4 7  7 6 7 9  8  8   lit_cost 0x0808090706070704
-byte 00: lengths 8 2  2 2 2 9  3  8   lit_cost 0x0803090202020208
+{{ch11.cost.65}}
+{{ch11.cost.20}}
+{{ch11.cost.00}}
 ```
 
 If these 4 literals were all of stream 0, `x[0]` would grow like this:
 
 ```text
-after 65:  0x0a0a0909050a0904
-after 20:  0x121212100b111008
-after 65:  0x1c1c1b19101b190c
-after 00:  0x241f241b121d1b14
+{{ch11.x.1}}
+{{ch11.x.2}}
+{{ch11.x.3}}
+{{ch11.x.4}}
 ```
 
-Read the last one byte by byte from the right: table 0 has `0x14 = 20` bits, table 1 `0x1b = 27`,
-table 2 `0x1d = 29`, table 3 `0x12 = 18`, table 4 `0x1b = 27`, table 5 `0x24 = 36`, table 6
-`0x1f = 31`, table 7 `0x24 = 36`. Those are the sums of the code lengths above,
+Read the last one byte by byte from the right: table 0 has `0x{{ch11.sum.0.hex}} = {{ch11.sum.0.dec}}` bits, table 1 `0x{{ch11.sum.1.hex}} = {{ch11.sum.1.dec}}`,
+table 2 `0x{{ch11.sum.2.hex}} = {{ch11.sum.2.dec}}`, table 3 `0x{{ch11.sum.3.hex}} = {{ch11.sum.3.dec}}`, table 4 `0x{{ch11.sum.4.hex}} = {{ch11.sum.4.dec}}`, table 5 `0x{{ch11.sum.5.hex}} = {{ch11.sum.5.dec}}`, table 6
+`0x{{ch11.sum.6.hex}} = {{ch11.sum.6.dec}}`, table 7 `0x{{ch11.sum.7.hex}} = {{ch11.sum.7.dec}}`. Those are the sums of the code lengths above,
 from 4 adds instead of 32. Then the split:
 
 ```text
-x                = 0x241f241b121d1b14
-x & lanes        = 0x001f001b001d0014    even: tables 6, 4, 2, 0 = 31, 27, 29, 20
-x >> 8 & lanes   = 0x002400240012001b    odd:  tables 7, 5, 3, 1 = 36, 36, 18, 27
+x                = {{ch11.x}}
+x & lanes        = {{ch11.even}}    even: tables 6, 4, 2, 0 = {{ch11.sum.6.dec}}, {{ch11.sum.4.dec}}, {{ch11.sum.2.dec}}, {{ch11.sum.0.dec}}
+x >> 8 & lanes   = {{ch11.odd}}    odd:  tables 7, 5, 3, 1 = {{ch11.sum.7.dec}}, {{ch11.sum.5.dec}}, {{ch11.sum.3.dec}}, {{ch11.sum.1.dec}}
 ```
 
 <figure class="diagram">
@@ -269,15 +271,15 @@ x >> 8 & lanes   = 0x002400240012001b    odd:  tables 7, 5, 3, 1 = 36, 36, 18, 2
   <rect x="510" y="40" width="70" height="28" fill="none" stroke="currentColor"/>
   <rect x="580" y="40" width="70" height="28" class="fill-sheet" stroke="currentColor"/>
   <g class="mark">
-    <text x="125" y="59" text-anchor="middle">24</text>
-    <text x="265" y="59" text-anchor="middle">24</text>
-    <text x="405" y="59" text-anchor="middle">12</text>
-    <text x="545" y="59" text-anchor="middle">1b</text>
+    <text x="125" y="59" text-anchor="middle">{{ch11.sum.7.hex}}</text>
+    <text x="265" y="59" text-anchor="middle">{{ch11.sum.5.hex}}</text>
+    <text x="405" y="59" text-anchor="middle">{{ch11.sum.3.hex}}</text>
+    <text x="545" y="59" text-anchor="middle">{{ch11.sum.1.hex}}</text>
   </g>
-  <text x="195" y="59" text-anchor="middle">1f</text>
-  <text x="335" y="59" text-anchor="middle">1b</text>
-  <text x="475" y="59" text-anchor="middle">1d</text>
-  <text x="615" y="59" text-anchor="middle">14</text>
+  <text x="195" y="59" text-anchor="middle">{{ch11.sum.6.hex}}</text>
+  <text x="335" y="59" text-anchor="middle">{{ch11.sum.4.hex}}</text>
+  <text x="475" y="59" text-anchor="middle">{{ch11.sum.2.hex}}</text>
+  <text x="615" y="59" text-anchor="middle">{{ch11.sum.0.hex}}</text>
 
   <rect x="90" y="110" width="140" height="28" fill="none" stroke="currentColor" stroke-width="2"/>
   <rect x="230" y="110" width="140" height="28" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -288,17 +290,17 @@ x >> 8 & lanes   = 0x002400240012001b    odd:  tables 7, 5, 3, 1 = 36, 36, 18, 2
   <rect x="440" y="110" width="70" height="28" class="fill-sheet" stroke="none"/>
   <rect x="580" y="110" width="70" height="28" class="fill-sheet" stroke="none"/>
   <text x="125" y="129" text-anchor="middle">00</text>
-  <text x="195" y="129" text-anchor="middle">1f</text>
+  <text x="195" y="129" text-anchor="middle">{{ch11.sum.6.hex}}</text>
   <text x="265" y="129" text-anchor="middle">00</text>
-  <text x="335" y="129" text-anchor="middle">1b</text>
+  <text x="335" y="129" text-anchor="middle">{{ch11.sum.4.hex}}</text>
   <text x="405" y="129" text-anchor="middle">00</text>
-  <text x="475" y="129" text-anchor="middle">1d</text>
+  <text x="475" y="129" text-anchor="middle">{{ch11.sum.2.hex}}</text>
   <text x="545" y="129" text-anchor="middle">00</text>
-  <text x="615" y="129" text-anchor="middle">14</text>
-  <text x="160" y="154" text-anchor="middle">table 6: 31</text>
-  <text x="300" y="154" text-anchor="middle">table 4: 27</text>
-  <text x="440" y="154" text-anchor="middle">table 2: 29</text>
-  <text x="580" y="154" text-anchor="middle">table 0: 20</text>
+  <text x="615" y="129" text-anchor="middle">{{ch11.sum.0.hex}}</text>
+  <text x="160" y="154" text-anchor="middle">table 6: {{ch11.sum.6.dec}}</text>
+  <text x="300" y="154" text-anchor="middle">table 4: {{ch11.sum.4.dec}}</text>
+  <text x="440" y="154" text-anchor="middle">table 2: {{ch11.sum.2.dec}}</text>
+  <text x="580" y="154" text-anchor="middle">table 0: {{ch11.sum.0.dec}}</text>
 
   <rect x="90" y="180" width="140" height="28" fill="none" stroke="currentColor" stroke-width="2"/>
   <rect x="230" y="180" width="140" height="28" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -309,21 +311,21 @@ x >> 8 & lanes   = 0x002400240012001b    odd:  tables 7, 5, 3, 1 = 36, 36, 18, 2
   <text x="405" y="199" text-anchor="middle">00</text>
   <text x="545" y="199" text-anchor="middle">00</text>
   <g class="mark">
-    <text x="195" y="199" text-anchor="middle">24</text>
-    <text x="335" y="199" text-anchor="middle">24</text>
-    <text x="475" y="199" text-anchor="middle">12</text>
-    <text x="615" y="199" text-anchor="middle">1b</text>
+    <text x="195" y="199" text-anchor="middle">{{ch11.sum.7.hex}}</text>
+    <text x="335" y="199" text-anchor="middle">{{ch11.sum.5.hex}}</text>
+    <text x="475" y="199" text-anchor="middle">{{ch11.sum.3.hex}}</text>
+    <text x="615" y="199" text-anchor="middle">{{ch11.sum.1.hex}}</text>
   </g>
-  <text x="160" y="224" text-anchor="middle">table 7: 36</text>
-  <text x="300" y="224" text-anchor="middle">table 5: 36</text>
-  <text x="440" y="224" text-anchor="middle">table 3: 18</text>
-  <text x="580" y="224" text-anchor="middle">table 1: 27</text>
+  <text x="160" y="224" text-anchor="middle">table 7: {{ch11.sum.7.dec}}</text>
+  <text x="300" y="224" text-anchor="middle">table 5: {{ch11.sum.5.dec}}</text>
+  <text x="440" y="224" text-anchor="middle">table 3: {{ch11.sum.3.dec}}</text>
+  <text x="580" y="224" text-anchor="middle">table 1: {{ch11.sum.1.dec}}</text>
 </svg>
 </div>
 <figcaption>x with one byte lane per table, and the two masks that widen it: even keeps the shaded bytes in place, odd shifts the others down by one byte.</figcaption>
 </figure>
 
-The same on a whole stream of a real page, stream 0 of [chapter 16](#ch-trace)'s page, with its 85
+The same on a whole stream of a real page, stream 0 of [chapter 16](#ch-trace)'s page, with its {{ch11.slab.s0}}
 literals in chunks of 25:
 
 @anim pricing The sums of stream 0 of chapter 16's page in x[0], one add per literal, and their move into the 16-bit lanes of even[0] and odd[0] after each chunk; or, as a choice, the same adds in 8-bit lanes only. Code lengths, literals and the sums of all 8 streams come from the real tables and lit_cost().
@@ -365,7 +367,7 @@ are pointers to arrays of one u64, which is how C passes a 2-D array.
   to 15, and `& 0xffffU` drops the lanes above it.
 
 For `k = 5`: `odd`, word 0, lane `5 % 8 / 2 = 2`, shift 32. In the example above `odd` is
-`0x002400240012001b`; shifted right by 32 it is `0x00240024`, and `& 0xffff` gives `0x24 = 36`, table
+`{{ch11.odd}}`; shifted right by 32 it is `{{ch11.odd32}}`, and `& 0xffff` gives `0x{{ch11.sum.5.hex}} = {{ch11.sum.5.dec}}`, table
 5's sum. The cast to `unsigned int` happens after the mask, so nothing is lost.
 
 ## The table with the fewest bits, and the 8 sizes {#ch-literals-enc--choice}
@@ -385,8 +387,8 @@ look for that case.
 
 The second loop computes, for the chosen table:
 
-- `sizes[j]`, the bytes of stream `j`: its bits rounded up with `(bits + 7U) / 8U`. 147 bits are
-  `154 / 8 = 19` bytes, 144 bits are 18.
+- `sizes[j]`, the bytes of stream `j`: its bits rounded up with `(bits + 7U) / 8U`. {{ch11.s0.bits}} bits are
+  `{{ch11.s0.bits7}} / 8 = {{ch11.s0.bytes}}` bytes, 144 bits are 18.
 - `coded`, the sum of the 8 sizes: the bytes of all streams, without the header.
 - `all`, the bitwise OR of all sizes. Its highest set bit is the highest set bit of the largest
   size, which is all `width` needs. OR saves a compare per stream against computing the maximum.
@@ -408,12 +410,13 @@ is undefined, and after the OR `all` is never 0.
 
 | largest size | `all`, with every size the largest | `clz` | `width` | header bytes |
 | --- | --- | --- | --- | --- |
-| 19 bytes, the example page | `0b10011` = 19 | 27 | 5 | 8 |
+| {{ch11.s0.bytes}} bytes, the example page | `{{ch11.max.bin}}` = {{ch11.max.all}} | {{ch11.max.clz}} | {{ch11.width}} | {{ch11.header}} |
 | 100 bytes | `0b1110100` = 116 | 25 | 7 | 10 |
-| 640 bytes, the largest a 4 KiB page can have | `0b1010010000` | 22 | 10 | 13 |
+| {{ch11.lit_stream_max}} bytes, the largest a 4 KiB page can have | `0b1010010000` | 22 | 10 | 13 |
+@assert ch11.lit_stream_max == 640 and ch11.max.all == ch11.s0.bytes
 
 Smaller sizes can set more low bits in `all`, which changes nothing above its highest bit. `width` is at most 12 on 16 KiB
-pages, where a stream has at most 2560 bytes. `header = SEQLZ_LIT_HEADER(width)` is `3 + width`: 2
+pages, where a stream has at most {{k16.ch11.lit_stream_max}} bytes. `header = SEQLZ_LIT_HEADER(width)` is `3 + width`: 2
 bytes of u16, byte 2, and `width` bytes that hold 8 sizes of `width` bits each, `8 * width` bits.
 
 Until 5th October 2026 every size had 2 bytes, a header of 19 bytes; what `w` bits save is in
@@ -422,18 +425,18 @@ literals was below 128 bytes on 85% and 69% of the pages, so the header is now m
 Widths of 3 and 4 bits would pay only on pages whose streams are all below 16 bytes, and such pages
 rarely pass the rule below.
 
-## Coded only where it saves 1/16 of the literals and 51 bytes {#ch-literals-enc--rule}
+## Coded only where it saves 1/16 of the literals and {{ch11.coded_min}} bytes {#ch-literals-enc--rule}
 
 @listing src/seqlz_compress.c 565-566
 
-The page keeps its raw literals unless `coded + 51 < n - n / 16`: the 8 streams plus 51 bytes have to
+The page keeps its raw literals unless `coded + {{ch11.coded_min}} < n - n / 16`: the 8 streams plus {{ch11.coded_min}} bytes have to
 be smaller than $\frac{15}{16}$ of the raw literals. Everything is `unsigned int`; `n - n / 16` cannot wrap,
 because `n / 16 <= n`. For `n = 0` the right side is 0 and the page stays raw, which is right:
 there is nothing to code.
 
 What the rule means in bytes: the page with raw literals has `2 + n` bytes before the bitstream, the
 coded one `3 + w + coded`. If the rule holds, the page shrinks by `n - coded - 1 - w`, which is more
-than `51 + n / 16 - 1 - w`: more than 38 bytes plus $\frac{1}{16}$ of the literals, with the largest `w` of 12.
+than `{{ch11.coded_min}} + n / 16 - 1 - w`: more than {{ch11.save_min}} bytes plus $\frac{1}{16}$ of the literals, with the largest `w` of 12.
 
 Two different reasons are behind the two terms.
 
@@ -468,8 +471,9 @@ choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.m
 The rule does not count the header of `3 + w` bytes. That is deliberate: when the sizes shrank from
 2 bytes to `w` bits, counting the smaller header would have coded 64.2% instead of 53.6% of the pages on
 the first desktop dump, and on the phone's pages it would have saved 2 bytes per page for 251 ns more
-per page written on the A55 than the rule that was kept. So the rule kept the old 19 bytes as its constant,
-and the same pages as before got coded with a smaller header. The 51 of today replaced that 19.
+per page written on the A55 than the rule that was kept ([explored-designs.md, "Stream sizes in as many
+bits as the largest needs"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)). So the rule kept the old 19 bytes as its constant,
+and the same pages as before got coded with a smaller header. The {{ch11.coded_min}} of today replaced that 19.
 
 ## Writing over the raw literals, safely {#ch-literals-enc--in-place}
 
@@ -495,18 +499,18 @@ first of the two `static_assert`s after the function makes it a compile-time fac
 fails with the message ([chapter 5](#ch-compat)). It costs nothing at run time.
 
 The first one says `SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MAX) <= SEQLZ_HEADER + SEQLZ_LIT_CODED_MIN`, that
-is `3 + 12 = 15 <= 2 + 51 = 53`. With it, the proof that the streams end before the bitstream is
+is `3 + 12 = {{ch11.header_max}} <= 2 + {{ch11.coded_min}} = {{ch11.coded_min_h}}`. With it, the proof that the streams end before the bitstream is
 three lines:
 
 ```text
 streams end at     d + header + coded
-header           <= 15 <= 2 + 51                     (the static_assert)
-coded + 51        < n - n/16 <= n                     (the rule, since the page is coded)
-so header + coded < 2 + 51 + n - 51 = 2 + n,  and d + 2 + n is where the bitstream starts
+header           <= {{ch11.header_max}} <= 2 + {{ch11.coded_min}}                     (the static_assert)
+coded + {{ch11.coded_min}}        < n - n/16 <= n                     (the rule, since the page is coded)
+so header + coded < 2 + {{ch11.coded_min}} + n - {{ch11.coded_min}} = 2 + n,  and d + 2 + n is where the bitstream starts
 ```
 
 So no stream byte lands on the bitstream, and it can stay where it is while the streams are written.
-In the example page, the streams end at byte 145 and the bitstream starts at byte 203.
+In the example page, the streams end at byte {{ch11.q.8}} and the bitstream starts at byte {{ch11.raw.bs}}.
 
 The writes are bounded on the other side too: every store of `lit_streams()` stays between `q[0]` and
 `q[8]`, as we will see in `lit_flush()`. The u16, byte 2 and the sizes are written last, after
@@ -515,7 +519,7 @@ The writes are bounded on the other side too: every store of `lit_streams()` sta
 The second `static_assert` is about the copy. `struct seqlz_state` ([chapter 6](#ch-header)) is a union
 of the matcher's `u16 table[1 << SEQLZ_HASH_BITS]` and `u8 literals[SEQLZ_PAGE]`. A union is as large as
 its largest member, so `literals` is there for free only if the table is at least a page. With 4 KiB
-pages the table has 4096 entries of 2 bytes, 8192 bytes; with 16 KiB pages 8192 entries, 16 384 bytes,
+pages the table has {{ch11.hash_entries}} entries of 2 bytes, {{ch11.hash_bytes}} bytes; with 16 KiB pages {{k16.ch11.hash_entries}} entries, {{k16.ch11.hash_bytes|grp}} bytes,
 exactly a page. `sizeof_field(type, member)` is the kernel's macro for the size of a member without an
 object. The assert keeps the work memory per CPU at the table's size: the staging area for the raw
 literals costs no byte of it.
@@ -616,17 +620,17 @@ of bits added. The rest of `sum` is garbage, and an `unsigned int` that wraps ar
 `lit_flush()` reads `*sum & 255U`. So the length of each code is counted with one add per literal,
 and the mask is applied once per flush instead of once per literal.
 
-Stream 0 of the example page, in table 0, gets literals 0, 8, 16 and 24, the letters `o`, `d`, `h`
-and `n`:
+Stream 0 of the example page, in table {{ch11.set}}, gets literals 0, 8, 16 and 24, the letters `{{ch11.put.0.ch}}`, `{{ch11.put.1.ch}}`, `{{ch11.put.2.ch}}`
+and `{{ch11.put.3.ch}}`:
 
 | literal | `enc[b]` | code | `acc` after | `sum` after | low byte |
 | --- | --- | --- | --- | --- | --- |
-| `o` | `0x805` | `01000`, 5 bits | `0x8` | `0x805` | 5 |
-| `d` | `0x1a06` | `011010`, 6 bits | `0x21a` | `0x220b` | 11 |
-| `h` | `0x5907` | `1011001`, 7 bits | `0x10d59` | `0x7b12` | 18 |
-| `n` | `0x705` | `00111`, 5 bits | `0x21ab27` | `0x8217` | 23 |
+| `{{ch11.put.0.ch}}` | `{{ch11.put.0.enc}}` | `{{ch11.put.0.code}}`, {{ch11.put.0.len}} bits | `{{ch11.put.0.acc}}` | `{{ch11.put.0.sum}}` | {{ch11.put.0.low}} |
+| `{{ch11.put.1.ch}}` | `{{ch11.put.1.enc}}` | `{{ch11.put.1.code}}`, {{ch11.put.1.len}} bits | `{{ch11.put.1.acc}}` | `{{ch11.put.1.sum}}` | {{ch11.put.1.low}} |
+| `{{ch11.put.2.ch}}` | `{{ch11.put.2.enc}}` | `{{ch11.put.2.code}}`, {{ch11.put.2.len}} bits | `{{ch11.put.2.acc}}` | `{{ch11.put.2.sum}}` | {{ch11.put.2.low}} |
+| `{{ch11.put.3.ch}}` | `{{ch11.put.3.enc}}` | `{{ch11.put.3.code}}`, {{ch11.put.3.len}} bits | `{{ch11.put.3.acc}}` | `{{ch11.put.3.sum}}` | {{ch11.put.3.low}} |
 
-`acc` now holds the 23 bits `01000 011010 1011001 00111`, oldest on top.
+`acc` now holds the {{ch11.put.3.low}} bits `{{ch11.acc.bits}}`, oldest on top.
 
 ### lit_flush(): whole bytes to memory, big-endian
 
@@ -667,16 +671,17 @@ the same on every machine; CI checks that on s390x.
 For stream 0 of the example, the first flush:
 
 ```text
-n        = 0 + 23 = 23
-acc<<41  = 0x43564e0000000000        the 23 bits on top, zeros below
-w        = 0x00000000004e5643        bswap64
-stored   = 43 56 4e 00 00 00 00 00   at q[0], byte 8 of the page
-p       += 23 >> 3 = 2               cnt = 23 & 7 = 7
+n        = 0 + {{ch11.flush.n}} = {{ch11.flush.n}}
+acc<<{{ch11.flush.shift}}  = {{ch11.flush.sh}}        the {{ch11.flush.n}} bits on top, zeros below
+w        = {{ch11.flush.w}}        bswap64
+stored   = {{ch11.flush.stored}}   at q[0], byte {{ch11.q.0}} of the page
+p       += {{ch11.flush.n}} >> 3 = {{ch11.flush.moved}}               cnt = {{ch11.flush.n}} & 7 = {{ch11.flush.cnt}}
 ```
 
-The bytes `43 56` are final. `4e` holds 7 bits of stream 0, `0100111`, and a 0 that is not a bit yet;
+The bytes `{{ch11.flush.final}}` are final. `{{ch11.flush.part}}` holds {{ch11.flush.cnt}} bits of stream 0, `{{ch11.flush.partbits}}`, and a 0 that is not a bit yet;
 the next flush writes this byte again with its eighth bit. In the finished page, stream 0 starts with
-`43 56 4e e0`.
+`{{ch11.s0.head4}}`.
+@assert ch11.flush.cnt == 7 and ch11.flush.moved == 2
 
 ### store_tail(): at most 7 bytes at the end of a stream
 
@@ -704,21 +709,23 @@ switch serves both halves.
 
 The literals of the other half must be skipped, and that is `if ((k & 3U) == 3U) k += 4;`. After this
 half's 4th literal of a group of 8, at `k % 8 == 3` or `k % 8 == 7`, `k` jumps over the next 4, and
-the loop's `k++` adds the fifth. For `half = 0` and the example's `n = 201`, the blocks end at
-`k = 192`, and the tail takes:
+the loop's `k++` adds the fifth. For `half = 0` and the example's `n = {{ch11.n}}`, the blocks end at
+`k = {{ch11.tail0}}`, and the tail takes:
 
 ```text
-k = 192  case 0  stream 0
-k = 193  case 1  stream 1
-k = 194  case 2  stream 2
-k = 195  case 3  stream 3, then k += 4 -> 199, k++ -> 200
-k = 200  case 0  stream 0
-k = 201  stop
+{{ch11.tr.0}}
+{{ch11.tr.1}}
+{{ch11.tr.2}}
+{{ch11.tr.3}}
+{{ch11.tr.4}}
+{{ch11.tr.5}}
 ```
+@assert ch11.tr.lines == 6
 
-For `half = 4` the blocks run from `k = 4` up to `k = 164`, and the tail starts at `k = 196`, which is
-case 4, stream 4. After 199, `k += 4` makes it 203, past the end. `k` can step past `n` this way, but
+For `half = 4` the blocks run from `k = 4` up to `k = {{ch11.block4}}`, and the tail starts at `k = {{ch11.tail4}}`, which is
+case 4, stream 4. After {{ch11.tr4.last}}, `k += 4` makes it {{ch11.tr4.jump}}, past the end. `k` can step past `n` this way, but
 the loop condition `k < n_literals` stops it, and `k` is far from wrapping around.
+@assert ch11.tail4 % 8 == 4 and ch11.tr4.jump > ch11.n
 
 The `switch` runs for at most 16 literals per half, 4 per stream, so its cost does not matter next to
 the blocks above it. The 4 final `lit_flush()` calls write each
@@ -732,8 +739,8 @@ With the streams in place, the header is written over the first bytes of the old
 
 - `put_unaligned_le16((u16)(SEQLZ_LIT_CODED | n_literals), d)` sets the top bit of the u16 that
   counts the literals. `SEQLZ_LIT_CODED` is `0x8000`; a page has at most 16 384 literals, which need
-  15 bits, so bit 15 is free ([chapter 6](#ch-header)). For 201 literals the u16 is `0x80c9`, the
-  bytes `c9 80`.
+  15 bits, so bit 15 is free ([chapter 6](#ch-header)). For {{ch11.n}} literals the u16 is `{{ch11.u16hex}}`, the
+  bytes `{{ch11.u16}}`.
 - `d[2]` is the table in bits 0 to 2, `set`, and `width - 5` in bits 3 to 5, shifted by
   `SEQLZ_LIT_WIDTH_AT`, 3. `width` is 5 to 12, so `width - 5` is 0 to 7, 3 bits. Bits 6 and 7 stay 0;
   the decoder rejects a page where they are not ([chapter 13](#ch-literals-dec)). Table 3 with width 7
@@ -760,20 +767,21 @@ more than 20 bits; a u64 is more than enough, and the cast to u64 before the shi
 64 bits. After 8 sizes, `8 * width` bits have gone in, a whole number of bytes, so the last inner loop
 leaves `cnt` at 0 and nothing behind: exactly `width` bytes, as the comment promises.
 
-The example's sizes are 19, 17, 17, 17, 17, 17, 17 and 16 with `width = 5`:
+The example's sizes are {{ch11.sizes}} with `width = {{ch11.width}}`:
 
 ```text
-j=0  acc = 19                cnt  5
-j=1  acc |= 17 << 5          cnt 10  -> write 0x33, cnt 2
-j=2  acc |= 17 << 2          cnt  7
-j=3  acc |= 17 << 7          cnt 12  -> write 0xc6, cnt 4
-j=4  acc |= 17 << 4          cnt  9  -> write 0x18, cnt 1
-j=5  acc |= 17 << 1          cnt  6
-j=6  acc |= 17 << 6          cnt 11  -> write 0x63, cnt 3
-j=7  acc |= 16 << 3          cnt  8  -> write 0x84, cnt 0
+{{ch11.sz.0}}
+{{ch11.sz.1}}
+{{ch11.sz.2}}
+{{ch11.sz.3}}
+{{ch11.sz.4}}
+{{ch11.sz.5}}
+{{ch11.sz.6}}
+{{ch11.sz.7}}
 ```
 
-5 bytes, `33 c6 18 63 84`: in binary, little end first, `10011` (19), `10001` (17), and so on.
+{{ch11.width}} bytes, `{{ch11.sizes.hex}}`: in binary, little end first, `10011` (19), `10001` (17), and so on.
+@assert ch11.width == 5 and F("ch11.sizes").startswith("19, 17,")
 
 ## The bitstream moves down {#ch-literals-enc--memmove}
 
@@ -784,11 +792,11 @@ bitstream, `bitstream` bytes at `d + SEQLZ_HEADER + n_literals`, moves down to t
 length is `coded + bitstream`.
 
 It is `memmove()`, not `memcpy()`, because source and destination can overlap: the bitstream moves
-down by `2 + n - coded`, more than 38 bytes, and a bitstream is often longer than that. `memmove()` is
+down by `2 + n - coded`, more than {{ch11.save_min}} bytes, and a bitstream is often longer than that. `memmove()` is
 defined for overlapping ranges, `memcpy()` is not.
 
-In the example, the bitstream of 6 bytes moves from byte 203 to byte 145, and the page goes from 209
-to 151 bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
+In the example, the bitstream of {{ch11.bs}} bytes moves from byte {{ch11.raw.bs}} to byte {{ch11.q.8}}, and the page goes from {{letters.len}}
+to {{letters.coded.len}} bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
 the back of `dst` to behind the raw literals ([chapter 10](#ch-encoder)). Copying it only once, to
 behind the coded literals, was built and measured: the writes got up to 0.3 µs slower in the kernel
 VM and 0.8 µs on the A55, `seqlz-fast` too, because gcc laid out the matcher's loop differently
@@ -798,56 +806,59 @@ The copy of 400 to 600 bytes on a third of the pages stayed.
 
 ## The example page, byte by byte {#ch-literals-enc--example}
 
-The page of this chapter: 200 letters, each drawn from `etaoinshrdlu` and a space by the C library's
+The page of this chapter: {{ch11.letters}} letters, each drawn from `etaoinshrdlu` and a space by the C library's
 classic linear congruential generator, `seed = seed * 1103515245 + 12345` with `seed = 1`, taking
-`(seed >> 16) % 13`; then 3896 zero bytes. The first 24 letters are `oh  asridistliuthtoo hha`. The
-matcher finds 2 sequences: 201 literals followed by a match of 3895 bytes at offset 1, and the last
-sequence with no literals, which takes no bits. Compressed with `coded = false` the page has 209
-bytes; with `coded = true`, 151:
+`(seed >> 16) % 13`; then {{ch11.zeros}} zero bytes. The first 24 letters are `{{ch11.first24}}`. The
+matcher finds {{letters.seqs}} sequences: {{ch11.n}} literals followed by a match of {{ch11.ml}} bytes at offset {{ch11.off}}, and the last
+sequence with no literals, which takes no bits. Compressed with `coded = false` the page has {{letters.len}}
+bytes; with `coded = true`, {{letters.coded.len}}:
 
 ```text
-000  c9 80 00 33 c6 18 63 84 43 56 4e e0 00 96 ca 9f
-010  45 9b 28 68 cf a1 4f a6 cb f7 80 b2 65 be 53 18
-020  e6 71 a6 90 8b 22 57 0e fa 9f 03 38 05 21 68 5b
-030  87 53 8d 25 6e 21 4e 0a d0 b5 b4 16 40 05 a1 c3
-040  34 74 34 e3 45 68 a7 4a 0c 0a 07 0c e0 00 2b 80
-050  75 81 dc 42 0e 72 95 a5 38 e2 94 d3 43 65 f0 51
-060  ac 98 5f b2 7b 2e 20 54 f8 8a 50 b7 1a 29 cc a0
-070  4b f6 52 65 2c eb 69 f5 ac 05 62 82 be 76 9f 52
-080  40 32 ca 63 24 4a 50 10 7c c0 90 6a ca 56 fb e9
-090  b2 d6 df 3a f7 8a 00
+{{ch11.dump.0}}
+{{ch11.dump.1}}
+{{ch11.dump.2}}
+{{ch11.dump.3}}
+{{ch11.dump.4}}
+{{ch11.dump.5}}
+{{ch11.dump.6}}
+{{ch11.dump.7}}
+{{ch11.dump.8}}
+{{ch11.dump.9}}
 ```
+@assert ch11.dump_lines == 10
 
 The offsets on the left are hexadecimal. Taken apart by hand:
 
-- `c9 80` is the u16 `0x80c9`. The top bit is set, coded literals; `0x80c9 & 0x7fff = 0xc9 = 201`
+- `{{ch11.u16}}` is the u16 `{{ch11.u16hex}}`. The top bit is set, coded literals; `{{ch11.u16hex}} & 0x7fff = {{ch11.n}}`
   literals.
-- `00` is byte 2: table `0x00 & 7 = 0`, width `5 + (0x00 >> 3 & 7) = 5`, and bits 6 and 7 are 0.
-  Table 0 is the one that gives `e` and the space 4 bits, the table for text.
-- `33 c6 18 63 84` are the 8 sizes. As one little-endian number, `0x846318c633`, cut into 5-bit
-  fields from the bottom: 19, 17, 17, 17, 17, 17, 17, 16. Their sum is 137.
-- The streams start at byte $3 + 5 = 8$: stream 0 at 8, stream 1 at 27, then 44, 61, 78, 95, 112 and
-  129, and they end at $8 + 137 = 145$, `0x91`.
-- Stream 0 begins `43 56 4e e0`, in bits `01000011 01010110 01001110 11100000`. Table 0's codes cut it
-  into `01000` (`o`), `011010` (`d`), `1011001` (`h`), `00111` (`n`), `011100` (`l`): literals 0, 8, 16,
+- `{{ch11.byte2}}` is byte 2: table `0x{{ch11.byte2}} & 7 = {{ch11.set}}`, width `5 + (0x{{ch11.byte2}} >> 3 & 7) = {{ch11.width}}`, and bits 6 and 7 are 0.
+  Table {{ch11.set}} is the one that gives `e` and the space 4 bits, the table for text.
+@assert ch11.set == 0 and lit[0].len[0x65] == 4 and lit[0].len[0x20] == 4
+- `{{ch11.sizes.hex}}` are the 8 sizes. As one little-endian number, `{{ch11.sizes.le}}`, cut into {{ch11.width}}-bit
+  fields from the bottom: {{ch11.sizes_comma}}. Their sum is {{ch11.coded}}.
+- The streams start at byte $3 + {{ch11.width}} = {{ch11.q.0}}$: stream 0 at {{ch11.q.0}}, stream 1 at {{ch11.q.1}}, then {{ch11.q.2}}, {{ch11.q.3}}, {{ch11.q.4}}, {{ch11.q.5}}, {{ch11.q.6}} and
+  {{ch11.q.7}}, and they end at ${{ch11.q.0}} + {{ch11.coded}} = {{ch11.q.8}}$, `{{ch11.q8hex}}`.
+- Stream 0 begins `{{ch11.s0.head4}}`, in bits `{{ch11.s0.head4bin}}`. Table {{ch11.set}}'s codes cut it
+  into {{ch11.s0.codes5}}: literals 0, 8, 16,
   24 and 32 of the page.
-- Stream 0 ends with byte 26, `0x1a`, which is `80`. It has 147 bits, 18 whole bytes and 3 bits, so
-  the last byte holds `100` and 5 zero bits.
-- `d6 df 3a f7 8a 00` from byte 145 on is the sequences' bitstream, the same 6 bytes that followed
-  the raw literals in the 209-byte page.
+- Stream 0 ends with byte {{ch11.s0.lastbyte}}, `{{ch11.s0.lasthex}}`, which is `{{ch11.s0.last}}`. It has {{ch11.s0.bits}} bits, {{ch11.s0.whole}} whole bytes and {{ch11.s0.rem}} bits, so
+  the last byte holds `{{ch11.s0.lastbits}}` and {{ch11.s0.zeros}} zero bits.
+- `{{letters.b.hex}}` from byte {{ch11.q.8}} on is the sequences' bitstream, the same {{ch11.bs}} bytes that followed
+  the raw literals in the {{letters.len}}-byte page.
 
 Did it pass the rule? The pricing gave these bits per stream:
 
 | table | stream 0 to 7 | total |
 | --- | --- | --- |
-| 0 | 147 135 130 129 132 132 130 127 | 1062 |
-| 3 | 159 152 150 148 148 150 152 150 | 1209 |
-| 1 | 213 216 212 210 214 218 221 215 | 1719 |
-| others | | 1749 to 1954 |
+| {{ch11.rank.0.table}} | {{ch11.rank.0.bits}} | {{ch11.rank.0.total}} |
+| {{ch11.rank.1.table}} | {{ch11.rank.1.bits}} | {{ch11.rank.1.total}} |
+| {{ch11.rank.2.table}} | {{ch11.rank.2.bits}} | {{ch11.rank.2.total}} |
+| others | | {{ch11.others.min}} to {{ch11.others.max}} |
 
-Table 0 wins. Its sizes add up to `coded = 137`, and `137 + 51 = 188` is less than
-`201 - 201 / 16 = 189`. One byte more and this page would have kept its raw literals. It saves 58
-bytes, 28% of the 209 bytes the page takes with raw literals.
+Table {{ch11.set}} wins. Its sizes add up to `coded = {{ch11.coded}}`, and `{{ch11.coded}} + {{ch11.coded_min}} = {{ch11.rule.lhs}}` is less than
+`{{ch11.n}} - {{ch11.n}} / 16 = {{ch11.rule.rhs}}`. One byte more and this page would have kept its raw literals. It saves {{ch11.saves}}
+bytes, {{ch11.saves_pct}}% of the {{letters.len}} bytes the page takes with raw literals.
+@assert ch11.rule.lhs + 1 == ch11.rule.rhs
 
 ::: try Compress a page of your own
 In a scratch directory, with the repository's path in `$R` (`R=/path/to/quetschn`):
@@ -876,9 +887,15 @@ int main(void)
 	return 0;
 }
 ```
+@program ch11-letters
 
 Build it with `gcc -O2 -I$R/src ex.c $R/src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c`.
+It prints the page above, 16 bytes to a line, and ends with:
+
+@output ch11-letters 10-11
+
 With 190 letters instead of 200 the literals stay raw, with 195 they are coded.
+@assert ch11.l190 == 0 and ch11.l195 == 1
 :::
 
 ## What writing the literals costs {#ch-literals-enc--cost}

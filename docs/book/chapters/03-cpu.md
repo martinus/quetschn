@@ -1,11 +1,12 @@
 # What makes code slow on a CPU {#ch-cpu}
 
-seqlz's decoder runs 2.1 times as many instructions as lz4's: 25 284 against 11 899 per page. It
-takes 7609 cycles for them, against lz4's 4992, so it is 1.5 times as slow, not 2.1. In a real
-swap-in on the PC it takes 2.0 µs against 1.4. The difference between instruction count and time
-is what this chapter is about. Most choices in `src/` that look odd at first, a table of exactly
-2048 entries, a bitstream read from the top bit, 8 streams of literals, a copy of 16 bytes for 3
-literals, an `& 63U` on a shift that is never 64, follow from a few facts about how a CPU runs code.
+seqlz's decoder runs 2.1 times as many instructions as lz4's: 25 284 against 11 899 per page, as of
+5th October 2026. It takes 7609 cycles for them, against lz4's 4992, so it is 1.5 times as slow, not
+2.1. In a real swap-in on the PC it takes 2.0 µs against 1.4. The difference between instruction
+count and time is what this chapter is about. Most choices in `src/` that look odd at first, a table
+of exactly {{ch03.tok_dec.entries}} entries, a bitstream read from the top bit, 8 streams of
+literals, a copy of 16 bytes for 3 literals, an `& 63U` on a shift that is never 64, follow from a
+few facts about how a CPU runs code.
 
 Each section explains one of them and shows where seqlz depends on it, with the function and the
 chapter where the code is explained line by line. Three facts decide most of the speed: waiting for
@@ -21,6 +22,7 @@ A modern core does not run one instruction per cycle. It fetches several instruc
 finds the ones whose inputs are ready, and runs several of them in the same cycle on separate units:
 adders, shifters, load units. The number of instructions it completes per cycle, the **IPC**, says
 how much of that parallel work a piece of code lets it do.
+<!-- undated: an example clock, not a measurement -->
 
 ::: measured seqlz against lz4, the decoder alone
 A loop over 2000 pages of the first desktop dump, the pages in the cache, on the Ryzen 9 7950X of
@@ -50,10 +52,11 @@ GHz. So the core has caches: small, fast copies of recently used memory. The sma
 The unit of a cache is the **cache line**, 64 bytes on every CPU this book is about: a load of one
 byte brings the whole aligned 64 bytes around it into L1, and the next load in the same line is
 cheap.
+<!-- undated: typical latencies of any PC, not this project's measurement -->
 
 ::: cpu Cold and warm in zram
 A page in zram was swapped out because nobody used it for a while. When a program touches it again,
-its compressed bytes are usually in no cache: the page is **cold**. The decoder's tables, 43 280 bytes
+its compressed bytes are usually in no cache: the page is **cold**. The decoder's tables, {{size.tables|grp}} bytes
 shared by all CPUs, may also have been pushed out of the caches by whatever ran since the last
 swap-in. A benchmark that reads the same page twice, or decodes pages in a tight loop, has all of
 that **warm**, and measures something else than a swap-in.
@@ -64,17 +67,19 @@ of 4 KiB pages, from `struct seqlz_tables` in `src/seqlz_internal.h` ([chapter 7
 
 | table | entries | bytes | cache lines | read |
 | --- | --- | ---: | ---: | --- |
-| token decode table | 2048 of 4 bytes | 8192 | 128 | once per sequence |
-| `LL` and `ML` decode tables | 256 of 4 bytes, each | 1024 each | 16 each | for [length values](#ch-format--length-values) |
-| one literal decode table, of 8 | 1024 of 2 bytes | 2048 | 32 | once per coded literal |
-| token codes for the encoder | 3073 of 2 bytes | 6146 | about 96 | once per sequence |
-| the matcher's hash table, per CPU | 4096 of 2 bytes | 8192 | 128 | once per position |
+| token decode table | {{ch03.tok_dec.entries}} of 4 bytes | {{ch03.tok_dec.bytes}} | {{ch03.tok_dec.lines}} | once per sequence |
+| `LL` and `ML` decode tables | {{ch03.len_dec.entries}} of 4 bytes, each | {{ch03.len_dec.bytes}} each | {{ch03.len_dec.lines}} each | for [length values](#ch-format--length-values) |
+| one literal decode table, of 8 | {{ch03.lit_dec.entries}} of 2 bytes | {{ch03.lit_dec.bytes}} | {{ch03.lit_dec.lines}} | once per coded literal |
+| token codes for the encoder | {{ch03.tok_enc.entries}} of 2 bytes | {{ch03.tok_enc.bytes}} | about {{ch03.tok_enc.lines}} | once per sequence |
+| the matcher's hash table, per CPU | {{ch03.hash.entries}} of 2 bytes | {{ch03.hash.bytes}} | {{ch03.hash.lines}} | once per position |
 
-The decoder of a page with coded literals reads from 12 KiB of tables, the encoder from the 6 KiB of
-token codes next to the matcher's 8 KiB. Each table's size is a format decision. The token table has
-2048 entries because token codes have at most 11 bits (`SEQLZ_TOKEN_BITS`), the length tables 256
-because their codes have at most 8 (`SEQLZ_MAX_BITS`), the literal tables 1024 because literal codes
-have at most 10 (`SEQLZ_LIT_BITS`). Longer codes would compress a little better and double a table.
+The decoder of a page with coded literals reads from {{ch03.dec_kib}} KiB of tables, the encoder
+from the {{ch03.tok_enc.kib}} KiB of token codes next to the matcher's {{ch03.hash.kib}} KiB. Each
+table's size is a format decision. The token table has {{ch03.tok_dec.entries}} entries because
+token codes have at most {{ch03.tok_bits}} bits (`SEQLZ_TOKEN_BITS`), the length tables
+{{ch03.len_dec.entries}} because their codes have at most {{ch03.len_bits}} (`SEQLZ_MAX_BITS`), the
+literal tables {{ch03.lit_dec.entries}} because literal codes have at most {{ch03.lit_bits}}
+(`SEQLZ_LIT_BITS`). Longer codes would compress a little better and double a table.
 
 ::: measured Tables have to stay in L1
 In an early version of the format, the token had 512 symbols and codes of up to 12 bits, a decode
@@ -96,13 +101,16 @@ known only late, e.g. because each table index depends on the bits the lookup be
 code has to ask for the lines ahead of time. That is a **prefetch**: an instruction that asks the
 CPU to bring a line into the cache and does not wait for it. On x86-64 it is `prefetcht0`, on arm64
 `prfm`, and the kernel's name for it is `prefetch()`.
+<!-- undated: a typical latency of any PC, and arithmetic on it -->
 
+<!-- undated: the animation is a model with round numbers, not a measurement -->
 @anim misses A model, not a measurement: 8 lookups whose addresses do not depend on each other and whose lines are in no cache, about 100 ns per miss as above, and 20 ns of work on each entry. The out-of-order core's window holds the work of 3 lookups. One step is 20 ns.
 
-`seqlz_decode()` asks for the lines of its tables before it reads the first byte of the page, 8 lines
-per round of a small loop. [Chapter 12](#ch-dec-basics--prefetch) goes through that loop,
-`prefetch_lines()`, line by line, and says why a table that does not start at a cache line misses its
-last line: the literal tables always do.
+`seqlz_decode()` asks for the lines of its tables before it reads the first byte of the page,
+{{ch03.prefetch_lines}} lines per round of a small loop. [Chapter 12](#ch-dec-basics--prefetch) goes
+through that loop, `prefetch_lines()`, line by line, and says why a table that does not start at a
+cache line misses its last line: the literal tables always do.
+@assert ch03.lit_at_mod != 0 and ch03.lit_size_mod == 0
 
 ::: measured What the prefetches give
 On the Mi 9T's little core, a Cortex-A55, in the phone's own kernel: without any table prefetch, cold
@@ -132,14 +140,20 @@ page touches.
 
 seqlz reads its bitstream **most significant bit first** ([chapter 4](#ch-format--bitstream)). The
 next code is then the top bits of the index, and the $2^{11-l}$ entries of a code are one range.
-Token 49's code is `0001`: its entries are the indices `0001xxxxxxx`, 128 to 255. At 4 bytes per entry
-and 16 entries per line, that is lines 8 to 15. Token 4's code `10001100` has the 8 entries 1120 to
-1127, all in line 70.
+Token 49's code is `{{tok.code.49}}`: its entries are the indices `0001xxxxxxx`, {{ch03.t49.first}}
+to {{ch03.t49.last}}. At 4 bytes per entry and 16 entries per line, that is lines
+{{ch03.t49.line_first}} to {{ch03.t49.line_last}}. Token 4's code `{{tok.code.4}}` has the
+{{ch03.t4.entries}} entries {{ch03.t4.first}} to {{ch03.t4.last}}, all in line
+{{ch03.t4.line_first}}.
+@assert tok.len[49] == 4 and ch03.t4.line_first == ch03.t4.line_last
 
 Read **least significant bit first**, as seqlz did until 6th October 2026, the code is in the low
-bits of the index, and its entries are every $2^l$-th entry of the table. Token 49's 128 entries are
-then indices 8, 24, 40, and so on, one in every one of the 128 lines, and token 4's 8 entries are
-in 8 lines, 3, 19, 35 and so on, 16 lines apart:
+bits of the index, and its entries are every $2^l$-th entry of the table. Token 49's
+{{ch03.t49.entries}} entries are then indices {{ch03.t49.lsb.at.0}}, {{ch03.t49.lsb.at.1}},
+{{ch03.t49.lsb.at.2}}, and so on, one in every one of the {{ch03.t49.lsb.lines}} lines, and token
+4's {{ch03.t4.entries}} entries are in {{ch03.t4.lsb.lines}} lines, {{ch03.t4.lsb.line.0}},
+{{ch03.t4.lsb.line.1}}, {{ch03.t4.lsb.line.2}} and so on, {{ch03.t4.lsb.step}} lines apart:
+@assert (ch03.t49.line_first, ch03.t49.line_last, ch03.t4.line_first, ch03.t49.lsb.lines, ch03.t4.lsb.line[0], ch03.t4.lsb.step) == (8, 15, 70, 128, 3, 16)
 
 <figure class="diagram">
 <div class="scroll">
@@ -419,9 +433,9 @@ in 8 lines, 3, 19, 35 and so on, 16 lines apart:
   <text x="404" y="141" text-anchor="end" class="mut" font-size="11">96</text>
   <text x="404" y="156" text-anchor="end" class="mut" font-size="11">112</text>
   <g class="acc"><rect x="50" y="186" width="14" height="14" class="fill-acc" fill-opacity="0.3" stroke="currentColor"/></g>
-  <text x="70" y="198" text-anchor="start">lines with an entry of token 49, code 0001</text>
+  <text x="70" y="198" text-anchor="start">lines with an entry of token 49, code {{tok.code.49}}</text>
   <g class="mark"><rect x="50" y="206" width="14" height="14" class="fill-mark" fill-opacity="0.75" stroke="currentColor"/></g>
-  <text x="70" y="218" text-anchor="start">lines with an entry of token 4, code 10001100</text>
+  <text x="70" y="218" text-anchor="start">lines with an entry of token 4, code {{tok.code.4}}</text>
 </svg>
 </div>
 <figcaption>The 128 cache lines of the token table, 16 per row. Most significant bit first, a code&#39;s entries are one range; least significant bit first, they are spread over the table.</figcaption>
@@ -433,8 +447,8 @@ first, they land on lines all over the table. Counted on 20 000 pages, a page to
 token table's 128 lines most significant bit first, and 55.3 least significant bit first. The bytes
 of the pages are the same either way: the change was the order, not the codes.
 
-The same count for the 179 token lookups of [chapter 16](#ch-trace)'s page, one for each sequence but
-the last, which has no token:
+The same count for the {{slab.tokens}} token lookups of [chapter 16](#ch-trace)'s page, one for each
+sequence but the last, which has no token:
 
 @anim lines wide The token lookups of chapter 16's page, found with the real codec, and the line of the token table each one reads: most significant bit first as seqlz reads, and the same bits reversed. One page, so the counts are its own, not the mean of 20 000 pages.
 
@@ -458,6 +472,7 @@ long before the branch's condition is computed. It guesses, with a **branch pred
 remembers how each branch went the last times, and how the branches before it went. When the guess
 is right, the branch is nearly free. When it is wrong, a **misprediction**, the core throws away the
 work it did on the wrong path and starts again at the right one. That costs about 15 to 20 cycles.
+<!-- undated: a typical cost on current cores, not this project's measurement -->
 
 ::: measured What a misprediction costs, and that the predictor learns a page
 In the kernel VM on the Ryzen 9 7950X at 4.5 GHz, `seqlz-fast-lit`'s decoder in a swap-in mispredicted
@@ -476,17 +491,18 @@ decoder that knows the page. A swap-in decodes a
 page once. Since then, the decode times the project trusts come from `MODE=swap` of its kernel VM,
 which swaps each page in once per pass, with 20 000 other pages in between.
 
-Three branches of the sequence loop made 58% of the mispredictions of a page seen once:
-whether the bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, 24 (the
-**fast path** is the common case of a short sequence away from the end of the page, decoded with few
+Three branches of the sequence loop made 58% of the mispredictions of a page seen once: whether the
+bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, 24 (the **fast
+path** is the common case of a short sequence away from the end of the page, decoded with few
 checks, [chapter 14](#ch-decode)); and whether the match's offset is below 8, 20 to 22
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
-The first one could be removed. Whether 23 bits are left in the buffer depends on the lengths of the
-codes before, which no predictor knows for a new page. But a refill leaves at least 56 bits, and two
-fast sequences take at most 46 of them on 4 KiB pages, 50 on 16 KiB. So `next_token_fast()` refills
-every second fast sequence without asking, a branch that alternates and that every predictor gets
-right. [Chapter 14](#ch-decode--next-token) goes through the lines, the count of bits, and what it
-saved per swap-in in the kernel VM and on the phone.
+The first one could be removed. Whether {{ch03.refill_at}} bits are left in the buffer depends on
+the lengths of the codes before, which no predictor knows for a new page. But a refill leaves at
+least 56 bits, and two fast sequences take at most {{ch03.two_fast}} of them on 4 KiB pages,
+{{k16.ch03.two_fast}} on 16 KiB. So `next_token_fast()` refills every second fast sequence without
+asking, a branch that alternates and that every predictor gets right.
+[Chapter 14](#ch-decode--next-token) goes through the lines, the count of bits, and what it saved per swap-in
+in the kernel VM and on the phone.
 
 ### Code without a branch
 
@@ -525,6 +541,7 @@ Two instructions can run in the same cycle only if neither needs the other's res
 sequence of steps where each needs the result of the one before. A chain sets a lower bound on the
 time, whatever the width of the core: if each step takes 5 cycles and there are 100 of them, it takes
 500 cycles, even if the core could run 6 instructions per cycle.
+<!-- undated: arithmetic on made-up numbers -->
 
 Decoding Huffman codes is such a chain. To decode a literal, the decoder takes the next 10 bits of
 its stream, looks them up in the literal table, writes the byte the entry holds, and shifts the
@@ -706,20 +723,20 @@ function needs more live values than there are registers, the compiler keeps som
 loads them back when needed, a **spill**. A spill is an extra load and store, and in a hot loop it can
 put a load onto a chain.
 
-seqlz reads its bitstream through one register. The decoder's `struct seqlz_bit_reader` has a `u64
-bits` with the next bits on top and an `int count` of how many of them are real. A refill loads 8
-bytes at once and ORs them in below the bits that are left, and the code then takes tokens, offsets
-and length values off the top with shifts. One load of 8 bytes serves two or three sequences: a
-refill leaves at least 56 bits, and a sequence on the fast path takes at most 11 bits of token and
-14 of offset (12 on 4 KiB pages). [Chapter 12](#ch-dec-basics--bit-reader) shows the reader line by
-line.
+seqlz reads its bitstream through one register. The decoder's `struct seqlz_bit_reader` has a
+`u64 bits` with the next bits on top and an `int count` of how many of them are real. A refill loads
+8 bytes at once and ORs them in below the bits that are left, and the code then takes tokens,
+offsets and length values off the top with shifts. One load of 8 bytes serves two or three
+sequences: a refill leaves at least 56 bits, and a sequence on the fast path takes at most
+{{ch03.tok_bits}} bits of token and 14 of offset ({{ch03.off_max}} on 4 KiB pages).
+[Chapter 12](#ch-dec-basics--bit-reader) shows the reader line by line.
 
 The 8 literal streams need 8 such buffers at once, and a pointer each. With a count per stream as
-well, they did not fit into the registers of x86-64. So a stream has no count: its 64 bits carry a
-1 below the last real bit, a marker, and the number of bits used is the position of that 1, found
-with one count-trailing-zeros instruction when the stream is refilled ([chapter 13](#ch-literals-dec)).
-Even so, on the A55 the 8 stream pointers did not fit and went to the stack; they are needed only
-at a refill, once per 5 literals of a stream.
+well, they did not fit into the registers of x86-64. So a stream has no count: its 64 bits carry a 1
+below the last real bit, a marker, and the number of bits used is the position of that 1, found with
+one count-trailing-zeros instruction when the stream is refilled ([chapter 13](#ch-literals-dec)).
+Even so, on the A55 the 8 stream pointers did not fit and went to the stack; they are needed only at
+a refill, once per {{ch03.lit_rounds}} literals of a stream.
 
 Registers also decided a choice in the matcher. Like lz4, it once moved on faster and faster when it
 found no match for a while. That step needs one more value in the loop, and "the matcher's loop has no
@@ -772,13 +789,14 @@ once, as long as no lane overflows into the next. This is called **SWAR**, SIMD 
 The kernel may not use the vector registers of the CPU in most places, so SWAR is how seqlz does 8
 things at once.
 
-The encoder uses it to choose the literal table of a page ([chapter 11](#ch-literals-enc)). It has to
-know how many bits the page's literals take in each of the 8 tables. `lit_cost` in `struct
-seqlz_tables` holds, for each of the 256 byte values, one `u64` with the byte's code length in all 8
-tables, table `k` in bits `8k` to `8k + 7`. Adding the `u64` of every literal sums all 8 tables with
-one add per literal. A lane holds at most 255, so after 25 literals of at most 10 bits the sums move
-into wider lanes. [Chapter 11](#ch-literals-enc--pricing) works it through for 4 bytes of text and
-gives what it costs per write.
+The encoder uses it to choose the literal table of a page ([chapter 11](#ch-literals-enc)). It has
+to know how many bits the page's literals take in each of the 8 tables. `lit_cost` in
+`struct seqlz_tables` holds, for each of the 256 byte values, one `u64` with the byte's code length
+in all 8 tables, table `k` in bits `8k` to `8k + 7`. Adding the `u64` of every literal sums all 8
+tables with one add per literal. A lane holds at most 255, so after {{ch03.lit_cost_run}} literals
+of at most {{ch03.lit_bits}} bits the sums move into wider lanes.
+[Chapter 11](#ch-literals-enc--pricing) works it through for 4 bytes of text and gives what it costs per
+write.
 
 Three more places use a register as 8 bytes at once:
 
@@ -790,11 +808,12 @@ Three more places use a register as 8 bytes at once:
 
 ## Copying more than needed {#ch-cpu--wild-copy}
 
-Most sequences are short: up to 14 literals and a match of up to 34 bytes fit into the token alone,
-and 79% of the matches are at most 16 bytes long. Copying exactly `ll` bytes needs a loop whose
-number of rounds is the length, and the end of that loop is a branch that mispredicts often, because
-the length changes from one sequence to the next. So the decoder copies a fixed 16 bytes, two loads
-and two stores, whatever the length, and then moves on by the real length:
+Most sequences are short: up to {{ch03.token_ll_max}} literals and a match of up to
+{{ch03.token_ml_max}} bytes fit into the token alone, and 79% of the matches are at most 16 bytes
+long. Copying exactly `ll` bytes needs a loop whose number of rounds is the length, and the end of
+that loop is a branch that mispredicts often, because the length changes from one sequence to the
+next. So the decoder copies a fixed 16 bytes, two loads and two stores, whatever the length, and
+then moves on by the real length:
 
 <figure class="diagram">
 <div class="scroll">
@@ -966,12 +985,13 @@ put:                            put_masked:
 ```
 
 With the mask the compiler knows the count is below 64, and the check is gone. The mask itself costs
-nothing here: x86-64's shift already uses only the low 6 bits of the count, so the compiler drops the
-`and`. That is why the encoder's shifts are written `<< (n & 63U)` even where `n` is never 64, and why
-the encoder's array of length-value codes, `enc[]` in `struct value_table`, has 32 entries for 25 or
-27 symbols: a power of 2, so that `s & (ENC_LEN_SYMBOLS - 1U)` proves every index in range
-([chapter 7](#ch-internal), [chapter 10](#ch-encoder)). Masked shifts and indices took the compressor
-from 25 225 to 25 064 cycles per page, 4.7% fewer instructions
+nothing here: x86-64's shift already uses only the low 6 bits of the count, so the compiler drops
+the `and`. That is why the encoder's shifts are written `<< (n & 63U)` even where `n` is never 64,
+and why the encoder's array of length-value codes, `enc[]` in `struct value_table`, has
+{{ch03.enc_len_symbols}} entries for {{const.LEN_SYMBOLS}} or {{k16.const.LEN_SYMBOLS}} symbols: a
+power of 2, so that `s & (ENC_LEN_SYMBOLS - 1U)` proves every index in range ([chapter
+7](#ch-internal), [chapter 10](#ch-encoder)). Masked shifts and indices took the compressor from 25
+225 to 25 064 cycles per page, 4.7% fewer instructions
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
 
 The decoder had 65 such checks in an early version, lz4's had 18. They were not in its hot path:

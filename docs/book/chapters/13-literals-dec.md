@@ -54,15 +54,17 @@ they never reach the 1, and `bits` is never 0. Both matter. If a code used the 1
 wrong; and `__builtin_ctzll(0)` is undefined.
 
 Here is one stream in three states, from the page that [chapter 11](#ch-literals-enc--example) built:
-201 literals, 200 random letters and a zero byte, coded with literal table 0. Stream 0 starts at byte
-8 of the compressed page with the bytes `43 56 4e e0 00 96 ca 9f 45 9b 28`.
+{{letters.lits}} literals, 200 random letters and a zero byte, coded with literal table {{ch13.set}}. Stream 0 starts at byte
+{{ch13.s0.start}} of the compressed page with the bytes `{{ch13.s0.bytes}}`.
+
+@assert letters.lits == 201 and ch13.last_lit_byte == 0 and ch13.r.valid_before + ch13.r.new_bits == ch13.r.valid_after
 
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 250" font-size="12" role="img" aria-label="the 64 bits of stream 0 after a refill, after 5 codes, and after the next refill, with the sentinel 1 moving up and down">
-  <text x="100" y="30">after the first refill: 0x43564ee00096ca9f, ctz = 0</text>
-  <rect x="100" y="38" width="567" height="28" fill="none" stroke="currentColor"/>
-  <text x="383" y="57" text-anchor="middle">63 bits of the stream, from ip = byte 8</text>
+  <text x="100" y="30">after the first refill: {{ch13.s0.bits0}}, ctz = 0</text>
+  <rect x="100" y="38" width="{{ch13.fig.w0}}" height="28" fill="none" stroke="currentColor"/>
+  <text x="{{ch13.fig.c0}}" y="57" text-anchor="middle">63 bits of the stream, from ip = byte {{ch13.s0.start}}</text>
   <g class="acc">
     <rect x="667" y="38" width="9" height="28" class="fill-acc" stroke="currentColor"/>
   </g>
@@ -70,25 +72,25 @@ Here is one stream in three states, from the page that [chapter 11](#ch-literals
   <text x="100" y="80">bit 63</text>
   <text x="676" y="80" text-anchor="end">bit 0</text>
 
-  <text x="100" y="110">after 5 codes of 29 bits: 0x0012d953e0000000, ctz = 29</text>
-  <rect x="100" y="118" width="306" height="28" fill="none" stroke="currentColor"/>
-  <text x="253" y="137" text-anchor="middle">34 bits not used yet</text>
+  <text x="100" y="110">after 5 codes of {{ch13.c.bits}} bits: {{ch13.c.after}}, ctz = {{ch13.r.used}}</text>
+  <rect x="100" y="118" width="{{ch13.fig.w1}}" height="28" fill="none" stroke="currentColor"/>
+  <text x="{{ch13.fig.c1}}" y="137" text-anchor="middle">{{ch13.r.valid_before}} bits not used yet</text>
   <g class="acc">
-    <rect x="406" y="118" width="9" height="28" class="fill-acc" stroke="currentColor"/>
+    <rect x="{{ch13.fig.s1}}" y="118" width="9" height="28" class="fill-acc" stroke="currentColor"/>
   </g>
-  <rect x="415" y="118" width="261" height="28" class="fill-sheet" stroke="currentColor"/>
-  <text x="545" y="137" text-anchor="middle">29 zeros shifted in</text>
-  <text x="410" y="162" text-anchor="middle">bit 29</text>
+  <rect x="{{ch13.fig.z1}}" y="118" width="{{ch13.fig.wz1}}" height="28" class="fill-sheet" stroke="currentColor"/>
+  <text x="{{ch13.fig.cz1}}" y="137" text-anchor="middle">{{ch13.r.used}} zeros shifted in</text>
+  <text x="{{ch13.fig.l1}}" y="162" text-anchor="middle">bit {{ch13.r.used}}</text>
 
-  <text x="100" y="192">next refill: ip += 29 &gt;&gt; 3 = 3, shift by 29 &amp; 7 = 5: 0x0012d953e8b36520</text>
-  <rect x="100" y="200" width="522" height="28" fill="none" stroke="currentColor"/>
-  <text x="253" y="219" text-anchor="middle">the same 34 bits, then 24 new ones</text>
+  <text x="100" y="192">next refill: ip += {{ch13.r.used}} &gt;&gt; 3 = {{ch13.r.bytes}}, shift by {{ch13.r.used}} &amp; 7 = {{ch13.r.shift}}: {{ch13.r.bits}}</text>
+  <rect x="100" y="200" width="{{ch13.fig.w2}}" height="28" fill="none" stroke="currentColor"/>
+  <text x="{{ch13.fig.c1}}" y="219" text-anchor="middle">the same {{ch13.r.valid_before}} bits, then {{ch13.r.new_bits}} new ones</text>
   <g class="acc">
-    <rect x="622" y="200" width="9" height="28" class="fill-acc" stroke="currentColor"/>
+    <rect x="{{ch13.fig.s2}}" y="200" width="9" height="28" class="fill-acc" stroke="currentColor"/>
   </g>
-  <rect x="631" y="200" width="45" height="28" class="fill-sheet" stroke="currentColor"/>
-  <text x="626" y="244" text-anchor="middle">bit 5</text>
-  <line x1="406" y1="200" x2="406" y2="228" stroke="currentColor" stroke-dasharray="2 2"/>
+  <rect x="{{ch13.fig.z2}}" y="200" width="{{ch13.fig.wz2}}" height="28" class="fill-sheet" stroke="currentColor"/>
+  <text x="{{ch13.fig.l2}}" y="244" text-anchor="middle">bit {{ch13.r.shift}}</text>
+  <line x1="{{ch13.fig.s1}}" y1="200" x2="{{ch13.fig.s1}}" y2="228" stroke="currentColor" stroke-dasharray="2 2"/>
 </svg>
 </div>
 <figcaption>Stream 0's 64 bits: the sentinel 1 (accent) marks how many bits were used since ip; a refill moves ip by the whole bytes and shifts by the rest.</figcaption>
@@ -121,32 +123,38 @@ After a refill the valid bits are bits 63 down to `(used & 7) + 1`, which is `63
 are 50 bits, which always fit ([chapter 6](#ch-header)). The decoder refills each stream once per 5
 literals of it.
 
+@assert ch13.k.rounds == 5 and ch13.k.streams == 8 and ch13.k.lit_bits == 10
+
 The first refill of a stream starts from `bits = 1`. Its `ctz` is 0, so `p` is the stream's start and
-nothing is shifted. In the example, stream 0's first 8 bytes are `43 56 4e e0 00 96 ca 9f`; the last
-byte is odd already, so `| 1` changes nothing, and the bits are `0x43564ee00096ca9f`. Then 5 codes:
+nothing is shifted. In the example, stream 0's first 8 bytes are `{{ch13.s0.first8}}`; the last
+byte is odd already, so `| 1` changes nothing, and the bits are `{{ch13.s0.bits0}}`. Then 5 codes:
 
-| top 10 bits | entry of table 0 | code length | literal |
+@assert ch13.s0.odd == 1
+
+| top 10 bits | entry of table {{ch13.set}} | code length | literal |
 | --- | --- | --- | --- |
-| `0100001101` | `0x6f05` | 5 | `o` |
-| `0110101011` | `0x6406` | 6 | `d` |
-| `1011001001` | `0x6807` | 7 | `h` |
-| `0011101110` | `0x6e05` | 5 | `n` |
-| `0111000000` | `0x6c06` | 6 | `l` |
+| `{{ch13.c.0.top}}` | `{{ch13.c.0.entry}}` | {{ch13.c.0.len}} | `{{ch13.c.0.lit}}` |
+| `{{ch13.c.1.top}}` | `{{ch13.c.1.entry}}` | {{ch13.c.1.len}} | `{{ch13.c.1.lit}}` |
+| `{{ch13.c.2.top}}` | `{{ch13.c.2.entry}}` | {{ch13.c.2.len}} | `{{ch13.c.2.lit}}` |
+| `{{ch13.c.3.top}}` | `{{ch13.c.3.entry}}` | {{ch13.c.3.len}} | `{{ch13.c.3.lit}}` |
+| `{{ch13.c.4.top}}` | `{{ch13.c.4.entry}}` | {{ch13.c.4.len}} | `{{ch13.c.4.lit}}` |
 
-The 5 codes took 29 bits, and the bits are now `0x0012d953e0000000`, with the sentinel at bit 29. The
+The 5 codes took {{ch13.c.bits}} bits, and the bits are now `{{ch13.c.after}}`, with the sentinel at bit {{ch13.r.used}}. The
 next refill:
 
 ```text
-used   = ctz(0x0012d953e0000000) = 29
-p      = ip + 29 >> 3 = ip + 3                 byte 11 of the page
-load   = e0 00 96 ca 9f 45 9b 28 -> 0xe00096ca9f459b28
-| 1    = 0xe00096ca9f459b29
-<< 5   = 0x0012d953e8b36520                    29 & 7 = 5, the sentinel at bit 5
+used   = ctz({{ch13.c.after}}) = {{ch13.r.used}}
+p      = ip + {{ch13.r.used}} >> 3 = ip + {{ch13.r.bytes}}                 byte {{ch13.r.at}} of the page
+load   = {{ch13.r.load_hex}} -> {{ch13.r.load}}
+| 1    = {{ch13.r.or1}}
+<< {{ch13.r.shift}}   = {{ch13.r.bits}}                    {{ch13.r.used}} & 7 = {{ch13.r.shift}}, the sentinel at bit {{ch13.r.shift}}
 ```
 
-The top 34 bits are the same before and after: the refill drops nothing that was not used, and
-appends the 24 bits that follow. The shift by 5 drops the first 5 bits of byte 11, `11100`, which
-were the end of the code of `l`, `0` from byte 10 and `11100` from byte 11.
+The top {{ch13.r.valid_before}} bits are the same before and after: the refill drops nothing that was not used, and
+appends the {{ch13.r.new_bits}} bits that follow. The shift by {{ch13.r.shift}} drops the first {{ch13.r.shift}} bits of byte {{ch13.r.at}}, `{{ch13.r.dropped}}`, which
+were the end of the code of `{{ch13.c.4.lit}}`, `{{ch13.c.last_prev}}` from byte {{ch13.c.last_prev_byte}} and `{{ch13.r.dropped}}` from byte {{ch13.r.at}}.
+
+@assert ch13.c.last_split == 1 and ch13.c.last_prev_byte + 1 == ch13.r.at
 
 ::: cpu A refill without a branch on the stream's data
 `lit_refill()` has one `?:`, on `end - p >= 8`. That is true for every refill except near the end of
@@ -175,8 +183,10 @@ the branch that calls it as the unlikely one ([chapter 5](#ch-compat)).
 
 When does it run? The streams are followed by the sequences' bitstream, so a stream's refill comes
 within 8 bytes of the end only on pages whose bitstream is short. The example page is one: its
-bitstream has 6 bytes, the page 151, and stream 7 starts at byte 129 with 16 bytes. Its last refill
-is at byte 144, 7 bytes before the end, and goes through `lit_load_tail()`.
+bitstream has {{ch13.bitstream}} bytes, the page {{ch13.n}}, and stream 7 starts at byte {{ch13.s7.start}} with {{ch13.s7.size}} bytes. Its last refill
+is at byte {{ch13.s7.last_refill}}, {{ch13.s7.before_end}} bytes before the end, and goes through `lit_load_tail()`.
+
+@assert ch13.s7.tail == 1 and ch13.bitstream == letters.b.bytes and ch13.n == letters.coded.len
 
 ## lit_decode(): one literal, or one that does not count {#ch-literals-dec--decode}
 
@@ -224,21 +234,22 @@ A 4-byte load holds the field: the field starts at most 7 bits into the first by
 in a short page, can come the end of the input. That is why the sizes are copied first, as the comment
 says: in `h`, bytes 10 to 15 exist and are zero.
 
-The example page has `width = 5` and the size bytes `33 c6 18 63 84`:
+The example page has `width = {{ch13.width}}` and the size bytes `{{ch13.size_hex}}`:
 
-| `k` | bit `k * 5` | byte | shift | `le32` at that byte | size |
+| `k` | bit `k * {{ch13.width}}` | byte | shift | `le32` at that byte | size |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | 0 | 0 | `0x6318c633` | `0x33 & 31 = 19` |
-| 1 | 5 | 0 | 5 | `0x6318c633` | 17 |
-| 2 | 10 | 1 | 2 | `0x846318c6` | 17 |
-| 3 | 15 | 1 | 7 | `0x846318c6` | 17 |
-| 4 | 20 | 2 | 4 | `0x00846318` | 17 |
-| 5 | 25 | 3 | 1 | `0x00008463` | 17 |
-| 6 | 30 | 3 | 6 | `0x00008463` | 17 |
-| 7 | 35 | 4 | 3 | `0x00000084` | `0x84 >> 3 = 16` |
+| 0 | {{ch13.sz.0.bit}} | {{ch13.sz.0.byte}} | {{ch13.sz.0.shift}} | `{{ch13.sz.0.le}}` | `{{ch13.sz.0.low}} & {{ch13.mask}} = {{ch13.sz.0.size}}` |
+| 1 | {{ch13.sz.1.bit}} | {{ch13.sz.1.byte}} | {{ch13.sz.1.shift}} | `{{ch13.sz.1.le}}` | {{ch13.sz.1.size}} |
+| 2 | {{ch13.sz.2.bit}} | {{ch13.sz.2.byte}} | {{ch13.sz.2.shift}} | `{{ch13.sz.2.le}}` | {{ch13.sz.2.size}} |
+| 3 | {{ch13.sz.3.bit}} | {{ch13.sz.3.byte}} | {{ch13.sz.3.shift}} | `{{ch13.sz.3.le}}` | {{ch13.sz.3.size}} |
+| 4 | {{ch13.sz.4.bit}} | {{ch13.sz.4.byte}} | {{ch13.sz.4.shift}} | `{{ch13.sz.4.le}}` | {{ch13.sz.4.size}} |
+| 5 | {{ch13.sz.5.bit}} | {{ch13.sz.5.byte}} | {{ch13.sz.5.shift}} | `{{ch13.sz.5.le}}` | {{ch13.sz.5.size}} |
+| 6 | {{ch13.sz.6.bit}} | {{ch13.sz.6.byte}} | {{ch13.sz.6.shift}} | `{{ch13.sz.6.le}}` | {{ch13.sz.6.size}} |
+| 7 | {{ch13.sz.7.bit}} | {{ch13.sz.7.byte}} | {{ch13.sz.7.shift}} | `{{ch13.sz.7.le}}` | `{{ch13.sz.7.le_short}} >> {{ch13.sz.7.shift}} = {{ch13.sz.7.size}}` |
 
-The zeros at the top of the last loads are `h`'s zeros, not bytes of the page. The starts are 8, 27,
-44, 61, 78, 95, 112 and 129, and the total is 137.
+@assert ch13.sz[0].shift == 0 and ch13.sz[7].past == 1 and ch13.sz[3].past == 0
+
+The zeros at the top of the last loads are `h`'s zeros, not bytes of the page. The starts are {{ch13.starts}}, and the total is {{ch13.total}}.
 
 ## Does a stream end where its size says? {#ch-literals-dec--ends}
 
@@ -264,16 +275,18 @@ The trailing bits are read from the page, not from `b`. The comment says why: if
 byte was the 8th byte of its last load, its lowest bit is where the refill put the sentinel, and `b`
 cannot tell whether the page had a 0 or a 1 there.
 
-The example, stream 0: size 19, so 152 bits. At the end `ip` is 17 bytes past the start and the
-sentinel is at bit 11, so 147 bits were used, and `left = 152 - 147 = 5`. The last byte is byte 26 of
-the page, `0x80`, and `0x80 & 0x1f = 0`: the stream is valid. Three damaged versions of the page, each
-rejected by `seqlz_decode()` with `-EINVAL` in a test program:
+The example, stream 0: size {{ch13.e.size}}, so {{ch13.e.size_bits}} bits. At the end `ip` is {{ch13.e.ip}} bytes past the start and the
+sentinel is at bit {{ch13.e.ctz}}, so {{ch13.e.used}} bits were used, and `left = {{ch13.e.size_bits}} - {{ch13.e.used}} = {{ch13.e.left}}`. The last byte is byte {{ch13.e.last}} of
+the page, `{{ch13.e.last_val}}`, and `{{ch13.e.last_val}} & {{ch13.e.mask}} = {{ch13.e.masked}}`: the stream is valid. Three damaged versions of the page, each
+rejected by `seqlz_decode()` with `-EINVAL` when the book is built:
 
 | change | what `lit_stream_ends()` sees |
 | --- | --- |
-| byte 26 is `0x81` | `left = 5`, `0x81 & 0x1f = 1`: a bit after the codes is set |
-| stream 0's size is 18 | `left = 144 - 147 = -3`: the codes ran into the next stream |
-| stream 0's size is 20 | `left = 160 - 147 = 13`: a whole byte after the codes |
+| byte {{ch13.e.last}} is `{{ch13.e.bad_val}}` | `left = {{ch13.e.left}}`, `{{ch13.e.bad_val}} & {{ch13.e.mask}} = {{ch13.e.bad_masked}}`: a bit after the codes is set |
+| stream 0's size is {{ch13.e.size1}} | `left = {{ch13.e.size1_bits}} - {{ch13.e.used}} = {{ch13.e.left1}}`: the codes ran into the next stream |
+| stream 0's size is {{ch13.e.size2}} | `left = {{ch13.e.size2_bits}} - {{ch13.e.used}} = {{ch13.e.left2}}`: a whole byte after the codes |
+
+@assert ch13.e.masked == 0 and ch13.e.bad_masked != 0 and ch13.e.left1 < 0 and ch13.e.left2 > 7
 
 A stream without literals, on a page with fewer than 8, has used 0 bits: its `left` is `8 * size`,
 valid only for size 0.
@@ -342,14 +355,18 @@ The checks come before anything is read from the streams:
 `lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode` picks the literal table by bits 0 to 2. Any value
 of those 3 bits is a valid table, so there is nothing to check.
 
-`prefetch_lines(lt, sizeof(t->lit[0].decode))` asks for the 2 KiB table at once, 32 prefetches 64
-bytes apart ([chapter 12](#ch-dec-basics--prefetch)). A literal table never starts at a cache line, so
-it covers 33 lines, and the last one, with entries 1022 and 1023, is not asked for; chapter 12's warn
-box has the offsets. In a swap-in the table is often not in the cache, and
+`prefetch_lines(lt, sizeof(t->lit[0].decode))` asks for the 2 KiB table at once, {{ch13.lt.loop_prefetches}} prefetches 64
+bytes apart and one more for the line of its last byte ([chapter 12](#ch-dec-basics--prefetch)). A literal
+table never starts at a cache line, so it covers 33 lines: the loop asks for 32 of them, and the
+prefetch of the last byte for the 33rd, which holds entries {{ch13.lt.last_entry}} and 1023 where the struct starts at a
+page; chapter 12's warn box has the offsets. In a swap-in the table is often not in the cache, and
+
 the lookups below would otherwise miss one line after the other. The prefetch goes out before the
 sizes are read, so the misses overlap with that work. On the Mi 9T's A55, the in-order core, cold
 reads were 14.5 µs slower without the decoder's table prefetches ([explored-designs.md, item 4 of "Six
 choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#six-choices-made-on-the-pc-measured-on-the-phone-the-token-table-and-the-prefetches-matter-the-rest-does-not)).
+
+@assert ch13.lt.mod8 != 0 and ch13.lt.lines == 33 and ch13.lt.prefetches == 33 and ch13.lt.loop_prefetches == 32
 
 Then the sizes and starts, and each stream's pointer at its start with `b[i] = 1`: only the sentinel,
 at bit 0, so the first refill loads from `start[i]` without a shift.
@@ -377,7 +394,7 @@ lookups and 8 refills in a row. Each `b[i] = lit_decode(...)` depends only on th
 That is the point of the whole format choice: the 8 chains are independent, and an out-of-order CPU
 starts the lookup of stream 1 while stream 0's is still waiting for the cache ([chapter 3](#ch-cpu)).
 
-@anim streams wide The 674 literals of chapter 16's page, dealt out to 8 streams and decoded a round at a time, or in one stream. Literals, code lengths and stream sizes come from the real codec; the count of dependent steps is a model, one step per decoded literal.
+@anim streams wide The {{slab.lits}} literals of chapter 16's page, dealt out to 8 streams and decoded a round at a time, or in one stream. Literals, code lengths and stream sizes come from the real codec; the count of dependent steps is a model, one step per decoded literal.
 
 The same for one round, as a picture:
 
@@ -496,16 +513,18 @@ complete steps of all 8 streams they make, and `r = rest % 8` how many streams h
 - Every stream's end is checked with `lit_stream_ends()`, and the function returns `q + total`, the
   byte after the last stream: the start of the sequences' bitstream.
 
-The example page has 201 literals. The rounds run for `k = 0, 40, 80, 120, 160`, since `160 + 40 = 200
-<= 201`, and stop at `k = 200`. Then `rest = 1`, `steps = 0`, `r = 1`. In the last step stream 0 decodes
-literal 200, the zero byte, with mask 63. Streams 1 to 7 decode whatever their next 10 bits say into
-`out[201]` to `out[207]` (streams 1 to 6 got `20`, a space, stream 7 got `64`, a `d`) and do not move
+The example page has {{letters.lits}} literals. The rounds run for `k = {{ch13.rounds}}`, since `{{ch13.k_last_round}} + 40 = {{ch13.k_last_end}}
+<= {{letters.lits}}`, and stop at `k = {{ch13.k_end}}`. Then `rest = {{ch13.rest}}`, `steps = {{ch13.steps}}`, `r = {{ch13.rest_r}}`. In the last step stream 0 decodes
+literal {{ch13.last_lit}}, the zero byte, with mask 63. Streams 1 to 7 decode whatever their next 10 bits say into
+`out[{{ch13.extra_first}}]` to `out[{{ch13.extra_last}}]` ({{ch13.extra_desc}}) and do not move
 on, so that
 `lit_stream_ends()` sees exactly their own codes.
 
+@assert ch13.rest_r == 1 and ch13.steps == 0 and ch13.last_lit_byte == 0
+
 Those extra bytes land behind the literals. The highest index the last step writes is `k + 7`, and
-`k = n_lit - r`, so at most `n_lit + 7`, at most `SEQLZ_PAGE + 7` = 4103 on 4 KiB pages. The scratch is
-`SEQLZ_SCRATCH`, a page plus 16 bytes, 4112 ([chapter 6](#ch-header)). The 16 spare bytes are there for
+`k = n_lit - r`, so at most `n_lit + 7`, at most `SEQLZ_PAGE + 7` = {{ch13.max_write}} on 4 KiB pages. The scratch is
+`SEQLZ_SCRATCH`, a page plus 16 bytes, {{const.SCRATCH}} ([chapter 6](#ch-header)). The 16 spare bytes are there for
 the sequence loop's 16-byte copies, which may read past the last literal; the last step's writes use
 the same room. A valid page never takes them as literals. The slow path of the sequence loop checks
 every `ll` against the number of literals left; the fast path does not, and a page whose literals run
@@ -516,7 +535,7 @@ Why decode into the spare bytes, instead of a loop over the remaining streams on
 stream with a literal left" ends after `r` iterations, and `r` is different on every page, 0 to 7. A
 branch predictor cannot learn that, and each page would pay a misprediction or more at the loop's end.
 The same steps for all streams cost 8 lookups at most, and no decision that depends on the page,
-except `r > i`, which is arithmetic. Measured on the Mi 9T (commit `8dc0341`), median of 7 runs of
+except `r > i`, which is arithmetic. Measured on the Mi 9T on 5th October 2026 (commit `8dc0341`), median of 7 runs of
 20 000 pages: the A55 decoded a page in 16 620 cycles this way against 16 531 with a loop per stream,
 the A76 in 7420 against 7480, all within their spread. So the form was chosen for its reason, not for a
 measured gain; it also keeps the size check exact without the loop.

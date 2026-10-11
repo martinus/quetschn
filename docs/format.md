@@ -285,7 +285,7 @@ else:       b = s - 12;  value = 2^b + read(b)
 The symbols 16 to `11 + P` stand for the ranges `[2^b, 2^(b+1))` with `b = s - 12`, i.e. 16 to 31, 32 to
 63, and so on, and `read(b)` says how far into the range the value is. E.g. 100 is in `[64, 128)`, so
 `b = 6`, the symbol is 18, and `read(6)` gives `100 - 64 = 36`. *Why `2^P - 1`:* the largest value a
-page needs is `ll - 15` of a page of `PAGE` literals, `PAGE - 15`, so a symbol for `[2^P, 2^(P+1))`
+page needs is `ll - 15` of `PAGE - 4` literals before a page's only match, `PAGE - 19`, so a symbol for `[2^P, 2^(P+1))`
 would never be sent.
 
 ### Tokens
