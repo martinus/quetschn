@@ -24,6 +24,11 @@ BookAnim.define('ends', function (ctx) {
   });
 
   var W = 900, H = 280, X0 = 20, BW = 860, CW = 25, NC = 16, LX = 20, RX = 480;
+  // the narrow layout, for a phone: 360 units wide, the close-ups one above the other, 8 bytes a row,
+  // the room check above the bits of the sequence, the legend in rows
+  var NW = 360, NH = 500, NX0 = 8, NCX = 40, NCW = 39, NRP = 52, NY1 = 110, NY2 = 232, NRC = 352, NBY = 376, NLY = 440;
+  // the shortest gap in the overview bar that gets 'free: ... bytes', and that gets 'the old copy'
+  var FREEMIN = 150, OLDMIN = 200;
   var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'The buffer dst: literals from the front, the bitstream from the back, and two close-ups of the bytes at the two ends' }, ctx.stage);
   var g = ctx.svg('g', {}, root);
 
@@ -92,7 +97,7 @@ BookAnim.define('ends', function (ctx) {
       if (r.in_place && fin === 2) rect(bx(s.p), Y, bx(c) - bx(s.p), BH, 'en-newbs');
       var free = s.p - (s.cnt > 0 ? 1 : 0) - s.lit;
       var mid = (bx(s.lit) + bx(s.p)) / 2;
-      if (bx(s.p) - bx(s.lit) > 150) T(mid, Y + 20, 'free: ' + free + ' bytes', 'en-muted', 'middle');
+      if (bx(s.p) - bx(s.lit) > FREEMIN) T(mid, Y + 20, 'free: ' + free + ' bytes', 'en-muted', 'middle');
       // the two ends
       var lx = bx(s.lit), px = bx(s.p);
       ctx.svg('line', { x1: lx, y1: Y - 4, x2: lx, y2: Y + BH + 6, class: 'en-ptr' }, g);
@@ -119,8 +124,9 @@ BookAnim.define('ends', function (ctx) {
       } else {
         var t = 'out = ' + out;
         T(Math.max(X0 + t.length * 7.3, bx(out) - 3), Y + BH + 18, t, 'en-ptrt', 'end');
-        T(Math.min(X0 + BW - 90, bx(end) + 3), Y + BH + 18, 'out + ' + r.bytes, 'en-ptrt', 'start');
-        if (bx(r.p_seq) - bx(end) > 200) T(X0 + BW, Y + BH + 18, 'the old copy', 'en-muted', 'end');
+        // after the label of out where the two ends are close, e.g. in the narrow layout
+        T(Math.min(X0 + BW - 90, Math.max(bx(end) + 3, X0 + t.length * 7.3 + 8)), Y + BH + 18, 'out + ' + r.bytes, 'en-ptrt', 'start');
+        if (bx(r.p_seq) - bx(end) > OLDMIN) T(X0 + BW, Y + BH + 18, 'the old copy', 'en-muted', 'end');
       }
     }
   }
@@ -140,6 +146,25 @@ BookAnim.define('ends', function (ctx) {
       var w = m.label.length * 7;
       var lx = Math.max(x0 + 40 + w / 2, Math.min(x0 + NC * CW - w / 2, x));
       T(lx, y0 + 42, m.label, 'en-ptrt', 'middle', 11.5);
+    });
+  }
+
+  // the narrow strip: the same 16 bytes as 2 rows of 8, the first index of each row in front of it
+  function stripN(y0, first, title, cells, marks) {
+    T(NX0, y0 - 8, title, 'en-sub');
+    for (var j = 0; j < NC; j++) {
+      var c = cells[j], x = NCX + (j & 7) * NCW, y = y0 + (j >> 3) * NRP;
+      rect(x, y, NCW - 2, 28, c.cls);
+      if (c.text) T(x + (NCW - 2) / 2, y + 19, c.text, c.tcls || '', 'middle', 12.5);
+      if (!(j & 7)) T(NCX - 5, y + 19, String(first + j), 'en-idx', 'end', 11.5);
+    }
+    marks.forEach(function (m) {
+      // a mark between the rows is at the start of the second row
+      var rel = m.at - first, row = rel >= 8 ? 1 : 0, y = y0 + row * NRP;
+      var x = NCX + (rel - 8 * row) * NCW - 1;
+      ctx.svg('line', { x1: x, y1: y - 4, x2: x, y2: y + 32, class: 'en-ptr' }, g);
+      var w = m.label.length * 7.2;
+      T(Math.max(NCX + w / 2, Math.min(NCX + 8 * NCW - w / 2, x)), y + 43, m.label, 'en-ptrt', 'middle', 12);
     });
   }
 
@@ -206,24 +231,30 @@ BookAnim.define('ends', function (ctx) {
       mL.push({ at: s.lit, label: s.bsFrom ? 'lit = p' : 'lit' });
       if (s.p >= b && s.p <= b + NC) mR.push({ at: s.p, label: r.in_place && s.fin === 2 ? 'in' : 'p' });
     }
+    if (ctx.narrow) {
+      stripN(NY1, a, tl, cellsL, mL);
+      stripN(NY2, b, tr, cellsR, mR);
+      return;
+    }
     strip(LX, Y, a, tl, cellsL, mL);
     strip(RX, Y, b, tr, cellsR, mR);
   }
 
   function bitsRow(s) {
-    var Y = 186, r = R();
+    // narrow: the room check on a line of its own, the bits below it
+    var Y = ctx.narrow ? NBY : 186, r = R(), YC = ctx.narrow ? NRC : Y + 14, BX = ctx.narrow ? X0 : RX;
     if (s.row) {
       var row = s.row, need = row[LL] + ROOM, ok = !s.failed;
-      T(X0, Y + 14, 'room check: p − lit = ' + roomOf(row) + (ok ? ' ≥ ' : ' < ') + 'll + ' + ROOM + ' = ' + need, ok ? 'en-txt' : 'en-bad');
+      T(X0, YC, 'room check: p − lit = ' + roomOf(row) + (ok ? ' ≥ ' : ' < ') + 'll + ' + ROOM + ' = ' + need, ok ? 'en-txt' : 'en-bad');
       if (ok) {
         var parts = [['token', row[TLEN]], ['offset', row[OB]], ['ll value', row[LLB]], ['ml value', row[MLB]]];
-        var x = RX, PX = 10, lx = RX;
+        var x = BX, PX = 10, lx = BX;
         T(x, Y - 2, 'the bits of this sequence: ' + row[BITS], 'en-sub');
         parts.forEach(function (pt, m) {
           if (pt[1]) {
             var w = pt[1] * PX;
             rect(x, Y + 3, w - 2, 18, 'en-bit' + m);
-            T(x + (w - 2) / 2, Y + 16, String(pt[1]), 'en-on', 'middle', 11);
+            T(x + (w - 2) / 2, Y + 16, String(pt[1]), 'en-on', 'middle', ctx.narrow ? 11.5 : 11);
             x += w;
           }
           rect(lx, Y + 30, 12, 12, 'en-bit' + m);
@@ -232,11 +263,11 @@ BookAnim.define('ends', function (ctx) {
         });
       }
     } else if (s.fin >= 0 && !r.fail) {
-      T(X0, Y + 14, 'literals: ' + r.n_lit + ' bytes, bitstream: ' + r.bytes + ' bytes', 'en-txt');
+      T(X0, YC, 'literals: ' + r.n_lit + ' bytes, bitstream: ' + r.bytes + ' bytes', 'en-txt');
     } else if (s.fin >= 0) {
-      T(X0, Y + 14, 'encoder_finish(): p == lit, the page does not fit', 'en-bad');
+      T(X0, YC, 'encoder_finish(): p == lit, the page does not fit', 'en-bad', 'start', ctx.narrow ? 11.5 : 12);
     } else {
-      T(X0, Y + 14, 'acc = 0, cnt = 0', 'en-txt');
+      T(X0, YC, 'acc = 0, cnt = 0', 'en-txt');
     }
   }
 
@@ -244,6 +275,15 @@ BookAnim.define('ends', function (ctx) {
     var Y = 256, items = [['en-lit', 'literals'], ['en-new', 'this step'], ['en-bs', 'bitstream'], ['en-newbs', 'this step'],
       ['en-part', 'bits left in acc'], ['en-over', 'written, overwritten later']];
     var x = X0;
+    if (ctx.narrow) {
+      // two columns: the literals and their step, the bitstream and its step, then the rest
+      items.forEach(function (it, m) {
+        var lx = X0 + (m & 1) * 142, ly = NLY + (m >> 1) * 20;
+        rect(lx, ly, 14, 14, it[0]);
+        T(lx + 19, ly + 11, it[1], 'en-muted', 'start', 11.5);
+      });
+      return;
+    }
     items.forEach(function (it) {
       rect(x, Y, 14, 14, it[0]);
       T(x + 19, Y + 11, it[1], 'en-muted', 'start', 11.5);
@@ -306,6 +346,9 @@ BookAnim.define('ends', function (ctx) {
 
   function draw(k) {
     while (g.firstChild) g.removeChild(g.firstChild);
+    // the mode can change between two draws, e.g. a phone turned
+    if (ctx.narrow) { X0 = NX0; BW = NW - 2 * NX0; FREEMIN = 130; OLDMIN = 170; root.setAttribute('viewBox', '0 0 ' + NW + ' ' + NH); }
+    else { X0 = 20; BW = 860; FREEMIN = 150; OLDMIN = 200; root.setAttribute('viewBox', '0 0 ' + W + ' ' + H); }
     var s = state(k);
     overview(s);
     zoom(s);
@@ -314,7 +357,7 @@ BookAnim.define('ends', function (ctx) {
     ctx.say(say(s));
   }
   return {
-    steps: steps, draw: draw, interval: 700,
+    steps: steps, draw: draw, interval: 700, narrow: true,
     // step k shows dst after sequence k
     link: {
       label: 'written into dst (chapter 10)',

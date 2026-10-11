@@ -114,6 +114,94 @@ BookAnim.define('accum', function (ctx) {
     T(X0 + N * CW - 4, Y + 84, 'dst from its end backwards: bitstream byte 0 first', 'ac-muted', 'end', 11.5);
   }
 
+  // the narrow layout, for a phone, 360 units wide: the 64 bits as 2 rows of 32 with a gap between the
+  // bytes, dst as 2 rows of 8 with 'end' in front of each row's labels, and in place of the lines from
+  // the word's bytes to dst a label under each byte that names its byte of dst
+  var NW = 360, NH = 362, NB = 10, NG = 6, NX0 = 11, NDX = 34, NCW = 40, NDY = 200, NDP = 70;
+  // bit 63 − i of a row of 64: its x and its row
+  function nbx(i) { var c = i & 31; return NX0 + c * NB + (c >> 3) * NG; }
+  function nby(i, y) { return y + (i >> 5) * 24; }
+  // byte q of 8, as the bits 8q to 8q + 7 from the left: its middle
+  function nbyte(q) { return nbx(q * 8) + (8 * NB - 1) / 2; }
+
+  function accRowN(st, s) {
+    var Y = 24, bits = bitsOf(st.acc), n = s.kind === 'put' ? s.o.n : 0;
+    T(NX0, Y - 8, 'acc, bit 63 to bit 0', 'ac-sub');
+    T(NX0 + 32 * NB + 3 * NG - 1, Y - 8, 'cnt = ' + st.cnt, 'ac-sub', 'end');
+    for (var i = 0; i < 64; i++) {
+      var b = 63 - i, x = nbx(i), y = nby(i, Y), counts = b < st.cnt, fresh = b < n;
+      var cls = fresh ? 'ac-new' : counts ? (s.kind === 'store' ? 'ac-out' : 'ac-on') : 'ac-off';
+      rect(x, y, NB - 1, 20, cls);
+      T(x + (NB - 1) / 2, y + 14.5, bits[i], fresh || (counts && s.kind === 'store') ? 'ac-tin' : counts ? '' : 'ac-faint', 'middle', 11.5);
+    }
+  }
+
+  function putRowN(s) {
+    // the value at the columns of acc's bits it goes to, all in the lower row: at most 32 bits
+    var o = s.o, Y = 96, i = 64 - o.n;
+    T(NX0, Y - 8, 'the value enc_put() appends: ' + plural(o.n, 'bit') + ', 0x' + o.v, 'ac-sub');
+    o.parts.forEach(function (pt, m) {
+      var bits = bin(pt[2], pt[1]), x0 = nbx(i);
+      for (var j = 0; j < pt[1]; j++, i++) {
+        rect(nbx(i), Y, NB - 1, 20, 'ac-p' + (pt[0] === 'offset' || pt[0] === 'extra' ? 1 : pt[0] === 'escape' ? 2 : 0));
+        T(nbx(i) + (NB - 1) / 2, Y + 14.5, bits[j], 'ac-tin', 'middle', 11.5);
+      }
+      var x1 = nbx(i - 1) + NB - 1;
+      ctx.svg('path', { d: 'M' + (x0 + 1) + ',' + (Y + 25) + ' v4 H' + (x1 - 1) + ' v-4', class: 'ac-brace' }, g);
+      var label = pt[0] + (pt[0] === 'token' && s.o.parts.length > 1 && s.o.parts[0][0] === 'escape' ? ' ' + pt[2] : '');
+      T((x0 + x1) / 2, Y + 43, label, 'ac-muted', 'middle', 11.5);
+    });
+  }
+
+  function storeRowN(s) {
+    var o = s.o, Y = 96, bits = bitsOf(o.word);
+    T(NX0, Y - 8, 'acc << (64 − ' + o.cnt0 + '): the word stored', 'ac-sub');
+    for (var i = 0; i < 64; i++) {
+      var x = nbx(i), y = nby(i, Y) + (i >> 5) * 18, on = i < o.cnt0;
+      rect(x, y, NB - 1, 20, on ? 'ac-out' : 'ac-off');
+      T(x + (NB - 1) / 2, y + 14.5, bits[i], on ? 'ac-tin' : 'ac-faint', 'middle', 11.5);
+    }
+    for (var q = 0; q < 8; q++) {
+      // byte 7 of the word, the top, goes to p − 1; under each byte the byte of dst it goes to
+      var t = T(nbyte(q), Y + 33 + (q >> 2) * 42, '', 'ac-hex', 'middle', 11.5);
+      ctx.svg('tspan', { text: hex2(parseInt(o.word.substr(q * 2, 2), 16)) }, t);
+      ctx.svg('tspan', { text: ' → ' + endShort(o.p0 + q + 1), class: 'ac-muted' }, t);
+    }
+  }
+
+  function dstRowN(st, s) {
+    var N = 16;
+    for (var j = 0; j < N; j++) {
+      var x = NDX + (j & 7) * NCW, y = NDY + (j >> 3) * NDP, written = st.tail && j < st.wrote, v = written ? st.tail[23 - j] : null;
+      var cls = !written ? 'ac-empty' : j < st.fullTo ? 'ac-fin' : j === st.partAt ? 'ac-part' : 'ac-below';
+      if (s.kind === 'store' && j >= s.o.p0 && j < s.o.p0 + 8) cls += ' ac-hit';
+      rect(x, y, NCW - 4, 30, cls);
+      if (written) T(x + (NCW - 4) / 2, y + 20, hex2(v), j < st.fullTo || j === st.partAt ? 'ac-fint' : 'ac-faint', 'middle', 13);
+      T(x + (NCW - 4) / 2, y + 44, '−' + (j + 1), 'ac-muted', 'middle', 11.5);
+      if (!(j & 7)) T(NDX - 6, y + 44, 'end', 'ac-muted', 'end', 11.5);
+    }
+    // p between two rows is at the end of the first: the line stays next to the bytes written
+    var row = st.p === 0 ? 0 : (st.p - 1) >> 3, px = NDX + (st.p - 8 * row) * NCW - 2, py = NDY + row * NDP;
+    ctx.svg('line', { x1: px, y1: py - 5, x2: px, y2: py + 35, class: 'ac-ptr' }, g);
+    var pt = 'p = ' + end(st.p), w = pt.length * 7.2;
+    T(Math.max(NDX + w / 2, Math.min(NDX + 8 * NCW - 4 - w / 2, px)), py - 9, pt, 'ac-ptrt', 'middle');
+    T(NX0, NDY + 2 * NDP + 2, 'dst from its end backwards:', 'ac-muted', 'start', 11.5);
+    T(NX0, NDY + 2 * NDP + 18, 'bitstream byte 0 first', 'ac-muted', 'start', 11.5);
+  }
+
+  function drawN(s, st) {
+    root.setAttribute('viewBox', '0 0 ' + NW + ' ' + NH);
+    accRowN(st, s);
+    if (s.kind === 'put') putRowN(s);
+    if (s.kind === 'store') storeRowN(s);
+    if (s.kind === 'move') {
+      T(NX0, 88, 'enc_flush(), after the store', 'ac-sub');
+      T(NX0, 116, 'p −= ' + s.o.cnt0 + ' >> 3, ' + plural(s.o.p1 - s.o.p0, 'byte') + ';', 'ac-big', 'start', 15);
+      T(NX0, 140, 'cnt &= 7, ' + s.o.cnt0 + ' → ' + s.o.cnt1, 'ac-big', 'start', 15);
+    }
+    dstRowN(st, s);
+  }
+
   function say(k, st) {
     var s = steps[k];
     if (s.kind === 'start') {
@@ -153,6 +241,9 @@ BookAnim.define('accum', function (ctx) {
   function draw(k) {
     while (g.firstChild) g.removeChild(g.firstChild);
     var s = steps[k], st = state(k);
+    // the mode can change between two draws, e.g. a phone turned
+    if (ctx.narrow) { drawN(s, st); ctx.say(say(k, st)); return; }
+    root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
     accRow(st, s);
     if (s.kind === 'put') putRow(s);
     if (s.kind === 'store') storeRow(s, st);
@@ -163,5 +254,5 @@ BookAnim.define('accum', function (ctx) {
     dstRow(st, s);
     ctx.say(say(k, st));
   }
-  return { steps: steps.length, draw: draw, interval: 1400 };
+  return { steps: steps.length, draw: draw, interval: 1400, narrow: true };
 });

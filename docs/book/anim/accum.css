@@ -21,3 +21,4 @@
 .an-stage svg text.ac-sub, .an-stage svg text.ac-ptrt { font-weight: 600; }
 .an-stage svg text.ac-big { font-weight: 600; }
 .an-stage .ac-on { stroke-width: 1.2; }
+.an-stage svg tspan.ac-muted { fill: var(--muted); font-weight: 400; }
