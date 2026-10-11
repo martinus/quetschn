@@ -533,7 +533,7 @@ not; that is what the fuzzers check.
 
 ## A page of `ab`, bit by bit {#ch-format--example}
 
-The 8 bytes `02 00 61 62 dc 65 ef db` are a 4 KiB page of `ab` 2048 times. `seqlz-fast` and
+The {{ab.len}} bytes `{{ab.hex}}` are a 4 KiB page of `ab` 2048 times. `seqlz-fast` and
 `seqlz-fast-lit` both write exactly these bytes: 2 literals are far from saving 51 bytes, the
 minimum for coding them.
 

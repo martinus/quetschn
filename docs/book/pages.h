@@ -68,6 +68,32 @@ static inline void ab_page(u8* p) {
         p[i] = i & 1 ? 'b' : 'a';
 }
 
+/* chapter 2's page: two records of a cat and a dog, then zeros */
+static inline void cat_page(u8* p) {
+    memset(p, 0, SEQLZ_PAGE);
+    memcpy(p, "cat=1,dog=2;cat=3,dog=4;", 24);
+}
+
+/* chapter 4's second page: three matches of three kinds of offset, then z to the end */
+static inline void second_page(u8* p) {
+    memcpy(p, "abcdefghijklllllxycdefghi", 25);
+    memset(p + 25, 'z', SEQLZ_PAGE - 25);
+}
+
+/*
+ * chapter 11's page: 200 letters of "etaoinshrdlu " drawn by the C library's classic linear
+ * congruential generator from seed 1, then zeros
+ */
+static inline void letters_page(u8* p) {
+    unsigned int k, seed = 1;
+
+    memset(p, 0, SEQLZ_PAGE);
+    for (k = 0; k < 200; k++) {
+        seed = seed * 1103515245U + 12345U;
+        p[k] = (u8) "etaoinshrdlu "[(seed >> 16) % 13];
+    }
+}
+
 /* "name":[n bytes as numbers], for the JSON the programs print */
 static inline void array(const char* name, const u8* p, unsigned int n) {
     unsigned int i;

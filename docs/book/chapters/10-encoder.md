@@ -649,9 +649,15 @@ int main(void)
 	return 0;
 }
 ```
+@program ch10-ab
 
-It prints `02 00 61 62 dc 65 ef db`. With `true` instead of `false` the result is the same: 2 literals
-are too few to save the 51 bytes coded literals must save.
+It prints:
+
+@output ch10-ab
+
+With `true` instead of `false` the result is the same: 2 literals are too few to save the 51 bytes
+coded literals must save.
+@assert ab.coded.len == ab.len
 :::
 
 What this design gives up is the buffer of one page. The page is written with raw literals first, so a
