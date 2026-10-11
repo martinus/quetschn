@@ -128,7 +128,9 @@
 #define SEQLZ_LEN_LOG_BASE (SEQLZ_LEN_DIRECT - 4U)
 /*
  * The symbols of length values: 16 direct ones, then one per highest bit from 4
- * up to the page's bits, the largest length a page can need.
+ * up to the page's bits. The last one is never sent: the largest length value
+ * a page needs is below SEQLZ_PAGE, so its highest bit is at most
+ * QUETSCHN_PAGE_BITS - 1. It still has a code in the tables.
  */
 #define SEQLZ_LEN_SYMBOLS (SEQLZ_LEN_LOG_BASE + QUETSCHN_PAGE_BITS + 1U)
 /* the u16 at the start of every page */
@@ -305,8 +307,9 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_CODED_MIN 51U
 /*
  * The buffer the decoder decodes coded literals into, one per CPU. 16 bytes
- * more than a page, because the decoder copies literals 16 bytes at a time and
- * may read past the last one.
+ * more than a page: the decoder copies literals 16 bytes at a time and may read
+ * past the last one, and the last step of decode_literals() writes up to 8
+ * decoded bytes past it.
  */
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 16U)
 
