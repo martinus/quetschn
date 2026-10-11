@@ -344,7 +344,7 @@ completeness, see [chapter 8](#ch-codes).
 ### Length values: trained codes, measured twice
 
 A literal run of 15 or more bytes, or a match of 35 or more, needs a length value after the token: a
-symbol from a small table and some plain bits. Two tables of 25 symbols each, 27 with 16 KiB pages, are
+symbol from a small table and some plain bits. Two tables of 24 symbols each, 26 with 16 KiB pages, are
 part of the format for that. Replacing their codes with the symbol in 5 plain bits would take two tables out of the format, the
 trainer and the decoder's prefetch. It was measured twice. The first time the pages grew by 3.2 and 2.8
 bytes ([Length values in 5 plain bits](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)).

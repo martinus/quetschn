@@ -133,17 +133,17 @@ page touches.
 seqlz reads its bitstream **most significant bit first** ([chapter 4](#ch-format--bitstream)). The
 next code is then the top bits of the index, and the $2^{11-l}$ entries of a code are one range.
 Token 49's code is `0001`: its entries are the indices `0001xxxxxxx`, 128 to 255. At 4 bytes per entry
-and 16 entries per line, that is lines 8 to 15. Token 0's code `10001010` has the 8 entries 1104 to
-1111, all in line 69.
+and 16 entries per line, that is lines 8 to 15. Token 4's code `10001100` has the 8 entries 1120 to
+1127, all in line 70.
 
 Read **least significant bit first**, as seqlz did until 6th October 2026, the code is in the low
 bits of the index, and its entries are every $2^l$-th entry of the table. Token 49's 128 entries are
-then indices 8, 24, 40, and so on, one in every one of the 128 lines, and token 0's 8 entries are
-in 8 lines, 5, 21, 37 and so on, 16 lines apart:
+then indices 8, 24, 40, and so on, one in every one of the 128 lines, and token 4's 8 entries are
+in 8 lines, 3, 19, 35 and so on, 16 lines apart:
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 230" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 8 to 15 and token 0 one line, 69; read least significant bit first, token 49 has an entry in every line and token 0 in 8 lines" font-size="12">
+<svg viewBox="0 0 720 230" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 8 to 15 and token 4 one line, 70; read least significant bit first, token 49 has an entry in every line and token 4 in 8 lines" font-size="12">
   <text x="186" y="28" text-anchor="middle" font-weight="bold">most significant bit first</text>
   <rect x="50" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="67" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
@@ -214,8 +214,8 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <rect x="84" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="101" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="118" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <g class="mark"><rect x="135" y="100" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <rect x="152" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="135" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <g class="mark"><rect x="152" y="100" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <rect x="169" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="186" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="203" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
@@ -285,9 +285,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="40" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="40" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -301,9 +301,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="55" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="55" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -317,9 +317,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="70" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="70" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -333,9 +333,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="85" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="85" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -349,9 +349,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="100" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="100" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -365,9 +365,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="115" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="115" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -381,9 +381,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="130" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="130" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -397,9 +397,9 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="410" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="427" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="444" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="461" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="mark"><rect x="461" y="145" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="478" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="495" y="145" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="495" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="512" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="529" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
   <g class="acc"><rect x="546" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
@@ -421,7 +421,7 @@ in 8 lines, 5, 21, 37 and so on, 16 lines apart:
   <g class="acc"><rect x="50" y="186" width="14" height="14" class="fill-acc" fill-opacity="0.3" stroke="currentColor"/></g>
   <text x="70" y="198" text-anchor="start">lines with an entry of token 49, code 0001</text>
   <g class="mark"><rect x="50" y="206" width="14" height="14" class="fill-mark" fill-opacity="0.75" stroke="currentColor"/></g>
-  <text x="70" y="218" text-anchor="start">lines with an entry of token 0, code 10001010</text>
+  <text x="70" y="218" text-anchor="start">lines with an entry of token 4, code 10001100</text>
 </svg>
 </div>
 <figcaption>The 128 cache lines of the token table, 16 per row. Most significant bit first, a code&#39;s entries are one range; least significant bit first, they are spread over the table.</figcaption>

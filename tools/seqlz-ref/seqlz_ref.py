@@ -37,7 +37,7 @@ def load_tables(page_bits):
     tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml")}
     lit_src = (codec / f"seqlz_lit_sets_{size}.inc").read_text()
     lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
-    assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 13 + page_bits
+    assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 12 + page_bits
     assert len(lit) == 8 * 256
     hashes = spec_hashes()
     for name, lengths in [*tables.items(), ("LIT", lit)]:

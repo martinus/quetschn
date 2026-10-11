@@ -138,8 +138,8 @@ the hash table.
 5. **Token and offset in one put.** `enc_put(e, 0x31fe << 0 | (1 & 0), 16)`. For class 0 the offset is
    masked to 0 by `0U - (cls != 0)`, which is 0 here.
 6. **Length value.** `ml - 4 = 46` is at least 31, so `put_len_value()` writes `46 - 31 = 15` with the
-   `ml` table: values below 16 are their own symbol, and symbol 15 has the code `1111110`, 7 bits.
-7. **Flush.** The accumulator holds 23 bits, `0011 000111111110 1111110`. `enc_flush()` shifts them to
+   `ml` table: values below 16 are their own symbol, and symbol 15 has the code `1111111`, 7 bits.
+7. **Flush.** The accumulator holds 23 bits, `0011 000111111110 1111111`. `enc_flush()` shifts them to
    the top of a 64-bit word and stores it little endian at `e.p - 8`, so the top byte, `0x31`, lands
    at `dst + 8191`, the next, `0xfe`, at `dst + 8190`. `e.p` moves down by 2 whole bytes, and the 7
    bits left over stay in the accumulator for the next sequence.
@@ -149,8 +149,8 @@ The next two sequences are the first record and the start of the second. The tra
 the bits of all three:
 
 ```text
-seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111110
-seq 1: token code 1100000100, offset bits 01001101, ll value 12: symbol 12, code 111010
+seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111111
+seq 1: token code 1100000010, offset bits 01001101, ll value 12: symbol 12, code 111010
 seq 2: token code 101100110, offset bits 00100
 ```
 
@@ -226,21 +226,21 @@ Some rows worth reading closely:
 The whole page, summed by the program:
 
 ```text
-literals 674, bitstream 2160 bits = 270 bytes
+literals 674, bitstream 2159 bits = 270 bytes
 matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
 ```
 
 179 matches cover 3422 bytes, the 674 literals the other 674. 96 of the 179 matches are class 4, a
 multiple of 8 below 256: the records' period of 32 shows up as offsets 32, 64, 96, 128 and 192. 30
 more are class 5, multiples of 8 from 256 on, mostly 288, 9 records back; 25 of them are the 7 high
-bytes of a pointer. Only 2 matches needed the 12 offset bits of class 3. Of the 2160 bits, 1101 are
-token codes, 954 offset bits and 105 length values. By part of the page:
+bytes of a pointer. Only 2 matches needed the 12 offset bits of class 3. Of the 2159 bits, 1101 are
+token codes, 954 offset bits and 104 length values. By part of the page:
 
 | part | sequences | literals | bits |
 | --- | ---: | ---: | ---: |
 | header, bytes 0 to 63 | 1 | 14 | 23 |
 | records, 64 to 1599 | 155 | 167 | 1635 |
-| text, 1600 to 2224 | 22 | 493 | 475 |
+| text, 1600 to 2224 | 22 | 493 | 474 |
 | zeros, 2225 to 4095 | 2 | 0 | 27 |
 
 The records take three quarters of the bitstream, about 10.5 bits per sequence, and leave few
@@ -264,15 +264,16 @@ run in the kernel VM
 
 When the matcher is done, `compress_page()` calls `encoder_finish()` ([chapter 10](#ch-encoder)).
 At this point the literals fill `dst + 2` to `dst + 676`, and the bitstream fills the last 270 bytes
-of the 8192-byte buffer, backwards. 2160 is a multiple of 8, so after the flush of sequence 178, the
-last with bits, no bits are left in the accumulator, and `e.cnt` is 0: no partial last byte to count,
-`p` stays.
+of the 8192-byte buffer, backwards, the last of them in part: 2159 bits are 269 bytes and 7 bits. After
+the flush of sequence 178, the last with bits, `e.cnt` is 7. That flush already wrote the 7 bits on top
+of the byte below `p`, zeros below them, so `encoder_finish()` moves `p` down by one to count that
+byte.
 
 `encoder_finish()` writes the literal count, 674, as the u16 at the start, `a2 02`. Then it copies the
 bitstream from the end of the buffer to right after the literals. The gap between them is
 $(8192 - 270) - 676 = 7246$ bytes, much more than 270, so the copy cannot overlap: 33 copies of 8
 bytes, each a little-endian load from the back and a big-endian store to the front, which reverses
-the byte order, and 6 single bytes. The bitstream now starts at byte 676 with `31 fe fd 82`, and the
+the byte order, and 6 single bytes. The bitstream now starts at byte 676 with `31 fe ff 81`, and the
 function returns $2 + 674 + 270 = 946$.
 
 That is the page as `seqlz-fast` stores it, 23.1% of 4096 bytes. `seqlz_compress()` was called with
@@ -439,8 +440,8 @@ of the page, `lit_fast` 16 bytes before `lit_bound`, `in_fast` 8 bytes before th
 ## The loop over the sequences {#ch-trace--loop}
 
 **The first token.** `next_token()` finds `count = 0`, less than `11 + 12`, and refills: the 8 bytes
-at 525 loaded big endian, `p` moved on by 7 bytes, `count` set to 56. The top 11 bits of `31 fe fd
-82 ...` are `00110001111`, 399. Entry 399 of the token table is `0x80010000`: bit 31 says escape, and
+at 525 loaded big endian, `p` moved on by 7 bytes, `count` set to 56. The top 11 bits of `31 fe ff
+81 ...` are `00110001111`, 399. Entry 399 of the token table is `0x80010000`: bit 31 says escape, and
 bits 14 to 18 hold 4, the escape code's length. All 128 entries whose index starts with `0011` hold
 this value, which is how one lookup finds a 4-bit code in an 11-bit table.
 
@@ -453,14 +454,14 @@ to drop, since the token's bits are already gone.
 the fast path is out. `nl = 14` is not 15, so no `ll` value. The checks pass: `lit` is not past
 `lit_end`, 14 literals are left and fit in the page. `copy_literals()` copies them with one 16-byte
 copy, and `d` and `lit` move on by 14. The page is not full yet. `len` is 35, `SEQLZ_ML_CAP + 4`, so a
-length value follows: refill, look up the next 8 bits in the `ml` table, `1111110` is symbol 15, base
+length value follows: refill, look up the next 8 bits in the `ml` table, `1111111` is symbol 15, base
 15, no extra bits, and `len` becomes `35 + 15 = 50`. `off - 1 = 0` is less than the 14 bytes written,
 and 50 bytes fit. `copy_match()` with offset 1 builds the 8-byte pattern from `dst[13]`, a zero byte
 repeated 8 times by `repeat_pattern()`, and stores it every `repeat_step[1] = 8` bytes until 50 are
 covered, 56 bytes written in 7 stores. `d` is now at 64, and `next_token()` loads sequence 1's entry.
 
 **Sequence 1, slow path again.** The token's code is 10 bits, so its entry fills the 2 indices
-`1100000100x`. It says `ll` 15 with a value to follow, `ml` 6, 8 offset bits. The offset is cut out of
+`1100000010x`. It says `ll` 15 with a value to follow, `ml` 6, 8 offset bits. The offset is cut out of
 the bits right after the code with two shifts, `(bits << 10) >> 56`, which is 77. The `ll` value adds
 12, so 27 literals are copied, with two 16-byte copies, and the 6 bytes at offset 77 with two 8-byte
 copies.
@@ -488,7 +489,8 @@ literals used: `d - lit` is `end_gap`, 0 literals left for 0 bytes of the page. 
 the last, which has no token, and the loop leaves without reading one; `copy_literals()` copies 0 bytes. Then
 the checks that make a page valid only if it ends where its bits end
 ([chapter 4](#ch-format--validity)): the bit reader has read every byte, `p == end`, and `count`, the
-bits left, is 0, because 2160 bits are exactly 270 bytes. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
+bits left, is 1, fewer than 8, and that bit is 0: 2159 bits are 269 bytes and 7 bits, and the last
+byte's lowest bit is padding. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
 the page we started with.
 
 Without the scratch, the same 795 bytes are invalid: `seqlz_decode(t, src, 795, dst, NULL)` returns
@@ -509,9 +511,9 @@ so the output is too:
 ```text
 180 sequences
   # |  pos |  ll |   ml |  off | cl | token | code | off | values | bits
-seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111110
+seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111111
   0 |    0 |  14 |   50 |    1 |  0 |   510 | 16 e |   0 |      7 |   23
-seq 1: token code 1100000100, offset bits 01001101, ll value 12: symbol 12, code 111010
+seq 1: token code 1100000010, offset bits 01001101, ll value 12: symbol 12, code 111010
   1 |   64 |  27 |    6 |   77 |  2 |  1071 | 10   |   8 |      6 |   24
 seq 2: token code 101100110, offset bits 00100
   2 |   97 |   1 |    6 |   32 |  4 |  2081 |  9   |   5 |      0 |   14
@@ -530,7 +532,7 @@ seq 2: token code 101100110, offset bits 00100
 177 | 2224 |   1 |    7 | 1976 |  5 |  2609 |  6   |   9 |      0 |   15
 178 | 2232 |   0 | 1864 |    2 |  1 |  1008 |  7   |   4 |     16 |   27
 179 | 4096 |   0 |    0 |    - |  - |     - |    - |   - |      - |    0
-literals 674, bitstream 2160 bits = 270 bytes
+literals 674, bitstream 2159 bits = 270 bytes
 matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
 raw literals: 946 bytes = 2 + 674 + 270
 literal table 0: 4089 bits, 515 bytes in 8 streams
@@ -546,7 +548,7 @@ coded literals: 795 bytes, u16 0x82a2
 byte 2 = 0x10: table 0, w 7, header 10 bytes, sizes 66 59 65 64 64 65 66 66 = 515
 bitstream from byte 525, 270 bytes
 first 16 bytes: a2 82 10 c2 5d 10 08 0c 0a 85 ad 1f a3 bc 44 8c
-first 4 bytes of the bitstream: 31 fe fd 82
+first 4 bytes of the bitstream: 31 fe ff 81
 round trip ok, 161 sequences on the fast path, 18 on the slow path
 ```
 

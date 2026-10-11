@@ -44,9 +44,12 @@ The tables of 6th October were trained again before anyone used them, on swapped
 On 8th October a page became valid only if it ends where its bits end, see
 [The bitstream of the sequences](#the-bitstream-of-the-sequences) and [Coded literals](#coded-literals);
 the pages the compressor writes did not change. On 11th October the last sequence lost its token: a
-decoder knows it from the literals left, see [Decoding](#decoding). Pages got about 1.2 bytes smaller,
-the tables did not change
+decoder knows it from the literals left, see [Decoding](#decoding). Pages got about 1.2 bytes smaller
 ([explored-designs.md](explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
+The same day the token and length tables of both page sizes were trained again, without the last
+sequences, and the length values lost their last symbol, which no page needs, see
+[Length values](#length-values); the literal tables stayed
+([explored-designs.md](explored-designs.md#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)).
 
 The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
 since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
@@ -89,7 +92,7 @@ the decoder has to know it. Some numbers depend on it:
 | --- | --- | --- | --- |
 | `P` | 12 | 14 | log2 of the page size |
 | `PAGE` | 4096 | 16384 | bytes of the uncompressed page |
-| `LEN_SYMBOLS` | 25 | 27 | symbols of a length value, `13 + P`, see [Length values](#length-values) |
+| `LEN_SYMBOLS` | 24 | 26 | symbols of a length value, `12 + P`, see [Length values](#length-values) |
 
 The compressed page is a byte string of length `len`. Its length is not stored in it either: zram
 stores it and gives it to the decoder.
@@ -230,13 +233,13 @@ so that a decoder can check that it has the right ones:
 
 | table | SHA-256 |
 | --- | --- |
-| `TOK_4k` | `8348c354f914ba1510728521a7ee3d1469e998ec8ff71dcdd35140e6c9d6e997` |
-| `LL_4k` | `f019bfe73f61b5452473b27764ae587244bb5e31ddfca19c4a20288f2cce84d5` |
-| `ML_4k` | `25e6a220de355e0508ac0478b9ba4df4511bb4477600f2741e7feed9206b375b` |
+| `TOK_4k` | `557b1b495a383ca10bffe70bc2d1de6d67da8547027abc8eb9a291ffe5a6e689` |
+| `LL_4k` | `88ab2871c8fe2a3b055f9cce626b153555872dffe7038da8f084d32a73b145f6` |
+| `ML_4k` | `007f307f23de5ce8e43ef55257f104a3636df2e315f90b375b964dbe7b944645` |
 | `LIT_4k` | `efa140477f179ce5a9c5cc27b462fe5da459839b2ff71e0ee94fef939d63f4c2` |
-| `TOK_16k` | `50aa5b0520f5402c36d6c11fb30f582a8e2982ad1703b1da3449e0e678c3db94` |
-| `LL_16k` | `381d75ffcbba3662c01fb3a7d4445fa662da4e60af0195651a5ab1d7e91c887a` |
-| `ML_16k` | `a44d8993849e2385181b89d8299a518a39071652bb6d09d61383a5153acbb867` |
+| `TOK_16k` | `ef1e31daaca9a6571769c69fce641376aab2d0c86e11614c409e61e2c23a0d8d` |
+| `LL_16k` | `5e9e225ea55c28a9b0f358101521c670e89cbd32cec5e7f02fe608648dabb8b2` |
+| `ML_16k` | `fe6a87649f4b95830e663270eefe4289561269420cba951931f95c5fe38ccfce` |
 | `LIT_16k` | `cc37c3ba7e7ffdb91ff873d7c9a19f04301efe79c4b2fd7202c137212a769db4` |
 
 <!-- not in the kernel's copy -->
@@ -270,7 +273,7 @@ them; `seqlz_decode()` does that, and the result is the same as checking at ever
 
 ### Length values
 
-A length value is a number from 0 up to `2^(P+1) - 1`. Small values are a symbol of their own, larger
+A length value is a number from 0 up to `2^P - 1`. Small values are a symbol of their own, larger
 ones a symbol for a range of values plus bits that say which one in the range:
 
 ```text
@@ -279,9 +282,11 @@ if s < 16:  value = s
 else:       b = s - 12;  value = 2^b + read(b)
 ```
 
-The symbols 16 to `12 + P` stand for the ranges `[2^b, 2^(b+1))` with `b = s - 12`, i.e. 16 to 31, 32 to
+The symbols 16 to `11 + P` stand for the ranges `[2^b, 2^(b+1))` with `b = s - 12`, i.e. 16 to 31, 32 to
 63, and so on, and `read(b)` says how far into the range the value is. E.g. 100 is in `[64, 128)`, so
-`b = 6`, the symbol is 18, and `read(6)` gives `100 - 64 = 36`.
+`b = 6`, the symbol is 18, and `read(6)` gives `100 - 64 = 36`. *Why `2^P - 1`:* the largest value a
+page needs is `ll - 15` of a page of `PAGE` literals, `PAGE - 15`, so a symbol for `[2^P, 2^(P+1))`
+would never be sent.
 
 ### Tokens
 

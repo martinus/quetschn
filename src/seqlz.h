@@ -130,11 +130,10 @@
 #define SEQLZ_LEN_LOG_BASE (SEQLZ_LEN_DIRECT - 4U)
 /*
  * The symbols of length values: 16 direct ones, then one per highest bit from 4
- * up to the page's bits. The last one is never sent: the largest length value
- * a page needs is below SEQLZ_PAGE, so its highest bit is at most
- * QUETSCHN_PAGE_BITS - 1. It still has a code in the tables.
+ * up to QUETSCHN_PAGE_BITS - 1. The largest length value a page needs is below
+ * SEQLZ_PAGE, so no higher bit is needed.
  */
-#define SEQLZ_LEN_SYMBOLS (SEQLZ_LEN_LOG_BASE + QUETSCHN_PAGE_BITS + 1U)
+#define SEQLZ_LEN_SYMBOLS (SEQLZ_LEN_LOG_BASE + QUETSCHN_PAGE_BITS)
 /* the u16 at the start of every page */
 #define SEQLZ_HEADER 2U
 /*
