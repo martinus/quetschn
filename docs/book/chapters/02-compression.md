@@ -127,6 +127,10 @@ a moment earlier. Take a page that is `ab` 2048 times. Its compressed form is 2 
 and one match of 4094 bytes at offset 2: each byte copied is the byte 2 places before it, which the
 copy has just written.
 
+@anim overlap A match of 10 bytes at offset 1, 2 or 3, one byte per step. The byte loop copies what it wrote itself a moment before; memmove() copies the source as it was before the copy, and gets bytes that were not written yet.
+
+The same as a picture:
+
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 150" role="img" aria-label="The output ab followed by a match at offset 2: each copied byte comes from 2 places before it, which the copy wrote itself.">

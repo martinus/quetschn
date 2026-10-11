@@ -1,0 +1,26 @@
+/* the book's animations, see anim/core.js */
+figure.anim { margin: 1.8rem 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); font-family: var(--display); }
+figure.anim.wide { --animw: min(66rem, calc(100vw - var(--rail) - 4rem)); width: var(--animw); margin-left: calc(50% - var(--animw) / 2); }
+body.railhidden figure.anim.wide { --animw: min(66rem, calc(100vw - 4rem)); }
+.an-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--rule); }
+.an-ctl { display: flex; gap: 0.1rem; }
+.an-ctl .icon { color: var(--ink); }
+.an-ctl .i-pause, figure.anim.playing .an-ctl .i-play { display: none; }
+figure.anim.playing .an-ctl .i-pause { display: block; }
+.an-scrub { flex: 1; min-width: 7rem; accent-color: var(--accent); }
+.an-pos { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.an-choice { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.an-choice button { font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--muted); background: transparent; border: 1px solid var(--rule);
+                    border-radius: 4px; padding: 0.15rem 0.55rem; cursor: pointer; }
+.an-choice button[aria-pressed="true"] { color: var(--paper); background: var(--accent); border-color: var(--accent); }
+.an-say { margin: 0; min-height: 3.1em; padding: 0.55rem 0.9rem; background: var(--why); font-family: var(--body); font-size: 0.95rem; line-height: 1.5; }
+.an-stage { padding: 0.9rem; overflow-x: auto; }
+.an-stage svg { display: block; max-width: 100%; height: auto; margin-inline: auto; color: var(--ink); font-family: var(--mono); }
+/* on a phone a drawing keeps a readable size and scrolls sideways in the stage */
+.an-stage > svg { min-width: 560px; }
+.an-stage svg text { fill: currentColor; }
+figure.anim figcaption { padding: 0 0.9rem 0.8rem; font-size: 0.85rem; color: var(--muted); }
+/* moves between steps; none where the reader asks for less motion */
+.an-move { transition: transform 0.35s ease, opacity 0.35s ease, fill 0.35s ease; }
+@media (prefers-reduced-motion: reduce) { .an-move { transition: none; } }
+@media (max-width: 62rem) { figure.anim.wide { --animw: 100%; margin-left: 0; } }

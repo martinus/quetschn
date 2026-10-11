@@ -15,6 +15,10 @@ Directives, each on a line of its own, outside fenced code:
   $$ tex $$
       a formula of its own, on a line of its own
 
+  @anim <name> [wide] Caption
+      an animation, anim/<name>.js on anim/core.js; if anim/<name>.c exists, it is built with src/
+      and its output, JSON, is the animation's data. "wide" lets it use the width beside the column
+
   @stepper decode
       the step-through of seqlz_decode(): stepper/instrument.py and stepper/trace.c record the
       real function decoding the pages, stepper/stepper.js plays it; needs a C compiler
@@ -212,6 +216,51 @@ def render_stepper(what, where):
             f'<script>{(HERE / "stepper" / "stepper.js").read_text()}</script>')
 
 
+ANIM_CORE = [False]
+
+
+def anim_data(name):
+    """the JSON that anim/<name>.c prints, built with the codec of src/, or None"""
+    import tempfile
+    c = HERE / "anim" / f"{name}.c"
+    if not c.exists():
+        return None
+    # a file of src/ that the animation includes, to reach its static functions, is not linked again
+    text = c.read_text()
+    srcs = [str(REPO / f"src/seqlz_{n}.c") for n in ("codes", "compress", "decompress", "default_tables", "lit_sets")
+            if f'#include "seqlz_{n}.c"' not in text]
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["cc", "-O1", "-I", str(REPO / "src"), str(c), *srcs, "-o", f"{tmp}/a"], check=True)
+        out = subprocess.run([f"{tmp}/a"], capture_output=True, text=True, check=True).stdout
+    json.loads(out)  # fails here, not in the browser
+    return out
+
+
+def render_anim(args, where):
+    m = re.match(r"(\w[\w-]*)(\s+wide)?\s*(.*)$", args)
+    if not m:
+        sys.exit(f"{where}: @anim <name> [wide] caption")
+    name, wide, caption = m.group(1), bool(m.group(2)), m.group(3)
+    d = HERE / "anim"
+    if not (d / f"{name}.js").exists():
+        sys.exit(f"{where}: anim/{name}.js does not exist")
+    out = ""
+    if not ANIM_CORE[0]:
+        ANIM_CORE[0] = True
+        out += f'<style>{(d / "core.css").read_text()}</style><script>{(d / "core.js").read_text()}</script>'
+    if (d / f"{name}.css").exists():
+        out += f'<style>{(d / f"{name}.css").read_text()}</style>'
+    data = anim_data(name)
+    fid = f"anim-{name}"
+    out += (f'<figure class="anim{" wide" if wide else ""}" id="{fid}" data-anim="{name}" tabindex="-1">'
+            f'<div class="an-bar"></div><p class="an-say" aria-live="polite"></p><div class="an-stage"></div>'
+            + (f'<figcaption>{md(caption)[3:-4]}</figcaption>' if caption else "") + '</figure>')
+    if data is not None:
+        out += f'<script type="application/json" id="{fid}-data">{data}</script>'
+    out += f'<script>{(d / f"{name}.js").read_text()}</script>'
+    return out
+
+
 def render_fence(lang, body):
     hl = highlight_lines(body, lang or "text")
     return (f'<pre class="code snippet" data-lang="{html.escape(lang or "")}"><code>'
@@ -312,6 +361,11 @@ def preprocess(text, where):
             a = int(m.group(2))
             b = int(m.group(3) or a)
             out.append(stash(render_listing(m.group(1), a, b)))
+            i += 1
+            continue
+        m = re.match(r"^@anim\s+(.*)$", line)
+        if m:
+            out.append(stash(render_anim(m.group(1).strip(), f"{where}:{i + 1}")))
             i += 1
             continue
         m = re.match(r"^@stepper\s+(\w+)\s*$", line)
