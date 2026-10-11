@@ -97,6 +97,8 @@ code has to ask for the lines ahead of time. That is a **prefetch**: an instruct
 CPU to bring a line into the cache and does not wait for it. On x86-64 it is `prefetcht0`, on arm64
 `prfm`, and the kernel's name for it is `prefetch()`.
 
+@anim misses A model, not a measurement: 8 lookups whose addresses do not depend on each other and whose lines are in no cache, about 100 ns per miss as above, and 20 ns of work on each entry. The out-of-order core's window holds the work of 3 lookups. One step is 20 ns.
+
 `seqlz_decode()` asks for the lines of its tables before it reads the first byte of the page, 8 lines
 per round of a small loop. [Chapter 12](#ch-dec-basics--prefetch) goes through that loop,
 `prefetch_lines()`, line by line, and says why a table that does not start at a cache line misses its
@@ -431,6 +433,10 @@ first, they land on lines all over the table. Counted on 20 000 pages, a page to
 token table's 128 lines most significant bit first, and 55.3 least significant bit first. The bytes
 of the pages are the same either way: the change was the order, not the codes.
 
+The same count for the 180 token lookups of [chapter 16](#ch-trace)'s page:
+
+@anim lines wide The token lookups of chapter 16's page, found with the real codec, and the line of the token table each one reads: most significant bit first as seqlz reads, and the same bits reversed. One page, so the counts are its own, not the mean of 20 000 pages.
+
 ::: measured The bit order on the phone
 On the Mi 9T's big core, a Cortex-A76, with the token table not prefetched on that core as it was
 then: with the table's codes in one range, cold reads were 9.57 to 9.73 µs in every run; with the codes spread, one build of the same decoder read in 9.39 µs and
@@ -685,7 +691,7 @@ cold reads at the median 162 ns closer to `lz4` on the little core and 126 ns on
 sequences in its window and starts their misses early. An in-order core reaches each one only when it
 gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read. On the PC,
 prefetching the tables once made about 100 ns of difference, within the scatter of that measurement
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)). The [model of 8 misses](#anim-misses) in the section on prefetching shows the two kinds of core and the prefetches side by side.
 
 Until 10th October 2026 the arm64 decoder had a second loop, written for in-order cores; now one loop
 runs on every core, because nothing else in the kernel's `lib/` asks which CPU it runs on
