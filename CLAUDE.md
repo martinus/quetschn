@@ -112,7 +112,8 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
 
 - CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, gcc 16 KiB
   release+sanitize (no kernel tree), fuzz 60 s per target (4 KiB, 16 KiB, MSan), `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
-  (`tools/seqlz-ref/check.sh`, `tools/check-links.py`), `kernel-port` (`tools/kernel-port/check.sh` for x86-64, arm64, arm, s390; `kunit.sh` in UML on x86-64); `ci-ok` is the one required check (branch
+  (`tools/seqlz-ref/check.sh`, `tools/check-links.py`), `book` (`docs/book/build.py --check`, `lint.py`; the job
+  `pages` publishes the page from `main` to https://martin.ankerl.com/quetschn/), `kernel-port` (`tools/kernel-port/check.sh` for x86-64, arm64, arm, s390; `kunit.sh` in UML on x86-64); `ci-ok` is the one required check (branch
   protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
   its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.
   `.github/workflows/cflite.yml` is ClusterFuzzLite: daily, an hour each with ASan, UBSan and MSan, and
@@ -172,6 +173,11 @@ Commands: `docs/measuring.md`. Rules that matter:
   codes; `tools/seqlz-viz/compress.c` built with `-Isrc` compresses a page file. Say which tables a
   measurement used (e.g. "tables of 7 October").
 - Codec comparison charts: time per page on x, memory as % of page on y, both from 0.
+- The book `docs/book/` lists `src/` by line numbers. A change of `src/` that moves lines fails CI's
+  `book` job ("not covered"), or quietly shifts a listing by a few lines. In the same PR: `python3
+  docs/book/remap.py origin/main` prints how the listings and the line numbers in the prose move,
+  `--write` applies it; then read the prose next to every listing it marks CHANGED, and run
+  `docs/book/build.py --check` (needs `npm install` in `docs/book` once).
 
 ## Writing and git
 

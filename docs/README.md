@@ -3,6 +3,7 @@
 | document | what it is | read it if you want to |
 | --- | --- | --- |
 | [seqlz.md](seqlz.md) | how seqlz works, and why each choice was made, with the numbers | understand the codec. It explains every term where it is first used, no compressor experience needed |
+| [seqlz, line by line](https://martin.ankerl.com/quetschn/) | a book that explains every line of `src/`, with animations and step-throughs of the real code; built from [`book/`](book) by CI | understand the code itself, line by line |
 | [format.md](format.md) | the bytes of a compressed page, and which pages are valid | write a decoder, or check one |
 | [measuring.md](measuring.md) | the commands: corpus, clock, kernel VM, userspace harness, phone | reproduce a number, or measure a change |
 | [plan.md](plan.md) | the goal, the score, what zram needs from a codec, the phases, the risks, and where the project stands | know why the project does what it does |
