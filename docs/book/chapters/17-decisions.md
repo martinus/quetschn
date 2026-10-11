@@ -365,6 +365,10 @@ and so does each literal stream
 ([A page ends where its bits end](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)).
 zram keeps no checksum, so this strict end is what rejects a damaged page with bytes too many, as `lz4`
 rejects input it did not use. It cost nothing in the VM and 0.07 to 0.10 µs per warm read on the A55.
+Since 11th October 2026 the last sequence has no token either: the decoder knows it from the literals
+left, which saves 1.2 bytes per page, 0.12% of zsmalloc memory, at no time the VM or the phone could
+measure
+([The last sequence without a token](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 
 The page has no version byte. zram's pages never outlive the kernel that wrote them, so a new format
 needs a new kernel, not a new algorithm name

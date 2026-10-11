@@ -433,7 +433,8 @@ first, they land on lines all over the table. Counted on 20 000 pages, a page to
 token table's 128 lines most significant bit first, and 55.3 least significant bit first. The bytes
 of the pages are the same either way: the change was the order, not the codes.
 
-The same count for the 180 token lookups of [chapter 16](#ch-trace)'s page:
+The same count for the 179 token lookups of [chapter 16](#ch-trace)'s page, one for each sequence but
+the last, which has no token:
 
 @anim lines wide The token lookups of chapter 16's page, found with the real codec, and the line of the token table each one reads: most significant bit first as seqlz reads, and the same bits reversed. One page, so the counts are its own, not the mean of 20 000 pages.
 

@@ -4,7 +4,8 @@
 literals decoded into the scratch if the page has any ([chapter 13](#ch-literals-dec)), and then runs
 one loop over the sequences. Each round of the loop looks up one token in the token table, takes the
 offset out of the bits after it, and copies the literals and the match. There is no count of the
-sequences: the loop ends when the literals of a sequence fill the page.
+sequences, and the last one has no token: the loop ends when the literals left fill the rest of the
+page, and copies them.
 
 The loop has two paths. The **fast path** is for a sequence without a length value that is far from
 the end of the page, of the literals and of the input: it copies a fixed 16 bytes of literals and 16 to
@@ -26,10 +27,10 @@ flowchart TB
     F --> FC["copy16() literals,<br/>check off,<br/>copy_match_fast()"]
     FC --> E
     C -->|"no: slow path"| L["ll value if any,<br/>check nl, copy_literals()"]
-    L --> D{"d == d_end?"}
-    D -->|yes| END["last sequence:<br/>ml - 4 = 0, class 0?<br/>then the end checks"]
-    D -->|no| M["ml value if any,<br/>check off and len,<br/>copy_match()"]
-    M --> NT["tok = next_token(), skip = 0"]
+    L --> M["ml value if any,<br/>check off and len,<br/>copy_match()"]
+    M --> D{"literals left =<br/>bytes left?"}
+    D -->|yes| END["last sequence:<br/>copy_literals() the literals left,<br/>then the end checks"]
+    D -->|no| NT["tok = next_token(), skip = 0"]
     NT --> E
 </pre>
 
@@ -157,9 +158,9 @@ predictor gets right. Lines 511 to 516 are the fast half of `seqlz_br_refill()`
 pointer so that the function can change the caller's variable; after inlining it is a register.
 
 Why the bits never run short, with numbers. After a refill `count` is at least 56. The sequence in
-whose `next_token_fast()` the refill runs has dropped its own bits already, on line 616. Between this
+whose `next_token_fast()` the refill runs has dropped its own bits already, on line 626. Between this
 refill and the next one, two fast sequences take their bits: the next one, whose `next_token_fast()`
-does not refill, and the one after it, which drops its bits on line 616 before its own
+does not refill, and the one after it, which drops its bits on line 626 before its own
 `next_token_fast()` refills. Each takes its token's code, at most 11 bits, and its offset bits:
 
 | page size | most offset bits | one fast sequence | two | left of 56 |
@@ -303,10 +304,11 @@ but then the reader has to know that. Here `lit_bound` is the end of the input: 
 bitstream's bytes, which are in the buffer and may be read, though they are not literals.
 
 One rule of the format is not checked here: a raw page with more than 4096 literals. A page has room
-for at most 4096 literals, so such a page cannot use them all, and the end check `lit != lit_end`
-rejects it.
+for at most 4096 literals, so such a page cannot use them all: the literals left are always more than
+the bytes the page still needs, the loop never finds its end, and a check of room in the slow path
+rejects the page.
 
-@listing src/seqlz_decompress.c 578-591
+@listing src/seqlz_decompress.c 578-601
 
 `d_fast` is a pointer, 64 bytes before the end of the page, which is always inside the page. The other
 two limits are numbers of type `unsigned long`, and the comment says why: with a short input,
@@ -322,25 +324,38 @@ never taken. Without the guard, `s_end - 8` would be below `s`, and `br.p >= s` 
 well, unless the subtraction wrapped around address 0; the 0 states the rule without depending on
 where the buffer is.
 
-Line 591 gets the first token's entry. `count` is 0, so `next_token()` refills first.
+Lines 591 to 600 prepare the end. The page needs `d_end - d` more bytes, and `lit_end - lit` literals
+are left. When the two are equal, no match fits any more, since every match has at least 4 bytes, and
+the literals left are the last sequence, which has no token ([chapter 4](#ch-format--end)). Comparing
+the two differences costs two subtractions per sequence. `d - lit == d_end - lit_end` is the same
+equation, and its right side never changes, so line 597 computes it once, as `end_gap`. `d` and `lit`
+point into different buffers, the page and the input or the scratch, and C defines the difference of
+two pointers only within one array, so both sides are numbers, as `lit_fast` and `in_fast` above.
+
+Lines 599 and 600 take care of the one page that ends before its first token: a page of 4096 literals
+and no match, where the literals left fill the page from the start. Its bitstream is empty, and the
+`goto` jumps to the copy after the loop. With raw literals such a page is 4098 bytes and never stored;
+with coded literals it can be smaller than a page, and the format allows it.
+
+Line 601 gets the first token's entry. `count` is 0, so `next_token()` refills first.
 
 ## The loop: escape, then the offset without a branch {#ch-decode--offset}
 
-@listing src/seqlz_decompress.c 592-607
+@listing src/seqlz_decompress.c 602-617
 
-The loop has no condition; it ends with a `break` when the page is full, or with a `return -EINVAL`.
-Every round is one sequence.
+The loop has no condition; it ends with the `break` on line 688 when the literals left fill the rest of
+the page, or with a `return -EINVAL`. Every round is one sequence with a match.
 
-Lines 595 to 607 handle the escape first. Only 576 of the 3072 tokens have a code of their own in the
+Lines 605 to 617 handle the escape first. Only 576 of the 3072 tokens have a code of their own in the
 4 KiB tables; the others are sent as the escape's code, `0011`, followed by the token's number in 12
 bits ([chapter 4](#ch-format--token)). The escape's entry has bit 31 set, `TOK_ESCAPE_AT`, so `tok >>
 TOK_ESCAPE_AT` is 1 for it and 0 for every other entry, and only the code's length in its drop field,
-4 ([chapter 7](#ch-internal)). Line 599 drops the escape's code. Line 600 refills: the 12 bits may not
+4 ([chapter 7](#ch-internal)). Line 609 drops the escape's code. Line 610 refills: the 12 bits may not
 all be in the register, since `next_token()` only made sure of 23 or 25 bits before the escape's code
-was looked up. Line 601 takes the top 12 bits, line 603 drops them.
+was looked up. Line 611 takes the top 12 bits, line 613 drops them.
 
-12 bits can hold up to 4095, and the tokens end at 3071. Line 604 rejects the 1024 numbers that are no
-token. Then line 606 computes the token's entry with `token_entry(idx, 0)`, the same function that
+12 bits can hold up to 4095, and the tokens end at 3071. Line 614 rejects the 1024 numbers that are no
+token. Then line 616 computes the token's entry with `token_entry(idx, 0)`, the same function that
 filled the table ([chapter 7](#ch-internal)), with a code length of 0: the code and the 12 bits are
 already dropped, so the entry's shift and drop count only the offset bits. From here on, an escaped token
 is the same as any other.
@@ -350,7 +365,7 @@ is sent as `0011`, `001000000001` (513) and then 4 offset bits. `token_entry(513
 `TOK_N` 0, `TOK_BACK` 60, `TOK_DROP` 4, `ll` 1, `ml` 4, no length value. The offset is then the top 4
 bits of the register.
 
-@listing src/seqlz_decompress.c 608-619
+@listing src/seqlz_decompress.c 618-629
 
 This is the step [chapter 7](#ch-internal) built the token entry for: the offset in three shifts and a
 select, with every number taken from the entry. Right after the lookup, the register has the token's
@@ -364,8 +379,8 @@ code on top, `TOK_N(tok)` bits, then the offset bits.
 
 For class 0, the repeat offset, there are no offset bits. `back` is then 0 and not 64, because
 `token_entry()` stores `(64 - raw_bits) & 63`: a shift by 64 is undefined in C. With `back = 0`, `raw` is
-some part of the register, a meaningless number, and line 617 does not use it: `off = back ? raw : last`.
-Line 616 drops the code and the offset bits together, `TOK_DROP(tok)` = code length + offset bits.
+some part of the register, a meaningless number, and line 627 does not use it: `off = back ? raw : last`.
+Line 626 drops the code and the offset bits together, `TOK_DROP(tok)` = code length + offset bits.
 
 Three tokens from the 4 KiB tables, each with its real code and entry, printed by a program compiled
 against `src/`. The register holds the code, the offset bits, and then made-up bits `1010...`:
@@ -398,14 +413,14 @@ per sequence went into that; the entries of 4 bytes took the decoder from 16 547
 per page there, and the length value flag in the entry, bit 30, to 15 129
 ([explored-designs.md, "seqlz's decoder for an in-order core"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)).
 
-Lines 618 and 619 take `ll` and `ml` out of the entry. `TOK_ML` is `ml` itself, from 4 to 35, not `ml -
+Lines 628 and 629 take `ll` and `ml` out of the entry. `TOK_ML` is `ml` itself, from 4 to 35, not `ml -
 4`.
 
 ## The fast path {#ch-decode--fast}
 
-@listing src/seqlz_decompress.c 620-648
+@listing src/seqlz_decompress.c 630-659
 
-The condition on lines 627 to 629 has four parts, and each one is what lets the code below skip a check:
+The condition on lines 638 to 640 has four parts, and each one is what lets the code below skip a check:
 
 1. `!(tok & (1U << TOK_VALUE_AT))`: no length value follows. Then `nl` is at most 14 and `len` at most
    34, because 15 and 35 are exactly the values that need a length value, and the entry's bit 30 is set
@@ -415,16 +430,20 @@ The condition on lines 627 to 629 has four parts, and each one is what lets the 
 3. `(unsigned long)lit <= lit_fast`: 16 readable bytes at `lit`.
 4. `(unsigned long)br.p <= in_fast`: 8 bytes of input for the refill.
 
-The comment on lines 620 to 626 adds a consequence: the last sequence never takes the fast path. Its
-literals end at the end of the page, and a fast sequence starts 64 bytes or more before the end and
-moves `d` by at most $14 + 34 = 48$ bytes, so it ends 16 bytes or more before it. Every page therefore ends
-on the slow path, where the checks are.
+The comment on lines 630 to 637 adds a consequence: the page's last match, the one after which the
+literals left fill the page, never takes the fast path. After it fewer than 8 bits of the input are
+left, the padding of the last byte. The fast path needs `br.p <= in_fast`, so 8 bytes of input are not
+loaded yet, and at least 64 bits are not used. So the fast path needs no end check of its own, and
+every page ends on the slow path, where the checks are. On a damaged page the literals left could
+match the bytes left right after a fast sequence. The loop then goes on, every further match puts the
+literals left further ahead of the bytes left by its length, the two never meet again, and a check of
+room rejects the page.
 
-In the body, line 630 looks up the next token first, as explained above. Line 639 copies 16 bytes of
-literals, and lines 640 and 641 move both pointers by the real `nl`. Line 642 remembers the offset for a
+In the body, line 641 looks up the next token first, as explained above. Line 650 copies 16 bytes of
+literals, and lines 651 and 652 move both pointers by the real `nl`. Line 653 remembers the offset for a
 later class 0.
 
-Line 643 is the offset check, the same as in the slow path: the match must start inside the bytes
+Line 654 is the offset check, the same as in the slow path: the match must start inside the bytes
 written so far, `1 <= off <= d - dst`. It is one unsigned compare: `off - 1U >= (unsigned int)(d - (u8
 *)dst)`. For `off = 0`, `off - 1U` wraps around to 4 294 967 295, which is never below the bytes written,
 so 0 is rejected without a compare of its own. With 24 bytes written: `off = 24` gives `23 >= 24`, false,
@@ -434,13 +453,13 @@ the match may start at the first byte of the page; `off = 25` gives `24 >= 24`, 
 Then `copy_match_fast()` and `d += len`, and `continue` goes to the next round with the entry the lookup
 already brought.
 
-The comment on lines 631 to 638 explains a check that is missing on purpose: `nl` is not compared with
+The comment on lines 642 to 649 explains a check that is missing on purpose: `nl` is not compared with
 the literals left. A page could claim more literals in its tokens than its header has. Then `lit` moves
 past `lit_end`, and the bytes after the literals are copied as if they were literals: the bitstream's
 bytes for raw literals, the scratch's spare bytes for coded ones. Nothing is read outside memory that
 may be read, because `lit <= lit_bound - 16` before the copy, and the copy reads 16 bytes. And the page is
-still rejected: the next slow sequence checks `lit > lit_end` first, and the end checks require `lit ==
-lit_end`. The comment gives the saving, 3 instructions per sequence.
+still rejected: the next slow sequence checks `lit > lit_end` first, and only the slow path ends the
+loop. The comment gives the saving, 3 instructions per sequence.
 
 ::: warn The check that moved
 The first fast path, in September 2026, needed a check of `nl` that no test covered: without it, `lit`
@@ -455,16 +474,16 @@ the slow path came with it; without that, AddressSanitizer reported a heap overf
 
 ## The slow path: length values, and every check {#ch-decode--slow}
 
-@listing src/seqlz_decompress.c 649-668
+@listing src/seqlz_decompress.c 660-669
 
 A sequence ends up here if a length value follows, or if it is near one of the three ends.
 
-Lines 650 to 653: an `ll` of 15 in the token means 15 or more, and the rest follows as a length value
+Lines 661 to 664: an `ll` of 15 in the token means 15 or more, and the rest follows as a length value
 ([chapter 4](#ch-format--length-values)). The refill before `seqlz_br_value()` makes sure of the 20 or 22
 bits it may take. The bitstream has the offset bits before the length values, which matches the code:
-the offset bits were dropped with the token on line 616.
+the offset bits were dropped with the token on line 626.
 
-Lines 654 to 656 are the checks of the literals. The order matters, and C's `||` evaluates left to right
+Lines 665 to 667 are the checks of the literals. The order matters, and C's `||` evaluates left to right
 and stops at the first true part:
 
 - `lit > lit_end`: the fast path has gone past the literals, see above. This has to come first: with
@@ -473,45 +492,52 @@ and stops at the first true part:
 - `nl > (unsigned int)(lit_end - lit)`: more literals than are left.
 - `nl > (unsigned int)(d_end - d)`: more literals than fit into the page.
 
-Line 657 copies them with `copy_literals()` ([chapter 12](#ch-dec-basics--literals)), which may read
-up to `lit_bound`, not just `lit_end`, for its 16-byte copies.
+Line 668 copies them with `copy_literals()` ([chapter 12](#ch-dec-basics--literals)), which may read
+up to `lit_bound`, not just `lit_end`, for its 16-byte copies. No test of the end follows: every token
+has a match, only the last sequence has none, and the last sequence has no token.
 
-Lines 660 to 668 detect the last sequence. If the literals filled the page, this has to be the last
-sequence, and the format says what its token must be: `ml - 4 = 0` and class 0
-([chapter 4](#ch-format--validity)). `len != 4U` is `ml - 4 != 0`, and `TOK_BACK(tok) != 0U` is a class
-other than 0, since every other class has offset bits and so a `back` from 50 to 60. Any other token
-there makes the page invalid. That rule costs one compare per page and gives each page one way to end:
-without it, the last token could carry offset bits that mean nothing, or announce a match length value
-the decoder never reads. The format has no count of the sequences, so this is the only way the loop
-ends with success.
+Until 11th October 2026 it had one, and here the decoder checked `if (d == d_end)`: if the literals
+had filled the page, the token had to have `ml - 4 = 0` and class 0, else the page was invalid. The
+token said what the decoder knew already, and cost about 1.2 bytes per page.
 
-@listing src/seqlz_decompress.c 669-683
+@listing src/seqlz_decompress.c 670-691
 
-Line 670: an `ml` of 35 in the entry, `SEQLZ_ML_CAP + 4`, means 35 or more, and the rest follows as a
+Line 671: an `ml` of 35 in the entry, `SEQLZ_ML_CAP + 4`, means 35 or more, and the rest follows as a
 length value. With 4 KiB pages a length value is at most 8191, so `len` is at most 8226 here, more than a
 page; the check below catches that.
 
-Line 674 sets the repeat offset before the checks; if they fail, the function returns and `last` does not
-matter. Lines 676 to 678 check the offset as on the fast path, and that the match fits into the page.
-`copy_match()` copies it ([chapter 12](#ch-dec-basics--copy-match)). Then the next token comes through
-`next_token()`, with the check of the bits left, and `skip = 0` restarts the refill schedule of the fast
-path.
+Line 675 sets the repeat offset before the checks; if they fail, the function returns and `last` does not
+matter. Lines 677 to 679 check the offset as on the fast path, and that the match fits into the page.
+`copy_match()` copies it ([chapter 12](#ch-dec-basics--copy-match)).
+
+Lines 682 to 688 look for the end. If `d - lit` is `end_gap`, the literals left are exactly the bytes
+the page still needs, and the loop ends without reading another token. Otherwise the next token comes
+through `next_token()`, with the check of the bits left, and `skip = 0` restarts the refill schedule of
+the fast path.
 
 ## The end: a page must end where its bits end {#ch-decode--end}
 
-@listing src/seqlz_decompress.c 684-694
+@listing src/seqlz_decompress.c 692-704
 
-The loop leaves only through the `break` on line 667, so the page is full here. The checks on lines 689
-to 685 make sure the input had nothing else to say:
+The loop leaves only through the `break` on line 688, or never enters, from line 600. Either way the
+literals left are exactly the bytes the page still needs, and line 694 copies them with the slow
+path's `copy_literals()`: the last sequence. On the page of `ab` they are 0, on
+[chapter 16](#ch-trace)'s page too. A `memcpy()` here, a call instead of a second inlined copy loop,
+made the swap-in 0.02 µs slower in the kernel VM, at the edge of what the boots of one kernel differ by
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
+After the copy the page is full and every literal is used, by the condition the loop ended on, so there
+is nothing to check about them. The checks on lines 700 to 702 make sure the input had nothing else to
+say:
 
 | check | what it means | an example it rejects |
 | --- | --- | --- |
-| `d != d_end` | the page is full. That always holds here, since the loop ends only when `d == d_end`, so this test is never true; it states the rule | |
-| `lit != lit_end` | every literal of the header was used | a header that claims 10 literals where the sequences use 8 |
 | `br.count < 0` | the sequences took no more bits than the bitstream has | a page cut short: the reader filled in zeros |
-| `br.p != br.end` | every byte of the bitstream went into the register | 3 more bytes after the last sequence |
+| `br.p != br.end` | every byte of the bitstream went into the register | 3 more bytes after the last code |
 | `br.count >= 8` | fewer than 8 bits of the last byte are left | a whole byte after the last code, also a zero byte |
-| `br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))` | the bits left are 0 | a last byte `0x8b` where `0x8a` would end the page |
+| `br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))` | the bits left are 0 | a bit 1 in the padding of the last byte |
+
+A header with more literals than the sequences use fails before: the literals left never become the
+bytes left, so the loop reads tokens past the end of the bitstream until a check of room fails.
 
 The last two need a closer look. When `br.p == br.end`, the `count` bits left in the register are the
 last `count` bits of the last byte of the input, `br.end[-1]`. `(1U << count) - 1U` is a mask of the low
@@ -569,10 +595,9 @@ not 64 for class 0, `seqlz_br_value()` shifts twice, the refill shifts by a `cou
 byte loop only while `count` is from 0 to 56. Pointers are only formed inside their buffers; the limits
 that could fall before a buffer are numbers. Counts that may go negative are `int`.
 
-**Time.** Every sequence except the last writes a match of at least 4 bytes, and the checks make sure
-each write is inside the page. So after at most $4096 / 4 = 1024$ sequences with a match, the page is
-full, and the next sequence is the last: at most `PAGE / 4 + 1` = 1025 rounds of the loop, also for
-input that is not valid, which ends earlier with `-EINVAL`. Each round does a bounded amount of work
+**Time.** Every round of the loop writes a match of at least 4 bytes, and the checks make sure each
+write is inside the page. So after at most $4096 / 4 = 1024$ rounds the page is full, also for input
+that is not valid, which ends earlier with `-EINVAL`; then one copy for the last sequence. Each round does a bounded amount of work
 plus copies that are bounded by the bytes they write, and `decode_literals()` is bounded by the 4096
 literals a page can have. The slowest valid page found for the decoder is made up: a match of 4 bytes at
 an offset below 8 in every sequence, every token escaped, 1022 sequences. It takes 107 099 instructions
@@ -603,63 +628,63 @@ with the buttons or the arrow keys, and with shift from one sequence to the next
 
 The same in prose, for the example page:
 
-The 9 bytes `02 00 61 62 dc 65 ef db 8a` are the format's example ([chapter 4](#ch-format--example)): a
+The 8 bytes `02 00 61 62 dc 65 ef db` are the format's example ([chapter 4](#ch-format--example)): a
 4 KiB page of `ab` repeated 2048 times. Here is what `seqlz_decode()` does with them, from a copy of the
 function with `printf()`s in it.
 
-**Setup.** `src_len = 9 >= 2`. The header is `0x0002`: raw literals, `n_lit = 2`. `2 + 2 <= 9`, so `lit =
-s + 2`, `lit_end = s + 4`, `lit_bound = s_end = s + 9`, and the bit reader starts at `s + 4` with the 5
-bytes `dc 65 ef db 8a`. `d_fast = dst + 4032`. `lit_fast = s + 9 - 16`, as a number 7 below `s`.
-`in_fast = s_end - 8 = s + 1`, since `src_len >= 8`.
+**Setup.** `src_len = 8 >= 2`. The header is `0x0002`: raw literals, `n_lit = 2`. `2 + 2 <= 8`, so `lit =
+s + 2`, `lit_end = s + 4`, `lit_bound = s_end = s + 8`, and the bit reader starts at `s + 4` with the 4
+bytes `dc 65 ef db`. `d_fast = dst + 4032`. `lit_fast = s + 8 - 16`, as a number 8 below `s`.
+`in_fast = s_end - 8 = s`, since `src_len >= 8`. `end_gap = d_end - lit_end`, as numbers. `n_lit` is not
+4096, so the loop starts.
 
 **The first token.** `count = 0 < 23`, so `next_token()` refills: fewer than 8 bytes are left, so the
-byte loop runs 5 times, `bits = 0xdc65efdb8a000000`, `count = 40`, `p = end`. The index is the top 11
+byte loop runs 4 times, `bits = 0xdc65efdb00000000`, `count = 32`, `p = end`. The index is the top 11
 bits, `11011100011`, 1763, and the entry is `0x5193cf0b`: token 1010, code length 11, `ll` 2, `ml` 35,
 class 1, `back` 60, drop 15, length value bit set.
 
-**Sequence 1.** Not an escape. `raw = (bits << 11) >> 60`: the 4 bits `0010`, 2. Drop 15, `count = 25`.
+**Sequence 1.** Not an escape. `raw = (bits << 11) >> 60`: the 4 bits `0010`, 2. Drop 15, `count = 17`.
 `off = 2`, `nl = 2`, `len = 35`. The fast path is not taken, for three reasons at once: a length value
 follows, `lit` is above `lit_fast`, and `br.p` is above `in_fast`. On the slow path, `nl` is not 15. The
-checks pass: `lit == lit_end - 2`, `2 <= 2`, `2 <= 4096`. `copy_literals()` finds only 7 readable bytes
-after `lit`, so it copies `a b` byte by byte. `d = dst + 2`, not the end. `len == 35`, so a match length
-value follows: the refill finds `p == end` and adds nothing, and `seqlz_br_value()` reads the code
-`111101`, symbol 23, and 11 extra bits, 2011: the value is 4059 ([chapter 12](#ch-dec-basics--bit-reader)),
-`count = 8`, `len = 35 + 4059 = 4094`. `last = 2`. The checks: `2 - 1 = 1 >= 2` is false, the offset is
+checks pass: `lit == lit_end - 2`, `2 <= 2`, `2 <= 4096`. `copy_literals()` finds only 6 readable bytes
+after `lit`, so it copies `a b` byte by byte. `d = dst + 2`. `len == 35`, so a match length value
+follows: the refill finds `p == end` and adds nothing, and `seqlz_br_value()` reads the code `111101`,
+symbol 23, and 11 extra bits, 2011: the value is 4059 ([chapter 12](#ch-dec-basics--bit-reader)),
+`count = 0`, `len = 35 + 4059 = 4094`. `last = 2`. The checks: `2 - 1 = 1 >= 2` is false, the offset is
 fine; `4094 <= 4094`, the match fits. `copy_match()` with `off = 2` stores the pattern `abababab` every 8
 bytes from `d` up to `d + 4087`, and copies the last 6 bytes one by one. `d = d_end`.
 
-**The second token.** `next_token()`: `count = 8 < 23`, the refill adds nothing. The register is
-`0x8a00000000000000`; the index `10001010000`, 1104, gives the entry `0x02020008`: token 0, code
-`10001010`, 8 bits, `ll` 0, `ml` 4, class 0. `skip = 0`.
+**The end.** `lit == lit_end` and `d == d_end`, so `d - lit` is `end_gap`: 0 literals left for 0 bytes,
+the last sequence, `break`. No second token is read. `copy_literals()` copies 0 bytes.
 
-**Sequence 2.** Not an escape, class 0, so `off = last = 2`; drop 8, `count = 0`. Not the fast path: `d`
-is past `d_fast`. On the slow path, `nl = 0` passes the checks, `copy_literals()` copies nothing, and `d
-== d_end`. `len == 4` and `TOK_BACK == 0`: a valid last sequence, `break`.
+**The end checks.** `count = 0`, `p == end`, `count < 8`, and with `count = 0` there are no bits left to
+check. The function returns 0, and the page is `abab...ab`.
 
-**The end checks.** `d == d_end`, `lit == lit_end`, `count = 0`, `p == end`, `count < 8`, and with
-`count = 0` there are no bits left to check. The function returns 0, and the page is `abab...ab`.
-
-The example never takes the fast path; it has two sequences, and the first one has a length value. A
-page with more structure shows the fast path at work. A page of 256 made-up records of 16 bytes, an
-8-byte pointer, a 4-byte id that grows by 3, and 4 bytes of flags, compresses to 976 bytes, and its
-decode goes like this at the start:
+The example never takes the fast path; it has one sequence with a token, and that one has a length
+value. [Chapter 16](#ch-trace)'s page shows the fast path at work. With coded literals it compresses
+to 795 bytes, and its decode goes like this at the start and at the end:
 
 ```text
-SLOW d=0    nl=15 len=6 off=16    ll 15: a literal length value follows
-FAST d=24   nl=10 len=6 off=16    skip=0: refill
-FAST d=40   nl=1  len=7 off=16    skip=1: no refill
-FAST d=48   nl=2  len=6 off=16    skip=0: refill
-FAST d=56   nl=1  len=7 off=16    skip=1
+SLOW d=0    nl=14 len=35 off=1     a match length value follows
+SLOW d=64   nl=15 len=6  off=77    ll 15: a literal length value follows
+FAST d=97   nl=1  len=6  off=32    skip=0: refill
+FAST d=104  nl=12 len=6  off=25    skip=1: no refill
+FAST d=122  nl=0  len=6  off=2     skip=0: refill
+FAST d=128  nl=1  len=7  off=32    skip=1
+SLOW d=136  nl=15 len=9  off=32    ll 15 again
+FAST d=160  nl=2  len=6  off=32
 ...
-FAST d=88   nl=1  len=7 off=80    an offset of class 4, 80 = 10 * 8
-...
-SLOW d=4072 nl=1  len=7 off=16    past d_fast
-SLOW d=4080 nl=0  len=8 off=1024  class 5
-SLOW d=4088 nl=8  len=4 off=1024  the last sequence
+SLOW d=2138 nl=13 len=6  off=72    br.p is past in_fast: fewer than 8 bytes of input left
+SLOW d=2157 nl=15 len=5  off=399
+SLOW d=2199 nl=15 len=9  off=569
+SLOW d=2224 nl=1  len=7  off=1976
+SLOW d=2232 nl=0  len=35 off=2     the last match, to the end of the page
+END  d=4096                        0 literals left for 0 bytes: the last sequence, no token
 ```
 
-465 of its 478 sequences take the fast path. The first is slow because of its 15 literals, the last ones
-because they are within 64 bytes of the end of the page.
+161 of its 179 sequences with a token take the fast path. The slow ones have a length value, or come
+in the last 8 bytes of the input, where the fast path's refill would read past it; the last sequence
+has no token at all.
 
 ## What is left {#ch-decode--limits}
 

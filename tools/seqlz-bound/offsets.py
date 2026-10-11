@@ -14,7 +14,7 @@ import numpy as np
 def load(path):
     a = np.fromfile(path, dtype=np.uint16).reshape(-1, 4).astype(np.int64)
     lm, off, last, first = a.T
-    return lm, off, (off == last) | (off == 0), int(first.sum())
+    return lm, off, off == last, int(first.sum())
 
 
 def classify(layout, off, rep):

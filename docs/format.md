@@ -33,7 +33,7 @@ It is one format, and the decoder decodes both.
 ## Status
 
 > [!IMPORTANT]
-> The format for 4 KiB pages is the one of 8th October 2026, and nobody uses it yet. Until seqlz has
+> The format for 4 KiB pages is the one of 11th October 2026, and nobody uses it yet. Until seqlz has
 > users it may still change, the tables included, and such a change updates this file: its rules, the
 > hashes of the tables, the example and this section. Once seqlz is in a kernel, zram's pages still live
 > only as long as the kernel that wrote them, so a change needs no new name in zram, see
@@ -43,7 +43,10 @@ The tables of 6th October were trained again before anyone used them, on swapped
 ([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 On 8th October a page became valid only if it ends where its bits end, see
 [The bitstream of the sequences](#the-bitstream-of-the-sequences) and [Coded literals](#coded-literals);
-the pages the compressor writes did not change.
+the pages the compressor writes did not change. On 11th October the last sequence lost its token: a
+decoder knows it from the literals left, see [Decoding](#decoding). Pages got about 1.2 bytes smaller,
+the tables did not change
+([explored-designs.md](explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 
 The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
 since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
@@ -61,7 +64,8 @@ needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project 
 Like lz4 and zstd, seqlz describes a page as a list of **sequences**. Each sequence says: copy the next
 `ll` **literals** (bytes stored in the compressed page as they are) to the output, then copy a **match**
 of `ml` bytes that starts `off` bytes back in the output, its **offset**. The last sequence has literals
-only and ends the page. The numbers `ll`, `ml` and `off` are stored with **prefix codes** (Huffman
+only, the ones left, and no bits: they fill the rest of the page, and that is how a decoder knows it is
+the last. The numbers `ll`, `ml` and `off` are stored with **prefix codes** (Huffman
 codes) from fixed tables that are part of the format and not in the compressed page. *Why:* a page of
 4 KiB is too small to carry tables of its own.
 
@@ -281,8 +285,8 @@ The symbols 16 to `12 + P` stand for the ranges `[2^b, 2^(b+1))` with `b = s - 1
 
 ### Tokens
 
-Each sequence starts with a **token**, one symbol of `TOK` that holds three numbers at once, so that
-the most frequent combinations take few bits:
+Each sequence but the last starts with a **token**, one symbol of `TOK` that holds three numbers at
+once, so that the most frequent combinations take few bits:
 
 ```text
 ll  = token & 15         the literal length, 0 to 15; 15 means 15 or more
@@ -335,34 +339,35 @@ being written, `last` is 1.
 
 ```text
 loop:
+    if n - used == PAGE - |out|:                the last sequence
+        append lits[used] to lits[n - 1] to out
+        stop
     token: ll, mlf, c
     x = read(offset bits of class c)
     off = (c == 0) ? last : x as the offset of class c
     if ll == 15: ll = 15 + value(LL)
     if ll > n - used or ll > PAGE - |out|: invalid
     append lits[used] to lits[used + ll - 1] to out; used = used + ll
-    if |out| == PAGE:                           the last sequence
-        if mlf != 0 or c != 0: invalid
-        stop
     ml = mlf + 4
     if mlf == 31: ml = 35 + value(ML)
     last = off
     if off == 0 or off > |out| or ml > PAGE - |out|: invalid
     ml times: append the byte off places before the end of out
 
-at the stop: used == n, and fewer than 8 bits of B left, all 0, else invalid
+at the stop: fewer than 8 bits of B left, all 0, else invalid
 ```
 
 The match is copied one byte at a time, each byte after the one before is written, so it can repeat
 bytes it writes itself: with `off = 1` and `ml = 10` it repeats the last byte 10 times. A block copy
 like `memcpy` gives other bytes when `off < ml`.
 
-There is no count of the sequences. The page ends with the sequence whose literals fill it, and that is
-the only way it ends: a page whose last match reaches the end of the page has one more sequence with
-`ll = 0`. The last sequence's token must have `mlf = 0` and class 0, so it has no offset bits; any other
-token there makes the page invalid. *Why:* the compressor writes nothing else, and the check is one
-compare per page. Every sequence before it writes at least 4 bytes, so a decoder stops after at most
-`PAGE / 4 + 1` sequences, also on pages that are not valid.
+There is no count of the sequences, and the last sequence has no token. Every match is at least 4
+bytes, so once the literals left are as many as the bytes the page still needs, no match can follow:
+the literals left are the last sequence. A page whose last match reaches the end of the page ends with
+no literals left, a page of literals only has `n = PAGE` and no bits in `B`. *Why:* a decoder knows
+`n` and `PAGE`, so a token for the last sequence only says what the decoder knows already, and it took
+about 1.2 bytes per page. Every sequence before the last writes at least 4 bytes, so a decoder stops
+after at most `PAGE / 4 + 1` sequences, also on pages that are not valid.
 
 Two things follow from the rules: a valid page has `n >= 1`, because the first match needs a byte
 before it, and the first match's offset is at most that sequence's `ll`.
@@ -380,10 +385,10 @@ Else the page is invalid. A decoder may read past the end of a stream, as long a
 
 ## Example
 
-The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
+The 8 bytes `02 00 61 62 dc 65 ef db` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
 
 - `02 00`: `h = 2`, raw literals, `n = 2`; then the literals `61 62`, `a` and `b`.
-- `B` is `dc 65 ef db 8a`, 40 bits, read most significant bit first:
+- `B` is `dc 65 ef db`, 32 bits, read most significant bit first:
 
 | bits | read as | means |
 | --- | --- | --- |
@@ -392,7 +397,7 @@ The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times, wi
 | | | `a b` appended |
 | `111101` | `symbol(ML)` = 23, `b = 11` | |
 | `11111011011` | `read(11)` = 2011 | `ml = 35 + 2^11 + 2011 = 4094`, `ab` repeated |
-| `10001010` | `symbol(TOK)` = 0 | `ll = 0`: the page is full, the end |
+| | | 0 literals left for 0 bytes of the page: the last sequence, the end |
 
 ## What the compressor writes
 
@@ -436,5 +441,5 @@ with the encoder and decoder of `5342a9b`, 12 instances for 2 hours, 1.94 billio
 found none either.
 `test/seqlz_ref_test.cpp` checks the example above, the compressor's pages, damaged pages, and pages
 made by hand for the rules that damage rarely reaches: the top bits of `t`, a literal code outside its
-stream, the last sequence's class.
+stream, a page of literals only, and a last sequence with a token, which is invalid.
 <!-- end -->

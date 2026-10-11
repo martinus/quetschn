@@ -63,7 +63,7 @@ static void rec_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
     struct rec* r = &R->r[R->n];
     const struct seqlz_tables* t = R->e.t;
     long before = bits_out(R), lo = R->e.lit - R->d, hi = R->e.p - R->d, i;
-    unsigned int raw = 0;
+    unsigned int raw;
 
     if (R->fail) {
         encode_emit(&R->e, in, ll, ml, off);
@@ -72,16 +72,19 @@ static void rec_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
     memset(r, 0, sizeof(*r));
     r->ll = ll;
     r->ml = ml;
-    r->off = ml ? off : 0;
     r->room = R->e.p - R->e.lit;
-    r->cls = ml ? seqlz_off_class(off, R->e.last, &raw) : 0;
-    r->tok = seqlz_token(ll, ml, r->cls);
-    r->esc = t->token.enc[r->tok] == 0;
-    token_code(t, r->tok, &r->tlen);
-    r->obits = raw;
-    r->llbits = ll >= SEQLZ_LL_CAP ? len_bits(&t->ll, ll - SEQLZ_LL_CAP) : 0;
-    r->mlbits = ml && ml - 4 >= SEQLZ_ML_CAP ? len_bits(&t->ml, ml - 4 - SEQLZ_ML_CAP) : 0;
-    r->flushes = ml && ll >= SEQLZ_LL_CAP ? 2 : 1;
+    /* the last sequence, without a match, has no token and no bits */
+    if (ml) {
+        r->off = off;
+        r->cls = seqlz_off_class(off, R->e.last, &raw);
+        r->tok = seqlz_token(ll, ml, r->cls);
+        r->esc = t->token.enc[r->tok] == 0;
+        token_code(t, r->tok, &r->tlen);
+        r->obits = raw;
+        r->llbits = ll >= SEQLZ_LL_CAP ? len_bits(&t->ll, ll - SEQLZ_LL_CAP) : 0;
+        r->mlbits = ml - 4 >= SEQLZ_ML_CAP ? len_bits(&t->ml, ml - 4 - SEQLZ_ML_CAP) : 0;
+        r->flushes = ll >= SEQLZ_LL_CAP ? 2 : 1;
+    }
     /* which bytes of the free room the sequence writes: a byte that differs from one fill */
     probe(R, probe_a, 0x00, in, ll, ml, off);
     probe(R, probe_b, 0xff, in, ll, ml, off);

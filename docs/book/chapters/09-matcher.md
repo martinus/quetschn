@@ -603,8 +603,8 @@ so if the new position has the same hash as `pos - 2`, it finds `pos - 2`.
 
 When the loop ends, the bytes from `anchor` to the end of the page are not in any sequence yet. Line
 180 emits them as the last sequence: literals only, `ml` 0 and offset 0. The format has no count of
-sequences; the decoder knows the page is complete when the literals of a sequence with `ml - 4 = 0` and
-class 0 reach the end of the page, see [the format chapter](#ch-format--token). That last sequence can
+sequences, and the last one has no token: the decoder knows it has come when the literals left are as
+many as the bytes the page still needs, see [the format chapter](#ch-format--end). That last sequence can
 have 0 literals, when a match ran to the end of the page.
 
 How many sequences can there be? Every sequence but the last covers at least 4 bytes, the shortest

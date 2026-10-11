@@ -1,47 +1,45 @@
 /*
- * The 9 bytes of the page of ab, read as the spec reads them: the header, the literals, then the 40
+ * The 8 bytes of the page of ab, read as the spec reads them: the header, the literals, then the 32
  * bits of B field by field, with the page filling up below. The fields and their values are those of
  * the table in chapter 4, from the real 4 KiB tables.
  */
 BookAnim.define('abbits', function (ctx) {
-  var BYTES = [0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb, 0x8a];
+  var BYTES = [0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb];
   var BITS = '';
-  for (var b = 4; b < 9; b++) for (var k = 7; k >= 0; k--) BITS += (BYTES[b] >> k) & 1;
+  for (var b = 4; b < 8; b++) for (var k = 7; k >= 0; k--) BITS += (BYTES[b] >> k) & 1;
   // the fields of B: [first bit, bits, kind, label under it, the label on a phone]
   var FIELDS = [
     [0, 11, 'code', 'token 1010', 'token 1010'],
     [11, 4, 'plain', 'off = 2', 'off 2'],
     [15, 6, 'code', 'ML symbol 23', 'ML 23'],
-    [21, 11, 'plain', '2011', '2011'],
-    [32, 8, 'code', 'token 0', 'token 0']
+    [21, 11, 'plain', '2011', '2011']
   ];
   // per step: bytes marked, fields read, page bytes written, the sentence
   var STEPS = [
-    { bytes: [], fields: 0, page: 0, say: 'The 9 bytes of a compressed page. zram stores them together with their length, 9: the format has no length of its own.' },
+    { bytes: [], fields: 0, page: 0, say: 'The 8 bytes of a compressed page. zram stores them together with their length, 8: the format has no length of its own.' },
     { bytes: [0, 1], fields: 0, page: 0, say: 'The u16 h, little endian: 02 00 is 2. Its top bit is 0, so the literals are raw, and there are n = 2 of them.' },
     { bytes: [2, 3], fields: 0, page: 0, say: 'The 2 raw literals follow the u16: 61 62, "a" and "b". Everything after them is B, the sequences’ bitstream.' },
-    { bytes: [4, 5, 6, 7, 8], fields: 0, page: 0, say: 'B is 40 bits, read from bit 7 of each byte down to bit 0, byte after byte.' },
+    { bytes: [4, 5, 6, 7], fields: 0, page: 0, say: 'B is 32 bits, read from bit 7 of each byte down to bit 0, byte after byte.' },
     { bytes: [], fields: 1, page: 0, say: 'The first token: its code 11011100011, 11 bits, is the token 1010 in the TOK table. 1010 = 2 + 16 × 31 + 512 × 1: ll = 2 literals, mlf = 31, offset class 1.' },
     { bytes: [], fields: 2, page: 0, say: 'Class 1 sends 4 plain bits, 0010: the offset is 2.' },
     { bytes: [], fields: 2, page: 2, say: 'll = 2 is below 15, so no length value for it: the 2 literals go to the page. The page has 2 bytes, "ab".' },
     { bytes: [], fields: 3, page: 2, say: 'mlf = 31 is the largest the token holds, so a length value follows: its code 111101 is symbol 23 of the ML table, which means 23 − 12 = 11 extra bits.' },
     { bytes: [], fields: 4, page: 2, say: 'The 11 extra bits 11111011011 are 2011. The value is 2\u00b9\u00b9 + 2011 = 4059, and ml = 35 + 4059 = 4094.' },
     { bytes: [], fields: 4, page: 4096, say: 'The match copies 4094 bytes from 2 back. After 2 bytes it copies what it wrote itself: "abab..." up to byte 4095. The page is full.' },
-    { bytes: [], fields: 5, page: 4096, say: 'The next token: 10001010 is the token 0 in the TOK table: ll = 0, mlf = 0, class 0, so no offset bits.' },
-    { bytes: [], fields: 5, page: 4096, say: 'No literals to copy, and the page is full: this is the last sequence. 0 bits of B are left, every literal is used. The page is valid: 4096 bytes from 9.' }
+    { bytes: [], fields: 4, page: 4096, say: '0 literals are left for 0 bytes of the page: the last sequence, which has no token. 0 bits of B are left. The page is valid: 4096 bytes from 8.' }
   ];
   var X0 = 20;
-  var root = ctx.svg('svg', { viewBox: '0 0 744 300', role: 'img', 'aria-label': 'The 9 bytes, the 40 bits of B read field by field, and the page' }, ctx.stage);
+  var root = ctx.svg('svg', { viewBox: '0 0 744 300', role: 'img', 'aria-label': 'The 8 bytes, the 32 bits of B read field by field, and the page' }, ctx.stage);
 
   /*
-   * The layout: wide, the 40 bits in one row; on a phone (ctx.narrow, 360 units), bytes 0 to 2 of B
-   * in one row and bytes 3 and 4 in the next, a field across the break bracketed in both.
+   * The layout: wide, the 32 bits in one row; on a phone (ctx.narrow, 360 units), bytes 0 to 2 of B
+   * in one row and byte 3 in the next, a field across the break bracketed in both.
    */
   function layout() {
     var n = ctx.narrow;
     var L = {
       W: n ? 360 : 744, X0: n ? 6 : 20, CW: n ? 14 : 17, BW: n ? 34 : 52, BG: n ? 4 : 6, bfont: n ? 13 : 15,
-      bitFont: n ? 12 : 14, perRow: n ? 24 : 40, rowH: n ? 70 : 0, bitsY: 108, bitH: n ? 22 : 26
+      bitFont: n ? 12 : 14, perRow: n ? 24 : 32, rowH: n ? 70 : 0, bitsY: 108, bitH: n ? 22 : 26
     };
     L.pageY = L.bitsY + (n ? 2 * L.rowH : 0) + (n ? 0 : 88);
     L.H = L.pageY + (n ? 130 : 96);
@@ -54,9 +52,9 @@ BookAnim.define('abbits', function (ctx) {
   function draw(k) {
     var st = STEPS[k], L = layout();
     while (root.firstChild) root.removeChild(root.firstChild);
-    // the 9 bytes
-    ctx.svg('text', { x: L.X0, y: 16, class: 'ab-head', text: 'the compressed page, 9 bytes' }, root);
-    for (var j = 0; j < 9; j++) {
+    // the 8 bytes
+    ctx.svg('text', { x: L.X0, y: 16, class: 'ab-head', text: 'the compressed page, 8 bytes' }, root);
+    for (var j = 0; j < 8; j++) {
       var part = j < 2 ? 'ab-hdr' : j < 4 ? 'ab-lit' : 'ab-bits';
       var on = st.bytes.indexOf(j) >= 0, bx = L.X0 + j * (L.BW + L.BG);
       ctx.svg('rect', { x: bx, y: 24, width: L.BW, height: 30, rx: 3, class: part + (on ? ' ab-on' : '') }, root);
@@ -64,10 +62,10 @@ BookAnim.define('abbits', function (ctx) {
     }
     function under(j, t) { ctx.svg('text', { x: L.X0 + j * (L.BW + L.BG) + L.BW / 2, y: 70, 'text-anchor': 'middle', 'font-size': 12, class: 'ab-note', text: t }, root); }
     under(2, '"a"'); under(3, '"b"'); under(0.5, 'h = 2');
-    // the 40 bits of B
-    ctx.svg('text', { x: L.X0, y: 100, class: 'ab-head', text: ctx.narrow ? 'B, 40 bits, bit 7 first' : 'B, 40 bits, bit 7 of each byte first' }, root);
+    // the 32 bits of B
+    ctx.svg('text', { x: L.X0, y: 100, class: 'ab-head', text: ctx.narrow ? 'B, 32 bits, bit 7 first' : 'B, 32 bits, bit 7 of each byte first' }, root);
     var nf = st.fields, cur = nf > 0 ? FIELDS[nf - 1] : null;
-    for (var i = 0; i < 40; i++) {
+    for (var i = 0; i < 32; i++) {
       var f = null;
       for (var q = 0; q < nf; q++) if (i >= FIELDS[q][0] && i < FIELDS[q][0] + FIELDS[q][1]) f = FIELDS[q];
       var cls = f ? (f[2] === 'code' ? 'ab-code' : 'ab-plain') : 'ab-unread';

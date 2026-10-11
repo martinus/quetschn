@@ -4,6 +4,8 @@
  * the bit reader's p, count and 64 bits, the token's entry, nl, len, off, last and skip.
  */
 (function () {
+  // the copy of the last sequence's literals, after the loop
+  var LAST = 'copy_literals(d, d_end, lit, lit_bound, (unsigned int)';
   var F = { line: 0, d: 1, lit: 2, p: 3, count: 4, hi: 5, lo: 6, tok: 7, nl: 8, len: 9, off: 10, last: 11, skip: 12 };
 
   function entry(e) {
@@ -36,19 +38,24 @@
       page = data.pages[id];
       steps = page.steps;
       seqStarts = [];
-      steps.forEach(function (s, k) { if (is(s, 'if (tok >> TOK_ESCAPE_AT)')) seqStarts.push(k); });
+      page.nLit = page.lit.length;
+      // a sequence starts at its token; the last one has none, it is the copy of the literals left,
+      // whose count the trace records as nl 0, outside the loop: it is set here
+      steps.forEach(function (s, k) {
+        if (is(s, LAST)) s[F.nl] = page.nLit - s[F.lit];
+        if (is(s, 'if (tok >> TOK_ESCAPE_AT)') || is(s, LAST)) seqStarts.push(k);
+      });
       // when each byte of the page is final, and whether a literal or a match wrote it
       when = new Int32Array(C.PAGE).fill(-1);
       kind = new Uint8Array(C.PAGE);
       steps.forEach(function (s, k) {
         var a = s[F.d], n = 0, t = 0;
-        if (is(s, 'd += nl;')) { n = s[F.nl]; t = 1; }
+        if (is(s, 'd += nl;') || is(s, LAST)) { n = s[F.nl]; t = 1; }
         if (is(s, 'd += len;')) { n = s[F.len]; t = 2; }
         for (var b = a; b < a + n && b < C.PAGE; b++) { when[b] = k; kind[b] = t; }
       });
       page.bitStart = -1;
       for (var k = 0; k < steps.length; k++) if (steps[k][F.p] >= 0) { page.bitStart = steps[k][F.p]; break; }
-      page.nLit = page.lit.length;
       buildBytes();
       seqs = costs();
       return { steps: steps.length, groups: seqStarts };
@@ -79,7 +86,7 @@
       seqStarts.forEach(function (a, q) {
         var b = q + 1 < seqStarts.length ? seqStarts[q + 1] : end, ll = 0, ml = 0, lit = 0, k;
         for (k = a; k < b; k++) {
-          if (is(steps[k], 'd += nl')) { ll = steps[k][F.nl]; lit = steps[k][F.lit]; }
+          if (is(steps[k], 'd += nl') || is(steps[k], LAST)) { ll = steps[k][F.nl]; lit = steps[k][F.lit]; }
           if (is(steps[k], 'd += len')) ml = steps[k][F.len];
         }
         var litBits = 0;
@@ -124,6 +131,8 @@
       if (t.indexOf('q = decode_literals') === 0) return 'decode_literals() decodes the ' + page.nLit + ' coded literals into the scratch buffer, 8 streams side by side (chapter 13). The sequences’ bitstream starts right after the streams, at byte ' + page.bitStart + '.';
       if (t.indexOf('lit = scratch') === 0) return 'From now on the literals come from the scratch buffer, and the bit reader starts at byte ' + page.bitStart + '.';
       if (t.indexOf('lit = s + SEQLZ_HEADER') === 0) return 'Raw literals: they are bytes 2 to ' + (C.HEADER + page.nLit - 1) + ', and the bitstream starts after them, at byte ' + page.bitStart + '.';
+      if (t.indexOf('end_gap =') === 0) return 'end_gap = d_end − lit_end, as numbers. When d − lit is end_gap, the literals left, lit_end − lit, are exactly the bytes the page still needs, d_end − d: one compare per slow sequence tells the end.';
+      if (t.indexOf('if (n_lit == SEQLZ_PAGE)') === 0) return page.nLit === C.PAGE ? 'The page is all literals: no token, straight to the copy at the end.' : page.nLit + ' literals for a page of ' + C.PAGE + ' bytes: there are matches, so the loop over the sequences starts.';
       if (t.indexOf('d_fast =') === 0) return 'The fast path copies without checks, so it runs only while there is room: d at most ' + (C.PAGE - C.FAST_PAGE_ROOM) + ' (' + C.FAST_PAGE_ROOM + ' bytes before the end of the page), ' + C.FAST_LIT_ROOM + ' literal bytes left, ' + C.FAST_IN_ROOM + ' bytes of input left.';
       if (t.indexOf('tok = next_token(&br') === 0) {
         var nb = bitsOf(n), idx = Number(nb >> BigInt(64 - C.TOKEN_BITS));
@@ -169,16 +178,18 @@
       if (t.indexOf('if (nl == SEQLZ_LL_CAP)') === 0) return 'The slow path. ' + (nl === C.LL_CAP ? 'nl is ' + C.LL_CAP + ': a literal length value follows.' : 'nl < ' + C.LL_CAP + ': no literal length value.');
       if (t.indexOf('nl += seqlz_br_value(&br, &t->ll)') === 0) return 'Reads the literal length value from the ll table: nl = ' + C.LL_CAP + ' + ' + (n[F.nl] - C.LL_CAP) + ' = ' + n[F.nl] + '.';
       if (t.indexOf('if (lit > lit_end') === 0) return 'The literals must be there and fit the page: ' + nl + ' ≤ ' + (page.nLit - s[F.lit]) + ' left, and ' + nl + ' ≤ ' + (C.PAGE - d) + '.';
+      if (t.indexOf(LAST) === 0) return 'Sequence ' + seqOf(k) + ', the last: ' + (nl ? 'copy_literals() copies the ' + nl + ' literals left, to the end of the page.' : 'no literals are left, the last match ended at the end of the page: copy_literals() copies nothing.');
       if (t.indexOf('copy_literals(') === 0) return nl ? 'Copies ' + nl + ' literals, checked: 16 bytes at a time where there is room, the rest one by one.' : 'No literals to copy.';
-      if (t.indexOf('if (d == d_end)') === 0) return d === C.PAGE ? 'The page is full: this must be the last sequence.' : 'The page is not full yet.';
-      if (t.indexOf('if (len != 4U') === 0) return 'The last sequence must have ml − 4 = 0 and offset class 0: len = ' + len + ', back = ' + e.back + '. ' + (len === 4 && e.back === 0 ? 'It has.' : 'It has not: rejected.');
-      if (t.indexOf('break') === 0) return 'The last sequence: out of the loop.';
+      if (t.indexOf('if ((unsigned long)d - (unsigned long)lit == end_gap)') === 0) {
+        var left = page.nLit - s[F.lit], room = C.PAGE - d;
+        return left + ' literals left, ' + room + ' bytes of the page left. ' + (left === room ? 'The same: no match fits any more, the literals left are the last sequence, which has no token.' : 'Not the same, so more sequences with a match follow: read the next token.');
+      }
       if (t.indexOf('if (len == SEQLZ_ML_CAP + 4U)') === 0) return len === C.ML_CAP + 4 ? 'len is ' + len + ': a match length value follows.' : 'len < ' + (C.ML_CAP + 4) + ': no match length value.';
       if (t.indexOf('len += seqlz_br_value(&br, &t->ml)') === 0) return 'Reads the match length value from the ml table: len = ' + (C.ML_CAP + 4) + ' + ' + (n[F.len] - C.ML_CAP - 4) + ' = ' + n[F.len] + '.';
       if (t.indexOf('if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||') === 0) return 'The offset must point into the page so far, 1 ≤ ' + off + ' ≤ ' + d + ', and the match must fit: ' + len + ' ≤ ' + (C.PAGE - d) + '.';
       if (t.indexOf('copy_match(') === 0) return 'Copies ' + len + ' bytes from ' + off + ' back, checked, ' + (off < 8 ? 'as a pattern of ' + off + ' bytes.' : '8 bytes at a time.');
       if (t.indexOf('skip = 0') === 0) return 'After a slow sequence the next fast one refills again.';
-      if (t.indexOf('if (d != d_end') === 0) return 'The page must end where its bits end: d = ' + d + ', all ' + page.nLit + ' literals used, every byte read, ' + cnt + ' bits left in the last byte, and those 0.';
+      if (t.indexOf('if (br.count < 0') === 0) return 'The page must end where its bits end: every byte read, ' + cnt + ' bits left in the last byte, and those 0.';
       if (t.indexOf('return 0') === 0) return 'A valid page: seqlz_decode() returns 0.';
       return '';
     }

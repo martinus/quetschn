@@ -485,9 +485,9 @@ count` from the bottom, and counts 8 more. It stops when the register has no roo
 condition is not only about meaning: with `count` negative, `56 - count` would be more than 56, and
 for `count` below -7 a shift by 64 or more, undefined.
 
-The example page of [chapter 4](#ch-format--example) has a bitstream of 5 bytes, `dc 65 ef db 8a`, so its
-first refill is the byte half: 5 rounds, `bits = 0xdc65efdb8a000000`, `count = 40`, `p = end`. Every later
-refill on that page finds `p == end` and does nothing; the 40 bits are all there is.
+The example page of [chapter 4](#ch-format--example) has a bitstream of 4 bytes, `dc 65 ef db`, so its
+first refill is the byte half: 4 rounds, `bits = 0xdc65efdb00000000`, `count = 32`, `p = end`. Every later
+refill on that page finds `p == end` and does nothing; the 32 bits are all there is.
 
 ### seqlz_br_drop(): taking bits
 

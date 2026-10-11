@@ -18,7 +18,7 @@ decoder's side of this chapter is [chapter 13](#ch-literals-dec).
 
 ## What code_literals() does to dst {#ch-literals-enc--overview}
 
-@listing src/seqlz_compress.c 517-543
+@listing src/seqlz_compress.c 514-540
 
 The comment says what the function decides and why it does not code every page. "1/16 of them plus
 `SEQLZ_LIT_CODED_MIN` bytes" is the rule we meet in
@@ -64,7 +64,7 @@ the page.
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 280" font-size="12" role="img" aria-label="dst before and after code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
-  <text x="20" y="22">dst after compress_page(): 209 bytes, raw literals</text>
+  <text x="20" y="22">dst after compress_page(): 208 bytes, raw literals</text>
   <rect x="20" y="30" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="50" text-anchor="middle">c9 00</text>
   <rect x="80" y="30" width="440" height="30" fill="none" stroke="currentColor"/>
@@ -76,7 +76,7 @@ the page.
   <text x="20" y="74" text-anchor="middle">0</text>
   <text x="80" y="74" text-anchor="middle">2</text>
   <text x="520" y="74" text-anchor="middle">203</text>
-  <text x="600" y="74" text-anchor="middle">209</text>
+  <text x="600" y="74" text-anchor="middle">208</text>
 
   <line x1="300" y1="78" x2="300" y2="106" stroke="currentColor"/>
   <path d="M296 100 L300 108 L304 100 Z" fill="currentColor"/>
@@ -95,7 +95,7 @@ the page.
     <text x="536" y="130">memmove()</text>
   </g>
 
-  <text x="20" y="194">dst after code_literals(): 151 bytes</text>
+  <text x="20" y="194">dst after code_literals(): 150 bytes</text>
   <rect x="20" y="200" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="220" text-anchor="middle">c9 80</text>
   <rect x="80" y="200" width="30" height="30" class="fill-sheet" stroke="currentColor"/>
@@ -136,7 +136,7 @@ the page.
   <text x="380" y="244" text-anchor="middle">112</text>
   <text x="415" y="244" text-anchor="middle">129</text>
   <text x="450" y="244" text-anchor="middle">145</text>
-  <text x="530" y="244" text-anchor="middle">151</text>
+  <text x="530" y="244" text-anchor="middle">150</text>
   <text x="170" y="262" text-anchor="middle">q[0]</text>
   <text x="450" y="262" text-anchor="middle">q[8]</text>
 </svg>
@@ -145,8 +145,8 @@ the page.
 </figure>
 
 The offsets under the second row are the values of `q[0]` to `q[8]` for this page, measured from
-`d`. Bytes 2 to 150 of the first row are overwritten: by byte 2, by the 5 bytes of sizes, by the
-streams, and by the bitstream at its new place. Bytes 151 to 208 keep what they held, but they are no
+`d`. Bytes 2 to 149 of the first row are overwritten: by byte 2, by the 5 bytes of sizes, by the
+streams, and by the bitstream at its new place. Bytes 150 to 207 keep what they held, but they are no
 longer part of the page.
 
 ## Pricing all 8 tables with one add per literal {#ch-literals-enc--pricing}
@@ -176,7 +176,7 @@ once at start-up ([chapter 8](#ch-codes)), and the array is 256 times 8 bytes, 2
 index, `LIT_COST_WORDS`, is `(8 + 7) / 8 = 1`: the code is written for any number of tables, a u64 per
 8 of them, but with 8 tables every loop over `w` runs once. Read `[w]` as `[0]` in what follows.
 
-@listing src/seqlz_compress.c 390-405
+@listing src/seqlz_compress.c 387-402
 
 The comment states the plan. The sums go per stream, into `even` and `odd`, which hold 16-bit lanes:
 `even[j]` has the sums of stream `j` for tables 0, 2, 4 and 6, `odd[j]` for tables 1, 3, 5 and 7.
@@ -188,7 +188,7 @@ bits, so 25 literals add at most 250 to a lane, which fits a byte; a 26th could 
 overflow. `lanes = 0x00ff00ff00ff00ff` keeps every second byte, the comment says how it is used: to
 split 8 lanes of 8 bits into 2 times 4 lanes of 16 bits.
 
-@listing src/seqlz_compress.c 406-428
+@listing src/seqlz_compress.c 403-425
 
 The outer loop walks over the literals in chunks of `SEQLZ_LIT_STREAMS * LIT_COST_RUN`, 8 times 25 =
 200 literals, 25 per stream. For each chunk:
@@ -352,7 +352,7 @@ page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#s
 
 ## Reading one sum out of its lane: lit_bits() {#ch-literals-enc--lit-bits}
 
-@listing src/seqlz_compress.c 380-388
+@listing src/seqlz_compress.c 377-385
 
 `lit_bits()` returns the bits of stream `j` in table `k`. The parameters `u64 even[][LIT_COST_WORDS]`
 are pointers to arrays of one u64, which is how C passes a 2-D array.
@@ -372,7 +372,7 @@ For `k = 5`: `odd`, word 0, lane `5 % 8 / 2 = 2`, shift 32. In the example above
 
 Back in `code_literals()`, after the pricing:
 
-@listing src/seqlz_compress.c 544-560
+@listing src/seqlz_compress.c 541-557
 
 The first loop adds the 8 streams' bits for each table and keeps the smallest total. Because the
 compare is `b < bits`, a tie keeps the lower table number. That is a choice of the encoder only; the
@@ -393,7 +393,7 @@ The second loop computes, for the chosen table:
 
 ## The width of a size, from one count of leading zeros {#ch-literals-enc--width}
 
-@listing src/seqlz_compress.c 561-567
+@listing src/seqlz_compress.c 558-564
 
 The header stores each stream size in `width` bits, `w` in the format: as few as the largest size
 needs, but at least `SEQLZ_SIZE_BITS_MIN`, 5 ([chapter 6](#ch-header)).
@@ -424,7 +424,7 @@ rarely pass the rule below.
 
 ## Coded only where it saves 1/16 of the literals and 51 bytes {#ch-literals-enc--rule}
 
-@listing src/seqlz_compress.c 568-569
+@listing src/seqlz_compress.c 565-566
 
 The page keeps its raw literals unless `coded + 51 < n - n / 16`: the 8 streams plus 51 bytes have to
 be smaller than $\frac{15}{16}$ of the raw literals. Everything is `unsigned int`; `n - n / 16` cannot wrap,
@@ -473,7 +473,7 @@ and the same pages as before got coded with a smaller header. The 51 of today re
 
 ## Writing over the raw literals, safely {#ch-literals-enc--in-place}
 
-@listing src/seqlz_compress.c 570-580
+@listing src/seqlz_compress.c 567-577
 
 From here on the page gets coded literals.
 
@@ -489,7 +489,7 @@ chosen table's encoder entries `t->lit[set].enc`.
 The comment before the `memcpy()` is the safety argument for the whole in-place rewrite, and the
 first of the two `static_assert`s after the function makes it a compile-time fact:
 
-@listing src/seqlz_compress.c 594-598
+@listing src/seqlz_compress.c 591-595
 
 `static_assert(condition, message)` is checked by the compiler; if the condition is false the build
 fails with the message ([chapter 5](#ch-compat)). It costs nothing at run time.
@@ -536,7 +536,7 @@ table"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#
 `lit_streams()` writes the 8 streams. Each literal's code goes to the stream of its index modulo 8,
 most significant bit first, which is how the decoder reads them ([chapter 13](#ch-literals-dec)).
 
-@listing src/seqlz_compress.c 430-449
+@listing src/seqlz_compress.c 427-446
 
 The comment says why the loop is shaped the way it is. Appending a code to a stream is a shift and an
 OR into the stream's accumulator: `acc = acc << len | code`. The next code of the same stream needs
@@ -569,7 +569,7 @@ with 4 streams in one loop, two other changes earlier.
 
 ### Blocks of 32 literals
 
-@listing src/seqlz_compress.c 450-466
+@listing src/seqlz_compress.c 447-463
 
 One block is 32 literals of the page, `k` to `k + 31`, and from it this half's 4 streams get 4
 literals each. For `half = 0` and `k = 0`, the inner loop runs `j = 0, 8, 16, 24` and stream 0 gets
@@ -591,9 +591,9 @@ rest fits the accumulator without a flush in between.
 
 ### lit_put(): one code into an accumulator
 
-This is the first helper of the file, at line 326; it is used only here.
+This is the first helper of the file, at line 323; it is used only here.
 
-@listing src/seqlz_compress.c 326-340
+@listing src/seqlz_compress.c 323-337
 
 `enc[b]` is the literal table's encoder entry for byte `b`, built by `build_lit()`
 ([chapter 8](#ch-codes)): the code's length in the low byte, the code itself from bit 8 on. Lengths
@@ -630,7 +630,7 @@ and `n`:
 
 ### lit_flush(): whole bytes to memory, big-endian
 
-@listing src/seqlz_compress.c 356-378
+@listing src/seqlz_compress.c 353-375
 
 `lit_flush()` is the literal streams' version of `enc_flush()` ([chapter 10](#ch-encoder)), with one
 difference: the sequences' bitstream is written backwards from the end of `dst`, a stream forwards from
@@ -680,7 +680,7 @@ the next flush writes this byte again with its eighth bit. In the finished page,
 
 ### store_tail(): at most 7 bytes at the end of a stream
 
-@listing src/seqlz_compress.c 342-354
+@listing src/seqlz_compress.c 339-351
 
 `store_tail()` writes the first `n` bytes of what `put_unaligned_le64(w, p)` would write, for `n` below
 8. It stores the u64 into a local array and copies `n` bytes, a loop of up to 7 stores, slower than one
@@ -695,7 +695,7 @@ brought in, which is what the format requires: a stream ends in its last byte, w
 
 ### The tail: at most 4 literals per stream, one switch
 
-@listing src/seqlz_compress.c 467-496
+@listing src/seqlz_compress.c 464-493
 
 After the blocks, fewer than 29 literals are left from `k` on, and the loop takes them one by one.
 `k % SEQLZ_LIT_STREAMS` says which stream a literal belongs to. Cases 0 and 4 both go to `a0`, 1 and 5
@@ -726,7 +726,7 @@ stream's last bits, with `store_tail()` when fewer than 8 bytes are left before 
 
 ## The header: u16, byte 2 and the sizes {#ch-literals-enc--header}
 
-@listing src/seqlz_compress.c 581-587
+@listing src/seqlz_compress.c 578-584
 
 With the streams in place, the header is written over the first bytes of the old raw literals.
 
@@ -744,7 +744,7 @@ With the streams in place, the header is written over the first bytes of the old
 
 ### lit_sizes(): 8 numbers of w bits, lowest bit first
 
-@listing src/seqlz_compress.c 498-515
+@listing src/seqlz_compress.c 495-512
 
 The 8 sizes are one number of `8 * width` bits, little endian: size 0 in the lowest `width` bits,
 size 1 in the next `width`, and so on (the format's `S` in
@@ -777,7 +777,7 @@ j=7  acc |= 16 << 3          cnt  8  -> write 0x84, cnt 0
 
 ## The bitstream moves down {#ch-literals-enc--memmove}
 
-@listing src/seqlz_compress.c 588-592
+@listing src/seqlz_compress.c 585-589
 
 `coded += header` makes `coded` the offset where the coded literals end: header plus streams. The
 bitstream, `bitstream` bytes at `d + SEQLZ_HEADER + n_literals`, moves down to there, and the new
@@ -787,8 +787,8 @@ It is `memmove()`, not `memcpy()`, because source and destination can overlap: t
 down by `2 + n - coded`, more than 38 bytes, and a bitstream is often longer than that. `memmove()` is
 defined for overlapping ranges, `memcpy()` is not.
 
-In the example, the bitstream of 6 bytes moves from byte 203 to byte 145, and the page goes from 209
-to 151 bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
+In the example, the bitstream of 5 bytes moves from byte 203 to byte 145, and the page goes from 208
+to 150 bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
 the back of `dst` to behind the raw literals ([chapter 10](#ch-encoder)). Copying it only once, to
 behind the coded literals, was built and measured: the writes got up to 0.3 µs slower in the kernel
 VM and 0.8 µs on the A55, `seqlz-fast` too, because gcc laid out the matcher's loop differently
@@ -802,8 +802,8 @@ The page of this chapter: 200 letters, each drawn from `etaoinshrdlu` and a spac
 classic linear congruential generator, `seed = seed * 1103515245 + 12345` with `seed = 1`, taking
 `(seed >> 16) % 13`; then 3896 zero bytes. The first 24 letters are `oh  asridistliuthtoo hha`. The
 matcher finds 2 sequences: 201 literals followed by a match of 3895 bytes at offset 1, and the last
-sequence with no literals. Compressed with `coded = false` the page has 209 bytes; with
-`coded = true`, 151:
+sequence with no literals, which takes no bits. Compressed with `coded = false` the page has 208
+bytes; with `coded = true`, 150:
 
 ```text
 000  c9 80 00 33 c6 18 63 84 43 56 4e e0 00 96 ca 9f
@@ -815,7 +815,7 @@ sequence with no literals. Compressed with `coded = false` the page has 209 byte
 060  ac 98 5f b2 7b 2e 20 54 f8 8a 50 b7 1a 29 cc a0
 070  4b f6 52 65 2c eb 69 f5 ac 05 62 82 be 76 9f 52
 080  40 32 ca 63 24 4a 50 10 7c c0 90 6a ca 56 fb e9
-090  b2 d6 dc 75 ef 14 8a
+090  b2 d6 dc 75 ef 14
 ```
 
 The offsets on the left are hexadecimal. Taken apart by hand:
@@ -833,8 +833,8 @@ The offsets on the left are hexadecimal. Taken apart by hand:
   24 and 32 of the page.
 - Stream 0 ends with byte 26, `0x1a`, which is `80`. It has 147 bits, 18 whole bytes and 3 bits, so
   the last byte holds `100` and 5 zero bits.
-- `d6 dc 75 ef 14 8a` from byte 145 on is the sequences' bitstream, the same 6 bytes that followed the
-  raw literals in the 209-byte page.
+- `d6 dc 75 ef 14` from byte 145 on is the sequences' bitstream, the same 5 bytes that followed the
+  raw literals in the 208-byte page.
 
 Did it pass the rule? The pricing gave these bits per stream:
 
@@ -847,7 +847,7 @@ Did it pass the rule? The pricing gave these bits per stream:
 
 Table 0 wins. Its sizes add up to `coded = 137`, and `137 + 51 = 188` is less than
 `201 - 201 / 16 = 189`. One byte more and this page would have kept its raw literals. It saves 58
-bytes, 28% of the 209 bytes the page takes with raw literals.
+bytes, 28% of the 208 bytes the page takes with raw literals.
 
 ::: try Compress a page of your own
 In a scratch directory, with the repository's path in `$R` (`R=/path/to/quetschn`):

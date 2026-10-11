@@ -57,40 +57,42 @@ int main(int argc, char** argv) {
         bytes_all += len;
         coded_pages += coded;
         for (i = 0; i < n; i++) {
-            unsigned int ll = seq[i].literals, ml = i + 1 == n ? 0 : seq[i].match, cls = 0, tok;
+            unsigned int ll = seq[i].literals, ml = i + 1 == n ? 0 : seq[i].match;
 
-            if (ml)
-                cls = seqlz_off_class(seq[i].offset, last, &extra);
-            tok = seqlz_token(ll, ml, cls);
-            tok_hist[tok]++;
-            if (L->token[tok]) {
-                b_tok += L->token[tok];
-                bits += L->token[tok];
-            } else {
-                b_esc += L->token[SEQLZ_ESCAPE] + 12;
-                bits += L->token[SEQLZ_ESCAPE] + 12;
-                n_esc++;
-            }
+            /* the last sequence, without a match, has only its literals: no token, no length value */
             if (ml) {
+                unsigned int cls = seqlz_off_class(seq[i].offset, last, &extra);
+                unsigned int tok = seqlz_token(ll, ml, cls);
+
+                tok_hist[tok]++;
+                if (L->token[tok]) {
+                    b_tok += L->token[tok];
+                    bits += L->token[tok];
+                } else {
+                    b_esc += L->token[SEQLZ_ESCAPE] + 12;
+                    bits += L->token[SEQLZ_ESCAPE] + 12;
+                    n_esc++;
+                }
                 off_hist[cls][(seq[i].offset >> SEQLZ_OFF_SHIFT(cls)) & 4095U] += cls != 0;
                 b_off += SEQLZ_RAW_BITS(cls);
                 bits += SEQLZ_RAW_BITS(cls);
-            }
-            if (ll >= SEQLZ_LL_CAP) {
-                unsigned int s = seqlz_len_symbol(ll - SEQLZ_LL_CAP, &extra);
+                if (ll >= SEQLZ_LL_CAP) {
+                    unsigned int s = seqlz_len_symbol(ll - SEQLZ_LL_CAP, &extra);
 
-                ll_hist[s]++;
-                b_llc += L->ll[s];
-                b_llx += extra;
-                bits += L->ll[s] + extra;
-            }
-            if (ml && ml - 4 >= SEQLZ_ML_CAP) {
-                unsigned int s = seqlz_len_symbol(ml - 4 - SEQLZ_ML_CAP, &extra);
+                    ll_hist[s]++;
+                    b_llc += L->ll[s];
+                    b_llx += extra;
+                    bits += L->ll[s] + extra;
+                }
+                if (ml - 4 >= SEQLZ_ML_CAP) {
+                    unsigned int s = seqlz_len_symbol(ml - 4 - SEQLZ_ML_CAP, &extra);
 
-                ml_hist[s]++;
-                b_mlc += L->ml[s];
-                b_mlx += extra;
-                bits += L->ml[s] + extra;
+                    ml_hist[s]++;
+                    b_mlc += L->ml[s];
+                    b_mlx += extra;
+                    bits += L->ml[s] + extra;
+                }
+                last = seq[i].offset;
             }
             for (k = 0; k < ll; k++, nlit++) {
                 unsigned int b = page[in + k];
@@ -105,8 +107,6 @@ int main(int argc, char** argv) {
                 }
             }
             in += ll + ml;
-            if (ml)
-                last = seq[i].offset;
         }
         {
             /* the header, and the bits that fill up the last byte of each stream and the bitstream */

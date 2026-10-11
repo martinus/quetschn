@@ -151,6 +151,17 @@ struct bit_writer {
         FAIL("no code for symbol ", sym);
     }
 
+    // a length value: below 16 its own symbol, else the position of its top bit and the bits below
+    void value(seqlz_ref_code const& c, unsigned int v) {
+        if (v < 16) {
+            symbol(c, v);
+            return;
+        }
+        auto const b = static_cast<unsigned int>(std::bit_width(v)) - 1U;
+        symbol(c, 12 + b);
+        put(v - (1U << b), b);
+    }
+
     // a token, escaped when it has no code
     void token(seqlz_ref_code const& c, unsigned int tok) {
         if (seqlz_default_own.token[tok] != 0) {
@@ -162,29 +173,38 @@ struct bit_writer {
     }
 };
 
-// A page of PAGE raw literals and one sequence that takes them all: its token with class c, and
-// the offset bits of class 1 if c is 1. Valid only for c == 0. *padding gets the bits left in the last
-// byte.
-std::vector<unsigned char>
-one_sequence(seqlz_ref const& r, unsigned int literals, unsigned int c, unsigned int* padding = nullptr) {
+// literals raw literals, k * 7 for literal k, and no bits: valid only with PAGE of them.
+std::vector<unsigned char> literals_only(unsigned int literals) {
+    auto c_page = std::vector<unsigned char>{static_cast<unsigned char>(literals), static_cast<unsigned char>(literals >> 8)};
+    for (unsigned int k = 0; k < literals; ++k) {
+        c_page.push_back(static_cast<unsigned char>(k * 7));
+    }
+    return c_page;
+}
+
+// A page of PAGE raw literals with a token that takes them all, with class c and the offset bits of
+// class 1 if c is 1: the last sequence as it was before it lost its token. Invalid.
+std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int c) {
     auto w = bit_writer{};
     w.token(r.tok, 15 + 512 * c);
     if (c == 1) {
         w.put(1, 4);
     }
-    // ll = 15 + value(LL) = PAGE: the value has its top bit as the symbol, the rest as extra bits
-    auto const v = SEQLZ_PAGE - 15U;
-    auto const b = static_cast<unsigned int>(std::bit_width(v)) - 1U;
-    w.symbol(r.ll, 12 + b);
-    w.put(v - (1U << b), b);
-    auto c_page = std::vector<unsigned char>{static_cast<unsigned char>(literals), static_cast<unsigned char>(literals >> 8)};
-    for (unsigned int k = 0; k < literals; ++k) {
-        c_page.push_back(static_cast<unsigned char>(k * 7));
-    }
+    w.value(r.ll, SEQLZ_PAGE - 15U); // ll = 15 + value(LL) = PAGE
+    auto c_page = literals_only(SEQLZ_PAGE);
     c_page.insert(c_page.end(), w.bytes.begin(), w.bytes.end());
-    if (padding != nullptr) {
-        *padding = static_cast<unsigned int>(8 * w.bytes.size()) - w.n;
-    }
+    return c_page;
+}
+
+// A page of one literal, 7, and a match of the rest of the page from 1 back, the repeat offset a page
+// starts with. *padding gets the bits left in the last byte.
+std::vector<unsigned char> one_match(seqlz_ref const& r, unsigned int* padding) {
+    auto w = bit_writer{};
+    w.token(r.tok, 1 + 16 * 31);
+    w.value(r.ml, SEQLZ_PAGE - 1U - 35U); // ml = 35 + value(ML) = PAGE - 1
+    auto c_page = std::vector<unsigned char>{1, 0, 7};
+    c_page.insert(c_page.end(), w.bytes.begin(), w.bytes.end());
+    *padding = static_cast<unsigned int>(8 * w.bytes.size()) - w.n;
     return c_page;
 }
 
@@ -193,15 +213,18 @@ one_sequence(seqlz_ref const& r, unsigned int literals, unsigned int c, unsigned
 #if QUETSCHN_PAGE_BITS == 12
 TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
     auto const r = make_ref();
-    auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb, 0x8a};
+    auto const c = std::array<unsigned char, 8>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb};
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);
     REQUIRE(seqlz_ref_decode(r.get(), c.data(), c.size(), out.data()) == 0);
     for (std::size_t k = 0; k < out.size(); ++k) {
         REQUIRE(out[k] == (k % 2 ? 'b' : 'a'));
     }
-    // without the last token's last bit the page cannot end
-    auto const shorter = std::array<unsigned char, 8>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb};
+    // without the last byte the match is cut, and the last sequence has no token: token 0 after the
+    // match, as the page had before, is invalid
+    auto const shorter = std::array<unsigned char, 7>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef};
     CHECK(seqlz_ref_decode(r.get(), shorter.data(), shorter.size(), out.data()) == -1);
+    auto const with_token = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0xdc, 0x65, 0xef, 0xdb, 0x8a};
+    CHECK(seqlz_ref_decode(r.get(), with_token.data(), with_token.size(), out.data()) == -1);
 }
 #endif
 
@@ -268,15 +291,15 @@ TEST_CASE("seqlz_ref: tables that are no complete prefix code, and other page si
     CHECK(seqlz_ref_init(r.get(), &t, QUETSCHN_PAGE_BITS) == -1);
 }
 
-TEST_CASE("seqlz_ref: the last sequence needs class 0, and as many literals as the header has") {
+TEST_CASE("seqlz_ref: a page of literals only has no bits, and as many literals as the page") {
     auto const t = fast_tables();
     auto const r = make_ref();
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);
-    auto const good = one_sequence(*r, SEQLZ_PAGE, 0);
+    auto const good = literals_only(SEQLZ_PAGE);
     REQUIRE(seqlz_ref_decode(r.get(), good.data(), good.size(), out.data()) == 0);
     CHECK(out[7] == 49);
     check_same(t.get(), r.get(), good);
-    for (auto const& bad : {one_sequence(*r, SEQLZ_PAGE, 1), one_sequence(*r, SEQLZ_PAGE - 1, 0)}) {
+    for (auto const& bad : {literals_only(SEQLZ_PAGE - 1), one_sequence(*r, 0), one_sequence(*r, 1)}) {
         CHECK(seqlz_ref_decode(r.get(), bad.data(), bad.size(), out.data()) == -1);
         check_same(t.get(), r.get(), bad);
     }
@@ -287,8 +310,9 @@ TEST_CASE("seqlz_ref: a page ends where its bits end, the rest of the last byte 
     auto const r = make_ref();
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);
     auto padding = 0U;
-    auto const good = one_sequence(*r, SEQLZ_PAGE, 0, &padding);
+    auto const good = one_match(*r, &padding);
     REQUIRE(seqlz_ref_decode(r.get(), good.data(), good.size(), out.data()) == 0);
+    CHECK(out.back() == 7);
     auto longer = good;
     longer.push_back(0);
     CHECK(seqlz_ref_decode(r.get(), longer.data(), longer.size(), out.data()) == -1);
@@ -378,20 +402,10 @@ std::vector<unsigned char> coded_literals(seqlz_ref const& r, unsigned int n, F 
         c.insert(c.end(), s.bytes.begin(), s.bytes.end());
     }
     auto seq = bit_writer{};
-    auto value = [&](seqlz_ref_code const& code, unsigned int v) {
-        if (v < 16) {
-            seq.symbol(code, v);
-            return;
-        }
-        auto const bits = static_cast<unsigned int>(std::bit_width(v)) - 1U;
-        seq.symbol(code, 12 + bits);
-        seq.put(v - (1U << bits), bits);
-    };
     // ll and ml - 4 at their caps, class 0 with the offset 1 a page starts with
     seq.token(r.tok, 15 + 16 * 31);
-    value(r.ll, n - 15);
-    value(r.ml, SEQLZ_PAGE - n - 35);
-    seq.token(r.tok, 0);
+    seq.value(r.ll, n - 15);
+    seq.value(r.ml, SEQLZ_PAGE - n - 35);
     c.insert(c.end(), seq.bytes.begin(), seq.bytes.end());
     return c;
 }

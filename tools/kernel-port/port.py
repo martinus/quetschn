@@ -80,7 +80,7 @@ REWRITES = [
     ("A page has at most 16 KiB of literals", "A page has at most 4 KiB of literals"),
     ("at most 640 bytes in a 4 KiB page and 2560 in a 16 KiB page, so w is at most 12.",
      "at most 640 bytes in a 4 KiB page, so w is at most 10 here; the format allows 12."),
-    ("; for 16 KiB pages 15 876 bytes", ""),
+    ("; for 16 KiB pages 15 872 bytes", ""),
     (", 60 for 16 KiB pages", ""),
     ("20 or 22 bits more", "20 bits more"),
     # port_compress() takes out raw and the check of all_symbols, which the tables built once pass

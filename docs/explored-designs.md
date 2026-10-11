@@ -72,6 +72,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [seqlz: `lz4`'s matches, Huffman coded sequences with static tables](#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables)
 - [seqlz-fast-lit: one of 8 literal tables per page](#seqlz-fast-lit-one-of-8-literal-tables-per-page)
 - [A page ends where its bits end: no damaged page with bytes or bits too many decodes, 0.1 µs on the A55, kept](#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)
+- [The last sequence without a token: 1.2 bytes per page less, kept](#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5108,6 +5109,88 @@ Tests: the same output as `main` from the same-bytes program, also with `-m32` a
 all tests also with 16 KiB pages and under ASan and UBSan; a wrong `repeat[3]` fails 9 test cases, a
 wrong pattern in `copy_match()` 14. `tools/kernel-port/check.sh` on x86-64 and arm without warnings,
 KUnit 10 of 10.
+
+## The last sequence without a token: 1.2 bytes per page less, kept
+
+*The last sequence of a page had a token: its `ll`, `mlf = 0` and class 0, and an `ll` value for 15
+literals or more. It told the decoder nothing new. Every match has at least 4 bytes, so once the
+literals left are as many as the bytes the page still needs, no match can follow, and the literals left
+are the last sequence. The decoder now stops there and copies them, and the encoder writes nothing for
+the last sequence. Pages are 1.2 to 1.3 bytes smaller, 0.12% of zsmalloc memory; reads and writes take
+the same time in the kernel VM and on the phone. The tables are not trained again.* Code:
+`seqlz_decode()` (`end_gap`, the copy after the loop), `encode_emit()`, `seqlz_token()`, both
+reference decoders, `bench/seqlz_train_main.cpp`, which counts no token for the last sequence any more;
+docs/format.md, the book.
+
+**What the token cost.** The encoder without the last token, the pages only compressed, 20 000 pages of
+each dump, the zsmalloc column from a simple model (16-byte classes, pages from 3264 bytes on stored
+whole):
+
+| dump | last match fills the page | last token | bytes per page less | zsmalloc |
+| --- | ---: | ---: | ---: | ---: |
+| first desktop dump | 55% | 9.0 bits | 1.22 | -0.13% |
+| desktop, 28th September | 51% | 9.3 bits | 1.28 | -0.10% |
+| Mi 9T, 4th October | 64% | 8.7 bits | 1.20 | -0.12% |
+
+On the whole first desktop dump, 455 239 pages, the harness's zsmalloc cost goes from 1084.5 to 1083.2
+bytes per page for `seqlz-fast` and from 999.8 to 998.6 for `seqlz-fast-lit`; 35 and 18 pages fewer are
+stored as they are. In the kernel VM, 20 000 pages of that dump, zram's `compr_data_size` is 1.17 and 1.18 bytes
+per stored page less, and `mem_used_total` 56 KiB less for `seqlz-fast` and 12 KiB more for
+`seqlz-fast-lit`: zsmalloc's zspages, a few pages either way.
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, `BOOTS=3`, CPU 2 at a fixed 4.5
+GHz, boost off, gcc 16.2.1, 20 000 pages of the first desktop dump. `main` and three variants of the
+change in one boot, the codecs taking turns; they differ only in how the last literals are copied:
+with `copy_literals()`, as the slow path does (kept), with `memcpy()`, or one byte at a time. µs, the
+range over the 3 boots:
+
+| | swap-out | swap-in, warm | swap-in, flushed |
+| --- | ---: | ---: | ---: |
+| `lz4` | 6.43 to 6.45 | 3.16 to 3.19 | 3.25 to 3.27 |
+| `seqlz-fast`, `main` | 6.84 to 6.86 | 3.56 to 3.59 | 3.74 to 3.77 |
+| `copy_literals()` | 6.80 to 6.88 | 3.55 to 3.59 | 3.74 to 3.77 |
+| `memcpy()` | 6.82 to 6.83 | 3.59 to 3.60 | 3.76 to 3.80 |
+| byte loop | 6.79 | 3.58 to 3.61 | 3.75 to 3.78 |
+| `seqlz-fast-lit`, `main` | 7.32 to 7.38 | 3.78 to 3.83 | 3.94 to 3.95 |
+| `copy_literals()` | 7.29 to 7.33 | 3.76 to 3.77 | 3.93 to 3.96 |
+| `memcpy()` | 7.33 to 7.36 | 3.80 to 3.81 | 3.96 to 3.98 |
+
+`copy_literals()` is `main`'s time. `memcpy()`, a call where `copy_literals()` is inlined a second
+time, reads 0.02 µs slower, at the edge of what the boots differ by.
+
+**Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, `COUNTS=1`, `COOL=45`, 3 rounds, 20 000 pages of the
+first phone dump, each codec in its own process; µs, and the kernel's instructions per page from
+`simpleperf`:
+
+| | A55 warm | A55 cold | A55 instructions | A76 warm | A76 cold | A76 instructions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `seqlz-fast`, `main` | 11.49 | 29.82 | 344 352 | 4.06 | 7.24 | 342 691 |
+| `copy_literals()` | 11.65 | 28.97 | 343 730 | 4.03 | 7.13 | 342 192 |
+| `memcpy()` | 11.53 | 28.56 | 343 673 | 3.96 | 7.26 | 341 951 |
+| byte loop | 11.39 | 29.65 | 343 833 | 3.96 | 6.98 | 342 291 |
+| `seqlz-fast-lit`, `main` | 12.44 | 32.38 | 397 291 | 4.43 | 7.55 | 395 652 |
+| `copy_literals()` | 12.53 | 31.94 | 396 813 | 4.38 | 7.92 | 395 179 |
+
+The writes are the same, 28.73 to 28.85 µs on the A55 and 11.06 to 11.14 on the A76. Every variant
+runs 400 to 740 instructions per page fewer than `main`. The times move by more than that between
+the variants, in both directions. An earlier run with `main` and `memcpy()` alone had `memcpy()`'s cold
+reads 0.9 and 1.2 µs slower on the A55 and 0.6 and 0.7 µs on the A76, outside the ranges of the
+rounds; in the run above, with the same two modules, `main`'s cold read on the A55 was 1.6 µs slower
+than in that one and `memcpy()`'s 1.3 µs faster than `main`'s. One run's cold reads on the phone do not
+tell a change of this size, as [Less noise on the phone](#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed)
+found for the placement of the code.
+
+**On the PC, userspace**, `tools/quick-bench.sh` on the first desktop dump, both builds with
+`QUETSCHN_ALIGN_FUNCTIONS`, twice each: the writes 8% faster, 2862 to 2628 ns for `seqlz-fast`, which
+the VM's swap-out does not show, and the reads 10 to 50 ns slower at p99. `perf stat` on
+`--decode-loop` showed why: the first version of the decoder ran 2.0% more instructions, because gcc
+kept `nl` in a second register in the fast path, two `mov`s more per sequence. Comparing `d - lit` with
+`end_gap`, computed once, instead of `lit_end - lit` with `d_end - d`, and the copy of the last literals
+after the loop, brought that to 0.8% with `copy_literals()` and 0.5% with `memcpy()`; on arm64 every
+variant has fewer instructions than `main`.
+
+The 4 KiB tables still count a token for every last sequence, one count per page too many for the
+tokens `(ll, 0, 0)`. They change with the next training, together with #182.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 

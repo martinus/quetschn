@@ -3,7 +3,8 @@
  * lines.c: the token lookups of chapter 16's page. Compresses the page, walks the sequences'
  * bitstream as seqlz_decode() reads it, without copying bytes, and prints the 11-bit index of every
  * token lookup and the code length of the entry it found. Fails if the walk does not end exactly at
- * the end of the bitstream, after as many sequences as the real decode has.
+ * the end of the bitstream, after as many tokens as the real decode reads: one for each sequence but
+ * the last.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,7 +45,7 @@ int main(void) {
     static unsigned int idx[SEQLZ_PAGE], len[SEQLZ_PAGE];
     static struct seqlz_state st;
     struct seqlz_tables* t = malloc(seqlz_tables_size());
-    unsigned int n, n_lit, d = 0, seqs = 0, i;
+    unsigned int n, n_lit, matched = 0, seqs = 0, i;
     unsigned long pos = 0;
     const u8* q;
 
@@ -61,18 +62,23 @@ int main(void) {
         fprintf(stderr, "lines.c: the page has raw literals\n");
         return 1;
     }
+    n_lit &= SEQLZ_LIT_CODED - 1U;
     /* where the bitstream starts, as seqlz_decode() gets it */
-    q = decode_literals(t, comp, n, n_lit & (SEQLZ_LIT_CODED - 1U), scratch);
+    q = decode_literals(t, comp, n, n_lit, scratch);
     if (!q)
         return 1;
     g_q = q;
     g_nbits = 8UL * (unsigned long)(comp + n - q);
 
-    /* as in seqlz_decode(): a page ends with a sequence whose literals fill it */
-    for (;;) {
+    /*
+     * as in seqlz_decode(): when the literals left fill the rest of the page, the matches so far
+     * cover all bytes but the literals, and the literals left are the last sequence, which has no
+     * token
+     */
+    while (matched != SEQLZ_PAGE - n_lit && seqs < SEQLZ_PAGE) {
         unsigned int ix = peek(pos, SEQLZ_TOKEN_BITS);
         u32 tok = t->token.decode[ix];
-        unsigned int nl, ml;
+        unsigned int ml;
 
         idx[seqs] = ix;
         /* the code's length; an escape's entry has it only in TOK_DROP */
@@ -89,24 +95,20 @@ int main(void) {
         }
         seqs++;
         pos += TOK_DROP(tok);
-        nl = TOK_LL(tok);
         ml = TOK_ML(tok);
-        if (nl == SEQLZ_LL_CAP)
-            nl += value(&pos, &t->ll);
-        d += nl;
-        if (d >= SEQLZ_PAGE || seqs == SEQLZ_PAGE)
-            break;
+        if (TOK_LL(tok) == SEQLZ_LL_CAP)
+            value(&pos, &t->ll);
         if (ml == SEQLZ_ML_CAP + 4U)
             ml += value(&pos, &t->ml);
-        d += ml;
+        matched += ml;
     }
     /* the walk must end where the bits end: fewer than 8 bits left, in the last byte */
-    if (d != SEQLZ_PAGE || pos > g_nbits || g_nbits - pos >= 8) {
-        fprintf(stderr, "lines.c: walk ends at bit %lu of %lu, byte %u\n", pos, g_nbits, d);
+    if (matched != SEQLZ_PAGE - n_lit || pos > g_nbits || g_nbits - pos >= 8) {
+        fprintf(stderr, "lines.c: walk ends at bit %lu of %lu, %u bytes matched\n", pos, g_nbits, matched);
         return 1;
     }
-    if (seqs != 180) {
-        fprintf(stderr, "lines.c: %u sequences, chapter 16 has 180\n", seqs);
+    if (seqs != 179) {
+        fprintf(stderr, "lines.c: %u tokens, chapter 16 has 180 sequences, the last without one\n", seqs);
         return 1;
     }
     printf("{\"idx\":[");

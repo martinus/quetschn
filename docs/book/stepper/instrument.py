@@ -12,13 +12,16 @@ instrument.py match <src/page_lz.h> <out.h>
 import sys
 
 # seqlz_decode(): statements a step stops in front of, as their line starts after the indentation.
-# The hook is STEP_IN() inside the loop over the sequences, where its variables exist, else STEP_OUT()
+# The hook is STEP_IN() inside the loop over the sequences, where its variables exist, else STEP_OUT().
+# Never the body of an if without braces: the hook would become the body; the script fails on one.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
     "q = decode_literals(t, s, src_len, n_lit, scratch);",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
     "d_fast = d_end - FAST_PAGE_ROOM;",
+    "end_gap = (unsigned long)d_end - (unsigned long)lit_end;",
+    "if (n_lit == SEQLZ_PAGE)",
     "tok = next_token(&br, &t->token);",
     "if (tok >> TOK_ESCAPE_AT) {",
     "idx = (unsigned int)(br.bits >>",
@@ -43,15 +46,14 @@ DECODE_STOPS = [
     "nl += seqlz_br_value(&br, &t->ll);",
     "if (lit > lit_end || nl > (unsigned int)(lit_end - lit) ||",
     "copy_literals(d, d_end, lit, lit_bound, nl);",
-    "if (d == d_end) {",
-    "if (len != 4U || TOK_BACK(tok) != 0U)",
-    "break;",
+    "copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));",
     "if (len == SEQLZ_ML_CAP + 4U) {",
     "len += seqlz_br_value(&br, &t->ml);",
     "if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||",
     "copy_match(d, d_end, off, len);",
+    "if ((unsigned long)d - (unsigned long)lit == end_gap)",
     "skip = 0;",
-    "if (d != d_end || lit != lit_end || br.count < 0 || br.p != br.end ||",
+    "if (br.count < 0 || br.p != br.end || br.count >= 8 ||",
     "return 0;",
 ]
 
@@ -72,12 +74,26 @@ MATCH_STOPS = [
 # the function and its last line: the first "}" at the start of a line after it
 FUNCTIONS = {"decode": "int seqlz_decode(", "match": "static __always_inline void seqlz_match_page("}
 
+
+
+def braceless_body(lines, i):
+    """whether line i is the body of an if, for or while without braces: the code line before it, past
+    comments, ends with the ) of the condition, or is an else"""
+    for j in range(i - 1, -1, -1):
+        t = lines[j].strip()
+        if not t or t.startswith(("/*", "*")) or t.endswith("*/"):
+            continue
+        return t.endswith(")") or t == "else"
+    return False
+
+
 kind, src, out = sys.argv[1:4]
 lines = open(src).read().split("\n")
 first = next(i for i, l in enumerate(lines) if l.startswith(FUNCTIONS[kind]))
 last = next(i for i in range(first, len(lines)) if lines[i] == "}")
 stops = [(s, None) for s in DECODE_STOPS] if kind == "decode" else MATCH_STOPS
 found = {s: 0 for s, _ in stops}
+bodies = []
 loop = None  # the indentation of "for (;;) {" while inside the decoder's loop, -1 after it
 for i in range(first, last + 1):
     body = lines[i].lstrip("\t")
@@ -89,6 +105,8 @@ for i in range(first, last + 1):
         loop = -1
     for stop, macro in stops:
         if body.startswith(stop):
+            if braceless_body(lines, i):
+                bodies.append(stop)
             macro = macro or ("STEP_IN" if loop is not None and loop >= 0 else "STEP_OUT")
             lines[i] = f"{indent}{macro}(); {body}"
             found[stop] += 1
@@ -96,5 +114,7 @@ for i in range(first, last + 1):
 missing = [s for s, n in found.items() if n == 0]
 if missing:
     sys.exit(f"instrument.py: not found in {FUNCTIONS[kind]}...): " + "; ".join(missing))
+if bodies:
+    sys.exit("instrument.py: the body of an if without braces, a hook would replace it: " + "; ".join(bodies))
 open(out, "w").write("\n".join(lines))
 print(first + 1, last + 1)

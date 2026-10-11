@@ -177,7 +177,8 @@ position 0, and position 0 starts with `cat=`. Put a `#` in front, and the first
 matcher then writes 18 literals and finds only `,dog=`. On the page without the `#`, the third
 sequence takes `4`, `;` and one zero as literals, and covers the other 4071 zeros with one match at
 offset 1. The match ends at the end of the page, and the matcher still passes a last sequence with no
-literals and no match, which is how the format marks the end. [Chapter 9](#ch-matcher--back) has a
+literals and no match. The format writes no bits for it: the decoder sees that 0 literals are left
+for 0 bytes of the page, and that is the end. [Chapter 9](#ch-matcher--back) has a
 program that prints every sequence the matcher finds; give it this page, and others.
 :::
 
@@ -471,9 +472,10 @@ slower on the project's two desktop dumps, for 2.7 and 60.6 bytes less per page,
 stored size, and was not kept
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-choices-with-their-numbers)).
 
-The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is 28 bytes
+The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is 27 bytes
 in seqlz: 2 bytes of header, the literal count 16; the 16 literals as they are, the matcher's sequences
-being the ones from the box above; and 10 bytes of bitstream for the four sequences. The table below
+being the ones from the box above; and 9 bytes of bitstream for the four sequences, of which the last
+takes no bits. The table below
 runs ahead of [chapter 4](#ch-format), which explains how a token's number packs `ll`, `ml` and the
 offset class and what the escape is ([one sequence: the token](#ch-format--token)), and how a long
 `ml` is sent ([length values](#ch-format--length-values)). Read it now for the sizes, and again after
@@ -487,10 +489,10 @@ chapter 4 for the bits:
 | `0011` `001111110011` | the escape, then token 1011: `ll` 3, `ml - 4` 31, class 1 |
 | `0001` | offset 1 |
 | `111101` `11111000100` | the length value 4036: `ml` = 35 + 4036 = 4071 |
-| `10001010` | token 0: `ll` 0, the page is full, the end |
+| | 0 literals left, 0 bytes of the page left: the last sequence, no bits |
 | `000000` | fill to the end of the last byte |
 
-That is 74 bits and 6 bits of fill, the bytes `32 0c ca 59 9f 98 fb f1 22 80`, as `seqlz_compress()`
+That is 66 bits and 6 bits of fill, the bytes `32 0c ca 59 9f 98 fb f1 00`, as `seqlz_compress()`
 writes them. Two of the tokens are escaped: a sequence of 12 literals and a match of 4 at a short offset
 is rare on real pages and has no code of its own. The same four sequences in `lz4`'s format take 26
 bytes besides the literals, leaving aside `lz4`'s rules for the end of a block: a token byte each, 2 bytes

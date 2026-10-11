@@ -2,10 +2,9 @@
 /*
  * seqs <pages file> <output>: the sequences seqlz-fast-lit's matcher finds on the pages zram keeps
  * compressed, for offsets.py, which prices layouts of the offset classes on them. Same-filled pages and
- * pages of 3625 bytes and more are left out, as in bound.c. One record of four u16 per sequence:
- * min(ll, 15) + 16 * min(ml - 4, 31) (0 for ml of the last sequence), the offset (0 for the last
- * sequence), the offset before it, and 1 for the first sequence of a page. Build from the repository's
- * root:
+ * pages of 3625 bytes and more are left out, as in bound.c. One record of four u16 per sequence with a
+ * match, the last sequence has no token: min(ll, 15) + 16 * min(ml - 4, 31), the offset, the offset
+ * before it, and 1 for the first sequence of a page. Build from the repository's root:
  *   cc -O2 -Isrc -o seqs tools/seqlz-bound/seqs.c src/seqlz_codes.c src/seqlz_compress.c \
  *      src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
  */
@@ -35,18 +34,17 @@ int main(int argc, char** argv) {
         if (k == SEQLZ_PAGE || seqlz_compress(t, &st, page, dst, sizeof dst, 1) >= 3625)
             continue;
         n = seqlz_find(&st, page, seq);
-        for (i = 0; i < n; i++) {
-            unsigned int ll = seq[i].literals, ml = i + 1 == n ? 0 : seq[i].match;
+        for (i = 0; i + 1 < n; i++) {
+            unsigned int ll = seq[i].literals, ml = seq[i].match;
             unsigned short r[4];
 
-            r[0] = (unsigned short)((ll < 15 ? ll : 15) + 16 * (ml ? (ml - 4 < 31 ? ml - 4 : 31) : 0));
-            r[1] = (unsigned short)(ml ? seq[i].offset : 0);
+            r[0] = (unsigned short)((ll < 15 ? ll : 15) + 16 * (ml - 4 < 31 ? ml - 4 : 31));
+            r[1] = (unsigned short)seq[i].offset;
             r[2] = (unsigned short)last;
             r[3] = i == 0;
             if (fwrite(r, sizeof r[0], 4, o) != 4)
                 return 1;
-            if (ml)
-                last = seq[i].offset;
+            last = seq[i].offset;
         }
         pages++;
     }

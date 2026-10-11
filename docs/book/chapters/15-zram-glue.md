@@ -978,7 +978,7 @@ codec's tests in the kernel's own test framework. Six cases:
 - `seqlz_test_tables`: the SHA-256 of each table's code lengths against the one `docs/format.md`
   gives. The template has placeholders like `"@TOK_4k@"`, which `port.py` fills from the
   specification's table, so the kernel's tests check against the specification, not against a copy.
-- `seqlz_test_example`: the specification's worked example, 9 bytes that decode to a page of `ab`
+- `seqlz_test_example`: the specification's worked example, 8 bytes that decode to a page of `ab`
   2048 times. The same bytes without the last one, and with one zero byte more, must both be
   `-EINVAL`: a page ends where its bits end.
 - `seqlz_test_round_trip`: generated pages of 7 kinds, compressed and decompressed at both levels.

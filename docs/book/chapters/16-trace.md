@@ -10,7 +10,7 @@ and watch the numbers move.
 The page is made up. Real memory pages from a zram dump would be more honest, but they hold keys and
 passwords, so the page here is built to look like one: a small header, an array of records with a
 pointer, a few small integers and a name each, a stretch of English text, and zeros up to the end.
-It compresses to 796 bytes, 19.4% of the page, and with raw literals to 947.
+It compresses to 795 bytes, 19.4% of the page, and with raw literals to 946.
 
 Four figures of the book show this page sequence by sequence, each from the real code: the matcher
 finding it ([chapter 9](#stepper-match)), the encoder writing it into `dst` ([chapter 10](#anim-ends)),
@@ -80,7 +80,6 @@ values we will meet on this page:
 | --- | --- | ---: | --- |
 | token | escape (3072) | 4 | `0011` |
 | token | 34: `ll` 2, `ml` 6, class 0 | 4 | |
-| token | 0: `ll` 0, `ml` 4, class 0, also the last sequence without literals | 8 | |
 | literal table 0 | `e` | 4 | `0001` |
 | literal table 0 | space | 4 | |
 | literal table 0 | `t`, `a`, `o`, `s` | 5 | |
@@ -189,7 +188,7 @@ bits, and the sum.
 | ... | | | | | | | | | | |
 | 177 | 2224 | 1 | 7 | 1976 | 5 | 2609 | 6 | 9 | 0 | 15 |
 | 178 | 2232 | 0 | 1864 | 2 | 1 | 1008 | 7 | 4 | 16 | 27 |
-| 179 | 4096 | 0 | 0 | | | 0 | 8 | 0 | 0 | 8 |
+| 179 | 4096 | 0 | 0 | | | | | | | 0 |
 
 Some rows worth reading closely:
 
@@ -221,20 +220,20 @@ Some rows worth reading closely:
   top one, $1829 - 1024 = 805$. 16 bits for the length, 27 for the whole sequence, for 1864 bytes of
   the page.
 - **Sequence 179** is the last one. The match before ends exactly at byte 4096, so it has no literals
-  and no match: token 0, `ll` 0, `ml - 4 = 0`, class 0, 8 bits. The decoder knows it is the last
-  because the page is full after its literals.
+  and no match, and it takes no bits: the decoder knows it is the last because 0 literals are left
+  for 0 bytes of the page. Until 11th October 2026 it was token 0, 8 bits.
 
 The whole page, summed by the program:
 
 ```text
-literals 674, bitstream 2168 bits = 271 bytes
+literals 674, bitstream 2160 bits = 270 bytes
 matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
 ```
 
 179 matches cover 3422 bytes, the 674 literals the other 674. 96 of the 179 matches are class 4, a
 multiple of 8 below 256: the records' period of 32 shows up as offsets 32, 64, 96, 128 and 192. 30
 more are class 5, multiples of 8 from 256 on, mostly 288, 9 records back; 25 of them are the 7 high
-bytes of a pointer. Only 2 matches needed the 12 offset bits of class 3. Of the 2168 bits, 1109 are
+bytes of a pointer. Only 2 matches needed the 12 offset bits of class 3. Of the 2160 bits, 1101 are
 token codes, 954 offset bits and 105 length values. By part of the page:
 
 | part | sequences | literals | bits |
@@ -242,7 +241,7 @@ token codes, 954 offset bits and 105 length values. By part of the page:
 | header, bytes 0 to 63 | 1 | 14 | 23 |
 | records, 64 to 1599 | 155 | 167 | 1635 |
 | text, 1600 to 2224 | 22 | 493 | 475 |
-| zeros, 2225 to 4095 | 2 | 0 | 35 |
+| zeros, 2225 to 4095 | 2 | 0 | 27 |
 
 The records take three quarters of the bitstream, about 10.5 bits per sequence, and leave few
 literals. The text is the other way round: 22 sequences, but 493 of the 674 literals.
@@ -261,27 +260,28 @@ run in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 :::
 
-## encoder_finish(): 947 bytes with raw literals {#ch-trace--finish}
+## encoder_finish(): 946 bytes with raw literals {#ch-trace--finish}
 
 When the matcher is done, `compress_page()` calls `encoder_finish()` ([chapter 10](#ch-encoder)).
-At this point the literals fill `dst + 2` to `dst + 676`, and the bitstream fills the last 271 bytes
-of the 8192-byte buffer, backwards. 2168 is a multiple of 8, so after the last sequence's flush no
-bits are left in the accumulator, and `e.cnt` is 0: no partial last byte to count, `p` stays.
+At this point the literals fill `dst + 2` to `dst + 676`, and the bitstream fills the last 270 bytes
+of the 8192-byte buffer, backwards. 2160 is a multiple of 8, so after the flush of sequence 178, the
+last with bits, no bits are left in the accumulator, and `e.cnt` is 0: no partial last byte to count,
+`p` stays.
 
 `encoder_finish()` writes the literal count, 674, as the u16 at the start, `a2 02`. Then it copies the
 bitstream from the end of the buffer to right after the literals. The gap between them is
-$(8192 - 271) - 676 = 7245$ bytes, much more than 271, so the copy cannot overlap: 33 copies of 8
+$(8192 - 270) - 676 = 7246$ bytes, much more than 270, so the copy cannot overlap: 33 copies of 8
 bytes, each a little-endian load from the back and a big-endian store to the front, which reverses
-the byte order, and 7 single bytes. The bitstream now starts at byte 676 with `31 fe fd 82`, and the
-function returns $2 + 674 + 271 = 947$.
+the byte order, and 6 single bytes. The bitstream now starts at byte 676 with `31 fe fd 82`, and the
+function returns $2 + 674 + 270 = 946$.
 
 That is the page as `seqlz-fast` stores it, 23.1% of 4096 bytes. `seqlz_compress()` was called with
-`coded = 1`, so it now hands the 947 bytes to `code_literals()`.
+`coded = 1`, so it now hands the 946 bytes to `code_literals()`.
 
 ## code_literals(): 151 bytes less {#ch-trace--literals}
 
 `code_literals()` ([chapter 11](#ch-literals-enc)) reads the count, 674, from the u16 and computes the
-bitstream's length, $947 - 2 - 674 = 271$. Then `lit_cost()` sums, for every stream and every one of
+bitstream's length, $946 - 2 - 674 = 270$. Then `lit_cost()` sums, for every stream and every one of
 the 8 literal tables, the code lengths of that stream's literals. It works on the literals in chunks
 of $8 \times 25 = 200$, three full ones and one of 74, each chunk summed in 8-bit lanes of one u64 per
 stream and then moved into 16-bit lanes before a lane can overflow. The results, as the trace program
@@ -323,49 +323,49 @@ accumulator each, flushing every 32 literals. Stream 0 and 1 get 85 literals, th
 - byte 2 becomes `0 | (7 - 5) << 3 = 0x10`: table 0, width 7;
 - `lit_sizes()` writes the 8 sizes of 7 bits each, lowest bit first, into bytes 3 to 9:
   `c2 5d 10 08 0c 0a 85`;
-- `memmove()` moves the 271 bytes of bitstream from byte 676 down to byte 525.
+- `memmove()` moves the 270 bytes of bitstream from byte 676 down to byte 525.
 
-The function returns $525 + 271 = 796$. `seqlz_compress()` returns that, and the backend tells zram
-the page is 796 bytes.
+The function returns $525 + 270 = 795$. `seqlz_compress()` returns that, and the backend tells zram
+the page is 795 bytes.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 240" role="img" aria-label="The 796 bytes of the compressed page: a 10-byte header, 8 literal streams from byte 10 to 525, the bitstream of the sequences from 525 to 796, with the header's bytes shown enlarged below">
+<svg viewBox="0 0 720 240" role="img" aria-label="The 795 bytes of the compressed page: a 10-byte header, 8 literal streams from byte 10 to 525, the bitstream of the sequences from 525 to 795, with the header's bytes shown enlarged below">
   <g font-size="11">
-    <rect x="20" y="40" width="8.5" height="40" class="fill-acc" stroke="currentColor"/>
-    <rect x="28.5" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="84.9" y="40" width="50.4" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="135.3" y="40" width="55.5" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="190.9" y="40" width="54.7" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="245.5" y="40" width="54.7" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="300.2" y="40" width="55.5" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="355.7" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="412.1" y="40" width="56.4" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="468.5" y="40" width="231.5" height="40" class="fill-mark" stroke="currentColor"/>
-    <text x="56.7" y="64" text-anchor="middle">s0</text>
-    <text x="110.1" y="64" text-anchor="middle">s1</text>
-    <text x="163.1" y="64" text-anchor="middle">s2</text>
-    <text x="218.2" y="64" text-anchor="middle">s3</text>
-    <text x="272.9" y="64" text-anchor="middle">s4</text>
-    <text x="328" y="64" text-anchor="middle">s5</text>
-    <text x="383.9" y="64" text-anchor="middle">s6</text>
-    <text x="440.3" y="64" text-anchor="middle">s7</text>
-    <text x="584.3" y="58" text-anchor="middle" class="on-fill">bitstream of the sequences</text>
-    <text x="584.3" y="72" text-anchor="middle" class="on-fill">271 bytes, MSB first</text>
+    <rect x="20" y="40" width="8.6" height="40" class="fill-acc" stroke="currentColor"/>
+    <rect x="28.6" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="85" y="40" width="50.5" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="135.5" y="40" width="55.6" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="191.1" y="40" width="54.7" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="245.8" y="40" width="54.8" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="300.6" y="40" width="55.6" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="356.2" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="412.6" y="40" width="56.5" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="469.1" y="40" width="230.9" height="40" class="fill-mark" stroke="currentColor"/>
+    <text x="56.8" y="64" text-anchor="middle">s0</text>
+    <text x="110.2" y="64" text-anchor="middle">s1</text>
+    <text x="163.3" y="64" text-anchor="middle">s2</text>
+    <text x="218.4" y="64" text-anchor="middle">s3</text>
+    <text x="273.2" y="64" text-anchor="middle">s4</text>
+    <text x="328.4" y="64" text-anchor="middle">s5</text>
+    <text x="384.4" y="64" text-anchor="middle">s6</text>
+    <text x="440.8" y="64" text-anchor="middle">s7</text>
+    <text x="584.5" y="58" text-anchor="middle" class="on-fill">bitstream of the sequences</text>
+    <text x="584.5" y="72" text-anchor="middle" class="on-fill">270 bytes, MSB first</text>
     <text x="248" y="30" text-anchor="middle">8 literal streams, 515 bytes, table 0</text>
     <text x="20" y="96" text-anchor="middle" class="halo">0</text>
     <text x="30" y="110" text-anchor="middle">10</text>
-    <text x="84.9" y="96" text-anchor="middle" class="halo">76</text>
-    <text x="135.3" y="110" text-anchor="middle">135</text>
-    <text x="190.9" y="96" text-anchor="middle">200</text>
-    <text x="245.5" y="110" text-anchor="middle">264</text>
-    <text x="300.2" y="96" text-anchor="middle">328</text>
-    <text x="355.7" y="110" text-anchor="middle">393</text>
-    <text x="412.1" y="96" text-anchor="middle">459</text>
-    <text x="468.5" y="110" text-anchor="middle">525</text>
-    <text x="700" y="96" text-anchor="middle">796</text>
+    <text x="85" y="96" text-anchor="middle" class="halo">76</text>
+    <text x="135.5" y="110" text-anchor="middle">135</text>
+    <text x="191.1" y="96" text-anchor="middle">200</text>
+    <text x="245.8" y="110" text-anchor="middle">264</text>
+    <text x="300.6" y="96" text-anchor="middle">328</text>
+    <text x="356.2" y="110" text-anchor="middle">393</text>
+    <text x="412.6" y="96" text-anchor="middle">459</text>
+    <text x="469.1" y="110" text-anchor="middle">525</text>
+    <text x="700" y="96" text-anchor="middle">795</text>
     <line x1="20" y1="80" x2="20" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
-    <line x1="28.5" y1="80" x2="520" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
+    <line x1="28.6" y1="80" x2="520" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
     <rect x="20" y="160" width="100" height="34" class="fill-acc" stroke="currentColor"/>
     <rect x="120" y="160" width="50" height="34" class="fill-acc" stroke="currentColor"/>
     <rect x="170" y="160" width="350" height="34" class="fill-acc" stroke="currentColor"/>
@@ -380,35 +380,35 @@ the page is 796 bytes.
   </g>
 </svg>
 </div>
-<figcaption>The compressed page, 796 bytes, drawn to scale; the 10-byte header enlarged below.</figcaption>
+<figcaption>The compressed page, 795 bytes, drawn to scale; the 10-byte header enlarged below.</figcaption>
 </figure>
 
 ## How much memory the page takes in zram {#ch-trace--zsmalloc}
 
-zram does not store 796 bytes. It asks zsmalloc for an object of that size, and zsmalloc rounds it
+zram does not store 795 bytes. It asks zsmalloc for an object of that size, and zsmalloc rounds it
 up to a size class ([chapter 1](#ch-zram)). The project models this in `bench/zsmalloc_cost.cpp`,
 a port of the kernel's class computation; summed over a new device's pages it matched zram's own
 `mem_used_total` to the byte in the kernel VM. For 4 KiB pages:
 
-1. zsmalloc adds a handle of 8 bytes: $796 + 8 = 804$.
+1. zsmalloc adds a handle of 8 bytes: $795 + 8 = 803$.
 2. Classes are 16 bytes apart (`4096 >> 8`) from 32 bytes on, so the class index is
-   $\lceil (804 - 32) / 16 \rceil = \lceil 48.25 \rceil = 49$, and the class size $32 + 49 \times 16 = 816$ bytes.
+   $\lceil (803 - 32) / 16 \rceil = \lceil 48.19 \rceil = 49$, and the class size $32 + 49 \times 16 = 816$ bytes.
 3. A class keeps its objects in a "zspage" of 1 to 8 pages, the number with the least waste at the end.
    For 816 that is 1 page with 5 objects, since $4096 / 816 = 5.02$. Classes with the same pages and
    objects per zspage are merged into the larger: class 800 also has 1 page and 5 objects, so it is
    merged into 816, and no larger class shares 816's.
 4. So each object costs $4096 / 5 = 819.2$ bytes of memory.
 
-The same page with raw literals, `seqlz-fast`'s 947 bytes, lands in class 960 (`955` rounded up), 4
+The same page with raw literals, `seqlz-fast`'s 946 bytes, lands in class 960 (`954` rounded up), 4
 pages holding 17 objects, $16\,384 / 17 = 963.8$ bytes per page. Coding the literals saved 151 bytes of
-compressed size and 144.6 bytes of zsmalloc memory. The page could grow by 12 bytes and stay in class
-816 (up to $808 + 8 = 816$); it would have to shrink by 20 bytes, to 776, to reach the next smaller
+compressed size and 144.6 bytes of zsmalloc memory. The page could grow by 13 bytes and stay in class
+816 (up to $808 + 8 = 816$); it would have to shrink by 19 bytes, to 776, to reach the next smaller
 class, 784, because class 800 is part of 816.
 
 ## seqlz_decode(): the literals first {#ch-trace--decode}
 
-Some time later the page is read. zram calls the backend's decompress with the 796 bytes, and the
-backend calls `seqlz_decode(t, src, 796, dst, scratch)` with the per-CPU scratch of 4112 bytes
+Some time later the page is read. zram calls the backend's decompress with the 795 bytes, and the
+backend calls `seqlz_decode(t, src, 795, dst, scratch)` with the per-CPU scratch of 4112 bytes
 ([chapter 14](#ch-decode)).
 
 `src_len` is at least 2, so the decoder first prefetches its tables: the token table's 8192 bytes in
@@ -420,7 +420,7 @@ not `NULL`, and `decode_literals()` runs ([chapter 13](#ch-literals-dec)).
 and bits 6 and 7 are zero as they must be. The streams start at byte $3 + 7 = 10$. It prefetches
 literal table 0's 2048 bytes of decode table, 32 lines, and `lit_stream_sizes()` copies the 7 bytes of
 sizes out and takes 7 bits at a time: 66, 59, 65, 64, 64, 65, 66, 66, starts 10, 76, 135, 200, 264,
-328, 393, 459, total 515. $10 + 515 = 525$ is within the 796 bytes.
+328, 393, 459, total 515. $10 + 515 = 525$ is within the 795 bytes.
 
 The 8 streams are then decoded side by side, `SEQLZ_LIT_ROUNDS = 56 / 10 = 5` literals per stream
 after each refill, 40 literals per round. 674 literals are 16 full rounds, 640 literals. The rest, 34,
@@ -476,22 +476,22 @@ The rest of the page goes the same way. The program counts the paths with a copy
 has two counters added:
 
 ```text
-round trip ok, 162 sequences on the fast path, 18 on the slow path
+round trip ok, 161 sequences on the fast path, 18 on the slow path
 ```
 
-The 18 slow ones are the 16 sequences with a length value (14 for `ll`, 2 for `ml`); sequence 177,
-whose bit reader has reached the last 8 bytes of the input, so that a refill without a check could
-read past it; and sequence 179, the last, whose literals end the page.
+179 sequences have a token. The 18 slow ones are the 16 sequences with a length value (14 for `ll`, 2
+for `ml`), and sequences 174 and 177, whose bit reader has reached the last 8 bytes of the input, so
+that a refill without a check could read past it.
 
-**The end.** Sequence 179's token is 0: `ll` 0, `ml` 4, class 0. There are no literals left to copy,
-`d` is at the end of the page, so the loop checks that this is a valid last sequence, `len == 4` and
-`TOK_BACK(tok) == 0`, and leaves. Then the checks that make a page valid only if it ends where its
-bits end ([chapter 4](#ch-format--validity)): `d` is at the end of the page, `lit` at `lit_end`, all
-674 literals used; the bit reader has read every byte, `p == end`; and `count`, the bits left, is 0,
-because 2168 bits are exactly 271 bytes. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
+**The end.** After sequence 178's match `d` is at the end of the page and `lit` at `lit_end`, all 674
+literals used: `d - lit` is `end_gap`, 0 literals left for 0 bytes of the page. That is sequence 179,
+the last, which has no token, and the loop leaves without reading one; `copy_literals()` copies 0 bytes. Then
+the checks that make a page valid only if it ends where its bits end
+([chapter 4](#ch-format--validity)): the bit reader has read every byte, `p == end`, and `count`, the
+bits left, is 0, because 2160 bits are exactly 270 bytes. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
 the page we started with.
 
-Without the scratch, the same 796 bytes are invalid: `seqlz_decode(t, src, 796, dst, NULL)` returns
+Without the scratch, the same 795 bytes are invalid: `seqlz_decode(t, src, 795, dst, NULL)` returns
 `-EINVAL` as soon as it sees the top bit of the u16. That is why `seqlz-fast-lit` has a decompression
 context and `seqlz-fast` does not ([chapter 15](#ch-zram-glue)).
 
@@ -529,10 +529,10 @@ seq 2: token code 101100110, offset bits 00100
 ...
 177 | 2224 |   1 |    7 | 1976 |  5 |  2609 |  6   |   9 |      0 |   15
 178 | 2232 |   0 | 1864 |    2 |  1 |  1008 |  7   |   4 |     16 |   27
-179 | 4096 |   0 |    0 |    0 |  - |     0 |  8   |   0 |      0 |    8
-literals 674, bitstream 2168 bits = 271 bytes
+179 | 4096 |   0 |    0 |    - |  - |     - |    - |   - |      - |    0
+literals 674, bitstream 2160 bits = 270 bytes
 matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
-raw literals: 947 bytes = 2 + 674 + 271
+raw literals: 946 bytes = 2 + 674 + 270
 literal table 0: 4089 bits, 515 bytes in 8 streams
 literal table 1: 5512 bits, 691 bytes in 8 streams
 literal table 2: 5975 bits, 751 bytes in 8 streams
@@ -542,12 +542,12 @@ literal table 5: 6340 bits, 797 bytes in 8 streams
 literal table 6: 5896 bits, 740 bytes in 8 streams
 literal table 7: 6080 bits, 763 bytes in 8 streams
 fewest bits: table 0
-coded literals: 796 bytes, u16 0x82a2
+coded literals: 795 bytes, u16 0x82a2
 byte 2 = 0x10: table 0, w 7, header 10 bytes, sizes 66 59 65 64 64 65 66 66 = 515
-bitstream from byte 525, 271 bytes
+bitstream from byte 525, 270 bytes
 first 16 bytes: a2 82 10 c2 5d 10 08 0c 0a 85 ad 1f a3 bc 44 8c
 first 4 bytes of the bitstream: 31 fe fd 82
-round trip ok, 162 sequences on the fast path, 18 on the slow path
+round trip ok, 161 sequences on the fast path, 18 on the slow path
 ```
 
 The program itself:
@@ -665,8 +665,14 @@ int main(void)
 		unsigned int off = seq[i].offset, cls = 0, raw = 0, vbits = 0;
 		unsigned int tok, clen, te, b, show = i < 3;
 
-		if (ml)
-			cls = seqlz_off_class(off, last, &raw);
+		if (!ml) {
+			/* the last sequence: only its literals, no bits */
+			printf("%3u | %4u | %3u |    0 |    - |  - |     - |    - |   - |      - |    0\n",
+			       i, pos, ll);
+			n_lit += ll;
+			break;
+		}
+		cls = seqlz_off_class(off, last, &raw);
 		tok = seqlz_token(ll, ml, cls);
 		te = t->token.enc[tok];
 		if (te) {
@@ -694,7 +700,7 @@ int main(void)
 			vbits += value_bits(&t->ll, ll - SEQLZ_LL_CAP, show);
 			values++;
 		}
-		if (ml && ml - 4 >= SEQLZ_ML_CAP) {
+		if (ml - 4 >= SEQLZ_ML_CAP) {
 			if (show)
 				printf(", ml");
 			vbits += value_bits(&t->ml, ml - 4 - SEQLZ_ML_CAP, show);
@@ -705,18 +711,15 @@ int main(void)
 		b = clen + raw + vbits;
 		total += b;
 		n_lit += ll;
-		if (ml)
-			per_class[cls]++;
+		per_class[cls]++;
 		if (i < 14 || i + 3 >= n)
 			printf("%3u | %4u | %3u | %4u | %4u | %2c | %5u | %2u%s | %3u | %6u | %4u\n",
-			       i, pos, ll, ml, ml ? off : 0,
-			       ml ? (char)('0' + cls) : '-', tok, clen,
+			       i, pos, ll, ml, off, (char)('0' + cls), tok, clen,
 			       te ? "  " : " e", raw, vbits, b);
 		else if (i == 14)
 			printf("...\n");
 		pos += ll + ml;
-		if (ml)
-			last = off;
+		last = off;
 	}
 	printf("literals %u, bitstream %u bits = %u bytes\n", n_lit, total,
 	       (total + 7) / 8);
@@ -817,7 +820,7 @@ gcc -O2 -Wall -Wextra -I$R/src -o trace trace.c dec_counted.c \
 
 ::: try Change the page
 Replace the `memcpy()` of the text in `make_page()` with `(void)text;`, and the page has 181
-literals, a bitstream of 212 bytes, and stays at 395 bytes with raw literals: `code_literals()` finds
+literals, a bitstream of 211 bytes, and stays at 394 bytes with raw literals: `code_literals()` finds
 no table that saves enough. Change `N_REC`, the names or the pointer step, and watch the table of
 sequences, the classes and the size class move.
 :::

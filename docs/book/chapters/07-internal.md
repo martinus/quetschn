@@ -603,7 +603,7 @@ $2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has 9 bits, `10
 The entry is `0x0393bec9`, the upper row of the diagram above. Here is what the decoder does with it,
 on these lines of `seqlz_decode()` ([chapter 14](#ch-decode)):
 
-@listing src/seqlz_decompress.c 613-617
+@listing src/seqlz_decompress.c 623-627
 
 Say the register holds the code, then `00010`, then whatever follows: `0xb38bffffffffffff`, with the
 first bit of the stream as bit 63. The top 11 bits are `10110011100`, index 1436, one of the 4
@@ -651,7 +651,7 @@ Symbol 3072 has a 4-bit code, `0011`, so it fills the indices 384 to 511 with
 `token_entry(3072, 4) = 1U << 31 | 4 << 14 = 0x80010000`, the lower row of the diagram. The decoder
 handles it before everything else:
 
-@listing src/seqlz_decompress.c 595-607
+@listing src/seqlz_decompress.c 605-617
 
 Take token 1797, $5 + 16 \cdot 16 + 512 \cdot 3$: 5 literals, a match of 20, class 3. It is too rare to have
 a code, its `enc[]` is 0, so the encoder writes the escape's `0011`, then 1797 in 12 bits,
@@ -670,9 +670,9 @@ Those already pay for a refill and 12 more bits.
 
 ### The last sequence
 
-The last sequence of a page has no match. Its token has `ml - 4 = 0` and class 0 by the format's rule
-([chapter 4](#ch-format--validity)), e.g. token 0 when it has no literals, whose 8-bit code gives
-`0x02020008`: `N` 8, `BACK` 0, `DROP` 8, `LL` 0, `ML` 4. When the decoder has filled the page with
-this sequence's literals, it checks `len != 4U || TOK_BACK(tok) != 0U` and rejects the page if
-either holds: the `ML` of 4 and the `BACK` of 0 that this chapter built are the format's rule for the
-last token, read straight from the entry.
+The last sequence of a page has no match and no token, so the table has nothing to do with it: the
+decoder knows it has come from the literals left ([chapter 4](#ch-format--end)). Until 11th October
+2026 it had a token, e.g. token 0 when it had no literals, whose 8-bit code gives `0x02020008`: `N` 8,
+`BACK` 0, `DROP` 8, `LL` 0, `ML` 4. The decoder then checked `len != 4U || TOK_BACK(tok) != 0U`, the
+format's rule for that token, read straight from the entry. Token 0 is still in the table, for a
+sequence of no literals and a match of 4 bytes at the repeat offset.
