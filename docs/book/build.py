@@ -152,50 +152,50 @@ ICONS = {
 STEP_BUTTONS = [("first", "To the start"), ("prevseq", "Previous sequence (shift + left)"),
                 ("prev", "Step back (left)"), ("play", "Play or pause"), ("next", "Step (right)"),
                 ("nextseq", "Next sequence (shift + right)")]
-STEPPER_PAGES = [("ab", "ab × 2048, 9 bytes"), ("slab", "chapter 16’s page, 796 bytes")]
 
 
-def run_trace():
-    """the trace of the real seqlz_decode() on the step-through's pages, and its first and last line"""
+STEPPER_CSS = [False]
+
+
+def run_trace(kind):
+    """the trace of the real function on the step-through's pages, its file, first and last line"""
     import tempfile
     sd = HERE / "stepper"
     with tempfile.TemporaryDirectory() as tmp:
-        lines = subprocess.run([sys.executable, str(sd / "instrument.py"), str(REPO / "src/seqlz_decompress.c"),
-                                f"{tmp}/dec_inst.c"], capture_output=True, text=True, check=True).stdout.split()
-        srcs = [str(REPO / f"src/seqlz_{n}.c") for n in ("codes", "compress", "default_tables", "lit_sets")]
-        subprocess.run(["cc", "-O1", "-I", str(REPO / "src"), "-I", tmp, str(sd / "trace.c"), *srcs,
-                        "-o", f"{tmp}/trace"], check=True)
+        if kind == "decode":
+            path = "src/seqlz_decompress.c"
+            lines = subprocess.run([sys.executable, str(sd / "instrument.py"), str(REPO / path), f"{tmp}/dec_inst.c"],
+                                   capture_output=True, text=True, check=True).stdout.split()
+            srcs = [str(REPO / f"src/seqlz_{n}.c") for n in ("codes", "compress", "default_tables", "lit_sets")]
+            subprocess.run(["cc", "-O1", "-I", str(REPO / "src"), "-I", tmp, str(sd / "trace.c"), *srcs,
+                            "-o", f"{tmp}/trace"], check=True)
+        else:
+            path = "src/page_lz.h"
+            lines = subprocess.run([sys.executable, str(sd / "instrument.py"), "match", str(REPO / path),
+                                    f"{tmp}/page_lz.h"], capture_output=True, text=True, check=True).stdout.split()
+            # the copy of page_lz.h comes first on the include path
+            subprocess.run(["cc", "-O1", "-I", tmp, "-I", str(REPO / "src"), str(sd / "trace_match.c"),
+                            "-o", f"{tmp}/trace"], check=True)
         out = subprocess.run([f"{tmp}/trace"], capture_output=True, text=True, check=True).stdout
-    return out, int(lines[0]), int(lines[1])
+    return out, path, int(lines[0]), int(lines[1])
 
 
-def render_stepper(what, where):
-    if what != "decode":
-        sys.exit(f"{where}: unknown stepper {what}")
-    trace, a, b = run_trace()
-    path = "src/seqlz_decompress.c"
-    hl = highlight_lines("\n".join(src_lines(path)[a - 1:b]), "c")
-    def only_comment(h):
-        # a line with nothing but a comment, or blank: folded away while comments are hidden
-        return not re.sub(r'<span class="cm">.*?</span>', "", h).strip()
-    rows = "".join(f'<span class="line{" cmline" if only_comment(h) else ""}"><span class="ln" data-n="{a + i}"></span>'
-                   f'<span class="lc">{h}</span></span>' for i, h in enumerate(hl))
-    pages = "".join(f'<button type="button" data-page="{pid}" aria-pressed="false">{html.escape(t)}</button>'
-                    for pid, t in STEPPER_PAGES)
-    buttons = "".join(f'<button type="button" class="icon" data-do="{k}" title="{t}" aria-label="{t}">'
-                      f'<svg viewBox="0 0 24 24" aria-hidden="true">{ICONS[k]}</svg></button>' for k, t in STEP_BUTTONS)
-    sid = "stepper-" + what
-    return (f'<style>{(HERE / "stepper" / "stepper.css").read_text()}</style>'
-            f'<figure class="stepper nocomments" id="{sid}" tabindex="-1" aria-label="seqlz_decode() step by step">'
-            f'<div class="st-bar"><div class="st-pages" role="group" aria-label="Page">{pages}</div>'
-            f'<div class="st-ctl">{buttons}</div>'
-            f'<input type="range" class="st-scrub" min="0" value="0" aria-label="Step">'
-            f'<span class="st-pos"></span>'
-            f'<button type="button" class="st-cm" aria-pressed="false" title="Show the comment lines of the code">comments</button></div>'
-            f'<p class="st-say" aria-live="polite"></p>'
-            f'<div class="st-grid"><div class="st-code"><pre class="code numbered"><code>{rows}</code></pre></div>'
-            f'<div class="st-state">'
-            f'<section><h4>The bit reader&rsquo;s 64 bits</h4><div class="st-bits"></div><div class="st-regline"></div></section>'
+STEPPERS = {
+    "decode": {
+        "pages": [("ab", "ab \u00d7 2048, 9 bytes"), ("slab", "chapter 16\u2019s page, 796 bytes")],
+        "label": "seqlz_decode() step by step", "fn": "seqlz_decode()", "js": "stepper.js",
+        "what": "decoding two pages", "seq": "a sequence",
+    },
+    "match": {
+        "pages": [("pointers", "512 pointers"), ("slab", "chapter 16\u2019s page")],
+        "label": "seqlz_match_page() step by step", "fn": "seqlz_match_page()", "js": "match.js",
+        "what": "finding the sequences of two pages", "seq": "the next sequence emitted",
+    },
+}
+
+
+def decode_panes():
+    return (f'<section><h4>The bit reader&rsquo;s 64 bits</h4><div class="st-bits"></div><div class="st-regline"></div></section>'
             f'<section><h4>The variables</h4><div class="st-vars"></div>'
             f'<div class="st-legend">nl, len and off are set further down in each sequence; before that the copy shows 0, '
             f'the real function has whatever was on the stack</div></section>'
@@ -206,14 +206,46 @@ def render_stepper(what, where):
             f'<section><h4>The page, 4096 bytes</h4><div class="st-page"><canvas width="384" height="384" aria-hidden="true"></canvas></div>'
             f'<div class="st-window"></div>'
             f'<div class="st-legend">written by a <span class="k-lit">literal</span> or a <span class="k-match">match</span>; '
-            f'outlined: what this step writes, and in the colour of a match where it copies from</div></section>'
-            f'</div></div>'
-            f'<figcaption>The real <code>seqlz_decode()</code> of <code>{path}</code>, lines {a} to {b}, decoding two pages: '
+            f'outlined: what this step writes, and in the colour of a match where it copies from</div></section>')
+
+
+def render_stepper(what, where):
+    if what not in STEPPERS:
+        sys.exit(f"{where}: unknown stepper {what}")
+    k = STEPPERS[what]
+    trace, path, a, b = run_trace(what)
+    hl = highlight_lines("\n".join(src_lines(path)[a - 1:b]), "c")
+
+    def only_comment(h):
+        # a line with nothing but a comment, or blank: folded away while comments are hidden
+        return not re.sub(r'<span class="cm">.*?</span>', "", h).strip()
+    rows = "".join(f'<span class="line{" cmline" if only_comment(h) else ""}"><span class="ln" data-n="{a + i}"></span>'
+                   f'<span class="lc">{h}</span></span>' for i, h in enumerate(hl))
+    pages = "".join(f'<button type="button" data-page="{pid}" aria-pressed="false">{html.escape(t)}</button>'
+                    for pid, t in k["pages"])
+    buttons = "".join(f'<button type="button" class="icon" data-do="{b_}" title="{t}" aria-label="{t}">'
+                      f'<svg viewBox="0 0 24 24" aria-hidden="true">{ICONS[b_]}</svg></button>' for b_, t in STEP_BUTTONS)
+    sid = "stepper-" + what
+    css = ""
+    if not STEPPER_CSS[0]:
+        STEPPER_CSS[0] = True
+        css = f'<style>{(HERE / "stepper" / "stepper.css").read_text()}</style>'
+    return (css +
+            f'<figure class="stepper nocomments" id="{sid}" data-kind="{what}" tabindex="-1" aria-label="{k["label"]}">'
+            f'<div class="st-bar"><div class="st-pages" role="group" aria-label="Page">{pages}</div>'
+            f'<div class="st-ctl">{buttons}</div>'
+            f'<input type="range" class="st-scrub" min="0" value="0" aria-label="Step">'
+            f'<span class="st-pos"></span>'
+            f'<button type="button" class="st-cm" aria-pressed="false" title="Show the comment lines of the code">comments</button></div>'
+            f'<p class="st-say" aria-live="polite"></p>'
+            f'<div class="st-grid"><div class="st-code"><pre class="code numbered"><code>{rows}</code></pre></div>'
+            f'<div class="st-state">{decode_panes() if what == "decode" else ""}</div></div>'
+            f'<figcaption>The real <code>{k["fn"]}</code> of <code>{path}</code>, lines {a} to {b}, {k["what"]}: '
             f'a copy of the function with a hook in front of its statements recorded every step when this book was built. '
-            f'The highlighted line is the one about to run. Keys: left and right step, with shift a sequence.</figcaption>'
+            f'The highlighted line is the one about to run. Keys: left and right step, with shift {k["seq"]}.</figcaption>'
             f'</figure>'
             f'<script type="application/json" id="{sid}-data">{trace}</script>'
-            f'<script>{(HERE / "stepper" / "stepper.js").read_text()}</script>')
+            f'<script>{(HERE / "stepper" / k["js"]).read_text()}</script>')
 
 
 ANIM_CORE = [False]

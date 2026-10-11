@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """A copy of src/seqlz_decompress.c whose seqlz_decode() records each step, for the step-through of
-chapter 14. STEP_OUT() or STEP_IN() goes in front of the statements below, on the same line, so
+chapter 14, or of src/page_lz.h whose seqlz_match_page() does, for chapter 9. STEP_OUT() or STEP_IN() goes in front of the statements below, on the same line, so
 __LINE__ is the line in src/. The function's variables get initial values, so that a step before
 their first assignment records 0 and not whatever was on the stack. Fails if a statement is not
 found: then the list below has to follow src/.
 
-instrument.py <src/seqlz_decompress.c> <out.c>   prints the function's first and last line
+instrument.py [decode] <src/seqlz_decompress.c> <out.c>   prints the function's first and last line
+instrument.py match <src/page_lz.h> <out.h>
 """
 import re
 import sys
@@ -60,8 +61,51 @@ INITS = {
     "unsigned int nl, len, off, back, raw;": "unsigned int nl = 0, len = 0, off = 0, back = 0, raw = 0;",
 }
 
-src, out = sys.argv[1], sys.argv[2]
+# the matcher: STEP_A() where only the variables of the whole function exist, STEP_B() after the
+# loop's own variables are all declared
+MATCH_STOPS = [
+    ("memset(table, 0, sizeof(u16) << SEQLZ_HASH_BITS);", "STEP_A"),
+    ("u64 v_next = get_unaligned_le64(src + pos + 1);", "STEP_A"),
+    ("if (!(rep_hit | cand_hit)) {", "STEP_B"),
+    ("m = rep_hit ? pos - last : cand;", "STEP_B"),
+    ("while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {", "STEP_B"),
+    ("len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,", "STEP_B"),
+    ("emit(ctx, src + anchor, pos - anchor, len, last);", "STEP_B"),
+    ("table[seqlz_hash5(get_unaligned_le64(src + pos - 2))] =", "STEP_B"),
+    ("emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);", "STEP_A"),
+]
+MATCH_INITS = {
+    "unsigned int pos = 1, anchor = 0, last = 1, h, cand;": "unsigned int pos = 1, anchor = 0, last = 1, h = 0, cand = 0;",
+    "u64 v;": "u64 v = 0;",
+    "u32 cand_bytes;": "u32 cand_bytes = 0;",
+    "unsigned int h_next = seqlz_hash5(v_next), m, len;": "unsigned int h_next = seqlz_hash5(v_next), m = 0, len = 0;",
+}
+
+kind = sys.argv[1] if len(sys.argv) == 4 else "decode"
+src, out = sys.argv[-2], sys.argv[-1]
 lines = open(src).read().split("\n")
+if kind == "match":
+    first = next(i for i, l in enumerate(lines) if l.startswith("static __always_inline void seqlz_match_page("))
+    last = next(i for i in range(first, len(lines)) if lines[i] == "}")
+    found = {s: 0 for s, _ in MATCH_STOPS}
+    for i in range(first, last + 1):
+        body = lines[i].lstrip("\t")
+        indent = lines[i][:len(lines[i]) - len(body)]
+        if body in MATCH_INITS:
+            lines[i] = indent + MATCH_INITS[body]
+            found[body] = 1
+            continue
+        for stop, macro in MATCH_STOPS:
+            if body.startswith(stop):
+                lines[i] = f"{indent}{macro}(); {body}"
+                found[stop] += 1
+                break
+    missing = [s for s, n in found.items() if n == 0] + [s for s in MATCH_INITS if s not in found]
+    if missing:
+        sys.exit("instrument.py: not found in seqlz_match_page(): " + "; ".join(missing))
+    open(out, "w").write("\n".join(lines))
+    print(first + 1, last + 1)
+    sys.exit(0)
 first = next(i for i, l in enumerate(lines) if l.startswith("int seqlz_decode("))
 last = next(i for i in range(first, len(lines)) if lines[i] == "}")
 found = {s: 0 for s in STOPS}

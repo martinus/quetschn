@@ -54,6 +54,20 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .w-src { border-bottom-color: var(--accent); }
 .st-legend .k-lit { color: var(--mark); } .st-legend .k-match { color: var(--accent); }
 .stepper figcaption { padding: 0 0.8rem 0.8rem; font-size: 0.85rem; color: var(--muted); }
+/* the matcher's panes */
+.m-cmp { display: flex; flex-direction: column; gap: 0.3rem; }
+.m-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.45ch; font-family: var(--mono); font-size: 12.5px; }
+.m-lab { min-width: 7.5rem; font-family: var(--display); font-size: 0.78rem; color: var(--muted); }
+.m-b { padding: 0 2px; border-radius: 2px; }
+.m-cur { outline: 1.5px solid var(--ink); outline-offset: -1px; }
+.m-eq { background: var(--accent); color: var(--paper); }
+.m-ne { background: var(--warn); }
+.m-ch { color: var(--muted); margin-left: 0.6ch; white-space: pre; }
+.m-yes { font-family: var(--display); font-size: 0.78rem; font-weight: 700; color: var(--accent); margin-left: 0.6ch; }
+.m-no { font-family: var(--display); font-size: 0.78rem; color: var(--muted); margin-left: 0.6ch; }
+.m-seqs { font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.m-seqh { font-family: var(--display); font-size: 0.8rem; color: var(--muted); }
+.stepper[data-kind="match"] .st-page canvas { max-width: 232px; }
 @media (max-width: 62rem) {
   .stepper { --stepw: 100%; margin-left: 0; }
   .st-grid { grid-template-columns: minmax(0, 1fr); }

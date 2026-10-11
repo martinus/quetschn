@@ -309,5 +309,5 @@
     load(fig.querySelector('.st-pages button').getAttribute('data-page'));
   }
 
-  document.querySelectorAll('figure.stepper').forEach(function (f) { Stepper(f); });
+  document.querySelectorAll('figure.stepper[data-kind="decode"]').forEach(function (f) { Stepper(f); });
 })();

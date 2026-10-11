@@ -618,6 +618,15 @@ bound matters for `seqlz_find()`'s array, and the encoder's proof that its outpu
 
 ## The matcher on two made-up pages {#ch-matcher--back}
 
+Below, `seqlz_match_page()` runs on two pages, one statement at a time: the page of 512 pointers of this
+section, and the made-up page of [chapter 16](#ch-trace). It is the function of this chapter, recorded
+while it searched the pages when the book was built, so every position, slot and match is the real one.
+Step with the buttons or the arrow keys, and with shift from one sequence to the next.
+
+@stepper match
+
+The same in prose and tables:
+
 The numbers in this section come from running the code: `seqlz_find()` from `src/` on pages built in a
 few lines of C, and for the step-by-step tables a copy of `page_lz.h` with a `printf()` added after line
 139, compiled with `gcc -O2 -Isrc`.
