@@ -531,6 +531,10 @@ minimum for coding them.
 - `61 62`: the 2 literals, `a` and `b`.
 - `dc 65 ef db 8a`: `B`, 40 bits.
 
+@anim abbits The 9 bytes read as the spec reads them, one field per step, with the codes of the real 4 KiB tables; the page fills up below.
+
+The same as a picture, and as a table:
+
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 196" role="img" aria-label="The 40 bits of the bitstream of the page of ab, grouped into the token 1010, 4 offset bits, the length value symbol 23 with 11 extra bits, and token 0" font-size="12">
