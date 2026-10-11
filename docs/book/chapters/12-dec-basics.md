@@ -461,6 +461,10 @@ so `v` starts with `0x33`, and `v >> 41` puts it at bits 22 to 15 again: `0x19a2
 `0x44 << 7` and the top 7 bits of `0x55`. `p` moves on by 2, over `0x33` and `0x44`, and stops at `0x55`,
 of which only 7 bits went in.
 
+@anim refill wide The example of the table, one operation per step: each refill loads, shifts, ORs, moves p and sets count, and the decoder drops 15 and then 23 bits between them. Computed in the browser with 64-bit integers, as the code does it.
+
+The second refill as a picture:
+
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 250" role="img" aria-label="The register before and after the second refill of the example: 41 counted bits and the byte 0x33 below them; the loaded value shifted right by 41 brings 0x33, 0x44 and 7 bits of 0x55">
