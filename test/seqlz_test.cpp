@@ -147,8 +147,8 @@ TEST_CASE("seqlz: pages from random sequences come back, with every kind of copy
 
 TEST_CASE("seqlz: the largest length value a page needs is the last length symbol") {
     auto extra = 0U;
-    // ll - 15 of a page of literals only, and ml - 35 of a match of all but the page's first byte
-    CHECK(seqlz_len_symbol(page_size - SEQLZ_LL_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
+    // ll - 15 of all literals but a last match of 4 bytes, and ml - 35 of a match of all but the first byte
+    CHECK(seqlz_len_symbol(page_size - 4 - SEQLZ_LL_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
     CHECK(extra == QUETSCHN_PAGE_BITS - 1);
     CHECK(seqlz_len_symbol(page_size - 1 - 4 - SEQLZ_ML_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
     // the direct symbols end at 15, the ranges start at 16

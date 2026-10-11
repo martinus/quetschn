@@ -172,7 +172,9 @@ Commands: `docs/measuring.md`. Rules that matter:
   `book` job ("not covered"), or quietly shifts a listing by a few lines. In the same PR: `python3
   docs/book/remap.py origin/main` prints how the listings and the line numbers in the prose move,
   `--write` applies it; then read the prose next to every listing it marks CHANGED, and run
-  `docs/book/build.py --check` (needs `npm install` in `docs/book` once).
+  `docs/book/build.py --check` (needs `npm install` in `docs/book` once). Values the code computes
+  are `{{key}}` from `docs/book/facts/*.c`, `@program`/`@output` or `@assert` (docs/book/README.md), so a
+  change of the format or the tables fails the build where the prose needs a look.
 
 ## Writing and git
 

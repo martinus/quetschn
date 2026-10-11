@@ -5199,7 +5199,7 @@ tokens `(ll, 0, 0)`. They change with the next training, together with #182.
 literals or more, which the last sequence has not had since
 [The last sequence without a token](#the-last-sequence-without-a-token-12-bytes-per-page-less-kept).
 And both length tables had a last symbol, 4096 to 8191 on 4 KiB pages, that no page needs: the largest
-length value is `ll - 15` of a page of literals only, 4081 (#182). The symbol is gone,
+length value is `ll - 15` of 4092 literals before a page's only match, 4077 (#182). The symbol is gone,
 `SEQLZ_LEN_SYMBOLS` is `12 + QUETSCHN_PAGE_BITS`, and the tables are trained again on the pages and
 with the seeds of 7th October: `train-rz-phone5`, 524 912 pages, k-means seeds 1 to 32, and for 16 KiB
 pages `emu-a17-16k-a-train`. Pages get 0.1 to 0.2 bytes smaller, in the same time.* Code: `src/seqlz.h`,

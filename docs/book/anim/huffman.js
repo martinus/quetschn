@@ -4,7 +4,8 @@
  * the lighter branch on the left and 1 for the right, and the average code length is computed.
  */
 BookAnim.define('huffman', function (ctx) {
-  var SHARE = [30.55, 13.04, 8.82, 8.12, 24.17, 15.30];
+  // the shares of the chapter's table, from the training counts (facts/ch00_02.c)
+  var SHARE = [0, 1, 2, 3, 4, 5].map(function (k) { return parseFloat(ctx.data.facts['ch02.cls.' + k + '.share']); });
   var W, H, SL, XL, YC, DY, BW, BH, PW, PH, TY, BY, SC, mode = null;
   // the sizes of the wide layout, or of the narrow one, one unit about one pixel on a phone, with
   // leaves of two lines more: "class" and its number, and the code without the word

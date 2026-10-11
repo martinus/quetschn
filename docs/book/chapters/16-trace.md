@@ -10,7 +10,7 @@ and watch the numbers move.
 The page is made up. Real memory pages from a zram dump would be more honest, but they hold keys and
 passwords, so the page here is built to look like one: a small header, an array of records with a
 pointer, a few small integers and a name each, a stretch of English text, and zeros up to the end.
-It compresses to 795 bytes, 19.4% of the page, and with raw literals to 946.
+It compresses to {{ch16.coded.len}} bytes, {{ch16.coded.pct}}% of the page, and with raw literals to {{ch16.raw.len}}.
 
 Four figures of the book show this page sequence by sequence, each from the real code: the matcher
 finding it ([chapter 9](#stepper-match)), the encoder writing it into `dst` ([chapter 10](#anim-ends)),
@@ -24,30 +24,32 @@ The 4096 bytes, in four parts:
 
 - **Bytes 0 to 63, a header.** `"TASKSLAB"`, then the record count 48 and the record size 32 as
   little-endian 32-bit integers, then zeros.
-- **Bytes 64 to 1599, 48 records of 32 bytes.** Each has a `next` pointer, a kernel address
+- **Bytes 64 to {{ch16.page.records_last}}, 48 records of 32 bytes.** Each has a `next` pointer, a kernel address
   `0xffff888104a3c040` plus 32 times another record's number, `(5i + 1) mod 48`, so 8-aligned and with the same top 6 bytes in
   every record; a pid, `1000 + 3 * i`; a state `i % 3` and a priority 120 as 16-bit integers; and a
   name of 16 bytes, one of 6 names in turn (`kworker/0:1`, `bash`, `systemd`, `sshd`, `kworker/1:2`,
   `cron`), padded with zeros.
-- **Bytes 1600 to 2224, 625 bytes of text,** ten lines about zram.
-- **Bytes 2225 to 4095, 1871 zero bytes.**
+- **Bytes {{ch16.page.records_end}} to {{ch16.page.text_last}}, {{ch16.page.text_len}} bytes of text,** ten lines about zram.
+- **Bytes {{ch16.page.text_end}} to 4095, {{ch16.page.zeros}} zero bytes.**
+
+@assert ch16.page.text_lines == 10
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 120" role="img" aria-label="The 4096 bytes of the made-up page: a 64-byte header, 48 records up to byte 1600, text up to byte 2225, zeros to the end">
+<svg viewBox="0 0 720 120" role="img" aria-label="The 4096 bytes of the made-up page: a 64-byte header, 48 records up to byte {{ch16.page.records_end}}, text up to byte {{ch16.page.text_end}}, zeros to the end">
   <g font-size="12">
-    <rect x="20" y="30" width="10.6" height="40" class="fill-acc" stroke="currentColor"/>
-    <rect x="30.6" y="30" width="255" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="285.6" y="30" width="103.8" height="40" class="fill-mark" stroke="currentColor"/>
-    <rect x="389.4" y="30" width="310.6" height="40" fill="none" stroke="currentColor"/>
+    <rect x="20" y="30" width="{{ch16.fig.p.w0}}" height="40" class="fill-acc" stroke="currentColor"/>
+    <rect x="{{ch16.fig.p.64}}" y="30" width="{{ch16.fig.p.w1}}" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="{{ch16.fig.p.x2}}" y="30" width="{{ch16.fig.p.w2}}" height="40" class="fill-mark" stroke="currentColor"/>
+    <rect x="{{ch16.fig.p.x3}}" y="30" width="{{ch16.fig.p.w3}}" height="40" fill="none" stroke="currentColor"/>
     <text x="20" y="22">header</text>
-    <text x="158" y="55" text-anchor="middle">48 records of 32 bytes</text>
-    <text x="337.5" y="55" text-anchor="middle" class="on-fill">text</text>
-    <text x="544.7" y="55" text-anchor="middle">zeros</text>
+    <text x="{{ch16.fig.p.c1}}" y="55" text-anchor="middle">48 records of 32 bytes</text>
+    <text x="{{ch16.fig.p.c2}}" y="55" text-anchor="middle" class="on-fill">text</text>
+    <text x="{{ch16.fig.p.c3}}" y="55" text-anchor="middle">zeros</text>
     <text x="20" y="88" text-anchor="middle">0</text>
     <text x="34" y="104" text-anchor="middle">64</text>
-    <text x="285.6" y="88" text-anchor="middle">1600</text>
-    <text x="389.4" y="88" text-anchor="middle">2225</text>
+    <text x="{{ch16.fig.p.x2}}" y="88" text-anchor="middle">{{ch16.page.records_end}}</text>
+    <text x="{{ch16.fig.p.x3}}" y="88" text-anchor="middle">{{ch16.page.text_end}}</text>
     <text x="700" y="88" text-anchor="middle">4096</text>
   </g>
 </svg>
@@ -67,7 +69,7 @@ Before any page, the tables are built: in the kernel once at boot by `seqlz_init
 once per device, in our program with one call:
 
 ```c
-struct seqlz_tables *t = malloc(seqlz_tables_size());   /* 43 280 bytes */
+struct seqlz_tables *t = malloc(seqlz_tables_size());   /* {{size.tables|grp}} bytes */
 seqlz_tables_init(t, &seqlz_default_own);
 seqlz_all_symbols(t);                                    /* true */
 ```
@@ -78,24 +80,28 @@ values we will meet on this page:
 
 | table | symbol | code length | code |
 | --- | --- | ---: | --- |
-| token | escape (3072) | 4 | `0011` |
-| token | 34: `ll` 2, `ml` 6, class 0 | 4 | |
-| literal table 0 | `e` | 4 | `0001` |
-| literal table 0 | space | 4 | |
-| literal table 0 | `t`, `a`, `o`, `s` | 5 | |
-| literal table 0 | `0x00` | 8 | |
-| literal table 0 | `0x40`, `0x80`, `0xc0`, `0xff` | 10 | |
+| token | escape (3072) | {{tok.len.3072}} | `{{tok.code.3072}}` |
+| token | 34: `ll` 2, `ml` 6, class 0 | {{tok.len.34}} | |
+| literal table 0 | `e` | {{lit.0.len.101}} | `{{lit.0.code.101}}` |
+| literal table 0 | space | {{lit.0.len.32}} | |
+| literal table 0 | `t`, `a`, `o`, `s` | {{lit.0.len.116}} | |
+| literal table 0 | `0x00` | {{lit.0.len.0}} | |
+| literal table 0 | `0x40`, `0x80`, `0xc0`, `0xff` | {{lit.0.len.64}} | |
 
-576 of the 3072 tokens have a code of their own; the others are sent as the escape's code followed by
+@assert lit[0].len[116] == lit[0].len[97] == lit[0].len[111] == lit[0].len[115] and lit[0].len[64] == lit[0].len[128] == lit[0].len[192] == lit[0].len[255]
+
+{{ch14.tokens_coded}} of the {{const.TOKEN_SYMBOLS}} tokens have a code of their own; the others are sent as the escape's code followed by
 the token in 12 bits ([chapter 4](#ch-format--token)). Literal table 0 is the one that codes text
 best; we will see the encoder pick it.
+
+@assert ch16.lt.set == 0
 
 ## seqlz_compress(), and the matcher's first sequence {#ch-trace--matcher}
 
 zram calls the backend, and the backend calls `seqlz_compress(t, st, page, dst, 8192, 1)`: the tables,
-the per-CPU `struct seqlz_state` of 8192 bytes, the page, an output buffer of 2 pages, and `coded = 1`
+the per-CPU `struct seqlz_state` of {{size.state}} bytes, the page, an output buffer of 2 pages, and `coded = 1`
 for `seqlz-fast-lit`. `seqlz_compress()` first calls `compress_page()`
-([chapter 10](#ch-encoder)), which checks that `dst_cap` is at least `SEQLZ_HEADER + ENC_ROOM`, 34
+([chapter 10](#ch-encoder)), which checks that `dst_cap` is at least `SEQLZ_HEADER + ENC_ROOM`, {{ch16.enc_min}}
 bytes, and that the tables have every symbol, and then sets up the encoder with `encoder_init()`:
 
 - `e.p = dst + 8192`, the end of the buffer: the bitstream grows downward from there;
@@ -104,8 +110,8 @@ bytes, and that the tables have every symbol, and then sets up the encoder with 
 - `e.last = 1`, the repeat offset at the start of every page.
 
 Then `seqlz_match_page()` ([chapter 9](#ch-matcher)) runs over the page, with `encode_emit()` as the
-function it calls for every sequence. It clears its hash table, 4096 entries of 2 bytes, with one
-`memset()` of 8192 bytes, and starts at position 1 with `anchor = 0`, `last = 1` and `back = -1`.
+function it calls for every sequence. It clears its hash table, {{ch16.hash_entries}} entries of 2 bytes, with one
+`memset()` of {{ch16.hash_bytes}} bytes, and starts at position 1 with `anchor = 0`, `last = 1` and `back = -1`.
 
 At positions 1 to 13 nothing matches. Each position compares 4 bytes against two candidates: the
 bytes one position back, for the repeat offset 1, and the bytes at the position the hash table holds
@@ -113,146 +119,133 @@ for the hash of the next 5 bytes. The table starts as all zeros, so the second c
 0, `"TASK"`, until a position with the same hash was stored. Each position is stored in the table
 before the test.
 
-At position 14 the repeat offset hits: bytes 13 to 16 and bytes 14 to 17 are all zero. Byte 12 is
-`0x20`, the low byte of the record size, so the backward extension stops at once: `src[13]` is `0x00`
-and `src[12]` is not. `seqlz_match_len()` then counts how far the match goes: the zeros reach byte 63,
-and byte 64 is `0x60`, the low byte of the first record's pointer. So the matcher emits its first
-sequence: 14 literals (`TASKSLAB`, `30 00 00 00`, `20 00`), then a match of 50 bytes at offset 1. It
-moves `pos` to 64, sets `anchor` to 64, and stores position 62, 2 bytes before the match's end, in
+At position {{ch16.s.0.ll}} the repeat offset hits: bytes 13 to 16 and bytes 14 to 17 are all zero. Byte 12 is
+`{{ch16.byte12_hex}}`, the low byte of the record size, so the backward extension stops at once: `src[13]` is `0x00`
+and `src[12]` is not. `seqlz_match_len()` then counts how far the match goes: the zeros reach byte {{ch16.e0.zeros_to}},
+and byte {{ch16.s.0.end}} is `{{ch16.byte64_hex}}`, the low byte of the first record's pointer. So the matcher emits its first
+sequence: {{ch16.s.0.ll}} literals (`TASKSLAB`, `30 00 00 00`, `20 00`), then a match of {{ch16.s.0.ml}} bytes at offset {{ch16.s.0.off}}. It
+moves `pos` to {{ch16.s.0.end}}, sets `anchor` to {{ch16.s.0.end}}, and stores position {{ch16.e0.store}}, 2 bytes before the match's end, in
 the hash table.
+
+@assert ch16.s[0].ll == 14 and ch16.s[0].off == 1 and ch16.byte12 == 32
 
 ## encode_emit(): the first sequence in bits {#ch-trace--emit}
 
-`encode_emit()` ([chapter 10](#ch-encoder)) gets `ll = 14`, `ml = 50`, `off = 1`.
+`encode_emit()` ([chapter 10](#ch-encoder)) gets `ll = {{ch16.s.0.ll}}`, `ml = {{ch16.s.0.ml}}`, `off = {{ch16.s.0.off}}`.
 
-1. **Room.** `e.p - e.lit` is 8190 bytes, more than `14 + ENC_ROOM`, so the page still fits.
+1. **Room.** `e.p - e.lit` is {{ch16.e0.room}} bytes, more than `14 + ENC_ROOM`, so the page still fits.
 2. **Literals.** The page has more than 16 bytes from `in` on, so one 16-byte copy writes the 14
    literals and 2 bytes more to `dst + 2`; the next sequence's literals overwrite those 2. `e.lit`
-   moves to `dst + 16`.
+   moves to `dst + {{ch16.e0.lit_end}}`.
 3. **Offset class.** `seqlz_off_class(1, 1, &raw_bits)`: `off == last`, so `is_new` is
    `(1 == 1) - 1 = 0`, and the class, masked with it, is 0, with 0 offset bits
    ([chapter 6](#ch-header)).
-4. **Token.** `seqlz_token(14, 50, 0)` is `14 + 16 * min(46, 31) + 512 * 0 = 510`. Token 510 has no
-   code (`enc[510]` is 0), so `token_code()` returns the escape: code `0011` shifted left by 12, or'ed
-   with 510, `0x31fe`, 16 bits.
-5. **Token and offset in one put.** `enc_put(e, 0x31fe << 0 | (1 & 0), 16)`. For class 0 the offset is
+4. **Token.** `seqlz_token(14, 50, 0)` is `14 + 16 * min(46, 31) + 512 * 0 = {{ch16.s.0.tok}}`. Token 510 has no
+   code (`enc[510]` is 0), so `token_code()` returns the escape: code `{{tok.code.3072}}` shifted left by 12, or'ed
+   with 510, `{{ch16.e0.word}}`, {{ch16.e0.word_bits}} bits.
+5. **Token and offset in one put.** `enc_put(e, {{ch16.e0.word}} << 0 | (1 & 0), {{ch16.e0.word_bits}})`. For class 0 the offset is
    masked to 0 by `0U - (cls != 0)`, which is 0 here.
-6. **Length value.** `ml - 4 = 46` is at least 31, so `put_len_value()` writes `46 - 31 = 15` with the
-   `ml` table: values below 16 are their own symbol, and symbol 15 has the code `1111111`, 7 bits.
-7. **Flush.** The accumulator holds 23 bits, `0011 000111111110 1111111`. `enc_flush()` shifts them to
-   the top of a 64-bit word and stores it little endian at `e.p - 8`, so the top byte, `0x31`, lands
-   at `dst + 8191`, the next, `0xfe`, at `dst + 8190`. `e.p` moves down by 2 whole bytes, and the 7
+6. **Length value.** `ml - 4 = {{ch16.e0.ml4}}` is at least 31, so `put_len_value()` writes `{{ch16.e0.ml4}} - 31 = {{ch16.e0.value}}` with the
+   `ml` table: values below 16 are their own symbol, and symbol {{ch16.e0.sym}} has the code `{{ml.code.15}}`, {{ml.len.15}} bits.
+7. **Flush.** The accumulator holds {{ch16.s.0.bits}} bits, `{{ch16.e0.acc}}`. `enc_flush()` shifts them to
+   the top of a 64-bit word and stores it little endian at `e.p - 8`, so the top byte, `{{ch16.e0.top}}`, lands
+   at `dst + 8191`, the next, `{{ch16.e0.next}}`, at `dst + 8190`. `e.p` moves down by {{ch16.e0.full}} whole bytes, and the {{ch16.e0.left}}
    bits left over stay in the accumulator for the next sequence.
 8. `e.last = 1`.
+
+@assert ch16.s[0].tok == 510 and ch16.s[0].esc == 1 and ch16.e0.sym == 15
 
 The next two sequences are the first record and the start of the second. The trace program prints
 the bits of all three:
 
-```text
-seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111111
-seq 1: token code 1100000010, offset bits 01001101, ll value 12: symbol 12, code 111010
-seq 2: token code 101100110, offset bits 00100
-```
+@output ch16-trace 3,5,7
 
-Sequence 1 starts the first record: 27 literals (the pointer, pid, state, priority, and the 11
-letters of `kworker/0:1`), then 6 zero bytes, the rest of the name's padding and the next record's
-first byte, at offset 77, which points into the header's zeros. 77 is not a multiple of 8 and below
-256, so class 2 with 8 offset bits, `01001101`. `ll = 27` is above the token's cap of 15, so the
-token holds 15 and a length value of 12 follows, symbol 12 in the `ll` table, 6 bits. The token is
-$15 + 16 \times 2 + 512 \times 2 = 1071$, with a code of 10 bits. Sequence 2 is one literal and 6 bytes at
-offset 32, the record before: 32 is a multiple of 8 from 16 on, so class 4, and the offset goes as
-$32 / 8 = 4$ in 5 bits, `00100`.
+Sequence 1 starts the first record: {{ch16.s.1.ll}} literals (the pointer, pid, state, priority, and the 11
+letters of `kworker/0:1`), then {{ch16.s.1.ml}} zero bytes, the rest of the name's padding and the next record's
+first byte, at offset {{ch16.s.1.off}}, which points into the header's zeros. {{ch16.s.1.off}} is not a multiple of 8 and below
+256, so class {{ch16.s.1.cls}} with {{ch16.s.1.raw}} offset bits, `{{ch16.s.1.ob_bin}}`. `ll = {{ch16.s.1.ll}}` is above the token's cap of 15, so the
+token holds 15 and a length value of 12 follows, symbol 12 in the `ll` table, {{ll.len.12}} bits. The token is
+$15 + 16 \times 2 + 512 \times 2 = {{ch16.s.1.tok}}$, with a code of {{ch16.s.1.clen}} bits. Sequence 2 is one literal and {{ch16.s.2.ml}} bytes at
+offset {{ch16.s.2.off}}, the record before: 32 is a multiple of 8 from 16 on, so class {{ch16.s.2.cls}}, and the offset goes as
+$32 / 8 = {{ch16.s.2.ob}}$ in {{ch16.s.2.raw}} bits, `{{ch16.s.2.ob_bin}}`.
 
-## All 180 sequences {#ch-trace--sequences}
+@assert ch16.s[1].ll == 27 and ch16.s[1].ml == 6 and ch16.s[2].ll == 1 and ch16.s[2].off == 32
 
-The matcher finds 180 sequences. The first 14, and the last 3, with the bits each takes in the
+## All {{ch16.seqs}} sequences {#ch-trace--sequences}
+
+The matcher finds {{ch16.seqs}} sequences. The first 14, and the last 3, with the bits each takes in the
 bitstream: the token's code (16 with `e` for an escaped one), the offset bits, the length values'
 bits, and the sum.
 
-| # | page position | `ll` | `ml` | offset | class | token | code | offset bits | length values | bits |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 0 | 14 | 50 | 1 | 0 | 510 | 16 e | 0 | 7 | 23 |
-| 1 | 64 | 27 | 6 | 77 | 2 | 1071 | 10 | 8 | 6 | 24 |
-| 2 | 97 | 1 | 6 | 32 | 4 | 2081 | 9 | 5 | 0 | 14 |
-| 3 | 104 | 12 | 6 | 25 | 2 | 1068 | 16 e | 8 | 0 | 24 |
-| 4 | 122 | 0 | 6 | 2 | 1 | 544 | 9 | 4 | 0 | 13 |
-| 5 | 128 | 1 | 7 | 32 | 4 | 2097 | 4 | 5 | 0 | 9 |
-| 6 | 136 | 15 | 9 | 32 | 0 | 95 | 11 | 0 | 4 | 15 |
-| 7 | 160 | 2 | 6 | 32 | 0 | 34 | 4 | 0 | 0 | 4 |
-| 8 | 168 | 1 | 7 | 96 | 4 | 2097 | 4 | 5 | 0 | 9 |
-| 9 | 176 | 3 | 10 | 29 | 2 | 1123 | 16 e | 8 | 0 | 24 |
-| 10 | 189 | 4 | 7 | 32 | 4 | 2100 | 11 | 5 | 0 | 16 |
-| 11 | 200 | 1 | 7 | 96 | 4 | 2097 | 4 | 5 | 0 | 9 |
-| 12 | 208 | 0 | 8 | 128 | 4 | 2112 | 5 | 5 | 0 | 10 |
-| 13 | 216 | 3 | 5 | 128 | 0 | 19 | 7 | 0 | 0 | 7 |
-| ... | | | | | | | | | | |
-| 177 | 2224 | 1 | 7 | 1976 | 5 | 2609 | 6 | 9 | 0 | 15 |
-| 178 | 2232 | 0 | 1864 | 2 | 1 | 1008 | 7 | 4 | 16 | 27 |
-| 179 | 4096 | 0 | 0 | | | | | | | 0 |
+@output ch16-trace 2,4,6,8-23
 
 Some rows worth reading closely:
 
-- **Sequence 7 is the cheapest kind**: 2 literals, a match of 6 at the same offset as the sequence
-  before, 32. Class 0 needs no offset bits, and token 34 has a code of 4 bits. 8 bytes of the page in
-  4 bits of bitstream and 2 literals.
-- **Sequence 6 is class 0 with a length value**: `ll = 15` is exactly the cap, so a value of 0 follows,
-  4 bits in the `ll` table. A token holds `ll` 0 to 14 in full; 15 means "15 or more".
-- **Sequences 5, 8 and 11 are the same token, 2097**: `ll` 1, `ml` 7, class 4, a code of 4 bits plus
-  5 offset bits. One literal byte that differs, then 7 bytes that repeat, at a multiple of 8.
+- **Sequence 7 is the cheapest kind**: {{ch16.s.7.ll}} literals, a match of {{ch16.s.7.ml}} at the same offset as the sequence
+  before, {{ch16.s.7.off}}. Class 0 needs no offset bits, and token {{ch16.s.7.tok}} has a code of {{ch16.s.7.clen}} bits. 8 bytes of the page in
+  {{ch16.s.7.bits}} bits of bitstream and 2 literals.
+- **Sequence 6 is class 0 with a length value**: `ll = {{ch16.s.6.ll}}` is exactly the cap, so a value of 0 follows,
+  {{ll.len.0}} bits in the `ll` table. A token holds `ll` 0 to 14 in full; 15 means "15 or more".
+- **Sequences 5, 8 and 11 are the same token, {{ch16.s.5.tok}}**: `ll` 1, `ml` 7, class 4, a code of {{ch16.s.5.clen}} bits plus
+  {{ch16.s.5.raw}} offset bits. One literal byte that differs, then 7 bytes that repeat, at a multiple of 8.
   Sequence 5 is record 2's pointer: its low byte goes as a literal, and the 7 bytes above it match
   record 1's pointer, 32 bytes back. Pointers into the same few KiB of memory share their top bytes,
   and that is common in real pages too. Sequences 8 and 11 are a pid: its low byte goes as a literal,
-  and its 3 high bytes, the state and the priority match the record 3 places back, 96 bytes, which
+  and its 3 high bytes, the state and the priority match the record 3 places back, {{ch16.s.8.off}} bytes, which
   has the same state `i % 3`.
 - **Sequences 12 and 13** show the greedy matcher at work. Record 4's name is `kworker/1:2`. The hash
-  table's candidate for `kwork` is record 0, 128 bytes back, whose name is `kworker/0:1`, so the
-  match covers `kworker/`, 8 bytes, and ends at the `1` that differs. Then 3 literals and the zeros
-  of the padding, again at offset 128, now as the repeat offset.
-- **Sequence 177** is class 5: the 7 zero bytes after the text's last newline match a record's
-  padding 1976 bytes back. $1976 = 8 \times 247$, so it goes as 247 in 9 bits.
-- **Sequence 178** covers the 1864 zeros up to the end of the page, at offset 2. Offset 2 and not 1,
-  because offset 1 is not a candidate: the repeat offset is now 1976, from sequence 177, and the 4
-  bytes 1976 back are a record's pointer, not zeros. The hash table's candidate is position 2230,
+  table's candidate for `kwork` is record 0, {{ch16.s.12.off}} bytes back, whose name is `kworker/0:1`, so the
+  match covers `kworker/`, {{ch16.s.12.ml}} bytes, and ends at the `1` that differs. Then {{ch16.s.13.ll}} literals and the zeros
+  of the padding, again at offset {{ch16.s.13.off}}, now as the repeat offset.
+- **Sequence 177** is class {{ch16.s.177.cls}}: the {{ch16.s.177.ml}} zero bytes after the text's last newline match a record's
+  padding {{ch16.s.177.off}} bytes back. ${{ch16.s.177.off}} = 8 \times {{ch16.s.177.ob}}$, so it goes as {{ch16.s.177.ob}} in {{ch16.s.177.raw}} bits.
+- **Sequence 178** covers the {{ch16.s.178.ml}} zeros up to the end of the page, at offset {{ch16.s.178.off}}. Offset 2 and not 1,
+  because offset 1 is not a candidate: the repeat offset is now {{ch16.s.177.off}}, from sequence 177, and the 4
+  bytes {{ch16.s.177.off}} back are a record's pointer, not zeros. The hash table's candidate is position {{ch16.s.177.cand}},
   stored as "2 bytes before the end" of sequence 177's match, and its 5 bytes are zeros like those at
-  2232. Offset 2 is class 1, 4 bits. The length value is $1864 - 4 - 31 = 1829$. That is above 15,
-  so it goes as its highest bit's position: 1829 is 11 bits long, its top bit is bit 10, so the
-  symbol is $12 + 10 = 22$, with a 6-bit code in the `ml` table, followed by the 10 bits below the
-  top one, $1829 - 1024 = 805$. 16 bits for the length, 27 for the whole sequence, for 1864 bytes of
+  {{ch16.s.178.pos}}. Offset 2 is class {{ch16.s.178.cls}}, {{ch16.s.178.raw}} bits. The length value is ${{ch16.s.178.ml}} - 4 - 31 = {{ch16.v178.value}}$. That is above 15,
+  so it goes as its highest bit's position: {{ch16.v178.value}} is {{ch16.v178.len}} bits long, its top bit is bit {{ch16.v178.top}}, so the
+  symbol is $12 + {{ch16.v178.top}} = {{ch16.v178.sym}}$, with a {{ch16.v178.code_len}}-bit code in the `ml` table, followed by the {{ch16.v178.top}} bits below the
+  top one, ${{ch16.v178.value}} - {{ch16.v178.top_val}} = {{ch16.v178.extra}}$. {{ch16.s.178.vbits}} bits for the length, {{ch16.s.178.bits}} for the whole sequence, for {{ch16.s.178.ml}} bytes of
   the page.
-- **Sequence 179** is the last one. The match before ends exactly at byte 4096, so it has no literals
+- **Sequence {{ch16.matches}}** is the last one. The match before ends exactly at byte 4096, so it has no literals
   and no match, and it takes no bits: the decoder knows it is the last because 0 literals are left
   for 0 bytes of the page. Until 11th October 2026 it was token 0, 8 bits.
 
+@assert ch16.s[7].ll == 2 and ch16.s[7].ml == 6 and ch16.s[7].cls == 0 and ch16.s[7].off == ch16.s.prev_off_7 and ch16.s[6].ll == 15 and ch16.s[6].cls == 0 and ch16.s[5].tok == ch16.s[8].tok == ch16.s[11].tok == 2097 and ch16.s[5].off == 32 and ch16.s[11].off == 96
+@assert ch16.s[12].pos == 208 and ch16.s[12].ml == 8 and ch16.s[13].cls == 0 and ch16.s[177].cls == 5 and ch16.s[178].end == 4096 and ch16.s[178].off == 2 and ch16.s[179].ml == 0 and ch16.s[179].ll == 0 and ch16.matches == 179
+
 The whole page, summed by the program:
 
-```text
-literals 674, bitstream 2159 bits = 270 bytes
-matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
-```
+@output ch16-trace 24-25
 
-179 matches cover 3422 bytes, the 674 literals the other 674. 96 of the 179 matches are class 4, a
-multiple of 8 below 256: the records' period of 32 shows up as offsets 32, 64, 96, 128 and 192. 30
-more are class 5, multiples of 8 from 256 on, mostly 288, 9 records back; 25 of them are the 7 high
-bytes of a pointer. Only 2 matches needed the 12 offset bits of class 3. Of the 2159 bits, 1101 are
-token codes, 954 offset bits and 104 length values. By part of the page:
+{{ch16.matches}} matches cover {{ch16.matched}} bytes, the {{ch16.lits}} literals the other {{ch16.lits}}. {{ch16.class.4}} of the {{ch16.matches}} matches are class 4, a
+multiple of 8 below 256: the records' period of 32 shows up as offsets {{ch16.c4_offs}}. {{ch16.class.5}}
+more are class 5, multiples of 8 from 256 on, mostly {{ch16.c5_mode}}, {{ch16.c5_mode_records}} records back; {{ch16.c5_ptr}} of them are the 7 high
+bytes of a pointer. Only {{ch16.class.3}} matches needed the 12 offset bits of class 3. Of the {{ch16.bits}} bits, {{ch16.tok_bits}} are
+token codes, {{ch16.off_bits}} offset bits and {{ch16.v_bits}} length values. By part of the page:
+
+@assert 2 * ch16.c5_mode_n > F("ch16.class.5") and ch16.matched + ch16.lits == 4096
 
 | part | sequences | literals | bits |
 | --- | ---: | ---: | ---: |
-| header, bytes 0 to 63 | 1 | 14 | 23 |
-| records, 64 to 1599 | 155 | 167 | 1635 |
-| text, 1600 to 2224 | 22 | 493 | 474 |
-| zeros, 2225 to 4095 | 2 | 0 | 27 |
+| header, bytes 0 to 63 | {{ch16.part.0.seqs}} | {{ch16.part.0.lits}} | {{ch16.part.0.bits}} |
+| records, 64 to {{ch16.page.records_last}} | {{ch16.part.1.seqs}} | {{ch16.part.1.lits}} | {{ch16.part.1.bits}} |
+| text, {{ch16.page.records_end}} to {{ch16.page.text_last}} | {{ch16.part.2.seqs}} | {{ch16.part.2.lits}} | {{ch16.part.2.bits}} |
+| zeros, {{ch16.page.text_end}} to 4095 | {{ch16.part.3.seqs}} | {{ch16.part.3.lits}} | {{ch16.part.3.bits}} |
 
-The records take three quarters of the bitstream, about 10.5 bits per sequence, and leave few
-literals. The text is the other way round: 22 sequences, but 493 of the 674 literals.
+The records take three quarters of the bitstream, about {{ch16.part.records_per_seq}} bits per sequence, and leave few
+literals. The text is the other way round: {{ch16.part.2.seqs}} sequences, but {{ch16.part.2.lits}} of the {{ch16.lits}} literals.
+
+@assert 70 <= ch16.part.records_pct <= 80 and ch16.part[2].lits * 2 > ch16.lits
 
 ::: why One position per hash, on this page
 The names `kworker/0:1` and `kworker/1:2` share their first 8 bytes. Record 30, at byte 1024, is named
 `kworker/0:1`, like record 24 six places before it, so a match at offset 192 would cover the whole
-16-byte name in one sequence: token 2240 and 5 offset bits, 12 bits, as sequence 24 does for `bash`.
+16-byte name in one sequence: token {{ch16.s.24.tok}} and {{ch16.s.24.raw}} offset bits, {{ch16.s.24.bits}} bits, as sequence 24 does for `bash`.
 But the hash table keeps one position per hash, the newest, and for `kwork` that is record 28,
-`kworker/1:2`, 64 bytes back. So the matcher emits 8 bytes at offset 64 (sequence 98) and then 8 at
-offset 192 (sequence 99), 20 bits. The project measured a table that keeps the 2 newest positions per
+`kworker/1:2`, 64 bytes back. So the matcher emits {{ch16.s.98.ml}} bytes at offset {{ch16.s.98.off}} (sequence 98) and then {{ch16.s.99.ml}} at
+offset {{ch16.s.99.off}} (sequence 99), {{ch16.s.98_99_bits}} bits. The project measured a table that keeps the 2 newest positions per
 hash in the same 8 KiB and takes the longer match: 11 bytes less per page on its two dumps in the
 zsmalloc model, for 4400 to 4700 more compression cycles, about 1 µs per page written. That is about
 11 bytes per µs, at the edge of what the score accepts over both dumps, and it was dropped, without a
@@ -260,240 +253,248 @@ run in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 :::
 
-## encoder_finish(): 946 bytes with raw literals {#ch-trace--finish}
+@assert ch16.s[24].ll == 0 and ch16.s[24].ml == 16 and ch16.s[24].off == 192 and ch16.s[98].pos == 1040 and ch16.s[98].off == 64 and ch16.s[99].off == 192
+
+## encoder_finish(): {{ch16.raw.len}} bytes with raw literals {#ch-trace--finish}
 
 When the matcher is done, `compress_page()` calls `encoder_finish()` ([chapter 10](#ch-encoder)).
-At this point the literals fill `dst + 2` to `dst + 676`, and the bitstream fills the last 270 bytes
-of the 8192-byte buffer, backwards, the last of them in part: 2159 bits are 269 bytes and 7 bits. After
-the flush of sequence 178, the last with bits, `e.cnt` is 7. That flush already wrote the 7 bits on top
+At this point the literals fill `dst + 2` to `dst + {{ch16.raw.lit_end}}`, and the bitstream fills the last {{ch16.bytes}} bytes
+of the 8192-byte buffer, backwards, the last of them in part: {{ch16.bits}} bits are {{ch16.full_bytes}} bytes and {{ch16.pad_bits}} bits. After
+the flush of sequence 178, the last with bits, `e.cnt` is {{ch16.pad_bits}}. That flush already wrote the {{ch16.pad_bits}} bits on top
 of the byte below `p`, zeros below them, so `encoder_finish()` moves `p` down by one to count that
 byte.
 
-`encoder_finish()` writes the literal count, 674, as the u16 at the start, `a2 02`. Then it copies the
+`encoder_finish()` writes the literal count, {{ch16.lits}}, as the u16 at the start, `{{ch16.raw.u16}}`. Then it copies the
 bitstream from the end of the buffer to right after the literals. The gap between them is
-$(8192 - 270) - 676 = 7246$ bytes, much more than 270, so the copy cannot overlap: 33 copies of 8
+$(8192 - {{ch16.bytes}}) - {{ch16.raw.lit_end}} = {{ch16.raw.gap}}$ bytes, much more than {{ch16.bytes}}, so the copy cannot overlap: {{ch16.raw.copies}} copies of 8
 bytes, each a little-endian load from the back and a big-endian store to the front, which reverses
-the byte order, and 6 single bytes. The bitstream now starts at byte 676 with `31 fe ff 81`, and the
-function returns $2 + 674 + 270 = 946$.
+the byte order, and {{ch16.raw.singles}} single bytes. The bitstream now starts at byte {{ch16.raw.lit_end}} with `{{ch16.raw.b4}}`, and the
+function returns $2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$.
 
-That is the page as `seqlz-fast` stores it, 23.1% of 4096 bytes. `seqlz_compress()` was called with
-`coded = 1`, so it now hands the 946 bytes to `code_literals()`.
+@assert ch16.pad_bits > 0 and ch16.raw.gap >= ch16.bytes
 
-## code_literals(): 151 bytes less {#ch-trace--literals}
+That is the page as `seqlz-fast` stores it, {{ch16.raw.pct}}% of 4096 bytes. `seqlz_compress()` was called with
+`coded = 1`, so it now hands the {{ch16.raw.len}} bytes to `code_literals()`.
 
-`code_literals()` ([chapter 11](#ch-literals-enc)) reads the count, 674, from the u16 and computes the
-bitstream's length, $946 - 2 - 674 = 270$. Then `lit_cost()` sums, for every stream and every one of
+## code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
+
+`code_literals()` ([chapter 11](#ch-literals-enc)) reads the count, {{ch16.lits}}, from the u16 and computes the
+bitstream's length, ${{ch16.raw.len}} - 2 - {{ch16.lits}} = {{ch16.bytes}}$. Then `lit_cost()` sums, for every stream and every one of
 the 8 literal tables, the code lengths of that stream's literals. It works on the literals in chunks
-of $8 \times 25 = 200$, three full ones and one of 74, each chunk summed in 8-bit lanes of one u64 per
+of $8 \times 25 = {{ch16.lt.chunk}}$, {{ch16.lt.chunks}} full ones and one of {{ch16.lt.chunk_rest}}, each chunk summed in 8-bit lanes of one u64 per
 stream and then moved into 16-bit lanes before a lane can overflow. The results, as the trace program
 recomputes them one literal at a time:
 
-| literal table | bits | bytes in 8 streams |
-| ---: | ---: | ---: |
-| 0 | 4089 | 515 |
-| 1 | 5512 | 691 |
-| 2 | 5975 | 751 |
-| 3 | 4328 | 545 |
-| 4 | 5538 | 694 |
-| 5 | 6340 | 797 |
-| 6 | 5896 | 740 |
-| 7 | 6080 | 763 |
+@output ch16-trace 27-35
 
-Table 0 wins, at 4089 bits, 6.07 bits per literal. The text's 493 literals take 5.26 bits each in it,
-the records' 167 take 8.34: pointer and pid bytes are close to random, and table 0 gives every byte
-value above `0x7f` 10 bits. Each stream's bits are rounded up to whole bytes: the 8 streams take 66,
-59, 65, 64, 64, 65, 66 and 66 bytes, 515 together.
+Table {{ch16.lt.set}} wins, at {{ch16.lt.bits}} bits, {{ch16.lt.per_lit}} bits per literal. The text's {{ch16.part.2.lits}} literals take {{ch16.lit0.text}} bits each in it,
+the records' {{ch16.part.1.lits}} take {{ch16.lit0.records}}: pointer and pid bytes are close to random, and table 0 gives every byte
+value above `0x7f` 10 bits. Each stream's bits are rounded up to whole bytes: the 8 streams take {{ch16.lt.sizes}} bytes, {{ch16.lt.bytes}} together.
 
-The width of the stream sizes is the bits the largest needs, at least 5: the OR of the 8 sizes and 16
-is `123`, `0b1111011`, so `32 - __builtin_clz(123) = 7` bits each, and the header is $3 + 7 = 10$
+@assert ch16.lit0.high_all10 == 1
+
+The width of the stream sizes is the bits the largest needs, at least 5: the OR of the 8 sizes and {{ch16.lt.or_min}}
+is `{{ch16.lt.or}}`, `0b{{ch16.lt.or_bin}}`, so `32 - __builtin_clz({{ch16.lt.or}}) = {{ch16.lt.width}}` bits each, and the header is $3 + {{ch16.lt.width}} = {{ch16.lt.header}}$
 bytes.
 
 Then the rule. Coded literals are kept only if `coded + 51 < n - n / 16`:
-`515 + 51 = 566` against `674 - 42 = 632`. 566 is less, so the literals get coded. Had the page
-carried only the records and no text, they would not have been: the trace program, run without the
-text, finds 181 literals, which table 3 codes best, in 162 bytes, and `162 + 51 = 213` is not below
-`181 - 11 = 170`.
+`{{ch16.lt.bytes}} + 51 = {{ch16.lt.rule_l}}` against `{{ch16.lits}} - {{ch16.lt.n16}} = {{ch16.lt.rule_r}}`. {{ch16.lt.rule_l}} is less, so the literals get coded. Had the page
+carried only the records and no text, they would not have been: the page without the
+text has {{ch16.nt.lits}} literals, which table {{ch16.nt.set}} codes best, in {{ch16.nt.coded}} bytes, and `{{ch16.nt.coded}} + 51 = {{ch16.nt.rule_l}}` is not below
+`{{ch16.nt.lits}} - {{ch16.nt.n16}} = {{ch16.nt.rule_r}}`.
+
+@assert ch16.lt.rule_l < ch16.lt.rule_r and ch16.nt.rule_l >= ch16.nt.rule_r and ch16.nt.kept_raw == 1
 
 What follows is the write. `code_literals()` copies the 674 raw literals into the matcher's hash
 table, `st->literals`, which nobody needs any more, because the coded streams are about to be written
-over the raw literals in `dst`. It computes where each stream starts, `dst + 10`, `+ 76`, `+ 135`,
+over the raw literals in `dst`. It computes where each stream starts, `dst + {{ch16.lt.start.0}}`, `+ {{ch16.lt.start.1}}`, `+ {{ch16.lt.start.2}}`,
 and so on, and `lit_streams()` writes literal `k` into stream `k % 8`, 4 streams at a time with an
-accumulator each, flushing every 32 literals. Stream 0 and 1 get 85 literals, the other six 84. Then:
+accumulator each, flushing every 32 literals. Stream 0 and 1 get {{ch16.lt.more}} literals, the other six {{ch16.lt.less}}. Then:
 
-- the u16 becomes `0x8000 | 674 = 0x82a2`, bytes `a2 82`;
-- byte 2 becomes `0 | (7 - 5) << 3 = 0x10`: table 0, width 7;
-- `lit_sizes()` writes the 8 sizes of 7 bits each, lowest bit first, into bytes 3 to 9:
-  `c2 5d 10 08 0c 0a 85`;
-- `memmove()` moves the 270 bytes of bitstream from byte 676 down to byte 525.
+- the u16 becomes `0x8000 | {{ch16.lits}} = {{ch16.coded.u16}}`, bytes `{{ch16.coded.u16_bytes}}`;
+- byte 2 becomes `{{ch16.lt.set}} | ({{ch16.lt.width}} - 5) << 3 = {{ch16.coded.byte2}}`: table {{ch16.lt.set}}, width {{ch16.lt.width}};
+- `lit_sizes()` writes the 8 sizes of {{ch16.lt.width}} bits each, lowest bit first, into bytes 3 to 9:
+  `{{ch16.coded.sizes_hex}}`;
+- `memmove()` moves the {{ch16.bytes}} bytes of bitstream from byte {{ch16.raw.lit_end}} down to byte {{ch16.lt.end}}.
 
-The function returns $525 + 270 = 795$. `seqlz_compress()` returns that, and the backend tells zram
-the page is 795 bytes.
+@assert ch16.lt.n_more == 2 and ch16.lt.width == 7
+
+The function returns ${{ch16.lt.end}} + {{ch16.bytes}} = {{ch16.coded.len}}$. `seqlz_compress()` returns that, and the backend tells zram
+the page is {{ch16.coded.len}} bytes.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 240" role="img" aria-label="The 795 bytes of the compressed page: a 10-byte header, 8 literal streams from byte 10 to 525, the bitstream of the sequences from 525 to 795, with the header's bytes shown enlarged below">
+<svg viewBox="0 0 720 240" role="img" aria-label="The {{ch16.coded.len}} bytes of the compressed page: a {{ch16.lt.header}}-byte header, 8 literal streams from byte {{ch16.lt.header}} to {{ch16.lt.end}}, the bitstream of the sequences from {{ch16.lt.end}} to {{ch16.coded.len}}, with the header's bytes shown enlarged below">
   <g font-size="11">
-    <rect x="20" y="40" width="8.6" height="40" class="fill-acc" stroke="currentColor"/>
-    <rect x="28.6" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="85" y="40" width="50.5" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="135.5" y="40" width="55.6" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="191.1" y="40" width="54.7" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="245.8" y="40" width="54.8" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="300.6" y="40" width="55.6" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="356.2" y="40" width="56.4" height="40" class="fill-sheet" stroke="currentColor"/>
-    <rect x="412.6" y="40" width="56.5" height="40" class="fill-paper" stroke="currentColor"/>
-    <rect x="469.1" y="40" width="230.9" height="40" class="fill-mark" stroke="currentColor"/>
-    <text x="56.8" y="64" text-anchor="middle">s0</text>
-    <text x="110.2" y="64" text-anchor="middle">s1</text>
-    <text x="163.3" y="64" text-anchor="middle">s2</text>
-    <text x="218.4" y="64" text-anchor="middle">s3</text>
-    <text x="273.2" y="64" text-anchor="middle">s4</text>
-    <text x="328.4" y="64" text-anchor="middle">s5</text>
-    <text x="384.4" y="64" text-anchor="middle">s6</text>
-    <text x="440.8" y="64" text-anchor="middle">s7</text>
-    <text x="584.5" y="58" text-anchor="middle" class="on-fill">bitstream of the sequences</text>
-    <text x="584.5" y="72" text-anchor="middle" class="on-fill">270 bytes, MSB first</text>
-    <text x="248" y="30" text-anchor="middle">8 literal streams, 515 bytes, table 0</text>
+    <rect x="20" y="40" width="{{ch16.fig.c.w0}}" height="40" class="fill-acc" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x1}}" y="40" width="{{ch16.fig.c.w1}}" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x2}}" y="40" width="{{ch16.fig.c.w2}}" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x3}}" y="40" width="{{ch16.fig.c.w3}}" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x4}}" y="40" width="{{ch16.fig.c.w4}}" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x5}}" y="40" width="{{ch16.fig.c.w5}}" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x6}}" y="40" width="{{ch16.fig.c.w6}}" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x7}}" y="40" width="{{ch16.fig.c.w7}}" height="40" class="fill-sheet" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x8}}" y="40" width="{{ch16.fig.c.w8}}" height="40" class="fill-paper" stroke="currentColor"/>
+    <rect x="{{ch16.fig.c.x9}}" y="40" width="{{ch16.fig.c.w9}}" height="40" class="fill-mark" stroke="currentColor"/>
+    <text x="{{ch16.fig.c.m1}}" y="64" text-anchor="middle">s0</text>
+    <text x="{{ch16.fig.c.m2}}" y="64" text-anchor="middle">s1</text>
+    <text x="{{ch16.fig.c.m3}}" y="64" text-anchor="middle">s2</text>
+    <text x="{{ch16.fig.c.m4}}" y="64" text-anchor="middle">s3</text>
+    <text x="{{ch16.fig.c.m5}}" y="64" text-anchor="middle">s4</text>
+    <text x="{{ch16.fig.c.m6}}" y="64" text-anchor="middle">s5</text>
+    <text x="{{ch16.fig.c.m7}}" y="64" text-anchor="middle">s6</text>
+    <text x="{{ch16.fig.c.m8}}" y="64" text-anchor="middle">s7</text>
+    <text x="{{ch16.fig.c.m9}}" y="58" text-anchor="middle" class="on-fill">bitstream of the sequences</text>
+    <text x="{{ch16.fig.c.m9}}" y="72" text-anchor="middle" class="on-fill">{{ch16.bytes}} bytes, MSB first</text>
+    <text x="{{ch16.fig.c.lits_mid}}" y="30" text-anchor="middle">8 literal streams, {{ch16.lt.bytes}} bytes, table {{ch16.lt.set}}</text>
     <text x="20" y="96" text-anchor="middle" class="halo">0</text>
-    <text x="30" y="110" text-anchor="middle">10</text>
-    <text x="85" y="96" text-anchor="middle" class="halo">76</text>
-    <text x="135.5" y="110" text-anchor="middle">135</text>
-    <text x="191.1" y="96" text-anchor="middle">200</text>
-    <text x="245.8" y="110" text-anchor="middle">264</text>
-    <text x="300.6" y="96" text-anchor="middle">328</text>
-    <text x="356.2" y="110" text-anchor="middle">393</text>
-    <text x="412.6" y="96" text-anchor="middle">459</text>
-    <text x="469.1" y="110" text-anchor="middle">525</text>
-    <text x="700" y="96" text-anchor="middle">795</text>
+    <text x="30" y="110" text-anchor="middle">{{ch16.lt.start.0}}</text>
+    <text x="{{ch16.fig.c.x2}}" y="96" text-anchor="middle" class="halo">{{ch16.lt.start.1}}</text>
+    <text x="{{ch16.fig.c.x3}}" y="110" text-anchor="middle">{{ch16.lt.start.2}}</text>
+    <text x="{{ch16.fig.c.x4}}" y="96" text-anchor="middle">{{ch16.lt.start.3}}</text>
+    <text x="{{ch16.fig.c.x5}}" y="110" text-anchor="middle">{{ch16.lt.start.4}}</text>
+    <text x="{{ch16.fig.c.x6}}" y="96" text-anchor="middle">{{ch16.lt.start.5}}</text>
+    <text x="{{ch16.fig.c.x7}}" y="110" text-anchor="middle">{{ch16.lt.start.6}}</text>
+    <text x="{{ch16.fig.c.x8}}" y="96" text-anchor="middle">{{ch16.lt.start.7}}</text>
+    <text x="{{ch16.fig.c.x9}}" y="110" text-anchor="middle">{{ch16.lt.end}}</text>
+    <text x="700" y="96" text-anchor="middle">{{ch16.coded.len}}</text>
     <line x1="20" y1="80" x2="20" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
-    <line x1="28.6" y1="80" x2="520" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
+    <line x1="{{ch16.fig.c.x1}}" y1="80" x2="520" y2="160" stroke="currentColor" stroke-dasharray="3 3"/>
     <rect x="20" y="160" width="100" height="34" class="fill-acc" stroke="currentColor"/>
     <rect x="120" y="160" width="50" height="34" class="fill-acc" stroke="currentColor"/>
     <rect x="170" y="160" width="350" height="34" class="fill-acc" stroke="currentColor"/>
-    <text x="70" y="181" text-anchor="middle" class="on-fill">a2 82</text>
-    <text x="145" y="181" text-anchor="middle" class="on-fill">10</text>
-    <text x="345" y="181" text-anchor="middle" class="on-fill">c2 5d 10 08 0c 0a 85</text>
-    <text x="70" y="212" text-anchor="middle">u16: coded, 674</text>
+    <text x="70" y="181" text-anchor="middle" class="on-fill">{{ch16.coded.u16_bytes}}</text>
+    <text x="145" y="181" text-anchor="middle" class="on-fill">{{ch16.coded.byte2}}</text>
+    <text x="345" y="181" text-anchor="middle" class="on-fill">{{ch16.coded.sizes_hex}}</text>
+    <text x="70" y="212" text-anchor="middle">u16: coded, {{ch16.lits}}</text>
     <line x1="145" y1="196" x2="145" y2="216" stroke="currentColor"/>
-    <text x="145" y="230" text-anchor="middle">table 0, w 7</text>
-    <text x="345" y="212" text-anchor="middle">sizes 66 59 65 64 64 65 66 66, 7 bits each</text>
+    <text x="145" y="230" text-anchor="middle">table {{ch16.lt.set}}, w {{ch16.lt.width}}</text>
+    <text x="345" y="212" text-anchor="middle">sizes {{ch16.lt.sizes_plain}}, {{ch16.lt.width}} bits each</text>
     <text x="536" y="181">bytes 0 to 9, the header</text>
   </g>
 </svg>
 </div>
-<figcaption>The compressed page, 795 bytes, drawn to scale; the 10-byte header enlarged below.</figcaption>
+<figcaption>The compressed page, {{ch16.coded.len}} bytes, drawn to scale; the {{ch16.lt.header}}-byte header enlarged below.</figcaption>
 </figure>
 
 ## How much memory the page takes in zram {#ch-trace--zsmalloc}
 
-zram does not store 795 bytes. It asks zsmalloc for an object of that size, and zsmalloc rounds it
+zram does not store {{ch16.coded.len}} bytes. It asks zsmalloc for an object of that size, and zsmalloc rounds it
 up to a size class ([chapter 1](#ch-zram)). The project models this in `bench/zsmalloc_cost.cpp`,
 a port of the kernel's class computation; summed over a new device's pages it matched zram's own
 `mem_used_total` to the byte in the kernel VM. For 4 KiB pages:
 
-1. zsmalloc adds a handle of 8 bytes: $795 + 8 = 803$.
+1. zsmalloc adds a handle of 8 bytes: ${{ch16.coded.len}} + 8 = {{ch16.zs.size}}$.
 2. Classes are 16 bytes apart (`4096 >> 8`) from 32 bytes on, so the class index is
-   $\lceil (803 - 32) / 16 \rceil = \lceil 48.19 \rceil = 49$, and the class size $32 + 49 \times 16 = 816$ bytes.
+   $\lceil ({{ch16.zs.size}} - 32) / 16 \rceil = \lceil {{ch16.zs.frac}} \rceil = {{ch16.zs.idx}}$, and the class size $32 + {{ch16.zs.idx}} \times 16 = {{ch16.zs.nominal}}$ bytes.
 3. A class keeps its objects in a "zspage" of 1 to 8 pages, the number with the least waste at the end.
-   For 816 that is 1 page with 5 objects, since $4096 / 816 = 5.02$. Classes with the same pages and
-   objects per zspage are merged into the larger: class 800 also has 1 page and 5 objects, so it is
-   merged into 816, and no larger class shares 816's.
-4. So each object costs $4096 / 5 = 819.2$ bytes of memory.
+   For {{ch16.zs.class}} that is {{ch16.zs.pages}} page with {{ch16.zs.objs}} objects, since $4096 / {{ch16.zs.class}} = {{ch16.zs.div}}$. Classes with the same pages and
+   objects per zspage are merged into the larger: class {{ch16.zs.merged}} also has 1 page and 5 objects, so it is
+   merged into {{ch16.zs.class}}, and no larger class shares {{ch16.zs.class}}'s.
+4. So each object costs $4096 / {{ch16.zs.objs}} = {{ch16.zs.cost}}$ bytes of memory.
 
-The same page with raw literals, `seqlz-fast`'s 946 bytes, lands in class 960 (`954` rounded up), 4
-pages holding 17 objects, $16\,384 / 17 = 963.8$ bytes per page. Coding the literals saved 151 bytes of
-compressed size and 144.6 bytes of zsmalloc memory. The page could grow by 13 bytes and stay in class
-816 (up to $808 + 8 = 816$); it would have to shrink by 19 bytes, to 776, to reach the next smaller
-class, 784, because class 800 is part of 816.
+@assert F("ch16.zs.class") == ch16.zs.nominal and ch16.zs.pages == 1 and ch16.zs.merged == F("ch16.zs.class") - 16
+
+The same page with raw literals, `seqlz-fast`'s {{ch16.raw.len}} bytes, lands in class {{ch16.zs.raw_class}} (`{{ch16.zs.raw_size}}` rounded up), {{ch16.zs.raw_pages}}
+pages holding {{ch16.zs.raw_objs}} objects, ${{ch16.zs.raw_pages_bytes|grp}} / {{ch16.zs.raw_objs}} = {{ch16.zs.raw_cost}}$ bytes per page. Coding the literals saved {{ch16.coded.saved}} bytes of
+compressed size and {{ch16.zs.saved}} bytes of zsmalloc memory. The page could grow by {{ch16.zs.grow}} bytes and stay in class
+{{ch16.zs.class}} (up to ${{ch16.zs.hi}} + 8 = {{ch16.zs.class}}$); it would have to shrink by {{ch16.zs.shrink}} bytes, to {{ch16.zs.lo}}, to reach the next smaller
+class, {{ch16.zs.lower}}, because class {{ch16.zs.merged}} is part of {{ch16.zs.class}}.
 
 ## seqlz_decode(): the literals first {#ch-trace--decode}
 
 Some time later the page is read. zram calls the backend's decompress with the 795 bytes, and the
-backend calls `seqlz_decode(t, src, 795, dst, scratch)` with the per-CPU scratch of 4112 bytes
+backend calls `seqlz_decode(t, src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of {{const.SCRATCH}} bytes
 ([chapter 14](#ch-decode)).
 
-`src_len` is at least 2, so the decoder first prefetches its tables: the token table's 8192 bytes in
-16 rounds of 8 cache lines, and the 1024 bytes of each length table in 2 rounds. Then it reads the
-u16, `0x82a2`. The top bit is set, so the literals are coded: `n_lit = 0x02a2 = 674`, the scratch is
+`src_len` is at least 2, so the decoder first prefetches its tables: the token table's {{ch14.token_bytes}} bytes in
+16 rounds of 8 cache lines, and the 1024 bytes of each length table in 2 rounds, each table with one
+more prefetch for the line of its last byte. Then it reads the
+u16, `{{ch16.coded.u16}}`. The top bit is set, so the literals are coded: `n_lit = {{ch16.coded.nlit_hex}} = {{ch16.lits}}`, the scratch is
 not `NULL`, and `decode_literals()` runs ([chapter 13](#ch-literals-dec)).
 
-`decode_literals()` reads byte 2, `0x10`: width `5 + ((0x10 >> 3) & 7) = 7`, table `0x10 & 7 = 0`,
-and bits 6 and 7 are zero as they must be. The streams start at byte $3 + 7 = 10$. It prefetches
-literal table 0's 2048 bytes of decode table, 32 lines, and `lit_stream_sizes()` copies the 7 bytes of
-sizes out and takes 7 bits at a time: 66, 59, 65, 64, 64, 65, 66, 66, starts 10, 76, 135, 200, 264,
-328, 393, 459, total 515. $10 + 515 = 525$ is within the 795 bytes.
+`decode_literals()` reads byte 2, `{{ch16.coded.byte2}}`: width `5 + (({{ch16.coded.byte2}} >> 3) & 7) = {{ch16.lt.width}}`, table `{{ch16.coded.byte2}} & 7 = {{ch16.lt.set}}`,
+and bits 6 and 7 are zero as they must be. The streams start at byte $3 + {{ch16.lt.width}} = {{ch16.lt.header}}$. It prefetches
+literal table {{ch16.lt.set}}'s 2048 bytes of decode table, {{ch13.lt.loop_prefetches}} lines and the line of its last byte, and `lit_stream_sizes()` copies the {{ch16.lt.width}} bytes of
+sizes out and takes {{ch16.lt.width}} bits at a time: {{ch16.lt.sizes_sp}}, starts {{ch16.lt.starts}}, total {{ch16.lt.bytes}}. ${{ch16.lt.header}} + {{ch16.lt.bytes}} = {{ch16.lt.end}}$ is within the {{ch16.coded.len}} bytes.
 
 The 8 streams are then decoded side by side, `SEQLZ_LIT_ROUNDS = 56 / 10 = 5` literals per stream
-after each refill, 40 literals per round. 674 literals are 16 full rounds, 640 literals. The rest, 34,
-is `34 / 8 = 4` steps of all 8 streams and then one more step in which only `34 % 8 = 2` streams,
-0 and 1, take their literal. Streams 2 to 7 decode a literal in that step too, but with a mask of 0
-they do not move on; what they decode lands in `scratch[674]` to `scratch[679]`, after the last
+after each refill, 40 literals per round. {{ch16.lits}} literals are {{ch16.d.rounds}} full rounds, {{ch16.d.round_lits}} literals. The rest, {{ch16.d.rest}},
+is `{{ch16.d.rest}} / 8 = {{ch16.d.steps}}` steps of all 8 streams and then one more step in which only `{{ch16.d.rest}} % 8 = {{ch16.d.r}}` streams,
+0 and {{ch16.d.r_last}}, take their literal. Streams {{ch16.d.first_quiet}} to 7 decode a literal in that step too, but with a mask of 0
+they do not move on; what they decode lands in `scratch[{{ch16.d.extra_lo}}]` to `scratch[{{ch16.d.extra_hi}}]`, after the last
 literal, where nothing reads it. On a page of 4096 literals those bytes are past the page, which is
 one reason the scratch has 16 bytes more than a page. Finally `lit_stream_ends()` checks for each stream that it ended in
 its last byte and that the bits after its last code are 0. All 8 do, and `decode_literals()` returns
-`src + 525`, where the bitstream starts.
+`src + {{ch16.lt.end}}`, where the bitstream starts.
 
-The decoder sets up the bit reader at byte 525, `lit` at the scratch, `lit_end` at `scratch + 674`,
-`lit_bound` at `scratch + 4112`, and the limits of the fast path: `d_fast` 64 bytes before the end
+@assert ch16.d.r == 2 and ch14.pf.token == 129
+
+The decoder sets up the bit reader at byte {{ch16.lt.end}}, `lit` at the scratch, `lit_end` at `scratch + {{ch16.lits}}`,
+`lit_bound` at `scratch + {{const.SCRATCH}}`, and the limits of the fast path: `d_fast` 64 bytes before the end
 of the page, `lit_fast` 16 bytes before `lit_bound`, `in_fast` 8 bytes before the end of the input.
 
 ## The loop over the sequences {#ch-trace--loop}
 
 **The first token.** `next_token()` finds `count = 0`, less than `11 + 12`, and refills: the 8 bytes
-at 525 loaded big endian, `p` moved on by 7 bytes, `count` set to 56. The top 11 bits of `31 fe ff
-81 ...` are `00110001111`, 399. Entry 399 of the token table is `0x80010000`: bit 31 says escape, and
-bits 14 to 18 hold 4, the escape code's length. All 128 entries whose index starts with `0011` hold
-this value, which is how one lookup finds a 4-bit code in an 11-bit table.
+at {{ch16.lt.end}} loaded big endian, `p` moved on by {{ch16.d.p_moved}} bytes, `count` set to {{ch16.d.count}}. The top 11 bits of `{{ch16.raw.b4}}
+...` are `{{ch16.d.idx_bin}}`, {{ch16.d.idx}}. Entry {{ch16.d.idx}} of the token table is `{{ch16.d.entry}}`: bit 31 says escape, and
+bits 14 to 18 hold {{ch16.d.esc_len}}, the escape code's length. All {{ch16.d.esc_fill}} entries whose index starts with `{{tok.code.3072}}` hold
+this value, which is how one lookup finds a {{ch16.d.esc_len}}-bit code in an 11-bit table.
 
-**The escape.** The loop drops the 4 bits, refills, reads the next 12 bits, `000111111110`, 510, and
-drops them. 510 is below 3072, so it is a valid token, and `token_entry(510, 0)` builds its entry on
-the spot, `0x51f00000`: `ll` 14, `ml` 35, the length-value bit set, class 0 so `back` 0, and 0 bits
+**The escape.** The loop drops the {{ch16.d.esc_len}} bits, refills, reads the next 12 bits, `{{ch16.d.esc_bin}}`, {{ch16.d.esc_idx}}, and
+drops them. {{ch16.d.esc_idx}} is below 3072, so it is a valid token, and `token_entry({{ch16.d.esc_idx}}, 0)` builds its entry on
+the spot, `{{ch16.d.esc_entry}}`: `ll` {{ch16.d.esc_ll}}, `ml` {{ch16.d.esc_ml}}, the length-value bit set, class 0 so `back` {{ch16.d.esc_back}}, and {{ch16.d.esc_drop}} bits
 to drop, since the token's bits are already gone.
 
 **Sequence 0, slow path.** `back` is 0, so `off = last = 1`. The entry has the length-value bit, so
 the fast path is out. `nl = 14` is not 15, so no `ll` value. The checks pass: `lit` is not past
 `lit_end`, 14 literals are left and fit in the page. `copy_literals()` copies them with one 16-byte
 copy, and `d` and `lit` move on by 14. The page is not full yet. `len` is 35, `SEQLZ_ML_CAP + 4`, so a
-length value follows: refill, look up the next 8 bits in the `ml` table, `1111111` is symbol 15, base
-15, no extra bits, and `len` becomes `35 + 15 = 50`. `off - 1 = 0` is less than the 14 bytes written,
-and 50 bytes fit. `copy_match()` with offset 1 builds the 8-byte pattern from `dst[13]`, a zero byte
-repeated 8 times by `repeat_pattern()`, and stores it every `repeat_step[1] = 8` bytes until 50 are
-covered, 56 bytes written in 7 stores. `d` is now at 64, and `next_token()` loads sequence 1's entry.
+length value follows: refill, look up the next 8 bits in the `ml` table, `{{ml.code.15}}` is symbol 15, base
+15, no extra bits, and `len` becomes `35 + 15 = {{ch16.s.0.ml}}`. `off - 1 = 0` is less than the {{ch16.s.0.ll}} bytes written,
+and {{ch16.s.0.ml}} bytes fit. `copy_match()` with offset 1 builds the 8-byte pattern from `dst[13]`, a zero byte
+repeated 8 times by `repeat_pattern()`, and stores it every `repeat_step[1] = 8` bytes until {{ch16.s.0.ml}} are
+covered, {{ch16.d.m0_written}} bytes written in {{ch16.d.m0_stores}} stores. `d` is now at {{ch16.s.0.end}}, and `next_token()` loads sequence 1's entry.
 
-**Sequence 1, slow path again.** The token's code is 10 bits, so its entry fills the 2 indices
-`1100000010x`. It says `ll` 15 with a value to follow, `ml` 6, 8 offset bits. The offset is cut out of
-the bits right after the code with two shifts, `(bits << 10) >> 56`, which is 77. The `ll` value adds
-12, so 27 literals are copied, with two 16-byte copies, and the 6 bytes at offset 77 with two 8-byte
+**Sequence 1, slow path again.** The token's code is {{ch16.s.1.clen}} bits, so its entry fills the {{ch16.d.t1_fill}} indices
+`{{ch16.d.t1_code}}x`. It says `ll` 15 with a value to follow, `ml` {{ch16.s.1.ml}}, {{ch16.s.1.raw}} offset bits. The offset is cut out of
+the bits right after the code with two shifts, `(bits << {{ch16.s.1.clen}}) >> {{ch16.d.t1_back}}`, which is {{ch16.s.1.off}}. The `ll` value adds
+12, so {{ch16.s.1.ll}} literals are copied, with two 16-byte copies, and the {{ch16.s.1.ml}} bytes at offset {{ch16.s.1.off}} with two 8-byte
 copies.
 
-**Sequence 2, fast path.** Token 2081 has no length value, `d` at 97 is far from the end, the scratch
+@assert ch16.s[1].clen == 10 and 16 < ch16.s[1].ll <= 32 and ch16.e0.sym == 15
+
+**Sequence 2, fast path.** Token {{ch16.s.2.tok}} has no length value, `d` at {{ch16.s.2.pos}} is far from the end, the scratch
 has room, and the input has more than 8 bytes left. So the fast path runs: `next_token_fast()` refills
 without checking `count`, because `skip` is 0 after a slow sequence, and loads sequence 3's entry
 before anything is copied. Then one 16-byte copy for the 1 literal, and `copy_match_fast()` with
-offset `4 << 3 = 32`, two 8-byte copies for the 6 bytes. No compare of `nl` against the literals left,
+offset `{{ch16.s.2.ob}} << 3 = {{ch16.s.2.off}}`, two 8-byte copies for the {{ch16.s.2.ml}} bytes. No compare of `nl` against the literals left,
 no check of `len` against the room: the conditions of the fast path cover both.
 
 The rest of the page goes the same way. The program counts the paths with a copy of the decoder that
 has two counters added:
 
-```text
-round trip ok, 161 sequences on the fast path, 18 on the slow path
-```
+@output ch16-trace 41
 
-179 sequences have a token. The 18 slow ones are the 16 sequences with a length value (14 for `ll`, 2
-for `ml`), and sequences 174 and 177, whose bit reader has reached the last 8 bytes of the input, so
+{{ch14.seqs}} sequences have a token. The {{ch14.slow}} slow ones are the {{ch16.slow_value}} sequences with a length value ({{ch16.slow_ll}} for `ll`, {{ch16.slow_ml}}
+for `ml`), and sequences {{ch16.slow_novalue}}, whose bit reader has reached the last 8 bytes of the input, so
 that a refill without a check could read past it.
 
-**The end.** After sequence 178's match `d` is at the end of the page and `lit` at `lit_end`, all 674
+@assert ch16.slow_novalue_n == 2 and ch16.slow_novalue_past_in == 1 and ch16.slow_value + ch16.slow_novalue_n == ch14.slow
+
+**The end.** After sequence 178's match `d` is at the end of the page and `lit` at `lit_end`, all {{ch16.lits}}
 literals used: `d - lit` is `end_gap`, 0 literals left for 0 bytes of the page. That is sequence 179,
 the last, which has no token, and the loop leaves without reading one; `copy_literals()` copies 0 bytes. Then
 the checks that make a page valid only if it ends where its bits end
 ([chapter 4](#ch-format--validity)): the bit reader has read every byte, `p == end`, and `count`, the
-bits left, is 1, fewer than 8, and that bit is 0: 2159 bits are 269 bytes and 7 bits, and the last
+bits left, is {{ch16.pad}}, fewer than 8, and that bit is 0: {{ch16.bits}} bits are {{ch16.full_bytes}} bytes and {{ch16.pad_bits}} bits, and the last
 byte's lowest bit is padding. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
 the page we started with.
 
-Without the scratch, the same 795 bytes are invalid: `seqlz_decode(t, src, 795, dst, NULL)` returns
+@assert ch16.pad == 1
+
+Without the scratch, the same {{ch16.coded.len}} bytes are invalid: `seqlz_decode(t, src, {{ch16.coded.len}}, dst, NULL)` returns
 `-EINVAL` as soon as it sees the top bit of the u16. That is why `seqlz-fast-lit` has a decompression
 context and `seqlz-fast` does not ([chapter 15](#ch-zram-glue)).
 
@@ -505,52 +506,10 @@ bytes), computes each sequence's bits from the tables' `enc[]` arrays, compresse
 and with coded literals, and decodes it. It includes `seqlz_internal.h` to read the tables' codes, so
 it depends on the layout at commit `a2d57dd`.
 
-Its whole output comes first, with gcc 16.2.1 on x86-64; the compressed bytes are the same on every CPU,
-so the output is too:
+Its whole output comes first, as the build of this book printed it; the compressed bytes are the same
+on every CPU, so the output is too:
 
-```text
-180 sequences
-  # |  pos |  ll |   ml |  off | cl | token | code | off | values | bits
-seq 0: escape code 0011, token 000111111110, ml value 15: symbol 15, code 1111111
-  0 |    0 |  14 |   50 |    1 |  0 |   510 | 16 e |   0 |      7 |   23
-seq 1: token code 1100000010, offset bits 01001101, ll value 12: symbol 12, code 111010
-  1 |   64 |  27 |    6 |   77 |  2 |  1071 | 10   |   8 |      6 |   24
-seq 2: token code 101100110, offset bits 00100
-  2 |   97 |   1 |    6 |   32 |  4 |  2081 |  9   |   5 |      0 |   14
-  3 |  104 |  12 |    6 |   25 |  2 |  1068 | 16 e |   8 |      0 |   24
-  4 |  122 |   0 |    6 |    2 |  1 |   544 |  9   |   4 |      0 |   13
-  5 |  128 |   1 |    7 |   32 |  4 |  2097 |  4   |   5 |      0 |    9
-  6 |  136 |  15 |    9 |   32 |  0 |    95 | 11   |   0 |      4 |   15
-  7 |  160 |   2 |    6 |   32 |  0 |    34 |  4   |   0 |      0 |    4
-  8 |  168 |   1 |    7 |   96 |  4 |  2097 |  4   |   5 |      0 |    9
-  9 |  176 |   3 |   10 |   29 |  2 |  1123 | 16 e |   8 |      0 |   24
- 10 |  189 |   4 |    7 |   32 |  4 |  2100 | 11   |   5 |      0 |   16
- 11 |  200 |   1 |    7 |   96 |  4 |  2097 |  4   |   5 |      0 |    9
- 12 |  208 |   0 |    8 |  128 |  4 |  2112 |  5   |   5 |      0 |   10
- 13 |  216 |   3 |    5 |  128 |  0 |    19 |  7   |   0 |      0 |    7
-...
-177 | 2224 |   1 |    7 | 1976 |  5 |  2609 |  6   |   9 |      0 |   15
-178 | 2232 |   0 | 1864 |    2 |  1 |  1008 |  7   |   4 |     16 |   27
-179 | 4096 |   0 |    0 |    - |  - |     - |    - |   - |      - |    0
-literals 674, bitstream 2159 bits = 270 bytes
-matches per class: 0:27 1:3 2:21 3:2 4:96 5:30, escapes 4, length values 16
-raw literals: 946 bytes = 2 + 674 + 270
-literal table 0: 4089 bits, 515 bytes in 8 streams
-literal table 1: 5512 bits, 691 bytes in 8 streams
-literal table 2: 5975 bits, 751 bytes in 8 streams
-literal table 3: 4328 bits, 545 bytes in 8 streams
-literal table 4: 5538 bits, 694 bytes in 8 streams
-literal table 5: 6340 bits, 797 bytes in 8 streams
-literal table 6: 5896 bits, 740 bytes in 8 streams
-literal table 7: 6080 bits, 763 bytes in 8 streams
-fewest bits: table 0
-coded literals: 795 bytes, u16 0x82a2
-byte 2 = 0x10: table 0, w 7, header 10 bytes, sizes 66 59 65 64 64 65 66 66 = 515
-bitstream from byte 525, 270 bytes
-first 16 bytes: a2 82 10 c2 5d 10 08 0c 0a 85 ad 1f a3 bc 44 8c
-first 4 bytes of the bitstream: 31 fe ff 81
-round trip ok, 161 sequences on the fast path, 18 on the slow path
-```
+@output ch16-trace
 
 The program itself:
 
@@ -804,6 +763,7 @@ int main(void)
 	return 0;
 }
 ```
+@program ch16-trace with=dec_counted
 
 `dec_counted.c` is `src/seqlz_decompress.c` with two counters and `seqlz_decode()` renamed, so that
 it can be linked next to the original. `sed` makes it. From the root of the repository, with GNU sed
@@ -821,8 +781,8 @@ gcc -O2 -Wall -Wextra -I$R/src -o trace trace.c dec_counted.c \
 ```
 
 ::: try Change the page
-Replace the `memcpy()` of the text in `make_page()` with `(void)text;`, and the page has 181
-literals, a bitstream of 211 bytes, and stays at 394 bytes with raw literals: `code_literals()` finds
+Replace the `memcpy()` of the text in `make_page()` with `(void)text;`, and the page has {{ch16.nt.lits}}
+literals, a bitstream of {{ch16.nt.bytes}} bytes, and stays at {{ch16.nt.len}} bytes with raw literals: `code_literals()` finds
 no table that saves enough. Change `N_REC`, the names or the pointer step, and watch the table of
 sequences, the classes and the size class move.
 :::
@@ -830,6 +790,6 @@ sequences, the classes and the size class move.
 This page was built for the walk and is not typical. On the first desktop dump the project measures,
 in the kernel VM with the tables of 7th October 2026, `seqlz-fast-lit` stores a page in 1037.5 bytes
 of zsmalloc memory on average and `seqlz-fast` in 1123.7, so coded literals save 86 bytes per page
-there, against 144.6 on this page
+there, against {{ch16.zs.saved}} on this page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
 How much a page gains depends on its literals: without the text, this page gains nothing.

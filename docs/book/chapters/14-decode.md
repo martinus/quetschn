@@ -42,8 +42,8 @@ to get the next token, and the room the fast path needs. The helpers of the slow
 
 @listing src/seqlz_decompress.c 435-458
 
-On the fast path the match is at most 34 bytes long: a token holds `ml - 4` up to 31, and 31 means
-that a length value follows, which the fast path does not take. The caller guarantees room for 40 bytes
+On the fast path the match is at most {{ch14.fast_len}} bytes long: a token holds `ml - 4` up to 31, and 31 means
+that a length value follows, which the fast path does not take. The caller guarantees room for {{ch14.cmf.room}} bytes
 at `d`, see `FAST_PAGE_ROOM` below, so the function writes without looking at the end of the page.
 
 For an offset of 8 or more, lines 451 and 452 copy 16 bytes, the next two copies follow if `len > 16`,
@@ -74,12 +74,15 @@ and such a load waits.
 
 For an offset below 8 the function uses the pattern register of `repeat_pattern()`
 ([chapter 12](#ch-dec-basics--pattern)): 8 bytes that repeat every `step` bytes. Lines 467 to 471 store
-it 5 times without a loop, at `d`, `d + step`, up to `d + 4 * step`. The smallest step is 5, for `off =
-5`, and then the 5 stores cover $4 \times 5 + 8 = 28$ bytes, which is the "at least 28" of the comment. For
-`off` 1, 2 and 4 the step is 8 and the 5 stores cover 40 bytes, every match of the fast path. The loop
+it 5 times without a loop, at `d`, `d + step`, up to `d + 4 * step`. The smallest step is {{ch14.cmf.min_step}}, for `off =
+{{ch14.cmf.min_step_off}}`, and then the 5 stores cover $4 \times {{ch14.cmf.min_step}} + 8 = {{ch14.cmf.five_stores}}$ bytes, which is the "at least 28" of the comment. For
+`off` 1, 2 and 4 the step is 8 and the 5 stores cover {{ch14.cmf.five_stores_8}} bytes, every match of the fast path. The loop
 on lines 472 and 473 runs only for a longer match with a step below 8: e.g. `off = 5, len = 34` stores at
-25 and 30 and stops at 35. Over all offsets from 1 to 7 and lengths from 4 to 34, the furthest byte
-written is `d + 39`, counted with a few lines of Python; that is where the 40 bytes of room come from.
+25 and 30 and stops at 35. Over all offsets from 1 to 7 and lengths from 4 to {{ch14.fast_len}}, the furthest byte
+written is `d + {{ch14.cmf.max_byte}}`, found by running `copy_match_fast()` on all of them when the book is built; that is
+where the {{ch14.cmf.room}} bytes of room come from.
+
+@assert ch14.cmf.min_step == 5 and ch14.cmf.min_step_off == 5 and ch14.cmf.step1 == ch14.cmf.step2 == ch14.cmf.step4 == 8 and ch14.cmf.room == 40
 
 `repeat_step[off]` needs no `& 7U` here: this is the `else` of `off >= 8U`, so `off` is below 8. And
 `off` is not 0, which would index the placeholder entry: the caller rejected 0 before it called.
@@ -94,8 +97,8 @@ so the 5 stores stayed.
 @listing src/seqlz_decompress.c 477-490
 
 `next_token()` is how the slow path, and the first sequence, get the next token's entry. Line 487 checks
-whether the register has fewer bits than a token and its offset can take: an 11-bit code and up to 12
-offset bits with 4 KiB pages, 23, or up to 14 with 16 KiB pages, 25. Only then does it refill. Line 489
+whether the register has fewer bits than a token and its offset can take: an 11-bit code and up to {{ch14.max_off_bits}}
+offset bits with 4 KiB pages, {{ch14.need}}, or up to {{k16.ch14.max_off_bits}} with 16 KiB pages, {{k16.ch14.need}}. Only then does it refill. Line 489
 looks up the top 11 bits, `bits >> 53`, an index from 0 to 2047, in the token table. Every index is a
 valid entry, because the token code is complete ([chapter 2](#ch-compression)): there is no check for
 bits that are no code.
@@ -110,7 +113,7 @@ token's lookup: the lookup's index comes from `bits`, which the refill changes. 
 every sequence, every lookup would wait for a load from the compressed page, a miss when the page is
 cold. With the check, most lookups use bits that are already in the register, and the refill's load
 happens about once every two or three sequences: a refill leaves at least 56 bits, a sequence on the
-fast path takes at most 23 of them with 4 KiB pages.
+fast path takes at most {{ch14.fast_seq_bits}} of them with 4 KiB pages.
 
 ::: measured Refill below 23 bits instead of every sequence
 September 2026, `seqlz-fast` in the kernel VM, Ryzen 9 7950X at 4.5 GHz, cold and with another page
@@ -165,17 +168,19 @@ does not refill, and the one after it, which drops its bits on line 626 before i
 
 | page size | most offset bits | one fast sequence | two | left of 56 |
 | --- | --- | --- | --- | --- |
-| 4 KiB | 12, class 3 | 23 | 46 | 10 |
-| 16 KiB | 14, class 3 | 25 | 50 | 6 |
+| 4 KiB | {{ch14.max_off_bits}}, class 3 | {{ch14.fast_seq_bits}} | {{ch14.fast_two_bits}} | {{ch14.fast_left}} |
+| 16 KiB | {{k16.ch14.max_off_bits}}, class 3 | {{k16.ch14.fast_seq_bits}} | {{k16.ch14.fast_two_bits}} | {{k16.ch14.fast_left}} |
+
+@assert ch14.class3_bits == ch14.max_off_bits and F("k16.ch14.class3_bits") == F("k16.ch14.max_off_bits")
 
 The comment counts 14 offset bits for both page sizes, the larger case. The peek at the next token
-needs 11 bits; after the first of the two sequences at least 31 are left, after the second the refill
+needs 11 bits; after the first of the two sequences at least {{k16.ch14.fast_after_one}} are left, after the second the refill
 comes first. An escaped token does not break the count: the escape refills on its own before it reads
 its 12 bits, see below, which only adds bits.
 
 After a slow sequence the schedule starts over: the slow path sets `skip = 0`, so the first fast
-sequence after it refills. That is needed because the slow path's `next_token()` only guarantees 23 or
-25 bits, not 56.
+sequence after it refills. That is needed because the slow path's `next_token()` only guarantees {{ch14.need}} or
+{{k16.ch14.need}} bits, not 56.
 
 The comment's last sentence names the two preconditions of the load on line 511, which has no checks.
 "8 bytes of input are there": the fast path is only taken while `br.p <= in_fast`, 8 bytes before the
@@ -203,13 +208,15 @@ Since 10th October 2026 every core runs this one loop ([chapter 17](#ch-decision
 The fast path copies without asking whether there is room, so it is entered only where there is, and
 these three constants say how much.
 
-- **`FAST_PAGE_ROOM`, 64 bytes of page.** A fast sequence writes the 16 bytes of `copy16()` at `d`, then
-  moves `d` on by at most 14 literals, then writes at most 40 bytes of match: at most 54 bytes from where
-  it started. 64 is the round number above 54. The fast path of September 2026, which copied 16 or 32
+- **`FAST_PAGE_ROOM`, {{ch14.room.page}} bytes of page.** A fast sequence writes the 16 bytes of `copy16()` at `d`, then
+  moves `d` on by at most {{ch14.fast_nl}} literals, then writes at most {{ch14.cmf.room}} bytes of match: at most {{ch14.cmf.max_write}} bytes from where
+  it started. {{ch14.room.page}} is the round number above {{ch14.cmf.max_write}}. The fast path of September 2026, which copied 16 or 32
   bytes of match, already needed 64 bytes
   ([explored-designs.md, "zram: prefetch the compressed data", the paragraph "A fast path in seqlz's decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
-- **`FAST_LIT_ROOM`, 16 bytes of literals.** One `copy16()` reads 16 bytes at `lit`.
-- **`FAST_IN_ROOM`, 8 bytes of input.** The refill in `next_token_fast()` loads 8 bytes at `br.p`.
+- **`FAST_LIT_ROOM`, {{ch14.room.lit}} bytes of literals.** One `copy16()` reads 16 bytes at `lit`.
+- **`FAST_IN_ROOM`, {{ch14.room.input}} bytes of input.** The refill in `next_token_fast()` loads 8 bytes at `br.p`.
+
+@assert ch14.room.page == 64 and ch14.room.lit == 16 and ch14.room.input == 8 and ch14.cmf.max_write == 54 and ch14.fast_nl == 14
 
 <figure class="diagram">
 <div class="scroll">
@@ -236,7 +243,7 @@ these three constants say how much.
     <text x="540" y="200" font-size="11">lit_end</text>
     <text x="620" y="214" font-size="11" text-anchor="end">lit_fast = lit_bound - 16</text>
     <text x="680" y="200" font-size="11" text-anchor="end">lit_bound</text>
-    <text x="20" y="232" font-size="11">raw literals: lit_bound = s_end, the bitstream lies behind lit_end; coded: lit_bound = scratch + 4112</text>
+    <text x="20" y="232" font-size="11">raw literals: lit_bound = s_end, the bitstream lies behind lit_end; coded: lit_bound = scratch + {{const.SCRATCH}}</text>
     <text x="10" y="262" font-weight="bold">the bitstream, br.p to s_end</text>
     <rect x="20" y="272" width="630" height="24" class="fill-sheet" stroke="currentColor"/>
     <text x="30" y="289">bytes not yet in the register</text>
@@ -268,12 +275,12 @@ Line 544 rejects input shorter than the 2-byte header before anything reads it.
 
 @listing src/seqlz_decompress.c 546-553
 
-The tables are prefetched first, before the header is even read: 128 prefetches for the token table
-and 16 for each length table ([chapter 12](#ch-dec-basics--prefetch), whose warn box says which last
-line that can leave out). Everything until the first token's
+The tables are prefetched first, before the header is even read: {{ch14.pf.token}} prefetches for the token table
+and {{ch14.pf.len}} for each length table, the loop's and one for the line of the table's last byte
+([chapter 12](#ch-dec-basics--prefetch), whose warn box says why). Everything until the first token's
 lookup, reading the header and possibly decoding the literals, then runs while those lines are on their
 way. The comment says why that matters most on the little cores: an in-order core stops at every miss it
-did not see coming. `sizeof(t->token.decode)` is the array's size in bytes, 8192.
+did not see coming. `sizeof(t->token.decode)` is the array's size in bytes, {{ch14.token_bytes}}.
 
 Line 553 reads the 2-byte header with the kernel's `get_unaligned_le16()`: little endian, at any address.
 The input buffer has no alignment guarantee worth relying on, and the kernel helper says what is meant.
@@ -346,23 +353,23 @@ Line 601 gets the first token's entry. `count` is 0, so `next_token()` refills f
 The loop has no condition; it ends with the `break` on line 688 when the literals left fill the rest of
 the page, or with a `return -EINVAL`. Every round is one sequence with a match.
 
-Lines 605 to 617 handle the escape first. Only 576 of the 3072 tokens have a code of their own in the
-4 KiB tables; the others are sent as the escape's code, `0011`, followed by the token's number in 12
+Lines 605 to 617 handle the escape first. Only {{ch14.tokens_coded}} of the {{const.TOKEN_SYMBOLS}} tokens have a code of their own in the
+4 KiB tables; the others are sent as the escape's code, `{{tok.code.3072}}`, followed by the token's number in 12
 bits ([chapter 4](#ch-format--token)). The escape's entry has bit 31 set, `TOK_ESCAPE_AT`, so `tok >>
 TOK_ESCAPE_AT` is 1 for it and 0 for every other entry, and only the code's length in its drop field,
-4 ([chapter 7](#ch-internal)). Line 609 drops the escape's code. Line 610 refills: the 12 bits may not
+{{tok.len.3072}} ([chapter 7](#ch-internal)). Line 609 drops the escape's code. Line 610 refills: the 12 bits may not
 all be in the register, since `next_token()` only made sure of 23 or 25 bits before the escape's code
 was looked up. Line 611 takes the top 12 bits, line 613 drops them.
 
-12 bits can hold up to 4095, and the tokens end at 3071. Line 614 rejects the 1024 numbers that are no
+12 bits can hold up to 4095, and the tokens end at 3071. Line 614 rejects the {{ch14.no_token}} numbers that are no
 token. Then line 616 computes the token's entry with `token_entry(idx, 0)`, the same function that
 filled the table ([chapter 7](#ch-internal)), with a code length of 0: the code and the 12 bits are
 already dropped, so the entry's shift and drop count only the offset bits. From here on, an escaped token
 is the same as any other.
 
-An example with the 4 KiB tables: token 513 is 1 literal, a match of 4, class 1, and has no code. It
-is sent as `0011`, `001000000001` (513) and then 4 offset bits. `token_entry(513, 0)` is `0x02090f00`:
-`TOK_N` 0, `TOK_BACK` 60, `TOK_DROP` 4, `ll` 1, `ml` 4, no length value. The offset is then the top 4
+An example with the 4 KiB tables: token 513 is {{ch14.t513.ll}} literal, a match of {{ch14.t513.ml}}, class {{ch14.t513.cls}}, and has no code. It
+is sent as `{{tok.code.3072}}`, `{{ch14.t513.bin}}` (513) and then {{ch14.t513.raw_bits}} offset bits. `token_entry(513, 0)` is `{{ch14.t513.entry}}`:
+`TOK_N` {{ch14.t513.N}}, `TOK_BACK` {{ch14.t513.BACK}}, `TOK_DROP` {{ch14.t513.DROP}}, `ll` {{ch14.t513.ll}}, `ml` {{ch14.t513.ml}}, no length value. The offset is then the top {{ch14.t513.raw_bits}}
 bits of the register.
 
 @listing src/seqlz_decompress.c 618-629
@@ -383,24 +390,26 @@ some part of the register, a meaningless number, and line 627 does not use it: `
 Line 626 drops the code and the offset bits together, `TOK_DROP(tok)` = code length + offset bits.
 
 Three tokens from the 4 KiB tables, each with its real code and entry, printed by a program compiled
-against `src/`. The register holds the code, the offset bits, and then made-up bits `1010...`:
+against `src/`. The register holds the code, the offset bits, and then made-up bits `0101...`:
 
-| | class 1: token 576 | class 4: token 2097 | class 0: token 49 |
+| | class {{ch14.tk.a.cls}}: token {{ch14.tk.a.s}} | class {{ch14.tk.b.cls}}: token {{ch14.tk.b.s}} | class {{ch14.tk.c.cls}}: token {{ch14.tk.c.s}} |
 | --- | --- | --- | --- |
-| sequence | `ll` 0, `ml` 8, offset 8 | `ll` 1, `ml` 7, offset 24 | `ll` 1, `ml` 7, the last offset |
-| code | `01000`, 5 bits | `0010`, 4 bits | `0001`, 4 bits |
-| offset bits | `1000`, 4 bits: 8 | `00011`, 5 bits: 3 | none |
-| entry | `0x04024f05` | `0x038a7ec4` | `0x03890004` |
-| `TOK_N` / `TOK_BACK` / `TOK_SHIFT` / `TOK_DROP` | 5 / 60 / 0 / 9 | 4 / 59 / 3 / 9 | 4 / 0 / 0 / 4 |
-| `br.bits` | `0x442aaaaaaaaaaaaa` | `0x21aaaaaaaaaaaaaa` | `0x1555555555555555` |
-| `<< TOK_N` | `0x8555555555555540` | `0x1aaaaaaaaaaaaaa0` | `0x5555555555555550` |
-| `>> back` | `0x8` | `0x3` | `0x5555555555555550` |
-| `raw` | 8 | 3 << 3 = 24 | `0x55555550`, not used |
-| `off` | 8 | 24 | `last` |
+| sequence | `ll` {{ch14.tk.a.ll}}, `ml` {{ch14.tk.a.ml}}, offset {{ch14.tk.a.off}} | `ll` {{ch14.tk.b.ll}}, `ml` {{ch14.tk.b.ml}}, offset {{ch14.tk.b.off}} | `ll` {{ch14.tk.c.ll}}, `ml` {{ch14.tk.c.ml}}, the last offset |
+| code | `{{ch14.tk.a.code}}`, {{ch14.tk.a.n}} bits | `{{ch14.tk.b.code}}`, {{ch14.tk.b.n}} bits | `{{ch14.tk.c.code}}`, {{ch14.tk.c.n}} bits |
+| offset bits | `{{ch14.tk.a.ob}}`, {{ch14.tk.a.raw_bits}} bits: {{ch14.tk.a.ob_val}} | `{{ch14.tk.b.ob}}`, {{ch14.tk.b.raw_bits}} bits: {{ch14.tk.b.ob_val}} | none |
+| entry | `{{ch14.tk.a.entry}}` | `{{ch14.tk.b.entry}}` | `{{ch14.tk.c.entry}}` |
+| `TOK_N` / `TOK_BACK` / `TOK_SHIFT` / `TOK_DROP` | {{ch14.tk.a.N}} / {{ch14.tk.a.BACK}} / {{ch14.tk.a.SHIFT}} / {{ch14.tk.a.DROP}} | {{ch14.tk.b.N}} / {{ch14.tk.b.BACK}} / {{ch14.tk.b.SHIFT}} / {{ch14.tk.b.DROP}} | {{ch14.tk.c.N}} / {{ch14.tk.c.BACK}} / {{ch14.tk.c.SHIFT}} / {{ch14.tk.c.DROP}} |
+| `br.bits` | `{{ch14.tk.a.bits}}` | `{{ch14.tk.b.bits}}` | `{{ch14.tk.c.bits}}` |
+| `<< TOK_N` | `{{ch14.tk.a.shl}}` | `{{ch14.tk.b.shl}}` | `{{ch14.tk.c.shl}}` |
+| `>> back` | `{{ch14.tk.a.shr}}` | `{{ch14.tk.b.shr}}` | `{{ch14.tk.c.shr}}` |
+| `raw` | {{ch14.tk.a.raw}} | {{ch14.tk.b.ob_val}} << {{ch14.tk.b.SHIFT}} = {{ch14.tk.b.raw}} | `{{ch14.tk.c.raw32}}`, not used |
+| `off` | {{ch14.tk.a.off}} | {{ch14.tk.b.off}} | `last` |
 
-The index into the token table is the top 11 bits of `br.bits`: 545 for the first, 269 for the second,
-170 for the third. A code of 4 bits fills 128 entries of the table, all with the same value: token 49's
-entry is at every index from 128 to 255, which is why the made-up bits after the code do not matter for
+@assert ch14.tk.a.SHIFT == 0 and ch14.tk.c.BACK == 0 and ch14.tk.c.n == 4
+
+The index into the token table is the top 11 bits of `br.bits`: {{ch14.tk.a.index}} for the first, {{ch14.tk.b.index}} for the second,
+{{ch14.tk.c.index}} for the third. A code of {{ch14.tk.c.n}} bits fills {{ch14.tk.c.fill}} entries of the table, all with the same value: token {{ch14.tk.c.s}}'s
+entry is at every index from {{ch14.tk.c.idx_lo}} to {{ch14.tk.c.idx_hi}}, which is why the made-up bits after the code do not matter for
 the lookup.
 
 What the compiler makes of it, checked with gcc 16.2.1 at `-O2` for x86-64: the shifts, the masks and a
@@ -459,7 +468,8 @@ past `lit_end`, and the bytes after the literals are copied as if they were lite
 bytes for raw literals, the scratch's spare bytes for coded ones. Nothing is read outside memory that
 may be read, because `lit <= lit_bound - 16` before the copy, and the copy reads 16 bytes. And the page is
 still rejected: the next slow sequence checks `lit > lit_end` first, and only the slow path ends the
-loop. The comment gives the saving, 3 instructions per sequence.
+loop. The comment gives the saving, 3 instructions per sequence, counted when the check left the fast path on
+3rd October 2026 (commit `5c769f5`).
 
 ::: warn The check that moved
 The first fast path, in September 2026, needed a check of `nl` that no test covered: without it, `lit`
@@ -503,8 +513,11 @@ token said what the decoder knew already, and cost about 1.2 bytes per page.
 @listing src/seqlz_decompress.c 670-691
 
 Line 671: an `ml` of 35 in the entry, `SEQLZ_ML_CAP + 4`, means 35 or more, and the rest follows as a
-length value. With 4 KiB pages a length value is at most 8191, so `len` is at most 8226 here, more than a
+length value. With 4 KiB pages a length value is at most {{ch14.max_value}}, so `len` is at most {{ch14.max_len}} here, more than a
 page; the check below catches that.
+
+@assert ch14.max_len > 4096
+
 
 Line 675 sets the repeat offset before the checks; if they fail, the function returns and `last` does not
 matter. Lines 677 to 679 check the offset as on the fast path, and that the match fits into the page.
@@ -628,63 +641,72 @@ with the buttons or the arrow keys, and with shift from one sequence to the next
 
 The same in prose, for the example page:
 
-The 8 bytes `02 00 61 62 dc 65 ef db` are the format's example ([chapter 4](#ch-format--example)): a
+The {{ab.len}} bytes `{{ab.hex}}` are the format's example ([chapter 4](#ch-format--example)): a
 4 KiB page of `ab` repeated 2048 times. Here is what `seqlz_decode()` does with them, from a copy of the
 function with `printf()`s in it.
 
-**Setup.** `src_len = 8 >= 2`. The header is `0x0002`: raw literals, `n_lit = 2`. `2 + 2 <= 8`, so `lit =
-s + 2`, `lit_end = s + 4`, `lit_bound = s_end = s + 8`, and the bit reader starts at `s + 4` with the 4
-bytes `dc 65 ef db`. `d_fast = dst + 4032`. `lit_fast = s + 8 - 16`, as a number 8 below `s`.
+**Setup.** `src_len = {{ab.len}} >= 2`. The header is `0x0002`: raw literals, `n_lit = {{ab.lits}}`. `2 + 2 <= 8`, so `lit =
+s + 2`, `lit_end = s + 4`, `lit_bound = s_end = s + 8`, and the bit reader starts at `s + 4` with the {{ab.b.bytes}}
+bytes `{{ab.b.hex}}`. `d_fast = dst + {{ch14.ab.dfast}}`. `lit_fast = s + 8 - 16`, as a number {{ch14.ab.lit_fast_below}} below `s`.
 `in_fast = s_end - 8 = s`, since `src_len >= 8`. `end_gap = d_end - lit_end`, as numbers. `n_lit` is not
 4096, so the loop starts.
 
-**The first token.** `count = 0 < 23`, so `next_token()` refills: fewer than 8 bytes are left, so the
-byte loop runs 4 times, `bits = 0xdc65efdb00000000`, `count = 32`, `p = end`. The index is the top 11
-bits, `11011100011`, 1763, and the entry is `0x5193cf0b`: token 1010, code length 11, `ll` 2, `ml` 35,
-class 1, `back` 60, drop 15, length value bit set.
+@assert ab.len == 8 and ab.lits == 2 and ab.b.bytes == 4
 
-**Sequence 1.** Not an escape. `raw = (bits << 11) >> 60`: the 4 bits `0010`, 2. Drop 15, `count = 17`.
-`off = 2`, `nl = 2`, `len = 35`. The fast path is not taken, for three reasons at once: a length value
+**The first token.** `count = 0 < {{ch14.need}}`, so `next_token()` refills: fewer than 8 bytes are left, so the
+byte loop runs {{ch14.ab.loads}} times, `bits = {{ch14.ab.bits}}`, `count = {{ch14.ab.count}}`, `p = end`. The index is the top 11
+bits, `{{ch14.ab.idx_bin}}`, {{ch14.ab.idx}}, and the entry is `{{ch14.ab.entry}}`: token {{ch14.ab.tok}}, code length {{ch14.ab.N}}, `ll` {{ch14.ab.ll}}, `ml` {{ch14.ab.ml}},
+class {{ch14.ab.cls}}, `back` {{ch14.ab.BACK}}, drop {{ch14.ab.DROP}}, length value bit set.
+
+@assert ch14.ab.value_bit == 1 and ch14.ab.ml == 35
+
+**Sequence 1.** Not an escape. `raw = (bits << {{ch14.ab.N}}) >> {{ch14.ab.BACK}}`: the {{ch14.ab.raw_n}} bits `{{ch14.ab.raw_bin}}`, {{ch14.ab.raw}}. Drop {{ch14.ab.DROP}}, `count = {{ch14.ab.count2}}`.
+`off = {{ch14.ab.raw}}`, `nl = {{ch14.ab.ll}}`, `len = {{ch14.ab.ml}}`. The fast path is not taken, for three reasons at once: a length value
 follows, `lit` is above `lit_fast`, and `br.p` is above `in_fast`. On the slow path, `nl` is not 15. The
-checks pass: `lit == lit_end - 2`, `2 <= 2`, `2 <= 4096`. `copy_literals()` finds only 6 readable bytes
+checks pass: `lit == lit_end - 2`, `2 <= 2`, `2 <= 4096`. `copy_literals()` finds only {{ch14.ab.readable}} readable bytes
 after `lit`, so it copies `a b` byte by byte. `d = dst + 2`. `len == 35`, so a match length value
-follows: the refill finds `p == end` and adds nothing, and `seqlz_br_value()` reads the code `111101`,
-symbol 23, and 11 extra bits, 2011: the value is 4059 ([chapter 12](#ch-dec-basics--bit-reader)),
-`count = 0`, `len = 35 + 4059 = 4094`. `last = 2`. The checks: `2 - 1 = 1 >= 2` is false, the offset is
-fine; `4094 <= 4094`, the match fits. `copy_match()` with `off = 2` stores the pattern `abababab` every 8
-bytes from `d` up to `d + 4087`, and copies the last 6 bytes one by one. `d = d_end`.
+follows: the refill finds `p == end` and adds nothing, and `seqlz_br_value()` reads the code `{{ch14.ab.vcode}}`,
+symbol {{ch14.ab.vsym}}, and {{ch14.ab.vx}} extra bits, {{ch14.ab.vextra}}: the value is {{ch14.ab.value}} ([chapter 12](#ch-dec-basics--bit-reader)),
+`count = {{ch14.ab.count3}}`, `len = 35 + {{ch14.ab.value}} = {{ch14.ab.len}}`. `last = 2`. The checks: `2 - 1 = 1 >= 2` is false, the offset is
+fine; `{{ch14.ab.len}} <= {{ch14.ab.room}}`, the match fits. `copy_match()` with `off = 2` stores the pattern `abababab` every 8
+bytes from `d` up to `d + {{ch14.ab.store_end}}`, and copies the last {{ch14.ab.bytewise}} bytes one by one. `d = d_end`.
 
 **The end.** `lit == lit_end` and `d == d_end`, so `d - lit` is `end_gap`: 0 literals left for 0 bytes,
 the last sequence, `break`. No second token is read. `copy_literals()` copies 0 bytes.
 
-**The end checks.** `count = 0`, `p == end`, `count < 8`, and with `count = 0` there are no bits left to
+**The end checks.** `count = {{ch14.ab.count3}}`, `p == end`, `count < 8`, and with `count = 0` there are no bits left to
 check. The function returns 0, and the page is `abab...ab`.
+
+@assert ch14.ab.count3 == 0 and ab.b.pad == 0
 
 The example never takes the fast path; it has one sequence with a token, and that one has a length
 value. [Chapter 16](#ch-trace)'s page shows the fast path at work. With coded literals it compresses
-to 795 bytes, and its decode goes like this at the start and at the end:
+to {{slab.coded.len}} bytes, and its decode goes like this at the start and at the end, recorded from the loop
+of `seqlz_decode()` when the book was built:
 
 ```text
-SLOW d=0    nl=14 len=35 off=1     a match length value follows
-SLOW d=64   nl=15 len=6  off=77    ll 15: a literal length value follows
-FAST d=97   nl=1  len=6  off=32    skip=0: refill
-FAST d=104  nl=12 len=6  off=25    skip=1: no refill
-FAST d=122  nl=0  len=6  off=2     skip=0: refill
-FAST d=128  nl=1  len=7  off=32    skip=1
-SLOW d=136  nl=15 len=9  off=32    ll 15 again
-FAST d=160  nl=2  len=6  off=32
+{{ch14.trace.0}}
+{{ch14.trace.1}}
+{{ch14.trace.2}}
+{{ch14.trace.3}}
+{{ch14.trace.4}}
+{{ch14.trace.5}}
+{{ch14.trace.6}}
+{{ch14.trace.7}}
 ...
-SLOW d=2138 nl=13 len=6  off=72    br.p is past in_fast: fewer than 8 bytes of input left
-SLOW d=2157 nl=15 len=5  off=399
-SLOW d=2199 nl=15 len=9  off=569
-SLOW d=2224 nl=1  len=7  off=1976
-SLOW d=2232 nl=0  len=35 off=2     the last match, to the end of the page
-END  d=4096                        0 literals left for 0 bytes: the last sequence, no token
+{{ch14.trace.8}}
+{{ch14.trace.9}}
+{{ch14.trace.10}}
+{{ch14.trace.11}}
+{{ch14.trace.12}}
+{{ch14.trace.13}}
 ```
 
-161 of its 179 sequences with a token take the fast path. The slow ones have a length value, or come
+{{ch14.fast}} of its {{ch14.seqs}} sequences with a token take the fast path. The slow ones have a length value, or come
 in the last 8 bytes of the input, where the fast path's refill would read past it; the last sequence
 has no token at all.
+
+@assert ch14.seqs == slab.tokens and ch14.fast + ch14.slow == ch14.seqs and ch16.slow_novalue_past_in == 1
 
 ## What is left {#ch-decode--limits}
 

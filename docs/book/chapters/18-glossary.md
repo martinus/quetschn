@@ -15,11 +15,11 @@ same thing; the book uses each in the one sense given here, throughout.
 - **canonical code**: a prefix code that follows from the code lengths alone by a fixed rule, as in
   deflate: shorter codes first, within a length in symbol order. That is why a table stores only code
   lengths. [Chapter 2](#ch-compression), [chapter 8](#ch-codes)
-- **code**: the bits written for one symbol, e.g. 4 bits for the most frequent tokens and 11 for rare
+- **code**: the bits written for one symbol, e.g. {{ch17.tok_shortest}} bits for the most frequent tokens and {{ch17.tok_longest}} for rare
   ones. [Chapter 2](#ch-compression)
 - **code length**: how many bits a symbol's code has. A table is a list of code lengths. [Chapter 2](#ch-compression)
 - **coded literals**: literals written as Huffman codes of one literal table instead of as bytes, in 8
-  streams. Only `seqlz-fast-lit` writes them, and only where they save $\frac{1}{16}$ of the literals plus 51
+  streams. Only `seqlz-fast-lit` writes them, and only where they save more than $\frac{1}{16}$ of the literals plus {{ch15.coded_min}}
   bytes. [Chapter 11](#ch-literals-enc), [chapter 13](#ch-literals-dec)
 - **complete**: a prefix code whose codes use up every bit pattern (its Kraft sum is exactly 1), so every
   bit pattern starts some code and a decode table has no empty entry. All of seqlz's tables are
@@ -37,21 +37,21 @@ same thing; the book uses each in the one sense given here, throughout.
   sum of $p \times \log_2 \frac{1}{p}$. A Huffman code is within one bit per symbol of it. [Chapter 2](#ch-compression)
 - **entropy coder**: the part of a codec that writes symbols in codes of their frequency, Huffman codes
   or ANS, instead of in a fixed number of bits. [Chapter 2](#ch-compression--entropy)
-- **escape**: the code shared by all tokens that have no code of their own, followed by the token in 12
-  plain bits. Only 576 of the 3072 tokens have their own code. [Chapter 4](#ch-format)
+- **escape**: the code shared by all tokens that have no code of their own, followed by the token in {{ch17.escape_bits}}
+  plain bits. Only {{ch17.tok_own}} of the {{const.TOKEN_SYMBOLS}} tokens have their own code. [Chapter 4](#ch-format)
 - **fast path**: the decoder's path for a sequence with no length value and room to the ends of the page,
   the literals and the input: fixed copies of 16 bytes and more, no loop. [Chapter 14](#ch-decode)
 - **greedy**: a matcher that takes the first match it finds and does not check whether one position
   later starts a longer one. [Chapter 9](#ch-matcher)
-- **hash**: a number computed from some bytes, here from 5 bytes to a slot from 0 to 4095. Two different
+- **hash**: a number computed from some bytes, here from 5 bytes to a slot from 0 to {{ch18.slot_max}}. Two different
   byte strings with the same hash are a **collision**. [Chapter 9](#ch-matcher)
-- **hash table**: the matcher's table of positions, 4096 slots of 2 bytes, 8 KiB, cleared for each page.
+- **hash table**: the matcher's table of positions, {{ch17.hash_slots}} slots of 2 bytes, 8 KiB, cleared for each page.
   It is a cache, not a map: one position per slot, the newest wins. [Chapter 9](#ch-matcher)
 - **header**: the first bytes of a compressed page: the literal count and a flag, and with coded literals
   the literal table's number, the width $w$ and the 8 stream sizes, $3 + w$ bytes in all.
   [Chapter 6](#ch-header)
 - **Huffman code**: the prefix code with the fewest bits for given symbol frequencies. seqlz's tables are
-  Huffman codes limited to 11 bits (tokens), 10 bits (literals) and 8 bits (length values).
+  Huffman codes limited to {{ch18.bits.token}} bits (tokens), {{ch18.bits.lit}} bits (literals) and {{ch18.bits.len}} bits (length values).
   [Chapter 2](#ch-compression)
 - **Kraft sum**: the sum of $2^{-l}$ over the lengths $l$ of all codes of a table. It is at most 1 for a
   prefix code, and exactly 1 for a complete one. [Chapter 2](#ch-compression--complete)
@@ -73,12 +73,12 @@ same thing; the book uses each in the one sense given here, throughout.
 - **matcher**: the first half of the compressor, which walks through the page and finds matches;
   `seqlz_match_page()` in `src/page_lz.h`. [Chapter 9](#ch-matcher)
 - **MSB first**: most significant bit first. The sequences' bitstream is read from the top bit of a
-  64-bit register, so the next token is its top 11 bits. [Chapter 12](#ch-dec-basics)
+  64-bit register, so the next token is its top {{ch18.bits.token}} bits. [Chapter 12](#ch-dec-basics)
 - **offset**: how many bytes back the copy of a match starts. [Chapter 2](#ch-compression)
-- **offset bits**: the plain bits after the token that hold the offset, 0 to 12 on 4 KiB pages, as many
+- **offset bits**: the plain bits after the token that hold the offset, 0 to {{ch18.class_bits.3}} on 4 KiB pages, as many
   as its class says. [Chapter 4](#ch-format)
 - **offset class**: one of 6 ways to store an offset: the repeat offset in 0 bits, offsets below 16, 256
-  and the page size in 4, 8 and 12 bits, and multiples of 8 sent divided by 8 in 5 and 9 bits.
+  and the page size in {{ch18.class_bits.1}}, {{ch18.class_bits.2}} and {{ch18.class_bits.3}} bits, and multiples of 8 sent divided by 8 in {{ch18.class_bits.4}} and {{ch18.class_bits.5}} bits.
   [Chapter 6](#ch-header)
 - **optimal parser**: a matcher that searches for the sequences that make a page smallest, not the
   first match it finds; far slower than a greedy one. seqlz's was `seqlz-opt`. [Chapter 17](#ch-decisions--not-kept)
@@ -95,13 +95,13 @@ same thing; the book uses each in the one sense given here, throughout.
 - **stream**: one of the 8 parts coded literals are split into, literal $k$ into stream $k \bmod 8$, so the
   decoder can work on 8 at a time. [Chapter 11](#ch-literals-enc)
 - **symbol**: whatever a code stands for: a token, a byte value, a length value symbol. [Chapter 2](#ch-compression)
-- **table**: the code lengths of all symbols of one kind. seqlz has 11, all fixed and part of the format:
+- **table**: the code lengths of all symbols of one kind. seqlz has {{ch17.tables}}, all fixed and part of the format:
   the token table, the `ll` and `ml` tables for length values, and 8 literal tables. In memory each also
   has a decode table built from it once. [Chapter 7](#ch-internal), [chapter 8](#ch-codes)
 - **token**: one number for `ll`, `ml − 4` and the offset class of a sequence,
-  `min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class`, 3072 values; the token is what the token table
+  `min(ll, 15) + 16 × min(ml − 4, 31) + 512 × class`, {{const.TOKEN_SYMBOLS}} values; the token is what the token table
   codes. [Chapter 4](#ch-format)
-- **trained tables**: tables whose code lengths come from counting symbols on many pages, here 524 912
+- **trained tables**: tables whose code lengths come from counting symbols on many pages, here {{ch17.train_pages|grp}}
   of a desktop and a phone; the counts are in `bench/seqlz_counts_*.txt`. The **trainer**,
   `quetschn-seqlz-train`, is the program that counts and builds them. [Chapter 8](#ch-codes--lengths)
 - **wild copy**: a copy of a fixed 16 bytes or more where fewer are needed; the bytes past the real
@@ -143,7 +143,9 @@ same thing; the book uses each in the one sense given here, throughout.
   `scripts/kernel-doc` checks and turns into documentation. [Chapter 15](#ch-zram-glue--interface)
 - **`kmalloc()`**: the kernel's allocator for small objects. Up to `KMALLOC_MAX_CACHE_SIZE`, 2 pages, it
   hands out objects of fixed sizes, powers of 2; a larger request gets whole pages, again a power of 2
-  of them: 4112 bytes come as 8 KiB, 12 304 bytes as 16 KiB. [Chapter 1](#ch-zram)
+  of them: {{const.SCRATCH}} bytes come as 8 KiB, {{ch15.state_plus_scratch|grp}} bytes as 16 KiB.
+@assert ch15.mem.dctx_gets == 8192 and ch15.mem.struct_gets == 16384
+  [Chapter 1](#ch-zram)
 - **KUnit**: the kernel's framework for unit tests that run inside a kernel. seqlz's KUnit tests check the
   tables, the spec's example, round trips and damaged pages. [Chapter 15](#ch-zram-glue)
 - **`kvzalloc()`**: allocates zeroed memory with `kmalloc()` and falls back to `vmalloc()` when that
@@ -159,7 +161,7 @@ same thing; the book uses each in the one sense given here, throughout.
   per CPU, each with the codec's work memory, which is why that memory counts once per CPU.
   [Chapter 1](#ch-zram)
 - **`__ro_after_init`**: marks data that is written while the kernel starts and is read-only after
-  that. seqlz's tables, `seqlz_fixed_tables`, are such data in the kernel copy, 43 280 bytes.
+  that. seqlz's tables, `seqlz_fixed_tables`, are such data in the kernel copy, {{size.tables|grp}} bytes.
   [Chapter 15](#ch-zram-glue)
 - **same-filled page**: a page of one repeated 8-byte value, e.g. all zeros. zram stores it without the
   codec, so the metrics of `docs/plan.md` leave it out. [Chapter 1](#ch-zram)

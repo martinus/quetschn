@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * The made-up pages the book's figures are built on, one copy for all of them: the C programs of
- * anim/ and stepper/ include it, and build.py puts docs/book on their include path. The chapters
- * quote numbers of these pages (796 bytes, 180 sequences, 674 literals), so a change here changes
- * every figure and those numbers at once.
+ * anim/, stepper/ and facts/ include it, and build.py puts docs/book on their include path. The
+ * chapters quote numbers of these pages through facts/pages.c, so a change here changes every
+ * figure and those numbers at once.
  */
 #ifndef BOOK_PAGES_H
 #define BOOK_PAGES_H

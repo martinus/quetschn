@@ -3,7 +3,7 @@
 `src/seqlz_internal.h` is what the three `.c` files of the codec share and nobody else sees: the
 compressor in `seqlz_compress.c`, the decompressor in `seqlz_decompress.c`, and the code in
 `seqlz_codes.c` that builds the tables both of them read. The public header, `seqlz.h`, only
-declares `struct seqlz_tables`; this file says what is inside it. It is 146 lines, and almost all of
+declares `struct seqlz_tables`; this file says what is inside it. It is {{ch07.lines}} lines, and almost all of
 them are about memory layout: how many bytes each table has, which bits of an entry mean what, and
 `static_assert()`s that prove the fields are wide enough.
 
@@ -11,7 +11,7 @@ The format stores a table as a list of code lengths, one byte per symbol (see
 [chapter 4](#ch-format)). Neither the encoder nor the decoder can use code lengths directly. The
 encoder needs each symbol's code as a number it can shift into its bit buffer, and the decoder needs a
 table it can index with the next bits of the stream. `struct seqlz_tables` holds both forms, for all
-11 tables of the format, in 43 280 bytes. It is built once from the lengths by `seqlz_tables_init()`
+11 tables of the format, in {{size.tables|grp}} bytes. It is built once from the lengths by `seqlz_tables_init()`
 ([chapter 8](#ch-codes)) and only read after that, by every CPU. The most interesting part of the
 file is at the end: `token_entry()`, which packs everything the decoder needs to know about a token
 into one 32-bit number, so that the decoder's loop over the sequences never has to compute it.
@@ -20,7 +20,7 @@ into one 32-bit number, so that the decoder's loop over the sequences never has 
 
 @listing src/seqlz_internal.h 1-11
 
-Line 1 is the licence and lines 2, 3 and 146 the include guard, as in every file of `src/`
+Line 1 is the licence and lines 2, 3 and {{ch07.lines}} the include guard, as in every file of `src/`
 ([chapter 5](#ch-compat--top)). The kernel's copy, which `tools/kernel-port/port.py` writes, renames
 the guard to `_LIB_SEQLZ_SEQLZ_INTERNAL_H`, after the file's place in the kernel tree, `lib/seqlz/`.
 
@@ -46,17 +46,17 @@ The second paragraph is the format of an entry of the two tables of **length val
 
 | bits | field | example: symbol 18 of the `ll` table |
 | --- | --- | --- |
-| 0 to 3 | the code's length | 4 |
+| 0 to 3 | the code's length | {{ll.len.18}} |
 | 4 to 7 | how many extra bits follow the code | 6 |
 | 8 to 23 | the base value | 64 |
 
 Symbol 18 stands for the values 64 to 127: its code is followed by 6 plain bits, the value is
-`64 + read(6)`. In the real `ll` table it has the 4-bit code `1010`, and its entry is
-`64 << 8 | 6 << 4 | 4 = 0x4064`, in the 16 entries 160 to 175 of the 256. The decoder's
+`64 + read(6)`. In the real `ll` table it has the {{ll.len.18}}-bit code `{{ll.code.18}}`, and its entry is
+`64 << 8 | 6 << 4 | {{ll.len.18}} = {{ch07.ll18.entry}}`, in the {{ch07.ll18.entries}} entries {{ch07.ll18.first}} to {{ch07.ll18.last}} of the 256. The decoder's
 `seqlz_br_value()` ([chapter 12](#ch-dec-basics)) takes these fields apart with `& 15U`,
-`(e >> 4) & 15U` and `(e >> 8) & 0xffffU`. The base needs 16 bits because the largest is
-$2^{12} = 4096$ on 4 KiB pages and $2^{14} = 16384$ on 16 KiB pages, so the entry does not fit 16 bits
-and is a `u32`.
+`(e >> 4) & 15U` and `(e >> 8) & 0xffffU`. The base gets 16 bits: the largest is
+{{ch07.len_base_max}} on 4 KiB pages and {{k16.ch07.len_base_max}} on 16 KiB pages, more than 8 bits, so the
+entry does not fit 16 bits and is a `u32`.
 
 The third paragraph explains a habit of the encoder that looks odd at first: it masks values that
 are already in range.
@@ -68,7 +68,7 @@ in their normal kernels; a masked value needs no check ([chapter 3](#ch-cpu--ubs
 So the encoder masks: `enc_put()` in [chapter 10](#ch-encoder) shifts its bit buffer by
 `n & 63U`, and `put_len_value()` indexes the length values' `enc[]` with
 `seqlz_len_symbol(v, &extra) & (ENC_LEN_SYMBOLS - 1U)`. For every length a page can have, the
-symbol is at most 23 (25 on 16 KiB pages, see [chapter 6](#ch-header--length-values)), and `& 31`
+symbol is at most {{ch08.le_last_symbol}} ({{k16.ch08.le_last_symbol}} on 16 KiB pages, see [chapter 6](#ch-header--length-values)), and `& 31`
 changes nothing. The mask only tells the compiler what the code already knows. For that, `enc[]`
 needs a power of 2 entries, which is the next line. On 23rd September 2026, masked indices and shifts
 took the compressor to 4.7% fewer instructions ([chapter 3](#ch-cpu--ubsan) has the cycles).
@@ -76,14 +76,14 @@ took the compressor to 4.7% fewer instructions ([chapter 3](#ch-cpu--ubsan) has 
 @listing src/seqlz_internal.h 28-33
 
 `ENC_LEN_SYMBOLS` is that power of 2: 32 entries in the encoder's table of length values, where
-`SEQLZ_LEN_SYMBOLS` is 24 for 4 KiB pages and 26 for 16 KiB pages. The entries 24 to 31 are never
+`SEQLZ_LEN_SYMBOLS` is {{const.LEN_SYMBOLS}} for 4 KiB pages and {{k16.const.LEN_SYMBOLS}} for 16 KiB pages. The entries {{const.LEN_SYMBOLS}} to 31 are never
 used for a valid length; `seqlz_tables_init()` sets them to 0 with the rest of the struct.
 
 A `static_assert(condition, message)` is checked by the compiler, not at run time: if the condition
 is false, the build fails with the message. It costs nothing in the program. `seqlz_compat.h` maps
 it to C11's `_Static_assert` where the kernel's headers do not have it. The two here prove:
 
-- `SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS`, `24 <= 32`: every length value's symbol has an entry in
+- `SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS`, `{{const.LEN_SYMBOLS}} <= 32`: every length value's symbol has an entry in
   `enc[]`, so the mask never folds a real symbol onto another one. If a later change gave the page
   more bits, e.g. `QUETSCHN_PAGE_BITS` 21, the symbols would be 33 and the build would stop here
   instead of the encoder writing wrong codes.
@@ -103,14 +103,14 @@ argument.
 
 `struct value_table` is the `ll` table or the `ml` table, in both forms:
 
-- `decode[256]`: `1U << SEQLZ_MAX_BITS` entries of 4 bytes, 1024 bytes, in the format described
+- `decode[256]`: `1U << SEQLZ_MAX_BITS` entries of 4 bytes, {{ch07.size.value_decode}} bytes, in the format described
   above. The decoder indexes it with the top 8 bits of its bit register.
-- `enc[32]`: for each symbol its code in the low 16 bits and its length from bit 16 on, 128 bytes.
-  Symbol 18 of the `ll` table, code `1010` of 4 bits, has `10 | 4 << 16 = 0x4000a`. The encoder's
+- `enc[32]`: for each symbol its code in the low 16 bits and its length from bit 16 on, {{ch07.size.value_enc}} bytes.
+  Symbol 18 of the `ll` table, code `{{ll.code.18}}` of {{ll.len.18}} bits, has `{{ch07.ll18.c}} | {{ll.len.18}} << 16 = {{ch07.ll18.enc}}`. The encoder's
   `enc_put_code()` ([chapter 10](#ch-encoder)) takes the length back out with `entry >> 16 & 15U`
   and the code with `entry & 0xffffU`.
 
-The struct is 1152 bytes. Why are the encoder's codes and the decoder's table in one struct, when
+The struct is {{ch07.size.value_table}} bytes. Why are the encoder's codes and the decoder's table in one struct, when
 no function reads both? Because they come from one computation. `build_values()` in
 [chapter 8](#ch-codes) works out each symbol's code once and writes it to `enc[s]` and to the
 entries of `decode[]` in the same step. At run time the arrangement costs nothing: the encoder reads
@@ -126,11 +126,11 @@ plus the escape ([chapter 4](#ch-format--token)). Its decode table has `1U << SE
 2048 entries of 4 bytes: 8 KiB. What an entry holds is the subject of the last section,
 `token_entry()`.
 
-The encoder's side, `enc[]`, has one entry per symbol, `SEQLZ_TOKEN_SYMBOLS + 1 = 3073` of them,
-the `+ 1` being the escape, 2 bytes each: 6146 bytes. The comment gives the reason for 2 bytes: the
+The encoder's side, `enc[]`, has one entry per symbol, `SEQLZ_TOKEN_SYMBOLS + 1 = {{tok.symbols}}` of them,
+the `+ 1` being the escape, 2 bytes each: {{ch07.size.token_enc}} bytes. The comment gives the reason for 2 bytes: the
 matcher's hash table is 8 KiB ([chapter 9](#ch-matcher)), and the compressor reads the first at
 every position of the page and the second for every sequence. 8 KiB plus 6 KiB is 14 KiB, which
-leaves room in an L1 data cache of 32 KiB for the page itself and the rest. Until 23rd September 2026 the entries were `u32`, 12 292 bytes, and the two
+leaves room in an L1 data cache of 32 KiB for the page itself and the rest. Until 23rd September 2026 the entries were `u32`, {{ch07.size.token_enc_u32|grp}} bytes, and the two
 tables together 20 KiB (commit `c84ba25`).
 
 @listing src/seqlz_internal.h 49-55
@@ -139,11 +139,13 @@ An entry of `token.enc[]` is the code in bits 0 to 11 and the code's length in b
 
 | token | what it is | code | length | `enc[]` |
 | --- | --- | --- | --- | --- |
-| 34 | 2 literals, match of 6, repeat offset | `0000` | 4 | `0x4000` |
-| 49 | 1 literal, match of 7, repeat offset | `0001` | 4 | `0x4001` |
-| 2098 | 2 literals, match of 7, offset a multiple of 8 below 256 | `101100111` | 9 | `0x9167` |
-| 3072 | the escape | `0011` | 4 | `0x4003` |
-| 1797 | 5 literals, match of 20, class 3 | none | 0 | `0` |
+| 34 | 2 literals, match of 6, repeat offset | `{{tok.code.34}}` | {{tok.len.34}} | `{{ch07.tok.34.enc}}` |
+| 49 | 1 literal, match of 7, repeat offset | `{{tok.code.49}}` | {{tok.len.49}} | `{{ch07.tok.49.enc}}` |
+| 2098 | 2 literals, match of 7, offset a multiple of 8 below 256 | `{{tok.code.2098}}` | {{tok.len.2098}} | `{{ch07.tok.2098.enc}}` |
+| 3072 | the escape | `{{tok.code.3072}}` | {{tok.len.3072}} | `{{ch07.tok.3072.enc}}` |
+| 1797 | 5 literals, match of 20, class 3 | none | {{tok.len.1797}} | `{{ch07.tok.1797.enc}}` |
+
+@assert tok.len[1797] == 0 and ch07.tok[34].c == 0
 
 `TOK_ENC_LEN_AT` is where the length starts, `TOK_ENC_CODE_MASK` is `0xfff`, the mask for the code.
 The encoder's `token_code()` ([chapter 10](#ch-encoder)) reads `te >> TOK_ENC_LEN_AT` and
@@ -171,12 +173,12 @@ There are 8 literal tables, one chosen per page for its **coded literals**
 
 - `decode[1024]`: `1U << SEQLZ_LIT_BITS` entries of 2 bytes, 2 KiB. An entry is the code's length in
   the low byte and the literal itself, the byte value, in the high byte. In table 0, byte `0x65`, the
-  letter `e`, has the 4-bit code `0001`. That code is the top 4 bits of the 10-bit indices 64 to 127,
-  and each of those 64 entries is `4 | 0x65 << 8 = 0x6504`. A literal is one byte and a length at
+  letter `e`, has the {{lit.0.len.101}}-bit code `{{lit.0.code.101}}`. That code is the top {{lit.0.len.101}} bits of the 10-bit indices {{ch07.lit_e.first}} to {{ch07.lit_e.last}},
+  and each of those {{ch07.lit_e.entries}} entries is `{{lit.0.len.101}} | 0x65 << 8 = {{ch07.lit_e.entry}}`. A literal is one byte and a length at
   most 10, so 2 bytes per entry are enough, and the decoder's table of the page is half the size it
   would be with 4.
 - `enc[256]`: one `u32` per byte value, the code's length in the low byte and the code from bit 8 on.
-  Byte `0x65` in table 0 has `4 | 1 << 8 = 0x104`.
+  Byte `0x65` in table 0 has `{{lit.0.len.101}} | {{ch07.lit_e.c}} << 8 = {{ch07.lit_e.enc}}`.
 
 Why is the length below the code here, and above it in the other two tables? Because of how the
 encoder uses it. `lit_put()` in [chapter 11](#ch-literals-enc) does
@@ -185,7 +187,7 @@ the code is one shift away, and adding whole entries into `sum` adds up the leng
 (the code bits above it are thrown away later with `& 255`). Each table's layout follows what its
 user does with an entry.
 
-The 8 tables are `lit[8]` in `struct seqlz_tables`, 3072 bytes each, 24 576 together. A page reads
+The 8 tables are `lit[8]` in `struct seqlz_tables`, {{ch07.size.lit_table}} bytes each, {{ch07.size.lit|grp}} together. A page reads
 one of them.
 
 ## One add per literal for all 8 tables {#ch-internal--lit-cost}
@@ -220,11 +222,11 @@ packs them. With the real tables:
   </g>
   <g font-size="12">
     <text x="4" y="55">lit_cost[0x00]</text>
-    <text x="4" y="69" font-size="11">0x0803090202020208</text>
+    <text x="4" y="69" font-size="11">{{ch07.lit_cost.0}}</text>
     <text x="4" y="97">+ lit_cost[0x65]</text>
-    <text x="4" y="111" font-size="11">0x0a0a0909050a0904</text>
+    <text x="4" y="111" font-size="11">{{ch07.lit_cost.101}}</text>
     <text x="4" y="147">= the sums</text>
-    <text x="4" y="161" font-size="11">0x120d120b070c0b0c</text>
+    <text x="4" y="161" font-size="11">{{ch07.lit_cost.sum}}</text>
   </g>
   <g stroke="currentColor" stroke-width="1">
     <rect x="200" y="40" width="480" height="30" class="fill-sheet"/>
@@ -246,29 +248,31 @@ packs them. With the real tables:
     <line x1="200" y1="122" x2="680" y2="122"/>
   </g>
   <g font-size="13" text-anchor="middle">
-    <text x="230" y="60">8</text><text x="290" y="60">3</text><text x="350" y="60">9</text>
-    <text x="410" y="60">2</text><text x="470" y="60">2</text><text x="530" y="60">2</text>
-    <text x="590" y="60">2</text><text x="650" y="60">8</text>
-    <text x="230" y="102">10</text><text x="290" y="102">10</text><text x="350" y="102">9</text>
-    <text x="410" y="102">9</text><text x="470" y="102">5</text><text x="530" y="102">10</text>
-    <text x="590" y="102">9</text><text x="650" y="102">4</text>
-    <text x="230" y="152">18</text><text x="290" y="152">13</text><text x="350" y="152">18</text>
-    <text x="410" y="152">11</text><text x="470" y="152" class="on-fill">7</text><text x="530" y="152">12</text>
-    <text x="590" y="152">11</text><text x="650" y="152">12</text>
+    <text x="230" y="60">{{lit.7.len.0}}</text><text x="290" y="60">{{lit.6.len.0}}</text><text x="350" y="60">{{lit.5.len.0}}</text>
+    <text x="410" y="60">{{lit.4.len.0}}</text><text x="470" y="60">{{lit.3.len.0}}</text><text x="530" y="60">{{lit.2.len.0}}</text>
+    <text x="590" y="60">{{lit.1.len.0}}</text><text x="650" y="60">{{lit.0.len.0}}</text>
+    <text x="230" y="102">{{lit.7.len.101}}</text><text x="290" y="102">{{lit.6.len.101}}</text><text x="350" y="102">{{lit.5.len.101}}</text>
+    <text x="410" y="102">{{lit.4.len.101}}</text><text x="470" y="102">{{lit.3.len.101}}</text><text x="530" y="102">{{lit.2.len.101}}</text>
+    <text x="590" y="102">{{lit.1.len.101}}</text><text x="650" y="102">{{lit.0.len.101}}</text>
+    <text x="230" y="152">{{ch07.lit_sum.7}}</text><text x="290" y="152">{{ch07.lit_sum.6}}</text><text x="350" y="152">{{ch07.lit_sum.5}}</text>
+    <text x="410" y="152">{{ch07.lit_sum.4}}</text><text x="470" y="152" class="on-fill">{{ch07.lit_sum.3}}</text><text x="530" y="152">{{ch07.lit_sum.2}}</text>
+    <text x="590" y="152">{{ch07.lit_sum.1}}</text><text x="650" y="152">{{ch07.lit_sum.0}}</text>
   </g>
 </svg>
 </div>
-<figcaption>Two literals, 0x00 and 0x65, priced in all 8 literal tables with one 64-bit add; table 3 codes them in 7 bits.</figcaption>
+<figcaption>Two literals, 0x00 and 0x65, priced in all 8 literal tables with one 64-bit add; table {{ch07.lit_best}} codes them in {{ch07.lit_best_bits}} bits.</figcaption>
 </figure>
 
-The zero byte has a 2-bit code in tables 1 to 4, which are for pages with many zeros; `e` has a 4-bit
-code in table 0, which fits text. For these two literals table 3 wins with 7 bits, against 16 bits
+The zero byte has a 2-bit code in tables 1 to 4, which are for pages with many zeros; `e` has a {{lit.0.len.101}}-bit
+code in table 0, which fits text. For these two literals table {{ch07.lit_best}} wins with {{ch07.lit_best_bits}} bits, against 16 bits
 as raw bytes. [Chapter 11](#ch-literals-enc--pricing) has the same example with four literals.
+
+@assert lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2 and ch07.lit_best == 3
 
 The two macros size this:
 
 - `LIT_COST_WORDS` is `(SEQLZ_LIT_SETS + 7U) / 8U`, the number of `u64` needed for 8 lanes per word,
-  rounded up: `(8 + 7) / 8 = 1`. So `lit_cost` is `u64 [256][1]`, 2048 bytes. Written this way the
+  rounded up: `(8 + 7) / 8 = 1`. So `lit_cost` is `u64 [256][1]`, {{ch07.size.lit_cost}} bytes. Written this way the
   code would still work with more tables, one more word per 8, but byte 2 of the format has 3 bits
   for the table, and the next `static_assert` holds the number at 8.
 - `LIT_COST_RUN` is `255U / SEQLZ_LIT_BITS`, `255 / 10 = 25` in integer division: 25 codes of at
@@ -298,10 +302,10 @@ bits 0 to 2, the width `w - 5` of the stream sizes in bits 3 to 5, and two zero 
 `LIT_STREAM_MAX` is the largest a literal stream can be, in bytes. Literal `k` goes to stream
 `k % 8`, so a stream holds at most every 8th literal of a page, $4096 / 8 = 512$ literals, and each
 takes at most 10 bits: 5120 bits. `+ 7U` and `/ 8U` round the bits up to whole bytes: `(5120 + 7) /
-8 = 640`. On 16 KiB pages it is 2560. The assert `LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX`,
-$640 < 4096$ and $2560 < 4096$, proves that the widest size field, 12 bits, holds any stream. So the
+8 = {{ch07.lit_stream_max}}`. On 16 KiB pages it is {{k16.ch07.lit_stream_max}}. The assert `LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX`,
+${{ch07.lit_stream_max}} < 4096$ and ${{k16.ch07.lit_stream_max}} < 4096$, proves that the widest size field, 12 bits, holds any stream. So the
 encoder can always write the sizes, whatever the literals. For 4 KiB pages 10 bits would always do,
-$640 < 1024$; the format allows 12 for the 16 KiB pages.
+${{ch07.lit_stream_max}} < 1024$; the format allows 12 for the 16 KiB pages.
 
 The last assert, `SEQLZ_LIT_STREAMS == 8U`, is of another kind: it guards code, not the format. The
 encoder's `lit_streams()` writes the streams in two halves of 4 with 4 accumulators each, written
@@ -309,7 +313,7 @@ out by hand, and the decoder's `decode_literals()` ([chapter 13](#ch-literals-de
 states. Changing the number of streams means rewriting both, and the assert says so at compile
 time.
 
-## struct seqlz_tables: 43 280 bytes, once {#ch-internal--tables}
+## struct seqlz_tables: {{size.tables|grp}} bytes, once {#ch-internal--tables}
 
 @listing src/seqlz_internal.h 85-91
 
@@ -319,23 +323,23 @@ way):
 
 | field | offset | bytes | read by |
 | --- | --- | --- | --- |
-| `token.decode` | 0 | 8192 | decoder, every sequence |
-| `token.enc` | 8192 | 6146 | encoder, every sequence |
-| `lit[0]` to `lit[7]` | 14 340 | $8 \times 3072 = 24\,576$ | decoder: one `decode`; encoder: one `enc` |
-| (padding) | 38 916 | 4 | |
-| `lit_cost` | 38 920 | 2048 | encoder, every literal |
-| `ll` | 40 968 | 1152 | both, for long literal runs |
-| `ml` | 42 120 | 1152 | both, for long matches |
-| `all_symbols` | 43 272 | 1, then 7 of padding | the harness's encoder |
+| `token.decode` | 0 | {{ch07.size.token_decode}} | decoder, every sequence |
+| `token.enc` | {{ch07.off.token_enc}} | {{ch07.size.token_enc}} | encoder, every sequence |
+| `lit[0]` to `lit[7]` | {{ch07.off.lit|grp}} | $8 \times {{ch07.size.lit_table}} = {{ch07.size.lit|grp}}$ | decoder: one `decode`; encoder: one `enc` |
+| (padding) | {{ch07.off.pad|grp}} | {{ch07.pad}} | |
+| `lit_cost` | {{ch07.off.lit_cost|grp}} | {{ch07.size.lit_cost}} | encoder, every literal |
+| `ll` | {{ch07.off.ll|grp}} | {{ch07.size.value_table}} | both, for long literal runs |
+| `ml` | {{ch07.off.ml|grp}} | {{ch07.size.value_table}} | both, for long matches |
+| `all_symbols` | {{ch07.off.all_symbols|grp}} | 1, then {{ch07.tail_pad}} of padding | the harness's encoder |
 
-43 280 bytes in all. The two holes are alignment: a `u64` must start at a multiple of 8 on x86-64
-and arm64, and 38 916 is not one, so the compiler skips 4 bytes before `lit_cost`; and the size of a
-struct is a multiple of its strictest alignment, so the 1-byte `bool` at the end is followed by 7
+{{size.tables|grp}} bytes in all. The two holes are alignment: a `u64` must start at a multiple of 8 on x86-64
+and arm64, and {{ch07.off.pad|grp}} is not one, so the compiler skips {{ch07.pad}} bytes before `lit_cost`; and the size of a
+struct is a multiple of its strictest alignment, so the 1-byte `bool` at the end is followed by {{ch07.tail_pad}}
 bytes. On 32-bit x86, where a `u64` needs only 4-byte alignment, the struct is 43 272 bytes. The
-16 KiB variant has the same size: its length tables have 27 symbols, and `enc[]` has 32 entries
+16 KiB variant has the same size, {{k16.size.tables|grp}} bytes: its length tables have {{k16.const.LEN_SYMBOLS}} symbols, and `enc[]` has 32 entries
 either way.
 
-What a page touches is much less than 43 280 bytes. The decoder reads `token.decode`, the `decode` of
+What a page touches is much less than {{size.tables|grp}} bytes. The decoder reads `token.decode`, the `decode` of
 `ll` and `ml`, and with coded literals the `decode` of one literal table: $8 + 1 + 1 + 2 = 12$ KiB,
 small enough for the L1 cache, one of the reasons for the decoder's speed
 ([chapter 3](#ch-cpu--cache)).
@@ -397,7 +401,7 @@ to 8 KiB, which did not make cold reads slower. That was 3rd October 2026, commi
 :::
 
 The entry, bit 31 on the left, with two examples that the next sections compute: token 2098 with
-its 9-bit code, and the escape with its 4-bit code.
+its {{tok.len.2098}}-bit code, and the escape with its {{tok.len.3072}}-bit code.
 
 <figure class="diagram">
 <div class="scroll">
@@ -442,27 +446,27 @@ its 9-bit code, and the escape with its 4-bit code.
     <line x1="60" y1="148" x2="60" y2="172"/><line x1="80" y1="148" x2="80" y2="172"/>
   </g>
   <g font-size="12" text-anchor="middle">
-    <text x="50" y="83">0</text><text x="70" y="83">0</text><text x="90" y="83">0</text>
-    <text x="160" y="83">000111</text><text x="260" y="83">0010</text><text x="350" y="83">01110</text>
-    <text x="420" y="83">11</text><text x="500" y="83">111011</text><text x="620" y="83">001001</text>
+    <text x="50" y="83">{{ch07.tok.2098.bits.escape}}</text><text x="70" y="83">{{ch07.tok.2098.bits.value}}</text><text x="90" y="83">{{ch07.tok.2098.bits.free}}</text>
+    <text x="160" y="83">{{ch07.tok.2098.bits.ml}}</text><text x="260" y="83">{{ch07.tok.2098.bits.ll}}</text><text x="350" y="83">{{ch07.tok.2098.bits.drop}}</text>
+    <text x="420" y="83">{{ch07.tok.2098.bits.shift}}</text><text x="500" y="83">{{ch07.tok.2098.bits.back}}</text><text x="620" y="83">{{ch07.tok.2098.bits.n}}</text>
   </g>
   <g font-size="12" text-anchor="middle" class="acc">
-    <text x="160" y="108">ml 7</text><text x="260" y="108">ll 2</text><text x="350" y="108">14</text>
-    <text x="420" y="108">3</text><text x="500" y="108">59</text><text x="620" y="108">9</text>
+    <text x="160" y="108">ml {{ch07.tok.2098.ML}}</text><text x="260" y="108">ll {{ch07.tok.2098.LL}}</text><text x="350" y="108">{{ch07.tok.2098.DROP}}</text>
+    <text x="420" y="108">{{ch07.tok.2098.SHIFT}}</text><text x="500" y="108">{{ch07.tok.2098.BACK}}</text><text x="620" y="108">{{ch07.tok.2098.N}}</text>
   </g>
   <g font-size="11">
-    <text x="40" y="128">0x0393bec9: a 9-bit code, then 5 offset bits, the offset is them times 8</text>
+    <text x="40" y="128">{{ch07.tok.2098.entry}}: a {{tok.len.2098}}-bit code, then 5 offset bits, the offset is them times 8</text>
   </g>
   <g font-size="12" text-anchor="middle">
-    <text x="50" y="165">1</text><text x="70" y="165">0</text><text x="90" y="165">0</text>
-    <text x="160" y="165">000000</text><text x="260" y="165">0000</text><text x="350" y="165">00100</text>
-    <text x="420" y="165">00</text><text x="500" y="165">000000</text><text x="620" y="165">000000</text>
+    <text x="50" y="165">{{ch07.tok.3072.bits.escape}}</text><text x="70" y="165">{{ch07.tok.3072.bits.value}}</text><text x="90" y="165">{{ch07.tok.3072.bits.free}}</text>
+    <text x="160" y="165">{{ch07.tok.3072.bits.ml}}</text><text x="260" y="165">{{ch07.tok.3072.bits.ll}}</text><text x="350" y="165">{{ch07.tok.3072.bits.drop}}</text>
+    <text x="420" y="165">{{ch07.tok.3072.bits.shift}}</text><text x="500" y="165">{{ch07.tok.3072.bits.back}}</text><text x="620" y="165">{{ch07.tok.3072.bits.n}}</text>
   </g>
   <g font-size="12" text-anchor="middle" class="mark">
-    <text x="50" y="190">esc</text><text x="350" y="190">4</text>
+    <text x="50" y="190">esc</text><text x="350" y="190">{{ch07.tok.3072.DROP}}</text>
   </g>
   <g font-size="11">
-    <text x="40" y="214">0x80010000: drop the escape's 4 bits, then read the token in 12 bits</text>
+    <text x="40" y="214">{{ch07.tok.3072.entry}}: drop the escape's {{tok.len.3072}} bits, then read the token in 12 bits</text>
   </g>
 </svg>
 </div>
@@ -555,69 +559,75 @@ int main(void)
 	return 0;
 }
 ```
+@program ch07-entry
+
 Build it from the repository's root with
-`gcc -O2 -Isrc t.c src/seqlz_default_tables.c` and run it.
+`gcc -O2 -Isrc t.c src/seqlz_default_tables.c` and run it. It prints
+
+@output ch07-entry
 :::
 
 ### Token 49: one literal, a match of 7, the repeat offset
 
 Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is one of the three tokens
-with the shortest code, 4 bits, `0001`, and [chapter 9](#ch-matcher--back) shows where it comes from: in
+with the shortest code, {{tok.len.49}} bits, `{{tok.code.49}}`, and [chapter 9](#ch-matcher--back) shows where it comes from: in
 an array of pointers, each pointing 16 bytes further than the one before, every 8-byte pointer is one
 literal, its low byte, which changes, and a match of its 7 other bytes, 8 bytes back, the same offset as
 the sequence before.
 
 | field | computation | value |
 | --- | --- | --- |
-| `N` | `n` | 4 |
-| `BACK` | `(64 - 0) & 63` | 0 |
-| `SHIFT` | `SEQLZ_OFF_SHIFT(0)` | 0 |
-| `DROP` | $4 + 0$ | 4 |
-| `LL` | `49 & 15` | 1 |
-| `ML` | `((49 >> 4) & 31) + 4` | 7 |
-| value bit | `1 == 15 || 3 == 31` | 0 |
+| `N` | `n` | {{ch07.tok.49.N}} |
+| `BACK` | `(64 - 0) & 63` | {{ch07.tok.49.BACK}} |
+| `SHIFT` | `SEQLZ_OFF_SHIFT(0)` | {{ch07.tok.49.SHIFT}} |
+| `DROP` | ${{tok.len.49}} + 0$ | {{ch07.tok.49.DROP}} |
+| `LL` | `49 & 15` | {{ch07.tok.49.LL}} |
+| `ML` | `((49 >> 4) & 31) + 4` | {{ch07.tok.49.ML}} |
+| value bit | `1 == 15 || 3 == 31` | {{ch07.tok.49.value}} |
 
-The entry is `4 | 4 << 14 | 1 << 19 | 7 << 23 = 0x03890004`, in binary
-`0000 0011 1000 1001 0000 0000 0000 0100`. A 4-bit code is the top 4 bits of 128 of the 2048
-indices, 128 to 255, and all 128 entries hold this number. The decoder looks up the top 11 bits of
-its register, gets `0x03890004` whatever the 7 bits after the code are, computes a `raw` it then
-ignores, takes `last` as the offset because `BACK` is 0, drops 4 bits, and has `ll` 1 and `ml` 7.
+@assert tok.codes_of[4] == 4 and tok.len[34] == tok.len[2097] == tok.len[3072] == 4
+
+The entry is `{{ch07.tok.49.N}} | {{ch07.tok.49.DROP}} << 14 | 1 << 19 | 7 << 23 = {{ch07.tok.49.entry}}`, in binary
+`{{ch07.tok.49.bin}}`. A {{tok.len.49}}-bit code is the top {{tok.len.49}} bits of {{ch07.tok.49.entries}} of the 2048
+indices, {{ch07.tok.49.first}} to {{ch07.tok.49.last}}, and all {{ch07.tok.49.entries}} entries hold this number. The decoder looks up the top 11 bits of
+its register, gets `{{ch07.tok.49.entry}}` whatever the {{ch07.tok.49.rest}} bits after the code are, computes a `raw` it then
+ignores, takes `last` as the offset because `BACK` is 0, drops {{ch07.tok.49.DROP}} bits, and has `ll` 1 and `ml` 7.
 The value bit is 0, so the sequence can take the fast path.
 
 ### Token 2098: two literals, a match of 7, 16 bytes back
 
 [Chapter 4](#ch-format--token) uses this sequence as its example: 2 literals, a match of 7 bytes, offset
 16. The offset is a multiple of 8 below 256, class 4, sent as $16 / 8 = 2$ in 5 bits. The token is
-$2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has 9 bits, `101100111`.
+$2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has {{tok.len.2098}} bits, `{{tok.code.2098}}`.
 
 | field | computation | value |
 | --- | --- | --- |
-| `N` | `n` | 9 |
-| `BACK` | `(64 - 5) & 63` | 59 |
-| `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (4 >> 2) * 3` | 3 |
-| `DROP` | $9 + 5$ | 14 |
-| `LL` | `2098 & 15` | 2 |
-| `ML` | `((2098 >> 4) & 31) + 4` | 7 |
-| value bit | `2 == 15 || 3 == 31` | 0 |
+| `N` | `n` | {{ch07.tok.2098.N}} |
+| `BACK` | `(64 - 5) & 63` | {{ch07.tok.2098.BACK}} |
+| `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (4 >> 2) * 3` | {{ch07.tok.2098.SHIFT}} |
+| `DROP` | ${{tok.len.2098}} + 5$ | {{ch07.tok.2098.DROP}} |
+| `LL` | `2098 & 15` | {{ch07.tok.2098.LL}} |
+| `ML` | `((2098 >> 4) & 31) + 4` | {{ch07.tok.2098.ML}} |
+| value bit | `2 == 15 || 3 == 31` | {{ch07.tok.2098.value}} |
 
-The entry is `0x0393bec9`, the upper row of the diagram above. Here is what the decoder does with it,
+The entry is `{{ch07.tok.2098.entry}}`, the upper row of the diagram above. Here is what the decoder does with it,
 on these lines of `seqlz_decode()` ([chapter 14](#ch-decode)):
 
 @listing src/seqlz_decompress.c 623-627
 
-Say the register holds the code, then `00010`, then whatever follows: `0xb38bffffffffffff`, with the
-first bit of the stream as bit 63. The top 11 bits are `10110011100`, index 1436, one of the 4
-entries 1436 to 1439 of this 9-bit code. Then:
+Say the register holds the code, then `{{ch07.reg_raw_bits}}`, then whatever follows: `{{ch07.reg}}`, with the
+first bit of the stream as bit 63. The top 11 bits are `{{ch07.reg_index_bits}}`, index {{ch07.reg_index}}, one of the {{ch07.tok.2098.entries}}
+entries {{ch07.tok.2098.first}} to {{ch07.tok.2098.last}} of this {{tok.len.2098}}-bit code. Then:
 
 ```text
-br.bits                   1011 0011 1000 1011 1111 ... 1111    0xb38bffffffffffff
-br.bits << TOK_N   (9)    0001 0111 1111 1111 1111 ... 0000    0x17fffffffffffe00
-             >> TOK_BACK  (59)                         00010   2
-             << TOK_SHIFT (3)                                  16
-seqlz_br_drop(&br, TOK_DROP) moves on by 14 bits, to the next sequence
+br.bits                   {{ch07.reg_bin}} ... {{ch07.reg_low}}    {{ch07.reg}}
+br.bits << TOK_N   ({{ch07.tok.2098.N}})    {{ch07.reg_shl_bin}} ... {{ch07.reg_shl_low}}    {{ch07.reg_shl}}
+             >> TOK_BACK  ({{ch07.tok.2098.BACK}})                         {{ch07.reg_raw_bits}}   {{ch07.reg_raw}}
+             << TOK_SHIFT ({{ch07.tok.2098.SHIFT}})                                  {{ch07.reg_off}}
+seqlz_br_drop(&br, TOK_DROP) moves on by {{ch07.tok.2098.DROP}} bits, to the next sequence
 ```
 
-The left shift throws the code away, the right shift by 59 keeps the 5 bits that were behind it, and
+The left shift throws the code away, the right shift by {{ch07.tok.2098.BACK}} keeps the 5 bits that were behind it, and
 the shift by 3 multiplies by 8. No branch on the class, no table of offset bits: the same three
 shifts for every class, with the numbers from the entry.
 
@@ -626,42 +636,44 @@ shifts for every class, with the numbers from the entry.
 Token 1552 is $0 + 16 \cdot 1 + 512 \cdot 3$: no literals, a match of 5, an offset below the page size in 12
 bits. On the two desktop dumps, 29% and 36% of the matches at a class 3 offset are 5 bytes long
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)),
-and this token has an 8-bit code.
+and this token has an {{tok.len.1552}}-bit code.
 
 | field | value |
 | --- | --- |
-| `N` | 8 |
-| `BACK` | $64 - 12 = 52$ |
-| `SHIFT` | 0 |
-| `DROP` | $8 + 12 = 20$ |
-| `LL`, `ML` | 0, 5 |
-| value bit | 0 |
+| `N` | {{ch07.tok.1552.N}} |
+| `BACK` | $64 - 12 = {{ch07.tok.1552.BACK}}$ |
+| `SHIFT` | {{ch07.tok.1552.SHIFT}} |
+| `DROP` | ${{tok.len.1552}} + 12 = {{ch07.tok.1552.DROP}}$ |
+| `LL`, `ML` | {{ch07.tok.1552.LL}}, {{ch07.tok.1552.ML}} |
+| value bit | {{ch07.tok.1552.value}} |
 
-The entry is `0x02850d08`. The decoder computes `(br.bits << 8) >> 52`, the 12 bits after the code,
-and moves on by 20 bits.
+The entry is `{{ch07.tok.1552.entry}}`. The decoder computes `(br.bits << {{ch07.tok.1552.N}}) >> {{ch07.tok.1552.BACK}}`, the 12 bits after the code,
+and moves on by {{ch07.tok.1552.DROP}} bits.
 
-Token 1567 is the same with `ll` 15: $15 + 16 \cdot 1 + 512 \cdot 3$. Its code has 9 bits, and its entry
-`0x42fd4d09` has `LL` 15 and bit 30 set, `ll == SEQLZ_LL_CAP`. The decoder sees bit 30, does not take
+Token 1567 is the same with `ll` 15: $15 + 16 \cdot 1 + 512 \cdot 3$. Its code has {{tok.len.1567}} bits, and its entry
+`{{ch07.tok.1567.entry}}` has `LL` 15 and bit 30 set, `ll == SEQLZ_LL_CAP`. The decoder sees bit 30, does not take
 the fast path, and after the offset reads an `ll` value from the `ll` table and adds it to 15. The
-same bit is set for `ml - 4 = 31`, e.g. token 2032, `ML` 35, entry `0x51850d08`.
+same bit is set for `ml - 4 = 31`, e.g. token 2032, `ML` {{ch07.tok.2032.ML}}, entry `{{ch07.tok.2032.entry}}`.
+
+@assert ch07.tok[1567].value == 1 and ch07.tok[2032].value == 1 and tok.len[2032] > 0
 
 ### The escape
 
-Symbol 3072 has a 4-bit code, `0011`, so it fills the indices 384 to 511 with
-`token_entry(3072, 4) = 1U << 31 | 4 << 14 = 0x80010000`, the lower row of the diagram. The decoder
+Symbol 3072 has a {{tok.len.3072}}-bit code, `{{tok.code.3072}}`, so it fills the indices {{ch07.tok.3072.first}} to {{ch07.tok.3072.last}} with
+`token_entry(3072, {{tok.len.3072}}) = 1U << 31 | {{tok.len.3072}} << 14 = {{ch07.tok.3072.entry}}`, the lower row of the diagram. The decoder
 handles it before everything else:
 
 @listing src/seqlz_decompress.c 605-617
 
 Take token 1797, $5 + 16 \cdot 16 + 512 \cdot 3$: 5 literals, a match of 20, class 3. It is too rare to have
-a code, its `enc[]` is 0, so the encoder writes the escape's `0011`, then 1797 in 12 bits,
-`011100000101`, then the offset, say 1000, in 12 bits. The decoder's top 11 bits are
-`00110111000`, index 440, in the escape's range. Bit 31 is set: it drops `TOK_DROP` = 4 bits,
+a code, its `enc[]` is 0, so the encoder writes the escape's `{{tok.code.3072}}`, then 1797 in 12 bits,
+`{{ch07.esc1797.bits}}`, then the offset, say 1000, in 12 bits. The decoder's top 11 bits are
+`{{ch07.esc1797.index_bits}}`, index {{ch07.esc1797.index}}, in the escape's range. Bit 31 is set: it drops `TOK_DROP` = {{ch07.tok.3072.DROP}} bits,
 refills, reads the top 12 bits, 1797, drops them, and checks $1797 < 3072$. Then it calls
 `token_entry(1797, 0)`.
 
-With `n = 0`, the entry describes a token whose code is already gone: `N` 0, `BACK` 52, `SHIFT` 0,
-`DROP` $0 + 12 = 12$, `LL` 5, `ML` 20, `0x0a2b0d00`. From here the escaped token goes through the same
+With `n = 0`, the entry describes a token whose code is already gone: `N` 0, `BACK` {{ch07.esc1797.BACK}}, `SHIFT` 0,
+`DROP` $0 + 12 = {{ch07.esc1797.DROP}}$, `LL` {{ch07.esc1797.LL}}, `ML` {{ch07.esc1797.ML}}, `{{ch07.esc1797.entry}}`. From here the escaped token goes through the same
 lines as any other: `(br.bits << 0) >> 52` is the next 12 bits, 1000, and the decoder moves on by 12.
 This is the one place where the decoder does take a token apart at run time, by calling
 `token_entry()`: for an escaped token, which is about 14 to 38 of some 200 sequences per page on the
@@ -677,3 +689,5 @@ decoder knows it has come from the literals left ([chapter 4](#ch-format--end)).
 format's rule for that token, read straight from the entry. Token 0 is still a token, no literals and
 a match of 4 bytes at the repeat offset, but that is rare, and since the tables were trained again
 without the last sequences it has no code: it is sent escaped.
+
+@assert tok.len[0] == 0

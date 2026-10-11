@@ -126,6 +126,7 @@ The offset of a match can be smaller than its length. Then the match reads bytes
 a moment earlier. Take a page that is `ab` 2048 times. Its compressed form is 2 literals, `a` and `b`,
 and one match of 4094 bytes at offset 2: each byte copied is the byte 2 places before it, which the
 copy has just written.
+@assert ab.lits == 2 and ab.tokens == 1
 
 @anim overlap A match of 10 bytes at offset 1, 2 or 3, one byte per step. The byte loop copies what it wrote itself a moment before; memmove() copies the source as it was before the copy, and gets bytes that were not written yet.
 
@@ -159,25 +160,32 @@ overwrite each other. So the compressor misses a match now and then. It never ma
 because every candidate is compared before it is used. In exchange, each position costs one read and
 one write of the table, whatever the page holds.
 
-@anim hash wide The three steps on a short text, as a model, not seqlz's matcher: the table has 16 slots instead of 4096, the hash is seqlz's hash of 5 bytes cut to 4 bits, and there is no repeat offset. Every number is computed from the text.
+@anim hash wide The three steps on a short text, as a model, not seqlz's matcher: the table has 16 slots instead of {{ch02.HASH_SLOTS}}, the hash is seqlz's hash of 5 bytes cut to 4 bits, and there is no repeat offset. Every number is computed from the text.
 
-seqlz's table has 4096 slots of 2 bytes, 8 KiB, all of its work memory for compression, and it is cleared
+seqlz's table has {{ch02.HASH_SLOTS}} slots of 2 bytes, 8 KiB, all of its work memory for compression, and it is cleared
 for every page, so every position in it is a position of the current page. Its hash covers the next
 **5 bytes**, not 4, which finds fewer and longer matches; a match of exactly 4 bytes is still found at
-the repeat offset, which needs no table. E.g. the 5 bytes `,dog=` go to slot 2823 at position 5 and
+the repeat offset, which needs no table. E.g. the 5 bytes `,dog=` go to slot {{ch02.hash.dog}} at position 5 and
 again at position 17, which is how the match of sequence 2 is found. [Chapter 9](#ch-matcher--hash)
 goes through the hash line by line and has the measurements behind 5 bytes.
+@assert size.state == 2 * ch02.HASH_SLOTS == 8192 and ch02.hash.dog == ch02.hash.dog17
 
 ::: try The real matcher on the example
 On a page that starts with `cat=1,dog=2;cat=3,dog=4;` and is zeros after, seqlz's matcher finds the
-first two sequences exactly as above. Its hash of 5 bytes cannot find `cat=` at position 12, because
+first two sequences exactly as above.
+@assert (ch02.cat[0].ll, ch02.cat[0].ml, ch02.cat[0].off, ch02.cat[1].ll, ch02.cat[1].ml, ch02.cat[1].off) == (12, 4, 12, 1, 5, 12)
+Its hash of 5 bytes cannot find `cat=` at position 12, because
 `cat=3` never appeared before, but the matcher finds it anyway, for a reason that has nothing to do
 with the hash: the cleared table holds 0 in every slot, an empty slot is a candidate at
 position 0, and position 0 starts with `cat=`. Put a `#` in front, and the first match is gone: the
-matcher then writes 18 literals and finds only `,dog=`. On the page without the `#`, the third
-sequence takes `4`, `;` and one zero as literals, and covers the other 4071 zeros with one match at
+matcher then writes {{ch02.hash.sharp.ll}} literals and finds only `,dog=`.
+@assert ch02.hash.sharp.ml == 5 and ch02.hash.sharp.n == 3
+On the page without the `#`, the third
+sequence takes `4`, `;` and one zero as literals, and covers the other {{ch02.cat.2.ml}} zeros with one match at
 offset 1. The match ends at the end of the page, and the matcher still passes a last sequence with no
-literals and no match. The format writes no bits for it: the decoder sees that 0 literals are left
+literals and no match.
+@assert ch02.cat.n == 4 and ch02.cat[2].ll == 3 and ch02.cat[2].off == 1 and ch02.cat[3].ll == 0
+The format writes no bits for it: the decoder sees that 0 literals are left
 for 0 bytes of the page, and that is the end. [Chapter 9](#ch-matcher--back) has a
 program that prints every sequence the matcher finds; give it this page, and others.
 :::
@@ -199,26 +207,27 @@ page has offsets of at most 12 bits, and offsets below 16 are common.
 How many bits does a number need, if not a fixed amount? It depends on how often each value occurs. A
 small example with real numbers: seqlz sorts every offset into one of 6 **offset classes**, e.g. class 0
 for the repeat offset, class 1 for offsets below 16, class 4 for multiples of 8 below 256. These are how
-often each class occurred on the 524 912 pages seqlz's tables were trained on, summed from the token
+often each class occurred on the {{ch02.train_pages|grp}} pages seqlz's tables were trained on, summed from the token
 counts in
+@assert ch02.OFF_CLASSES == 6
 [`bench/seqlz_counts_4k.txt`](https://github.com/martinus/quetschn/blob/main/bench/seqlz_counts_4k.txt):
 
 | class | offset | share of the sequences |
 | --- | --- | --- |
-| 0 | the repeat offset | 30.55% |
-| 1 | below 16 | 13.04% |
-| 2 | below 256 | 8.82% |
-| 3 | below 4096 | 8.12% |
-| 4 | multiple of 8, 16 to 248 | 24.17% |
-| 5 | multiple of 8, from 256 | 15.30% |
+| 0 | the repeat offset | {{ch02.cls.0.share}}% |
+| 1 | below 16 | {{ch02.cls.1.share}}% |
+| 2 | below 256 | {{ch02.cls.2.share}}% |
+| 3 | below 4096 | {{ch02.cls.3.share}}% |
+| 4 | multiple of 8, 16 to 248 | {{ch02.cls.4.share}}% |
+| 5 | multiple of 8, from 256 | {{ch02.cls.5.share}}% |
 
 6 values in a fixed width take 3 bits, and 2 of the 8 patterns are never used. Information theory says
 what they need at least: a value that occurs with probability $p$ carries $-\log_2 p$ bits of
 information, and the average of that over all values, the **entropy**, is the least number of bits per
-value any code can reach on average. Here it is 2.42 bits. (These are shares of all sequences in the
+value any code can reach on average. Here it is {{ch02.cls.entropy}} bits. (These are shares of all sequences in the
 training counts, which count the pages of a phone's zram dump five times; on the desktop dumps, 18% to 25% of
-the matches use the repeat offset, see [chapter 9](#ch-matcher--plan).) Class 0, at 30.55%, carries 1.71 bits;
-class 3, at 8.12%, carries 3.62. A good code gives class 0 fewer than 3 bits and class 3 more.
+the matches use the repeat offset, see [chapter 9](#ch-matcher--plan).) Class 0, at {{ch02.cls.0.share}}%, carries
+{{ch02.cls.0.info}} bits; class 3, at {{ch02.cls.3.share}}%, carries {{ch02.cls.3.info}}. A good code gives class 0 fewer than 3 bits and class 3 more.
 
 ## Prefix codes {#ch-compression--prefix-codes}
 
@@ -246,17 +255,19 @@ Each symbol's code is the path from the root to its leaf, 0 for one branch and 1
 
 | step | joins | weights | new weight |
 | --- | --- | --- | --- |
-| 1 | class 3 and class 2 | $8.12 + 8.82$ | 16.94 |
-| 2 | class 1 and class 5 | $13.04 + 15.30$ | 28.34 |
-| 3 | {3, 2} and class 4 | $16.94 + 24.17$ | 41.11 |
-| 4 | {1, 5} and class 0 | $28.34 + 30.55$ | 58.89 |
-| 5 | the two that are left | $41.11 + 58.89$ | 100 |
+| 1 | {{ch02.join.1.what}} | ${{ch02.join.1.a}} + {{ch02.join.1.b}}$ | {{ch02.join.1.sum}} |
+| 2 | {{ch02.join.2.what}} | ${{ch02.join.2.a}} + {{ch02.join.2.b}}$ | {{ch02.join.2.sum}} |
+| 3 | {{ch02.join.3.what}} | ${{ch02.join.3.a}} + {{ch02.join.3.b}}$ | {{ch02.join.3.sum}} |
+| 4 | {{ch02.join.4.what}} | ${{ch02.join.4.a}} + {{ch02.join.4.b}}$ | {{ch02.join.4.sum}} |
+| 5 | {{ch02.join.5.what}} | ${{ch02.join.5.a}} + {{ch02.join.5.b}}$ | {{ch02.join.5.sum}} |
 
-@anim huffman The table above, one join per two steps, then the codes read off the tree. The shares are the ones of the offset classes in the training counts; the average is computed from them.
+@anim huffman facts=ch02.cls The table above, one join per two steps, then the codes read off the tree. The shares are the ones of the offset classes in the training counts; the average is computed from them.
 
-Classes 0 and 4 get 2 bits, the other four get 3. On average that is
-$2 \times (30.55\% + 24.17\%) + 3 \times (13.04\% + 8.82\% + 8.12\% + 15.30\%) = 2.45$ bits, against 3 for the
-fixed width and 2.42 for the entropy. The gap to the entropy is what a Huffman code cannot get: every
+Classes 0 and 4 get 2 bits, the other four get 3.
+@assert [ch02.cls[k].len for k in "012345"] == [2, 3, 3, 3, 2, 3]
+On average that is
+$2 \times ({{ch02.cls.0.share}}\% + {{ch02.cls.4.share}}\%) + 3 \times ({{ch02.cls.1.share}}\% + {{ch02.cls.2.share}}\% + {{ch02.cls.3.share}}\% + {{ch02.cls.5.share}}\%) = {{ch02.cls.avg}}$ bits, against 3 for the
+fixed width and {{ch02.cls.entropy}} for the entropy. The gap to the entropy is what a Huffman code cannot get: every
 code is a whole number of bits, so a symbol with probability 0.9, which carries 0.15 bits, still costs
 1. Coders with fractional bits exist, arithmetic coding and ANS, which `zstd` uses for its sequences as
 FSE, but their decoders do more work per symbol. On the project's dumps, Huffman codes fitted to the
@@ -265,14 +276,14 @@ pages are 1.4 to 3.5 bytes per page above the entropy, 0.2% to 0.3%, so seqlz st
 
 seqlz does not give the offset class a code of its own; it puts the class into one symbol together with
 `ll` and `ml`, the **token**, and codes that. The class is a good example only because it has 6 values.
-The token has 3072, and the same method builds its code.
+The token has {{const.TOKEN_SYMBOLS}}, and the same method builds its code.
 
 One more limit matters in practice: a decoder that decodes with a table, as below, needs a table of
-$2^L$ entries for a longest code of $L$ bits. A Huffman code for 3072 symbols, some of them very rare,
+$2^L$ entries for a longest code of $L$ bits. A Huffman code for {{const.TOKEN_SYMBOLS}} symbols, some of them very rare,
 can have codes of 20 bits and more. So the trainer, the program that builds seqlz's tables from counts
-([chapter 8](#ch-codes--lengths)), limits the code lengths, 11 bits for tokens, 10 for
-literals, 8 for [length values](#ch-format--length-values), at a small cost in bits, and gives the rarest tokens no code at all; they
-share one code, the **escape**, followed by the token in 12 plain bits ([chapter 4](#ch-format)).
+([chapter 8](#ch-codes--lengths)), limits the code lengths, {{ch02.TOKEN_BITS}} bits for tokens, {{ch02.LIT_BITS}} for
+literals, {{ch02.MAX_BITS}} for [length values](#ch-format--length-values), at a small cost in bits, and gives the rarest tokens no code at all; they
+share one code, the **escape**, followed by the token in {{ch02.ESCAPE_BITS}} plain bits ([chapter 4](#ch-format)).
 
 ## Canonical codes: only the lengths are stored {#ch-compression--canonical-codes}
 
@@ -358,11 +369,13 @@ The last peek here needs no bits past the end, but in general it does, e.g. when
 is a loop at the end of each of seqlz's table builders ([chapter 8](#ch-codes--build-token)). For a
 token of code `c` with `l` bits, the indices from `c << (11 - l)` up to, not including,
 `(c + 1) << (11 - l)` are the 11-bit numbers whose top `l` bits are `c`, and each gets the same entry.
-seqlz's token table has `SEQLZ_TOKEN_BITS` = 11, 2048 entries of 4 bytes, 8 KiB. Token 49, "1
+seqlz's token table has `SEQLZ_TOKEN_BITS` = {{ch02.TOKEN_BITS}}, {{ch02.tok_entries}} entries of {{ch02.tok_entry_bytes}} bytes, {{ch02.tok_table_kib}} KiB. Token 49, "1
 literal, a match of 7 bytes, the repeat offset", the sequence of an array of 8-byte pointers that
-differ only in their lowest byte, has a code of 4 bits (how a token's number comes from `ll`, `ml` and
-the offset class is in [chapter 4](#ch-format--token)), so it fills $2^{11-4} = 128$ entries, one sixteenth of the table. The longest codes, 11
-bits, fill one entry each. [Chapter 7](#ch-internal) shows what an entry holds: for a token not only the
+differ only in their lowest byte, has a code of {{tok.len.49}} bits (how a token's number comes from `ll`, `ml` and
+the offset class is in [chapter 4](#ch-format--token)), so it fills $2^{ {{ch02.TOKEN_BITS}}-{{tok.len.49}} } = {{ch02.tok49_entries}}$ entries, one sixteenth of the table. The longest codes, {{ch02.TOKEN_BITS}}
+bits, fill one entry each.
+@assert ch02.tok49 == 49 and 16 * ch02.tok49_entries == ch02.tok_entries and tok.codes_of[ch02.TOKEN_BITS] > 0
+[Chapter 7](#ch-internal) shows what an entry holds: for a token not only the
 symbol and the code length, but the two lengths and everything needed to cut the offset bits out of the
 bits that follow.
 
@@ -439,7 +452,7 @@ built.
 <figcaption>The same canonical code in a decode table: read most significant bit first, each code is one range; read least significant bit first, its entries are spread.</figcaption>
 </figure>
 
-With 8 entries it makes no difference. With the token table of 2048 entries it does: read most
+With 8 entries it makes no difference. With the token table of {{ch02.tok_entries}} entries it does: read most
 significant bit first, the few short codes most sequences use stay in a few of the table's cache
 lines, and a cold read loads fewer of them from memory, see [chapter 3](#ch-cpu--msb-first). The
 compressed bytes are the same size either way; only the order of the bits differs.
@@ -463,7 +476,7 @@ code lengths of a literal table for the 256 byte values take `zstd` about 64 byt
 page of 4 KiB that often costs more than the code saves.
 
 **seqlz writes bits, with fixed tables.** Its tables are trained once on many pages, compiled into the
-code, and part of the format; a page says only which of 8 literal tables it uses, in 3 bits. A
+code, and part of the format; a page says only which of {{ch02.LIT_SETS}} literal tables it uses, in {{ch02.lit_set_bits}} bits. A
 sequence is one token, which holds `ll`, `ml - 4` and the offset class, with its Huffman code, then the
 offset in as many plain bits as the class says, then length values only for long runs. The decoder does
 one table lookup per sequence, where `zstd` steps three FSE states. What seqlz gives up is tables that
@@ -472,10 +485,12 @@ slower on the project's two desktop dumps, for 2.7 and 60.6 bytes less per page,
 stored size, and was not kept
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-choices-with-their-numbers)).
 
-The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is 27 bytes
-in seqlz: 2 bytes of header, the literal count 16; the 16 literals as they are, the matcher's sequences
-being the ones from the box above; and 9 bytes of bitstream for the four sequences, of which the last
-takes no bits. The table below
+The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is {{cat.len}} bytes
+in seqlz: {{ch02.HEADER}} bytes of header, the literal count {{cat.lits}}; the {{cat.lits}} literals as they are, the matcher's sequences
+being the ones from the box above; and {{cat.b.bytes}} bytes of bitstream for the four sequences, of which the last
+takes no bits.
+@assert cat.seqs == 4 and cat.coded.len == cat.len
+The table below
 runs ahead of [chapter 4](#ch-format), which explains how a token's number packs `ll`, `ml` and the
 offset class and what the escape is ([one sequence: the token](#ch-format--token)), and how a long
 `ml` is sent ([length values](#ch-format--length-values)). Read it now for the sizes, and again after
@@ -483,20 +498,23 @@ chapter 4 for the bits:
 
 | bits | what they are |
 | --- | --- |
-| `0011` `001000001100` | the escape, then token 524 in 12 bits: `ll` 12, `ml` 4, class 1 |
-| `1100` | offset 12 in the 4 bits of class 1 |
-| `101001011` | token 17: `ll` 1, `ml` 5, class 0, the repeat offset 12 |
-| `0011` `001111110011` | the escape, then token 1011: `ll` 3, `ml - 4` 31, class 1 |
-| `0001` | offset 1 |
-| `111101` `11111000100` | the length value 4036: `ml` = 35 + 4036 = 4071 |
+| `{{ch02.cat.0.code}}` `{{ch02.cat.0.esc}}` | the escape, then token {{ch02.cat.0.tok}} in {{ch02.ESCAPE_BITS}} bits: `ll` {{ch02.cat.0.ll}}, `ml` {{ch02.cat.0.ml}}, class {{ch02.cat.0.cls}} |
+| `{{ch02.cat.0.raw}}` | offset {{ch02.cat.0.off}} in the {{ch02.cat.0.rawbits}} bits of class {{ch02.cat.0.cls}} |
+| `{{ch02.cat.1.code}}` | token {{ch02.cat.1.tok}}: `ll` {{ch02.cat.1.ll}}, `ml` {{ch02.cat.1.ml}}, class {{ch02.cat.1.cls}}, the repeat offset {{ch02.cat.1.off}} |
+| `{{ch02.cat.2.code}}` `{{ch02.cat.2.esc}}` | the escape, then token {{ch02.cat.2.tok}}: `ll` {{ch02.cat.2.ll}}, `ml - 4` {{ch02.cat.2.tml}}, class {{ch02.cat.2.cls}} |
+| `{{ch02.cat.2.raw}}` | offset {{ch02.cat.2.off}} |
+| `{{ch02.cat.2.vcode}}` `{{ch02.cat.2.vextra}}` | the length value {{ch02.cat.2.value}}: `ml` = {{ch02.ml_base}} + {{ch02.cat.2.value}} = {{ch02.cat.2.ml}} |
 | | 0 literals left, 0 bytes of the page left: the last sequence, no bits |
-| `000000` | fill to the end of the last byte |
+| `{{ch02.cat.fill}}` | fill to the end of the last byte |
+@assert [ch02.cat[k].escaped for k in "012"] == [1, 0, 1] and ch02.cat[1].cls == 0 and ch02.cat[2].tml == 31
+@assert ch02.cat[0].code + ch02.cat[0].esc + ch02.cat[0].raw + ch02.cat[1].code + ch02.cat[2].code + ch02.cat[2].esc + ch02.cat[2].raw + ch02.cat[2].vcode + ch02.cat[2].vextra == cat.b.bin and cat.b.pad == len(ch02.cat.fill)
 
-That is 66 bits and 6 bits of fill, the bytes `32 0c ca 59 9f 98 fb f1 00`, as `seqlz_compress()`
+That is {{cat.b.bits}} bits and {{cat.b.pad}} bits of fill, the bytes `{{cat.b.hex}}`, as `seqlz_compress()`
 writes them. Two of the tokens are escaped: a sequence of 12 literals and a match of 4 at a short offset
-is rare on real pages and has no code of its own. The same four sequences in `lz4`'s format take 26
+is rare on real pages and has no code of its own. The same four sequences in `lz4`'s format take {{ch02.lz4.bytes}}
 bytes besides the literals, leaving aside `lz4`'s rules for the end of a block: a token byte each, 2 bytes
-for each of the three offsets, and 16 bytes to say 4071, 15 of them 255.
+for each of the three offsets, and {{ch02.lz4.ml_bytes}} bytes to say {{ch02.cat.2.ml}}, {{ch02.lz4.ml_255}} of them 255.
+@assert cat.escapes == 2
 
 ::: measured Where the bytes come from
 Which of the two ideas gives `zstd` its ratio was estimated on the project's first desktop dump, with

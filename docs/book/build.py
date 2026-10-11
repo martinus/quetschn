@@ -15,9 +15,10 @@ Directives, each on a line of its own, outside fenced code:
   $$ tex $$
       a formula of its own, on a line of its own
 
-  @anim <name> [wide] Caption
+  @anim <name> [wide] [facts=<prefix>,...] Caption
       an animation, anim/<name>.js on anim/core.js; if anim/<name>.c exists, it is built with src/
-      and its output, JSON, is the animation's data. "wide" lets it use the width beside the column
+      and its output, JSON, is the animation's data. "wide" lets it use the width beside the column.
+      facts= adds the facts under those prefixes to the data, as data.facts["ch02.cls.0.share"]
 
   @stepper decode | match
       the step-through of seqlz_decode() or seqlz_match_page(): stepper/instrument.py puts hooks
@@ -39,7 +40,8 @@ Directives, each on a line of its own, outside fenced code:
       a value the facts programs compute, anywhere in a chapter, also in code and figures: each
       facts/*.c is built with src/ and prints a JSON object, nested objects give dotted keys, list
       items their index (ab.bytes, tok.code.34). |grp writes a number in groups of 3 digits,
-      524 912. An unknown key fails the build
+      524 912. An unknown key fails the build. A facts file with the line "// facts: also 16k" is
+      built for 16 KiB pages too, its keys then start with k16.
 
   @assert <python expression>
       fails the build when false, for a sentence that depends on the code without quoting a
@@ -83,6 +85,7 @@ def git(*args):
 # links on GitHub point to that commit
 SRC_COMMIT = git("log", "-1", "--format=%H", "--", "src")
 OUT_DIR = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else HERE
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT = OUT_DIR / "seqlz-line-by-line.html"
 STANDALONE = OUT_DIR / "seqlz-line-by-line.standalone.html"
 
@@ -146,6 +149,17 @@ def src_lines(path):
 
 COVERED = {}  # path -> set of line numbers
 LISTINGS = []
+FILE_COMMIT = {}
+LANG = {".c": "c", ".h": "c", ".inc": "c", ".py": "python", ".sh": "bash", ".patch": "diff", ".cpp": "cpp"}
+
+
+def file_commit(path):
+    """the last commit that changed path, which its link on GitHub shows; src/ files share SRC_COMMIT"""
+    if path.startswith("src/"):
+        return SRC_COMMIT
+    if path not in FILE_COMMIT:
+        FILE_COMMIT[path] = git("log", "-1", "--format=%H", "--", path) or SRC_COMMIT
+    return FILE_COMMIT[path]
 
 
 def render_listing(path, a, b):
@@ -155,13 +169,13 @@ def render_listing(path, a, b):
     COVERED.setdefault(path, set()).update(range(a, b + 1))
     LISTINGS.append((path, a, b))
     body = "\n".join(lines[a - 1:b])
-    hl = highlight_lines(body, "c")
+    hl = highlight_lines(body, LANG.get(pathlib.Path(path).suffix, "text"))
     rows = "".join(
         f'<span class="line"><span class="ln" data-n="{a + i}"></span><span class="lc">{h}</span></span>'
         for i, h in enumerate(hl))
     rng = f"line {a}" if a == b else f"lines {a}&ndash;{b}"
     return (f'<figure class="listing" id="L-{path.replace("/", "-").replace(".", "-")}-{a}">'
-            f'<figcaption><a class="lfile" href="{GITHUB}/{SRC_COMMIT}/{path}#L{a}-L{b}">{html.escape(path)}</a>'
+            f'<figcaption><a class="lfile" href="{GITHUB}/{file_commit(path)}/{path}#L{a}-L{b}">{html.escape(path)}</a>'
             f'<span class="lrange">{rng}</span></figcaption>'
             f'<pre class="code numbered"><code>{rows}</code></pre></figure>')
 
@@ -297,8 +311,8 @@ def fact_tree():
             dict.__setitem__(node, parts[-1], v)
 
 
-def facts_of(c):
-    out = run_c(c)
+def facts_of(c, flags=()):
+    out = run_c(c, flags=flags)
     try:
         return json.loads(out)
     except json.JSONDecodeError as e:
@@ -307,11 +321,16 @@ def facts_of(c):
 
 def load_facts(pool):
     # what the repository has, which no program of src/ can print
-    FACTS["src.lines"] = sum(len(src_lines(f"src/{f.name}")) for f in (REPO / "src").iterdir()
+    FACTS["src.lines"] = sum((REPO / "src" / f.name).read_text().count("\n") for f in (REPO / "src").iterdir()
                              if f.suffix in (".c", ".h"))
     files = sorted((HERE / "facts").glob("*.c"))
-    for c, fut in zip(files, [pool.submit(facts_of, c) for c in files]):
-        flatten(fut.result(), "", FACTS, f"facts/{c.name}")
+    # a facts file with the line "// facts: also 16k" is built a second time for 16 KiB pages, its
+    # keys then start with k16.
+    k16 = [c for c in files if "// facts: also 16k" in c.read_text()]
+    runs = [(c, "", pool.submit(facts_of, c)) for c in files]
+    runs += [(c, "k16.", pool.submit(facts_of, c, ("-DQUETSCHN_PAGE_BITS=14",))) for c in k16]
+    for c, prefix, fut in runs:
+        flatten(fut.result(), prefix, FACTS, f"facts/{c.name}")
     fact_tree()
 
 
@@ -342,11 +361,15 @@ def check_assert(expr, where):
     names["F"] = lambda key: FACTS[key]
     try:
         ok = eval(expr, {"__builtins__": {"len": len, "sum": sum, "min": min, "max": max, "all": all,
-                                          "any": any, "abs": abs, "sorted": sorted}}, names)
+                                          "any": any, "abs": abs, "sorted": sorted, "range": range,
+                                          "int": int, "str": str, "round": round}}, names)
     except Exception as e:  # noqa: BLE001 the expression is the chapter's
         sys.exit(f"{where}: @assert {expr}: {type(e).__name__}: {e}")
     if not ok:
-        sys.exit(f"{where}: @assert {expr} is false; the sentence next to it needs a look")
+        FAILED.append(f"{where}: @assert {expr} is false; the sentence next to it needs a look")
+
+
+FAILED = []  # the false asserts, all reported at the end of the build
 
 
 def render_output(args, where):
@@ -488,10 +511,10 @@ def prebuild(texts):
 
 
 def render_anim(args, where):
-    m = re.match(r"(\w[\w-]*)(\s+wide)?\s*(.*)$", args)
+    m = re.match(r"(\w[\w-]*)(\s+wide)?(?:\s+facts=(\S+))?\s*(.*)$", args)
     if not m:
-        sys.exit(f"{where}: @anim <name> [wide] caption")
-    name, wide, caption = m.group(1), bool(m.group(2)), m.group(3)
+        sys.exit(f"{where}: @anim <name> [wide] [facts=<prefix>,...] caption")
+    name, wide, caption = m.group(1), bool(m.group(2)), m.group(4)
     d = HERE / "anim"
     if not (d / f"{name}.js").exists():
         sys.exit(f"{where}: anim/{name}.js does not exist")
@@ -502,6 +525,16 @@ def render_anim(args, where):
     if (d / f"{name}.css").exists():
         out += f'<style>{(d / f"{name}.css").read_text()}</style>'
     data = PREBUILT[("anim", name)].result() if ("anim", name) in PREBUILT else anim_data(name)
+    if m.group(3):
+        # the facts under these prefixes, as data.facts, so the figure shows the numbers the text does
+        prefixes = m.group(3).split(",")
+        picked = {k: v for k, v in FACTS.items() if any(k == p or k.startswith(p + ".") for p in prefixes)
+                  and not isinstance(v, list)}
+        if not picked:
+            sys.exit(f"{where}: @anim {name}: no facts under {m.group(3)}")
+        obj = json.loads(data) if data is not None else {}
+        obj["facts"] = picked
+        data = json.dumps(obj)
     fid = f"anim-{name}"
     out += (f'<figure class="anim{" wide" if wide else ""}" id="{fid}" data-anim="{name}" tabindex="-1">'
             f'<div class="an-bar"></div><p class="an-say" aria-live="polite"></p><div class="an-stage"></div>'
@@ -835,6 +868,9 @@ def check_coverage():
 
 if __name__ == "__main__":
     build()
+    if FAILED:
+        print("\n".join(FAILED))
+        sys.exit(f"{len(FAILED)} @assert false: read those paragraphs again, then fix them or the assert")
     ok = check_coverage()
     if "--check" in sys.argv and (not ok or WARNINGS):
         sys.exit(1)

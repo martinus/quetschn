@@ -103,13 +103,14 @@ macro is missing the keyword does the same job. One difference matters: the kern
 leave out the message, `_Static_assert` in C11 does not. Every `static_assert()` in `src/` has a
 message, so both spellings compile.
 
-Lines 41 to 44 do the same for `sizeof_field()`, which came with 5.5. `sizeof_field(TYPE, MEMBER)` is
-the size of one member of a struct, without an object of it: `((TYPE *)0)->MEMBER` names the member of
-a struct at address 0, and `sizeof` only looks at its type and never evaluates the expression, so
-nothing is read from address 0. The definition is the kernel's own, character for character. The codec
-uses it in `static_assert`s, e.g. that the matcher's hash table has room for a page of literals
-(`seqlz_compress.c`, see [chapter 11](#ch-literals-enc)) and that each decode table is a multiple of
-512 bytes for the prefetch loop (`seqlz_decompress.c`, see [chapter 12](#ch-dec-basics)).
+Lines 41 to 44 do the same for `sizeof_field()`, which came with 5.5. `sizeof_field(TYPE, MEMBER)`
+is the size of one member of a struct, without an object of it: `((TYPE *)0)->MEMBER` names the
+member of a struct at address 0, and `sizeof` only looks at its type and never evaluates the
+expression, so nothing is read from address 0. The definition is the kernel's own, character for
+character. The codec uses it in `static_assert`s, e.g. that the matcher's hash table has room for a
+page of literals (`seqlz_compress.c`, see [chapter 11](#ch-literals-enc)) and that each decode table
+is a multiple of {{ch05.prefetch_step}} bytes for the prefetch loop (`seqlz_decompress.c`, see
+[chapter 12](#ch-dec-basics)).
 
 @listing src/seqlz_compat.h 45-53
 
@@ -119,21 +120,23 @@ them, say 128 there. The Cortex-A76 and A55 of the Mi 9T have lines of 64 bytes,
 says 64 too.
 
 The codec's decoder asks for its tables before it decodes a page, with a **prefetch** for each of
-their 64-byte cache lines ([chapter 3](#ch-cpu--prefetch)), in `prefetch_lines()`
-([chapter 12](#ch-dec-basics--prefetch)). It walks the table in steps of 512 bytes and, inside each
-step, calls `prefetch()` every `L1_CACHE_BYTES` bytes:
+their 64-byte cache lines ([chapter 3](#ch-cpu--prefetch)), in `prefetch_lines()` ([chapter
+12](#ch-dec-basics--prefetch)). It walks the table in steps of {{ch05.prefetch_step}} bytes and,
+inside each step, calls `prefetch()` every `L1_CACHE_BYTES` bytes:
 
 ```c
-for (; q < end; q += PREFETCH_STEP)          /* PREFETCH_STEP is 512 */
+for (; q < end; q += PREFETCH_STEP)          /* PREFETCH_STEP is {{ch05.prefetch_step}} */
 	for (k = 0; k < PREFETCH_STEP; k += L1_CACHE_BYTES)
 		prefetch(q + k);
 ```
 
-With 64 that is 8 prefetches per 512 bytes, one per line. With 128 it would be 4, at offsets 0, 128,
-256 and 384, and the lines at 64, 192, 320 and 448 would never be asked for: every second line of the
-token table would come in late. So lines 50 to 53 say 64 again when an arm64 kernel says 128. The test
-`L1_CACHE_BYTES == 128` works in `#if` because the kernel defines it as `(1 << L1_CACHE_SHIFT)`, an
-expression of numbers that the preprocessor can evaluate.
+With 64 that is {{ch03.prefetch_lines}} prefetches per {{ch05.prefetch_step}} bytes, one per line.
+With 128 it would be {{ch05.prefetches_128}}, at offsets 0, 128, 256 and 384, and the lines at 64,
+192, 320 and 448 would never be asked for: every second line of the token table would come in late.
+So lines 50 to 53 say 64 again when an arm64 kernel says 128. The test `L1_CACHE_BYTES == 128` works
+in `#if` because the kernel defines it as `(1 << L1_CACHE_SHIFT)`, an expression of numbers that the
+preprocessor can evaluate.
+@assert ch05.prefetch_step == 512
 
 The `#undef` affects only the files of the codec, which include this header, and only below this line.
 The rest of the kernel keeps its 128. In the kernel's copy this block is gone, because the copy is for
@@ -173,11 +176,11 @@ which holds on every ABI Linux runs on.
 
 Lines 84 to 86 define `__always_inline`. `inline` alone is a hint that the compiler may ignore; with
 `__attribute__((__always_inline__))` gcc and clang inline the function at every call or fail with an
-error. The codec marks its small helpers this way, 27 of them in its `.c` files and `page_lz.h`, e.g.
-`enc_put()` in the encoder, and 8 more in this header, `prefetch()` and the unaligned accessors below,
-because a call in a loop that runs once per sequence or per literal would cost more than the helper's
-work. The `#ifndef` is there because glibc defines `__always_inline` in
-`sys/cdefs.h`, which `string.h` pulls in; glibc's version means the same thing.
+error. The codec marks its small helpers this way, {{ch05.inline_c}} of them in its `.c` files and
+`page_lz.h`, e.g. `enc_put()` in the encoder, and {{ch05.inline_compat}} more in this header,
+`prefetch()` and the unaligned accessors below, because a call in a loop that runs once per sequence
+or per literal would cost more than the helper's work. The `#ifndef` is there because glibc defines
+`__always_inline` in `sys/cdefs.h`, which `string.h` pulls in; glibc's version means the same thing.
 
 Lines 88 to 91 define `noinline` and `__cold`, but only for C. `noinline` keeps a function out of its
 callers. `__cold` tells the compiler that a function is rarely called: it optimizes it for size, puts
@@ -274,9 +277,9 @@ each once. C++ has `std::min`, and a function-like macro called `min` would expa
 same name does not interfere: `std::min` is a different name in a different namespace.
 
 The function takes `unsigned int`, which is all the codec needs: its only callers are in
-`seqlz_token()` in `seqlz.h` ([chapter 6](#ch-header)), which caps `ll` at 15 and `ml - 4` at 31. A
-function evaluates its arguments once, as the kernel's macro does. gcc compiles it to a compare and a
-conditional move, without a branch.
+`seqlz_token()` in `seqlz.h` ([chapter 6](#ch-header)), which caps `ll` at {{ch05.ll_cap}} and
+`ml - 4` at {{ch05.ml_cap}}. A function evaluates its arguments once, as the kernel's macro does.
+gcc compiles it to a compare and a conditional move, without a branch.
 
 ## Little and big endian at any address {#ch-compat--endian}
 
@@ -340,11 +343,11 @@ reason: no type punning.
 `static __always_inline` on each accessor makes sure it is inlined, so that the `memcpy()` sees a
 constant size and the address of the caller. Without inlining, it would be a call per load.
 
-The codec did not always do it this way. Until 5th October 2026 the bit reader, the matcher's hash and
-compare, and the copy of short offsets loaded 4 and 8 bytes in the CPU's order. On s390x under qemu
-every page failed to round trip, 4656 of 4656. Commit `91fa53e` routed every load through accessors
-like these, and since then `test/seqlz_endian.c` compresses 600 generated pages, hashes the output, and
-CI compares that hash between x86-64, 32-bit x86 and s390x.
+The codec did not always do it this way. Until 5th October 2026 the bit reader, the matcher's hash
+and compare, and the copy of short offsets loaded 4 and 8 bytes in the CPU's order. On s390x under
+qemu every page failed to round trip, 4656 of 4656. Commit `91fa53e` routed every load through
+accessors like these, and since then `test/seqlz_endian.c` compresses {{ch05.endian_pages}}
+generated pages, hashes the output, and CI compares that hash between x86-64, 32-bit x86 and s390x.
 
 @listing src/seqlz_compat.h 171-193
 

@@ -3,8 +3,9 @@
  * tables.c: the facts of the tables and constants every chapter may quote. tok.code.N and tok.len.N
  * for each token (code "" and length 0 for one without a code, which is escaped), ll.* and ml.* for
  * the length values, lit.S.code.B for byte B in literal table S; the sizes of the structs; and how
- * many lines src/ has.
+ * many lines src/ has. Built for 16 KiB pages too, as k16.*.
  */
+// facts: also 16k
 #include "facts.h"
 
 static void table(const char* name, const unsigned char* len, unsigned int n) {
