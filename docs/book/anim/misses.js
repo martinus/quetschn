@@ -36,10 +36,20 @@ BookAnim.define('misses', function (ctx) {
     return b;
   });
 
-  var W = 720, X0 = 100, X1 = 650, ROW = 26, YCORE = 70, Y0 = 112, BAR = 16;
-  var YAXIS = Y0 + N * ROW + 6, YTOT = YAXIS + 56, H = YTOT + 3 * 24;
-  function x(t) { return X0 + (X1 - X0) * t / SCALE_NS; }
-  var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'A timeline of 8 table lookups that miss the cache, and the work after each, for an in-order core, an out-of-order core and with the lines prefetched' }, ctx.stage);
+  // the wide layout, and on a phone one about 360 units wide: legend in two rows, ticks every 200 ns,
+  // each total's name above its bar
+  var BAR = 16, L;
+  function layout(narrow) {
+    var o = narrow ? { W: 360, X0: 72, X1: 330, ROW: 24, YCORE: 82, Y0: 112, PAD: 4, TICK: 200, LAB: 8 }
+      : { W: 720, X0: 100, X1: 650, ROW: 26, YCORE: 70, Y0: 112, PAD: 6, TICK: 100, LAB: 20 };
+    o.YAXIS = o.Y0 + N * o.ROW + o.PAD;
+    o.YTOT = o.YAXIS + (narrow ? 50 : 56);
+    o.H = o.YTOT + (narrow ? 130 : 3 * 24);
+    return o;
+  }
+  L = layout(ctx.narrow);
+  function x(t) { return L.X0 + (L.X1 - L.X0) * t / SCALE_NS; }
+  var root = ctx.svg('svg', { viewBox: '0 0 ' + L.W + ' ' + L.H, role: 'img', 'aria-label': 'A timeline of 8 table lookups that miss the cache, and the work after each, for an in-order core, an out-of-order core and with the lines prefetched' }, ctx.stage);
   var g = ctx.svg('g', { 'font-size': 12 }, root);
 
   function rect(x0, x1, y, h, cls) {
@@ -53,15 +63,21 @@ BookAnim.define('misses', function (ctx) {
   }
 
   function draw(k) {
-    var p = plans[mode], T = Math.min(k * STEP, p.total), i, t;
+    var p = plans[mode], T = Math.min(k * STEP, p.total), i, t, nw = ctx.narrow;
+    L = layout(nw);
+    var X0 = L.X0, X1 = L.X1, ROW = L.ROW, YCORE = L.YCORE, Y0 = L.Y0, YAXIS = L.YAXIS, YTOT = L.YTOT;
+    root.setAttribute('viewBox', '0 0 ' + L.W + ' ' + L.H);
     while (g.firstChild) g.removeChild(g.firstChild);
 
     // legend and clock
-    text(20, 24, 't = ' + T + ' ns', { 'font-size': 17, 'font-weight': 'bold', class: 'ms-clock-t' });
+    text(L.LAB, 24, 't = ' + T + ' ns', { 'font-size': 17, 'font-weight': 'bold', class: 'ms-clock-t' });
     var lx = 190;
-    [['ms-miss' + (mode === 'prefetch' ? ' ms-pre' : ''), mode === 'prefetch' ? 'prefetch in flight' : 'miss in flight'], ['ms-work', 'work on the entry'], ['ms-wait', 'core waits']].forEach(function (l) {
-      ctx.svg('rect', { x: lx, y: 13, width: 14, height: 14, class: l[0] }, g);
-      text(lx + 20, 25, l[1]);
+    [['ms-miss' + (mode === 'prefetch' ? ' ms-pre' : ''), mode === 'prefetch' ? 'prefetch in flight' : 'miss in flight'], ['ms-work', 'work on the entry'], ['ms-wait', 'core waits']].forEach(function (l, j) {
+      // on a phone two columns, below the clock
+      var ly = nw ? 46 + 20 * (j >> 1) : 25;
+      if (nw) lx = j & 1 ? 172 : L.LAB;
+      ctx.svg('rect', { x: lx, y: ly - 12, width: 14, height: 14, class: l[0] }, g);
+      text(lx + 20, ly, l[1]);
       lx += 40 + l[1].length * 7.4;
     });
 
@@ -77,7 +93,7 @@ BookAnim.define('misses', function (ctx) {
     // one row per lookup
     for (i = 0; i < N; i++) {
       var y = Y0 + i * ROW, live = p.s[i] <= T && T < p.a[i];
-      text(X0 - 10, y + 12, 'lookup ' + (i + 1), { 'text-anchor': 'end', class: live ? 'ms-live' : 'ms-lab' });
+      text(X0 - (nw ? 6 : 10), y + 12, 'lookup ' + (i + 1), { 'text-anchor': 'end', class: live ? 'ms-live' : 'ms-lab' });
       ctx.svg('line', { x1: X0, x2: X1, y1: y + BAR / 2, y2: y + BAR / 2, class: 'ms-track' }, g);
       if (T > p.s[i]) rect(p.s[i], Math.min(p.a[i], T), y, BAR, 'ms-miss' + (mode === 'prefetch' ? ' ms-pre' : ''));
       if (T > p.w[i]) rect(p.w[i], Math.min(p.w[i] + WORK, T), y, BAR, 'ms-work');
@@ -85,23 +101,30 @@ BookAnim.define('misses', function (ctx) {
 
     // time axis and the clock's line
     ctx.svg('line', { x1: X0, x2: X1, y1: YAXIS, y2: YAXIS, class: 'ms-axis' }, g);
-    for (t = 0; t <= SCALE_NS; t += 100) {
+    for (t = 0; t <= SCALE_NS; t += L.TICK) {
       ctx.svg('line', { x1: x(t), x2: x(t), y1: YAXIS, y2: YAXIS + 5, class: 'ms-axis' }, g);
-      text(x(t), YAXIS + 19, t, { 'text-anchor': 'middle', 'font-size': 11, class: 'ms-lab' });
+      text(x(t), YAXIS + 19, t, { 'text-anchor': 'middle', 'font-size': nw ? 12 : 11, class: 'ms-lab' });
     }
-    text(X1 + 8, YAXIS + 19, 'ns', { 'font-size': 11, class: 'ms-lab' });
+    text(X1 + (nw ? 6 : 8), YAXIS + 19, 'ns', { 'font-size': nw ? 12 : 11, class: 'ms-lab' });
     ctx.svg('line', { x1: x(T), x2: x(T), y1: YCORE - 8, y2: YAXIS, class: 'ms-now' }, g);
 
     // the totals, at the end
     var end = T >= p.total;
     if (end) {
-      text(20, YTOT - 10, 'total time of the 8 lookups and their work', { 'font-weight': 'bold' });
+      text(L.LAB, YTOT - 10, 'total time of the 8 lookups and their work', { 'font-weight': 'bold' });
       MODES.forEach(function (m, j) {
         var y = YTOT + j * 24, q = plans[m[0]], cls = m[0] === mode ? 'ms-tot-now' : 'ms-tot';
-        text(X0 - 10, y + 12, m[1], { 'text-anchor': 'end', class: m[0] === mode ? '' : 'ms-lab' });
-        rect(0, q.total, y, BAR, cls);
-        text(x(q.total) + 8, y + 12, q.total + ' ns', { class: m[0] === mode ? 'ms-tot-t' : 'ms-lab' });
+        // on a phone the name above the bar on the left, the time above the bar's end
+        if (nw) y = YTOT + 20 + j * 38;
+        if (nw) text(L.LAB, y - 6, m[1], { class: m[0] === mode ? '' : 'ms-lab' });
+        else text(X0 - 10, y + 12, m[1], { 'text-anchor': 'end', class: m[0] === mode ? '' : 'ms-lab' });
+        rect(0, q.total, y, nw ? 14 : BAR, cls);
+        if (nw) text(x(q.total), y - 6, q.total + ' ns', { 'text-anchor': 'end', class: m[0] === mode ? 'ms-tot-t' : 'ms-lab' });
+        else text(x(q.total) + 8, y + 12, q.total + ' ns', { class: m[0] === mode ? 'ms-tot-t' : 'ms-lab' });
       });
+    } else if (nw) {
+      text(L.LAB, YTOT + 12, 'The totals of the three ways', { class: 'ms-lab' });
+      text(L.LAB, YTOT + 30, 'appear at the last step.', { class: 'ms-lab' });
     } else {
       text(20, YTOT + 12, 'The totals of the three ways appear at the last step.', { class: 'ms-lab' });
     }
@@ -141,5 +164,5 @@ BookAnim.define('misses', function (ctx) {
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
-  return { steps: function () { return plans[mode].total / STEP + 1; }, draw: draw, interval: 450 };
+  return { steps: function () { return plans[mode].total / STEP + 1; }, draw: draw, interval: 450, narrow: true };
 });

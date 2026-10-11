@@ -5,7 +5,14 @@
  */
 BookAnim.define('lines', function (ctx) {
   var D = ctx.data, IDX = D.idx, LEN = D.len, NL = IDX.length, BITS = 11, ONE = IDX.length, GROUP = 4;
-  var COLS = 16, CELL = 24, CH = 20, GX = [44, 500], GY = 64, W = 900, H = GY + 8 * CH + 66;
+  var COLS = 16, CH = 20, L;
+  // the two grids side by side, or on a phone (ctx.narrow) one above the other in 368 units, each with
+  // the current lookup's bits and its count below it
+  function layout(narrow) {
+    if (!narrow) return { W: 900, H: 64 + 8 * CH + 66, CELL: 24, GX: [44, 500], GY: [64, 64] };
+    return { W: 368, H: 548, CELL: 21, GX: [28, 28], GY: [24, 266] };
+  }
+  L = layout(ctx.narrow);
 
   function rev(v) { var r = 0; for (var i = 0; i < BITS; i++) r = r << 1 | (v >> i & 1); return r; }
   function bin(v) { var s = v.toString(2); while (s.length < BITS) s = '0' + s; return s; }
@@ -30,13 +37,13 @@ BookAnim.define('lines', function (ctx) {
   endBtn.type = 'button';
   endBtn.addEventListener('click', function () { ctx.go(STEPS - 1); });
 
-  var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'The 128 cache lines of the token table, twice: the lines that the token lookups of one page touch with the bitstream read most significant bit first, and with the index bit-reversed' }, ctx.stage);
+  var root = ctx.svg('svg', { viewBox: '0 0 ' + L.W + ' ' + L.H, role: 'img', 'aria-label': 'The 128 cache lines of the token table, twice: the lines that the token lookups of one page touch with the bitstream read most significant bit first, and with the index bit-reversed' }, ctx.stage);
   var cells = [ctx.svg('g', {}, root), ctx.svg('g', {}, root)];
   var g = ctx.svg('g', { 'font-size': 12 }, root);
   var cellEls = [[], []];
   [0, 1].forEach(function (side) {
     for (var c = 0; c < 128; c++) {
-      cellEls[side].push(ctx.svg('rect', { x: GX[side] + (c % COLS) * CELL, y: GY + Math.floor(c / COLS) * CH, width: CELL, height: CH }, cells[side]));
+      cellEls[side].push(ctx.svg('rect', { x: L.GX[side] + (c % COLS) * L.CELL, y: L.GY[side] + Math.floor(c / COLS) * CH, width: L.CELL, height: CH }, cells[side]));
     }
   });
 
@@ -56,7 +63,10 @@ BookAnim.define('lines', function (ctx) {
   }
 
   function draw(k) {
-    var n = upto(k), first = k <= ONE ? n - 1 : upto(k - 1), last = n - 1, side, i;
+    var n = upto(k), first = k <= ONE ? n - 1 : upto(k - 1), last = n - 1, side, i, nw = ctx.narrow;
+    L = layout(nw);
+    var CELL = L.CELL, GX = L.GX, W = L.W, H = L.H;
+    root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
     while (g.firstChild) g.removeChild(g.firstChild);
     var seen = [{}, {}], count = [0, 0], newIn = [0, 0], hits = [[], []];
     for (i = 0; i < n; i++) {
@@ -73,36 +83,43 @@ BookAnim.define('lines', function (ctx) {
     for (side = 0; side < 2; side++) {
       for (i = first; i < n && i >= 0 && k < STEPS - 1; i++) cur[side][entry(side, i) >> 4] = 1;
       if (n > 0 && k < STEPS - 1) code[side] = codeLines(side, last);
+      var GY = L.GY[side];
       for (var c = 0; c < 128; c++) {
+        var cx = GX[side] + (c % COLS) * CELL, cy = GY + Math.floor(c / COLS) * CH;
+        cellEls[side][c].setAttribute('x', cx); cellEls[side][c].setAttribute('y', cy);
+        cellEls[side][c].setAttribute('width', CELL);
         var cls = cur[side][c] ? 'ln-cur' : seen[side][c] ? 'ln-seen' : 'ln-free';
         cellEls[side][c].setAttribute('class', 'an-move ' + cls);
-        if (code[side][c]) ctx.svg('rect', { x: GX[side] + (c % COLS) * CELL + 1, y: GY + Math.floor(c / COLS) * CH + 1, width: CELL - 2, height: CH - 2, class: 'ln-code' }, g);
+        if (code[side][c]) ctx.svg('rect', { x: cx + 1, y: cy + 1, width: CELL - 2, height: CH - 2, class: 'ln-code' }, g);
         // how many of the lookups so far read this line
-        if (hits[side][c]) text(GX[side] + (c % COLS) * CELL + CELL / 2, GY + Math.floor(c / COLS) * CH + 14, hits[side][c], { 'text-anchor': 'middle', 'font-size': 11, class: cur[side][c] ? 'ln-on-cur' : '' });
+        if (hits[side][c]) text(cx + CELL / 2, cy + 14, hits[side][c], { 'text-anchor': 'middle', 'font-size': nw ? 12 : 11, class: cur[side][c] ? 'ln-on-cur' : '' });
       }
     }
 
     var titles = ['most significant bit first (seqlz)', 'least significant bit first (bits reversed)'];
     for (side = 0; side < 2; side++) {
-      var gx = GX[side];
-      text(gx, GY - 34, titles[side], { 'font-weight': 'bold' });
+      var gx = GX[side], gy = L.GY[side];
+      // the title above the grid; the lookup's bits above it, or on a phone below it
+      var ty = nw ? gy - 8 : gy - 34, by = nw ? gy + 8 * CH + 18 : gy - 14;
+      text(gx, ty, titles[side], { 'font-weight': 'bold' });
       if (n > 0 && k < STEPS - 1) {
         var e = entry(side, last);
-        text(gx, GY - 14, 'index ' + e + ' = ');
-        bits(gx + 7.2 * ('index ' + e + ' = ').length, GY - 14, e, LEN[last], side === 0);
-        text(gx + 7.2 * ('index ' + e + ' = ').length + 7.2 * 12, GY - 14, 'line ' + (e >> 4), { class: 'ln-cur-t' });
+        text(gx, by, 'index ' + e + ' = ');
+        bits(gx + 7.2 * ('index ' + e + ' = ').length, by, e, LEN[last], side === 0);
+        text(gx + 7.2 * ('index ' + e + ' = ').length + 7.2 * 12, by, 'line ' + (e >> 4), { class: 'ln-cur-t' });
       }
-      for (var r = 0; r < 8; r++) text(gx - 6, GY + r * CH + 14, r * COLS, { 'text-anchor': 'end', 'font-size': 11, class: 'ln-lab' });
-      text(gx, GY + 8 * CH + 24, 'lines touched: ' + count[side] + ' of 128', { 'font-size': 15, 'font-weight': 'bold' });
+      for (var r = 0; r < 8; r++) text(gx - (nw ? 4 : 6), gy + r * CH + 14, r * COLS, { 'text-anchor': 'end', 'font-size': nw ? 12 : 11, class: 'ln-lab' });
+      text(gx, gy + 8 * CH + (nw ? 40 : 24), 'lines touched: ' + count[side] + ' of 128', { 'font-size': 15, 'font-weight': 'bold' });
     }
-    // the legend
-    var ly = H - 16, lx = GX[0];
-    [['ln-cur', 'the line of this lookup'], ['ln-seen', 'touched before, and how often'], ['ln-code', 'lines this code can reach']].forEach(function (l) {
+    // the legend, on a phone one item per row
+    var ly = nw ? H - 54 : H - 16, lx = nw ? 8 : GX[0];
+    [['ln-cur', 'the line of this lookup'], ['ln-seen', 'touched before, and how often'], ['ln-code', 'lines this code can reach']].forEach(function (l, j) {
+      if (nw) ly = H - 54 + 22 * j;
       ctx.svg('rect', { x: lx, y: ly - 11, width: 14, height: 14, class: l[0] }, g);
       text(lx + 20, ly, l[1]);
-      lx += 46 + l[1].length * 7.2;
+      if (!nw) lx += 46 + l[1].length * 7.2;
     });
-    text(W - 20, H - 16, n + ' of ' + NL + ' lookups', { 'text-anchor': 'end', class: 'ln-lab' });
+    text(W - (nw ? 8 : 20), nw ? H - 54 : H - 16, n + ' of ' + NL + ' lookups', { 'text-anchor': 'end', class: 'ln-lab' });
     ctx.say(sentence(k, n, first, last, count, newIn));
   }
 
@@ -123,7 +140,7 @@ BookAnim.define('lines', function (ctx) {
   }
 
   return {
-    steps: STEPS, draw: draw, interval: 600,
+    steps: STEPS, draw: draw, interval: 600, narrow: true,
     // one token lookup per sequence, step k is lookup k
     link: {
       label: 'its token\u2019s cache line (chapter 3)',
