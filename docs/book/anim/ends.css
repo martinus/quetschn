@@ -1,0 +1,26 @@
+/* the encoder's two ends, anim/ends.js */
+.an-stage .en-free { fill: var(--paper); stroke: var(--rule); }
+.an-stage .en-none { fill: none; stroke: none; }
+.an-stage .en-hdr { fill: var(--paper); stroke: var(--muted); stroke-dasharray: 3 2; }
+.an-stage .en-lit { fill: var(--sheet); stroke: var(--muted); stroke-width: 0.6; }
+.an-stage .en-new { fill: var(--accent); stroke: var(--accent); }
+.an-stage .en-bs { fill: var(--sheet); stroke: var(--mark); stroke-width: 1; }
+.an-stage .en-newbs { fill: var(--mark); stroke: var(--mark); }
+.an-stage .en-part { fill: var(--paper); stroke: var(--mark); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.an-stage .en-over { fill: var(--why); stroke: var(--muted); stroke-dasharray: 2 2; }
+.an-stage .en-old { fill: var(--paper); stroke: var(--mark); stroke-dasharray: 4 3; opacity: 0.7; }
+.an-stage .en-ptr { stroke: var(--ink); stroke-width: 2; }
+.an-stage .en-brace { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.an-stage .en-bit0 { fill: var(--mark); }
+.an-stage .en-bit1 { fill: var(--accent); }
+.an-stage .en-bit2 { fill: var(--muted); }
+.an-stage .en-bit3 { fill: var(--ink); }
+.an-stage svg text.en-on { fill: var(--paper); font-weight: 600; }
+.an-stage svg text.en-bst { fill: var(--mark); font-weight: 600; }
+.an-stage svg text.en-muted, .an-stage svg text.en-idx { fill: var(--muted); }
+.an-stage svg text.en-bad { fill: var(--mark); font-weight: 600; }
+.an-stage svg text.en-title, .an-stage svg text.en-sub { font-weight: 600; }
+.an-stage svg text.en-ptrt { font-weight: 600; }
+.an-stage .en-u16 { fill: var(--paper); stroke: var(--accent); stroke-width: 1.6; }
+.an-stage svg text.en-u16t { fill: var(--accent); font-weight: 600; }
+.an-stage .en-ptr2 { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 2; }

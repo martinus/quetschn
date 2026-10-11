@@ -99,6 +99,12 @@ while the encoder works and after it is done:
 right below `p`. Byte 0 of the bitstream, the first one the decoder reads, is the last byte of `dst`,
 byte 1 the one before it, and so on. The two grow toward each other.
 
+Here is the same with a real page, the slab of task records from [chapter 16](#ch-trace), one sequence
+per step. The buttons give `dst` the two pages of zram, the smallest size the page fits into, and 1 byte
+less.
+
+@anim ends wide The buffer dst while seqlz compresses chapter 16's page with raw literals, after each sequence, then encoder_finish(). The numbers come from the real encoder, through anim/ends.c; the close-ups show the 16 bytes at each end.
+
 ::: why One pass, any buffer
 The obvious alternatives cost something. Two passes, the matcher into an array and then the encoder,
 were 6% slower ([chapter 9](#ch-matcher--emit)). Writing the bitstream into a second buffer needs more
@@ -306,6 +312,10 @@ the partial byte `0x22` at `p - 1`, and flush 4 completes it. The page's bitstre
 22`, which is what `seqlz_compress()` writes for this page: 817 bytes with raw literals, of which 258 are
 the bitstream for 511 sequences.
 
+The same, put by put and flush by flush, for the first sequences of chapter 16's page:
+
+@anim accum wide The accumulator acc, the value each enc_put() appends or the word enc_flush() stores, and the last bytes of dst, for the first 4 sequences of chapter 16's page. The values come from the encoder's own helpers, through anim/accum.c, which checks them against encode_emit().
+
 **The shift count.** `(64U - e->cnt) & 63U` is 64 - `cnt` for `cnt` from 1 to 63. For `cnt` 0, 64 - 0 would
 be a shift by 64, undefined, and the mask makes it 0. That happens: a sequence with an `ll` value and
 without an `ml` value flushes twice, and the second time there may be no bits at all. Then the whole old
@@ -499,6 +509,9 @@ memory. With the smallest `dst` each of the 22 500 made-up pages above would tak
 as with two pages.
 
 Line 273 returns the length of the page: the u16, the literals, the bitstream.
+
+The last steps of the [animation above](#ch-encoder--layout) do all of this for chapter 16's page; its
+smallest `dst` takes the in-place path.
 
 `encoder_finish()` is `static` but not inline. It runs once per page, so the call costs nothing that
 matters, and it is called from both `compress_page()` and `encode_raw()`.
