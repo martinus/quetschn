@@ -114,6 +114,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [copy_match() without its dead branch: within what the code's place moves, kept](#copy_match-without-its-dead-branch-within-what-the-codes-place-moves-kept)
 - [Five simplifications measured in the VM and on the phone: the literal streams as arrays kept, four not](#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)
 - [Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept](#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept)
+- [The token table in 10 bits again: the A55's cold reads 1.3 µs faster, x86-64 2% to 4% slower, not kept](#the-token-table-in-10-bits-again-the-a55s-cold-reads-13-µs-faster-x86-64-2-to-4-slower-not-kept)
 - [seqlz's decoder for an in-order core: 15% fewer instructions, 0.7 to 0.8 µs less at cold p99 on the A55, kept](#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
@@ -5156,6 +5157,58 @@ Within `a` and `a2` but for the A76's cold reads of coded pages, 7.72 to 7.92 µ
 against 7.21 to 7.84. The 32 lines no longer prefetched did not make the A55's cold reads faster: they
 spread by 1 to 2 µs over the rounds and decide nothing. So 0.2 to 0.3% more memory on every page buys
 two tables fewer in the format, and no time.
+
+## The token table in 10 bits again: the A55's cold reads 1.3 µs faster, x86-64 2% to 4% slower, not kept
+
+*[Six choices](#six-choices-made-on-the-pc-measured-on-the-phone-the-token-table-and-the-prefetches-matter-the-rest-does-not),
+item 1, again on the decoder of 11th October (#181): the token table with codes of at most 10 bits
+instead of 11, 4 KiB instead of 8, trained from the same counts. Since #152 every core prefetches the
+token table, so 10 bits is 64 lines less to load on every core. The pages are 1.6 to 5.4 bytes larger,
+0.2% to 0.4%. On the Mi 9T's A55 the cold reads of coded pages are 1.3 µs faster, about 0.4 µs per page
+written; on the A76 they are within two copies of `main`, where on 5th October they were 2.0 to 2.7 µs
+faster: the bit order of "The sequences' bitstream most significant bit first" put a code's entries in
+one range since then. In the kernel VM on x86-64 swap-ins are 2% to 4% slower. Not kept, 11 bits stay.*
+Code: not merged, `SEQLZ_TOKEN_BITS` 10 and `TOKEN_BITS = 10` in `gen-seqlz-tables.py`.
+
+zsmalloc cost in bytes per page, `seqlz-fast-lit` / `seqlz-fast`, all pages:
+
+| dump | 11 bits | 10 bits |
+| --- | --- | --- |
+| first desktop dump | 1259.9 / 1449.9 | 1264.5 / 1454.5 |
+| second desktop dump | 1239.6 / 1403.4 | 1245.0 / 1408.7 |
+| first phone dump | 705.4 / 746.5 | 707.0 / 748.1 |
+| second phone dump | 896.9 / 950.3 | 899.3 / 952.8 |
+
+**Kernel VM**, `tools/zram-vm/run.sh` at `ee383e8` with `VARIANTS`, `MODE=swap`, the backend's
+prefetch, gcc 16.2.1, CPU 2 at a fixed 4.5 GHz, boost off, 3 boots, 20 000 pages per dump; `t10` the
+variant, `same` the same source as `seqlz` again. The mean over the boots minus `seqlz`'s or
+`seqlz-lit`'s, in µs, swap-out / warm swap-in / flushed swap-in, from `tools/zram-vm/variants.py`:
+
+| | first desktop dump | second phone dump |
+| --- | --- | --- |
+| `t10`, raw | +0.100 / +0.154 / +0.164 | +0.081 / +0.065 / +0.074 |
+| `t10`, coded | +0.121 / +0.149 / +0.165 | +0.069 / +0.076 / +0.083 |
+| `same`, raw | +0.017 / -0.010 / +0.010 | +0.004 / +0.016 / +0.015 |
+| `same`, coded | +0.016 / +0.004 / -0.001 | +0.019 / +0.009 / +0.013 |
+
+More tokens take the escape, a second lookup, and the out-of-order core gets nothing from the 64
+prefetches less.
+
+**The Mi 9T**, `tools/zram-phone/run.sh` with `BUS=1`, `COOL=45`, 3 rounds, 20 000 pages of the second
+phone dump, NDK r21e's clang 9; `ma` and `mb` two modules of `main`, `tb` 10 bits. Means in µs, write /
+warm read / cold read:
+
+| module | A55, raw | A55, coded | A76, raw | A76, coded |
+| --- | --- | --- | --- | --- |
+| `ma`, `main` | 28.72 / 11.22 / 28.83 | 31.70 / 12.16 / 31.38 | 10.99 / 3.87 / 7.27 | 12.01 / 4.28 / 7.93 |
+| `mb`, `main` again | 28.61 / 11.35 / 29.82 | 31.72 / 12.32 / 31.21 | 10.96 / 3.88 / 7.21 | 11.99 / 4.27 / 7.43 |
+| `tb`, 10 bits | 28.85 / 11.34 / 27.86 | 31.77 / 12.26 / 29.95 | 11.05 / 4.04 / 6.86 | 12.09 / 4.44 / 7.61 |
+
+On the A55 the coded pages read cold in 29.39 to 30.31 µs over the rounds, `ma` and `mb` in 30.49 to
+32.03: write + 0.34 × cold read is 41.95 against 42.37 and 42.33 µs, 0.4 µs for 2.4 bytes more on this
+dump. On the A76 the warm reads are 0.16 µs slower, the cold reads between the two copies of `main`.
+So 10 bits pays only on the in-order core, and costs bytes on every page and time on the others; a
+format change for that is not worth it.
 
 ## Five simplifications measured in the VM and on the phone: the literal streams as arrays kept, four not
 
