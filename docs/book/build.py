@@ -19,9 +19,11 @@ Directives, each on a line of its own, outside fenced code:
       an animation, anim/<name>.js on anim/core.js; if anim/<name>.c exists, it is built with src/
       and its output, JSON, is the animation's data. "wide" lets it use the width beside the column
 
-  @stepper decode
-      the step-through of seqlz_decode(): stepper/instrument.py and stepper/trace.c record the
-      real function decoding the pages, stepper/stepper.js plays it; needs a C compiler
+  @stepper decode | match
+      the step-through of seqlz_decode() or seqlz_match_page(): stepper/instrument.py puts hooks
+      into a copy of the real function, stepper/trace.c or trace_match.c records it on the pages,
+      stepper/stepper.js or match.js plays it; needs a C compiler. The C programs of anim/ and
+      stepper/ get their pages from pages.h
 
 $tex$ in a line is a formula in the text, outside code spans; \$ is a dollar sign. KaTeX renders
 them at build time (math.mjs, `npm install` in docs/book first), so the page needs no script.
@@ -29,7 +31,8 @@ them at build time (math.mjs, `npm install` in docs/book first), so the page nee
 Fenced code (```c, ```text, ```python) is highlighted the same way, without
 line numbers. Raw HTML (figures with inline SVG) passes through.
 
-python3 build.py [--check]  --check fails if a line of src/ is in no listing
+python3 build.py [--check]  --check fails if a line of src/ is in no listing, an id is twice on
+                            the page, or a link goes to an id that is not
 """
 import base64
 import html
@@ -38,6 +41,8 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 import markdown
 from pygments.lexers import get_lexer_by_name
@@ -155,38 +160,44 @@ STEP_BUTTONS = [("first", "To the start"), ("prevseq", "Previous sequence (shift
 
 
 STEPPER_CSS = [False]
+SRC_C = ("codes", "compress", "decompress", "default_tables", "lit_sets")
+
+
+def run_c(main, include_dirs=(), link=SRC_C):
+    """main built with the codec of src/ and run, its stdout. A file of src/ that main #includes, to
+    reach its static functions, is not linked a second time. Variables start at 0: the step-throughs
+    record theirs before the function first sets them."""
+    text = main.read_text()
+    srcs = [str(REPO / f"src/seqlz_{n}.c") for n in link if f'#include "seqlz_{n}.c"' not in text]
+    incs = [a for d in [*include_dirs, HERE, REPO / "src"] for a in ("-I", str(d))]
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["cc", "-O1", "-ftrivial-auto-var-init=zero", *incs, str(main), *srcs, "-o", f"{tmp}/a"],
+                       check=True)
+        return subprocess.run([f"{tmp}/a"], capture_output=True, text=True, check=True).stdout
 
 
 def run_trace(kind):
     """the trace of the real function on the step-through's pages, its file, first and last line"""
-    import tempfile
-    sd = HERE / "stepper"
+    k = STEPPERS[kind]
     with tempfile.TemporaryDirectory() as tmp:
-        if kind == "decode":
-            path = "src/seqlz_decompress.c"
-            lines = subprocess.run([sys.executable, str(sd / "instrument.py"), str(REPO / path), f"{tmp}/dec_inst.c"],
-                                   capture_output=True, text=True, check=True).stdout.split()
-            srcs = [str(REPO / f"src/seqlz_{n}.c") for n in ("codes", "compress", "default_tables", "lit_sets")]
-            subprocess.run(["cc", "-O1", "-I", str(REPO / "src"), "-I", tmp, str(sd / "trace.c"), *srcs,
-                            "-o", f"{tmp}/trace"], check=True)
-        else:
-            path = "src/page_lz.h"
-            lines = subprocess.run([sys.executable, str(sd / "instrument.py"), "match", str(REPO / path),
-                                    f"{tmp}/page_lz.h"], capture_output=True, text=True, check=True).stdout.split()
-            # the copy of page_lz.h comes first on the include path
-            subprocess.run(["cc", "-O1", "-I", tmp, "-I", str(REPO / "src"), str(sd / "trace_match.c"),
-                            "-o", f"{tmp}/trace"], check=True)
-        out = subprocess.run([f"{tmp}/trace"], capture_output=True, text=True, check=True).stdout
-    return out, path, int(lines[0]), int(lines[1])
+        lines = subprocess.run([sys.executable, str(HERE / "stepper" / "instrument.py"), kind, str(REPO / k["src"]),
+                                f"{tmp}/{k['copy']}"], capture_output=True, text=True, check=True).stdout.split()
+        # the instrumented copy comes first on the include path; src/ files that would include it
+        # instead of the original are not linked
+        out = run_c(HERE / "stepper" / k["trace"], [tmp], k["link"])
+    return out, k["src"], int(lines[0]), int(lines[1])
 
 
 STEPPERS = {
     "decode": {
+        "src": "src/seqlz_decompress.c", "copy": "dec_inst.c", "trace": "trace.c",
+        "link": ("codes", "compress", "default_tables", "lit_sets"),
         "pages": [("ab", "ab \u00d7 2048, 9 bytes"), ("slab", "chapter 16\u2019s page, 796 bytes")],
         "label": "seqlz_decode() step by step", "fn": "seqlz_decode()", "js": "stepper.js",
         "what": "decoding two pages", "seq": "a sequence",
     },
     "match": {
+        "src": "src/page_lz.h", "copy": "page_lz.h", "trace": "trace_match.c", "link": (),
         "pages": [("pointers", "512 pointers"), ("slab", "chapter 16\u2019s page")],
         "label": "seqlz_match_page() step by step", "fn": "seqlz_match_page()", "js": "match.js",
         "what": "finding the sequences of two pages", "seq": "the next sequence emitted",
@@ -213,7 +224,7 @@ def render_stepper(what, where):
     if what not in STEPPERS:
         sys.exit(f"{where}: unknown stepper {what}")
     k = STEPPERS[what]
-    trace, path, a, b = run_trace(what)
+    trace, path, a, b = PREBUILT[("stepper", what)].result() if ("stepper", what) in PREBUILT else run_trace(what)
     hl = highlight_lines("\n".join(src_lines(path)[a - 1:b]), "c")
 
     def only_comment(h):
@@ -253,19 +264,29 @@ ANIM_CORE = [False]
 
 def anim_data(name):
     """the JSON that anim/<name>.c prints, built with the codec of src/, or None"""
-    import tempfile
     c = HERE / "anim" / f"{name}.c"
     if not c.exists():
         return None
-    # a file of src/ that the animation includes, to reach its static functions, is not linked again
-    text = c.read_text()
-    srcs = [str(REPO / f"src/seqlz_{n}.c") for n in ("codes", "compress", "decompress", "default_tables", "lit_sets")
-            if f'#include "seqlz_{n}.c"' not in text]
-    with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run(["cc", "-O1", "-I", str(REPO / "src"), str(c), *srcs, "-o", f"{tmp}/a"], check=True)
-        out = subprocess.run([f"{tmp}/a"], capture_output=True, text=True, check=True).stdout
+    out = run_c(c)
     json.loads(out)  # fails here, not in the browser
     return out
+
+
+# the builds of the figures' data, started all at once by build(), see prebuild()
+PREBUILT = {}
+
+
+def prebuild(texts):
+    """starts the C builds that the chapters' @anim and @stepper lines need, in parallel: each
+    compiles src/ again, and one after another they took 2 of the build's 3 seconds"""
+    pool = ThreadPoolExecutor()
+    for text in texts:
+        for m in re.finditer(r"^@anim\s+(\w[\w-]*)", text, re.M):
+            PREBUILT.setdefault(("anim", m.group(1)), pool.submit(anim_data, m.group(1)))
+        for m in re.finditer(r"^@stepper\s+(\w+)\s*$", text, re.M):
+            if m.group(1) in STEPPERS:
+                PREBUILT.setdefault(("stepper", m.group(1)), pool.submit(run_trace, m.group(1)))
+    pool.shutdown(wait=False)
 
 
 def render_anim(args, where):
@@ -282,7 +303,7 @@ def render_anim(args, where):
         out += f'<style>{(d / "core.css").read_text()}</style><script>{(d / "core.js").read_text()}</script>'
     if (d / f"{name}.css").exists():
         out += f'<style>{(d / f"{name}.css").read_text()}</style>'
-    data = anim_data(name)
+    data = PREBUILT[("anim", name)].result() if ("anim", name) in PREBUILT else anim_data(name)
     fid = f"anim-{name}"
     out += (f'<figure class="anim{" wide" if wide else ""}" id="{fid}" data-anim="{name}" tabindex="-1">'
             f'<div class="an-bar"></div><p class="an-say" aria-live="polite"></p><div class="an-stage"></div>'
@@ -326,15 +347,29 @@ CODE_SPAN = re.compile(r"(``.*?``|`[^`]*`)")
 INLINE_MATH = re.compile(r"(?<![\\$\w])\$(?=\S)(.+?)(?<=[^\s\\])\$(?![\w$])")
 
 
-def katex_css():
-    """KaTeX's stylesheet with its fonts in it, woff2 only: the page loads nothing from elsewhere"""
+def katex_css(page):
+    """KaTeX's stylesheet with its fonts in it, woff2 only, and only the font families that page
+    uses: all 20 were 282 KiB of base64, which does not compress, for 2 or 3 families in use"""
     dist = HERE / "node_modules" / "katex" / "dist"
     css = (dist / "katex.min.css").read_text()
+    used_classes = set(c for attr in re.findall(r'class="([^"]+)"', page) for c in attr.split())
+    # KaTeX_Main is the font of .katex itself; the others come with a class of the formula's spans
+    used = {"KaTeX_Main"}
+    for sel, body in re.findall(r"([^{}]+)\{([^{}]*font-family:[^{}]*)\}", css):
+        fams = set(re.findall(r"KaTeX_\w+", body))
+        if fams and set(re.findall(r"\.([\w-]+)", sel)) - {"katex"} & used_classes:
+            used |= fams
 
-    def font(m):
-        data = base64.b64encode((dist / "fonts" / f"{m.group(1)}.woff2").read_bytes()).decode()
-        return f'src:url(data:font/woff2;base64,{data}) format("woff2")'
-    return re.sub(r'src:url\(fonts/([\w-]+)\.woff2\) format\("woff2"\)[^;}]*', font, css)
+    def face(m):
+        fam = re.search(r'font-family:"?(KaTeX_\w+)', m.group(0)).group(1)  # SansSerif's is quoted
+        if fam not in used:
+            return ""
+        return re.sub(r'src:url\(fonts/([\w-]+)\.woff2\) format\("woff2"\)[^;}]*',
+                      lambda f: 'src:url(data:font/woff2;base64,'
+                                + base64.b64encode((dist / "fonts" / f"{f.group(1)}.woff2").read_bytes()).decode()
+                                + ') format("woff2")', m.group(0))
+    return re.sub(r"@font-face\{[^}]*\}", face, css)
+
 
 
 def math_line(line, where):
@@ -442,8 +477,19 @@ def slug(s):
     return re.sub(r"[\s]+", "-", s).strip("-")
 
 
+# what --check fails on besides lines of src/ that are in no listing
+WARNINGS = []
+
+
+def warn(msg):
+    WARNINGS.append(msg)
+    print(f"warning: {msg}")
+
+
 def build():
     parts_html, toc = [], []
+    prebuild((HERE / "chapters" / ch["file"]).read_text() for part in BOOK["parts"] for ch in part["chapters"]
+             if (HERE / "chapters" / ch["file"]).exists())
     ids = set()
     chap_no = 0
     for part in BOOK["parts"]:
@@ -490,7 +536,7 @@ def build():
             body = re.sub(r"<(h[234])([^>]*)>(.*?)</\1>", add_id, body, flags=re.S)
             for im in re.finditer(r'id="([^"]+)"', body):
                 if im.group(1) in ids and not im.group(1).startswith("L-"):
-                    print(f"warning: duplicate id {im.group(1)} in {ch['file']}")
+                    warn(f"duplicate id {im.group(1)} in {ch['file']}")
                 ids.add(im.group(1))
             subs = []
             for hm in re.finditer(r'<h2 id="([^"]+)"[^>]*>(.*?)</h2>', body, re.S):
@@ -503,7 +549,7 @@ def build():
     bad = sorted({m.group(1) for m in re.finditer(r'href="#([^"]+)"', allhtml)} - ids
                  - {p["id"] for p in BOOK["parts"] if "id" in p})
     for b in bad:
-        print(f"warning: link to missing id #{b}")
+        warn(f"link to missing id #{b}")
     toc_html = []
     for part, items in toc:
         if part.get("title"):
@@ -517,7 +563,7 @@ def build():
     if git("status", "--porcelain", "--", "src"):
         print("warning: src/ has changes that are not committed, the listings show them")
     tpl = (HERE / "template.html").read_text()
-    out = (tpl.replace("{{KATEX_CSS}}", katex_css())
+    out = (tpl.replace("{{KATEX_CSS}}", katex_css(allhtml))
               .replace("{{TOC}}", "\n".join(toc_html))
               .replace("{{BODY}}", allhtml)
               .replace("{{COMMIT}}", commit))
@@ -582,5 +628,5 @@ def check_coverage():
 if __name__ == "__main__":
     build()
     ok = check_coverage()
-    if "--check" in sys.argv and not ok:
+    if "--check" in sys.argv and (not ok or WARNINGS):
         sys.exit(1)

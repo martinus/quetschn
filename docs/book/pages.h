@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT OR GPL-2.0-only
+/*
+ * The made-up pages the book's figures are built on, one copy for all of them: the C programs of
+ * anim/ and stepper/ include it, and build.py puts docs/book on their include path. The chapters
+ * quote numbers of these pages (796 bytes, 180 sequences, 674 literals), so a change here changes
+ * every figure and those numbers at once.
+ */
+#ifndef BOOK_PAGES_H
+#define BOOK_PAGES_H
+
+#include <stdio.h>
+#include <string.h>
+
+#include "seqlz_internal.h"
+
+/* n bytes of v, little endian */
+static inline void le(u8* p, unsigned long long v, unsigned int n) {
+    while (n--) {
+        *p++ = (u8)v;
+        v >>= 8;
+    }
+}
+
+/* chapter 16's page: a slab of 48 task records, a text after them, zeros up to the end */
+static inline void slab_page(u8* p) {
+    static const char* const names[] = {"kworker/0:1", "bash", "systemd", "sshd", "kworker/1:2", "cron"};
+    static const char* const text = "zram stores each page in memory, compressed on its own. A page\n"
+                                    "that comes back is decompressed while the program waits for it,\n"
+                                    "so reading must be quick. Writing happens when memory runs low.\n"
+                                    "Most pages hold pointers, small numbers and short strings, with\n"
+                                    "many zero bytes between them. The compressor finds the bytes\n"
+                                    "that repeat and writes a copy instead; the other bytes stay as\n"
+                                    "literals. Text like this has few repeats but uses few letters,\n"
+                                    "and a Huffman code gives the frequent ones short codes: e, t,\n"
+                                    "a, o and the space take four or five bits, rare ones up to ten.\n"
+                                    "Every table is fixed, so a page carries none of its own.\n";
+    unsigned int i;
+
+    memset(p, 0, SEQLZ_PAGE);
+    memcpy(p, "TASKSLAB", 8);
+    le(p + 8, 48, 4);
+    le(p + 12, 32, 4);
+    for (i = 0; i < 48; i++) {
+        u8* r = p + 64 + 32 * i;
+
+        le(r, 0xffff888104a3c040ULL + 32 * ((i * 5 + 1) % 48), 8);
+        le(r + 8, 1000 + 3 * i, 4);
+        le(r + 12, i % 3, 2);
+        le(r + 14, 120, 2);
+        strcpy((char*)r + 16, names[i % 6]);
+    }
+    memcpy(p + 64 + 32 * 48, text, strlen(text));
+}
+
+/* chapter 9's page: 512 pointers of 8 bytes */
+static inline void pointer_page(u8* p) {
+    unsigned int i;
+
+    for (i = 0; i < 512; i++)
+        le(p + 8 * i, 0x7f1234560010ULL + 16ULL * i, 8);
+}
+
+/* chapter 4's page: ab 2048 times */
+static inline void ab_page(u8* p) {
+    unsigned int i;
+
+    for (i = 0; i < SEQLZ_PAGE; i++)
+        p[i] = i & 1 ? 'b' : 'a';
+}
+
+/* "name":[n bytes as numbers], for the JSON the programs print */
+static inline void array(const char* name, const u8* p, unsigned int n) {
+    unsigned int i;
+
+    printf("\"%s\":[", name);
+    for (i = 0; i < n; i++)
+        printf("%s%u", i ? "," : "", p[i]);
+    printf("]");
+}
+
+#endif

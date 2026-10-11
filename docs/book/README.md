@@ -23,7 +23,9 @@ python3 docs/book/lint.py            # dashes and banned words in the prose
   `seqlz_match_page()`, on the same line, `stepper/trace.c` and `trace_match.c` run the copy on the
   pages, and `stepper.js` and `match.js` play the trace. Both need a C compiler.
 - `build.py --check` fails if a non-blank line of `src/` (the generated `.inc` tables aside) is in no
-  listing, and warns about links to ids that do not exist.
+  listing, if an id is on the page twice, or if a link goes to an id that does not exist.
+- After a change of `src/`, `remap.py <commit>` moves the listings and the line numbers in the prose
+  from `src/` at that commit to `src/` as it is; read what it prints before `--write`.
 - `STYLE.md` is the brief the chapters were written to, `REVIEW.md` the one they were checked with.
 
 The prose quotes line numbers and numbers of the code as it was when it was written; a change of

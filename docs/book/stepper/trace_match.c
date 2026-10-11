@@ -30,6 +30,7 @@ static void step(int line,
 #define STEP_A() step(__LINE__, pos, anchor, last, h, cand, cand_bytes, (u32)v, -1, -1, 0, 0)
 #define STEP_B() step(__LINE__, pos, anchor, last, h, cand, cand_bytes, cur, (int)rep_hit, (int)cand_hit, m, len)
 #include "page_lz.h"
+#include "pages.h"
 
 /*
  * One step: the line and the variables. The 4 bytes at pos and at cand, and the slot of pos - 2 that
@@ -77,52 +78,6 @@ static void emit(void* ctx, const u8* literals, unsigned int ll, unsigned int ml
         r->out[r->n++] = literals[k];
     for (k = 0; k < ml && r->n < SEQLZ_PAGE; k++, r->n++)
         r->out[r->n] = r->n >= off ? r->out[r->n - off] : 0;
-}
-
-static void le(u8* p, unsigned long long v, unsigned int n) {
-    while (n--) {
-        *p++ = (u8)v;
-        v >>= 8;
-    }
-}
-
-/* chapter 9's page: 512 pointers of 8 bytes */
-static void pointer_page(u8* p) {
-    unsigned int i;
-
-    for (i = 0; i < 512; i++)
-        le(p + 8 * i, 0x7f1234560010ULL + 16ULL * i, 8);
-}
-
-/* chapter 16's page, as in trace.c */
-static void slab_page(u8* p) {
-    static const char* const names[] = {"kworker/0:1", "bash", "systemd", "sshd", "kworker/1:2", "cron"};
-    static const char* const text = "zram stores each page in memory, compressed on its own. A page\n"
-                                    "that comes back is decompressed while the program waits for it,\n"
-                                    "so reading must be quick. Writing happens when memory runs low.\n"
-                                    "Most pages hold pointers, small numbers and short strings, with\n"
-                                    "many zero bytes between them. The compressor finds the bytes\n"
-                                    "that repeat and writes a copy instead; the other bytes stay as\n"
-                                    "literals. Text like this has few repeats but uses few letters,\n"
-                                    "and a Huffman code gives the frequent ones short codes: e, t,\n"
-                                    "a, o and the space take four or five bits, rare ones up to ten.\n"
-                                    "Every table is fixed, so a page carries none of its own.\n";
-    unsigned int i;
-
-    memset(p, 0, SEQLZ_PAGE);
-    memcpy(p, "TASKSLAB", 8);
-    le(p + 8, 48, 4);
-    le(p + 12, 32, 4);
-    for (i = 0; i < 48; i++) {
-        u8* r = p + 64 + 32 * i;
-
-        le(r, 0xffff888104a3c040ULL + 32 * ((i * 5 + 1) % 48), 8);
-        le(r + 8, 1000 + 3 * i, 4);
-        le(r + 12, i % 3, 2);
-        le(r + 14, 120, 2);
-        strcpy((char*)r + 16, names[i % 6]);
-    }
-    memcpy(p + 64 + 32 * 48, text, strlen(text));
 }
 
 int main(void) {
