@@ -128,6 +128,45 @@ jobs:
       - run: tools/seqlz-ref/check.sh
       - run: tools/check-links.py
 
+  # The book docs/book/ from src/ as it is: --check fails on a line of src/ in no listing and on a link to
+  # an id the page does not have, and the C programs of its figures check themselves against the codec.
+  # The page it builds goes to GitHub Pages from main, see the job pages.
+  book:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the listings link to the last commit that changed src/
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pip install markdown pygments
+      - run: cd docs/book && npm ci
+      - run: python3 docs/book/build.py --check
+      - run: python3 docs/book/lint.py
+      - run: mkdir _site && cp docs/book/seqlz-line-by-line.standalone.html _site/index.html
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  # The book's page on GitHub Pages, from main only. Not in ci-ok: it publishes, it checks nothing.
+  pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: book
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5
+
   # The codec as the kernel would have it, tools/kernel-port/: written into the tree of KERNEL_COMMIT,
   # the codec, its KUnit tests and zram built with W=1 without a warning, kernel-doc without one, on
   # x86-64 with gcc, and with clang on arm64, 32-bit arm and big-endian s390, all with 4 KiB pages, the
@@ -164,7 +203,7 @@ jobs:
   # counts as passed, so this needs if: always() and has to look at every result itself.
   ci-ok:
     if: always()
-    needs: [format, test, fuzz, same-bytes, docs, kernel-port]
+    needs: [format, test, fuzz, same-bytes, docs, book, kernel-port]
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -173,4 +212,5 @@ jobs:
           test "${{ needs.fuzz.result }}" = success
           test "${{ needs.same-bytes.result }}" = success
           test "${{ needs.docs.result }}" = success
+          test "${{ needs.book.result }}" = success
           test "${{ needs.kernel-port.result }}" = success
