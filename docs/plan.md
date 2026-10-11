@@ -910,7 +910,7 @@ tools/                      see tools/README.md
   swap-fault/                 the whole page fault on a running Linux, e.g. the phone
   phone-apps/                 the app launch test on the phone
   seqlz-bound/, seqlz-worst/  bits per field against their entropy; the worst case
-  seqlz-viz/                  the two pages that show seqlz step by step
+  seqlz-compress/             compresses page files with src/, for checking numbers in the docs
 docs/                       this plan, the format, how seqlz works, measuring, explored designs, plots
 .github/workflows/ci.yml    gcc and clang, ASan and UBSan, arm64, s390x and 32-bit, fuzz smoke, format, docs
 ```

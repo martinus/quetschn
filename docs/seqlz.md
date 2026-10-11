@@ -26,10 +26,8 @@ The code is in [`src/seqlz_compress.c`](../src/seqlz_compress.c) with the matche
   [What makes code slow on a CPU](#what-makes-code-slow-on-a-cpu), and [How seqlz stores a page](#how-seqlz-stores-a-page)
   up to and including [The literals](#the-literals-one-table-per-page-in-8-streams). The rest, and the parts
   folded away behind a click, are for readers who want to know why each detail is the way it is.
-* **Watch it.** [seqlz, bit by bit](seqlz-bit-by-bit.html) decodes three real pages one step at a
-  time, every bit coloured by what it means; [seqlz, compressed](seqlz-compressed.html) compresses
-  them, from the first position the matcher tries to the header. GitHub shows only their source:
-  download a file and open it in a browser.
+* **Watch it.** [The book](https://martin.ankerl.com/quetschn/) runs the real decoder and matcher
+  on made-up pages one statement at a time, with what each sequence costs against `lz4`'s format.
 * **Two names, one format.** `seqlz-fast` stores the leftover bytes of a page as they are,
   `seqlz-fast-lit` also compresses them. Both write the same format, and one decoder reads both.
   Numbers are for `seqlz-fast-lit` unless they say otherwise.

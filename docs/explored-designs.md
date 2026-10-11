@@ -4681,8 +4681,8 @@ literals gets the same coded page as in two pages. That fails with `main`'s `cod
 writes 4101 bytes instead of 3244, and with the coder reading the raw literals from the buffer it writes
 into, which breaks 10 test cases. The doctest of #129, every buffer size from 0 to a page and 64 bytes
 under ASan, and the roundtrip fuzz target, which compresses into one page, pass as they are.
-[seqlz, compressed](seqlz-compressed.html) draws both buffers to scale at every step, with what moves
-where.
+The book draws dst at every step of chapter 16's page, with both ends and the room check
+([chapter 10, "Literals from the front, bits from the back"](https://martin.ankerl.com/quetschn/#ch-encoder--layout)).
 
 ## The bitstream copied once, behind the literals raw or coded: writes up to 0.3 µs slower in the VM and 0.8 µs on the A55, not kept
 

@@ -595,7 +595,8 @@ the decoder against the reference, nothing found
 Below, `seqlz_decode()` runs on two pages, one statement at a time: the format's example of
 [chapter 4](#ch-format--example), and the made-up page of [chapter 16](#ch-trace), which has coded
 literals and takes the fast path most of the time. It is the function of this chapter, recorded while
-it decoded the pages when the book was built, so every number in it is what the code computes. Step
+it decoded the pages when the book was built, so every number in it is what the code computes. For
+each sequence it also shows what it costs in bits, against the same sequence in `lz4`'s format. Step
 with the buttons or the arrow keys, and with shift from one sequence to the next.
 
 @stepper decode
