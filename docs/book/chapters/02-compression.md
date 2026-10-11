@@ -129,43 +129,6 @@ copy has just written.
 
 @anim overlap A match of 10 bytes at offset 1, 2 or 3, one byte per step. The byte loop copies what it wrote itself a moment before; memmove() copies the source as it was before the copy, and gets bytes that were not written yet.
 
-The same as a picture:
-
-<figure class="diagram">
-<div class="scroll">
-<svg viewBox="0 0 720 150" role="img" aria-label="The output ab followed by a match at offset 2: each copied byte comes from 2 places before it, which the copy wrote itself.">
-  <g fill="none" stroke="currentColor" stroke-width="1">
-    <rect x="60" y="60" width="100" height="40" class="fill-sheet"/>
-    <path d="M110,60 V100"/>
-  </g>
-  <g class="acc" fill="none" stroke="currentColor" stroke-width="1">
-    <rect x="160" y="60" width="300" height="40" class="fill-acc" fill-opacity="0.25"/>
-    <path d="M210,60 V100 M260,60 V100 M310,60 V100 M360,60 V100 M410,60 V100"/>
-  </g>
-  <g fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3">
-    <rect x="460" y="60" width="200" height="40" class="fill-paper"/>
-  </g>
-  <g font-size="13" text-anchor="middle">
-    <text x="85" y="85">a</text><text x="135" y="85">b</text>
-    <text x="185" y="85">a</text><text x="235" y="85">b</text><text x="285" y="85">a</text>
-    <text x="335" y="85">b</text><text x="385" y="85">a</text><text x="435" y="85">b</text>
-    <text x="560" y="85" font-size="11">... to byte 4095</text>
-  </g>
-  <g class="acc" fill="none" stroke="currentColor" stroke-width="1.2">
-    <path d="M85,58 C85,30 185,30 185,58"/><path d="M135,58 C135,22 235,22 235,58"/>
-    <path d="M185,58 C185,30 285,30 285,58"/><path d="M235,58 C235,22 335,22 335,58"/>
-    <path d="M285,58 C285,30 385,30 385,58"/><path d="M335,58 C335,22 435,22 435,58"/>
-  </g>
-  <g font-size="11">
-    <text x="60" y="120">literals</text>
-    <text x="160" y="120" class="acc">match, offset 2: byte i is a copy of byte i - 2</text>
-    <text x="160" y="138">the copy reads bytes it wrote a step before</text>
-  </g>
-</svg>
-</div>
-<figcaption>An overlapping match: with offset 2 every byte comes from 2 bytes back, so 2 literals and one match make a page of ab repeated.</figcaption>
-</figure>
-
 With offset 1 a match repeats the last byte: a literal `00` and a match of 4095 at offset 1 is a page
 of zeros, and that is how runs of one byte compress in every LZ format. This is why the decoder above
 copies one byte at a time, front to back. A block copy gives other bytes: `memcpy()` with overlapping
@@ -289,54 +252,6 @@ Each symbol's code is the path from the root to its leaf, 0 for one branch and 1
 | 5 | the two that are left | $41.11 + 58.89$ | 100 |
 
 @anim huffman The table above, one join per two steps, then the codes read off the tree. The shares are the ones of the offset classes in the training counts; the average is computed from them.
-
-The same as a picture:
-
-<figure class="diagram">
-<div class="scroll">
-<svg viewBox="0 0 720 280" role="img" aria-label="The Huffman tree of the six offset classes: classes 0 and 4 at depth 2, classes 1, 2, 3 and 5 at depth 3.">
-  <g fill="none" stroke="currentColor" stroke-width="1.2">
-    <line x1="360" y1="36" x2="200" y2="86"/><line x1="360" y1="36" x2="520" y2="86"/>
-    <line x1="200" y1="104" x2="120" y2="146"/><line x1="200" y1="104" x2="280" y2="146"/>
-    <line x1="520" y1="104" x2="440" y2="146"/><line x1="520" y1="104" x2="600" y2="146"/>
-    <line x1="120" y1="164" x2="60" y2="206"/><line x1="120" y1="164" x2="180" y2="206"/>
-    <line x1="440" y1="164" x2="380" y2="206"/><line x1="440" y1="164" x2="500" y2="206"/>
-  </g>
-  <g fill="none" stroke="currentColor" stroke-width="1">
-    <rect x="330" y="18" width="60" height="18" rx="9" class="fill-paper"/>
-    <rect x="170" y="86" width="60" height="18" rx="9" class="fill-paper"/>
-    <rect x="490" y="86" width="60" height="18" rx="9" class="fill-paper"/>
-    <rect x="90" y="146" width="60" height="18" rx="9" class="fill-paper"/>
-    <rect x="410" y="146" width="60" height="18" rx="9" class="fill-paper"/>
-  </g>
-  <g class="acc" fill="none" stroke="currentColor" stroke-width="1.2">
-    <rect x="240" y="146" width="80" height="46" rx="4" class="fill-sheet"/>
-    <rect x="560" y="146" width="80" height="46" rx="4" class="fill-sheet"/>
-  </g>
-  <g fill="none" stroke="currentColor" stroke-width="1.2">
-    <rect x="20" y="206" width="80" height="46" rx="4" class="fill-sheet"/>
-    <rect x="140" y="206" width="80" height="46" rx="4" class="fill-sheet"/>
-    <rect x="340" y="206" width="80" height="46" rx="4" class="fill-sheet"/>
-    <rect x="460" y="206" width="80" height="46" rx="4" class="fill-sheet"/>
-  </g>
-  <g font-size="11" text-anchor="middle">
-    <text x="360" y="31">100</text><text x="200" y="99">41.11</text><text x="520" y="99">58.89</text>
-    <text x="120" y="159">16.94</text><text x="440" y="159">28.34</text>
-    <text x="280" y="162">class 4</text><text x="280" y="175">24.17%</text><text x="280" y="188">code 01</text>
-    <text x="600" y="162">class 0</text><text x="600" y="175">30.55%</text><text x="600" y="188">code 11</text>
-    <text x="60" y="222">class 3</text><text x="60" y="235">8.12%</text><text x="60" y="248">code 000</text>
-    <text x="180" y="222">class 2</text><text x="180" y="235">8.82%</text><text x="180" y="248">code 001</text>
-    <text x="380" y="222">class 1</text><text x="380" y="235">13.04%</text><text x="380" y="248">code 100</text>
-    <text x="500" y="222">class 5</text><text x="500" y="235">15.30%</text><text x="500" y="248">code 101</text>
-    <text x="272" y="58">0</text><text x="448" y="58">1</text>
-    <text x="152" y="124">0</text><text x="248" y="124">1</text><text x="472" y="124">0</text><text x="568" y="124">1</text>
-    <text x="82" y="184">0</text><text x="158" y="184">1</text><text x="402" y="184">0</text><text x="478" y="184">1</text>
-  </g>
-  <text x="20" y="274" font-size="11">depth = code length: classes 0 and 4 get 2 bits, the others 3</text>
-</svg>
-</div>
-<figcaption>The Huffman tree of the offset classes, with 0 for the left branch and 1 for the right; the two frequent classes sit one level higher.</figcaption>
-</figure>
 
 Classes 0 and 4 get 2 bits, the other four get 3. On average that is
 $2 \times (30.55\% + 24.17\%) + 3 \times (13.04\% + 8.82\% + 8.12\% + 15.30\%) = 2.45$ bits, against 3 for the

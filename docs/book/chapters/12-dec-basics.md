@@ -472,35 +472,6 @@ of which only 7 bits went in.
 
 @anim refill wide The example of the table, one operation per step: each refill loads, shifts, ORs, moves p and sets count, and the decoder drops 15 and then 23 bits between them. Computed in the browser with 64-bit integers, as the code does it.
 
-The second refill as a picture:
-
-<figure class="diagram">
-<div class="scroll">
-<svg viewBox="0 0 720 250" role="img" aria-label="The register before and after the second refill of the example: 41 counted bits and the byte 0x33 below them; the loaded value shifted right by 41 brings 0x33, 0x44 and 7 bits of 0x55">
-  <g font-size="12">
-    <text x="70" y="18" font-size="11">bit 63</text><text x="710" y="18" font-size="11" text-anchor="end">bit 0</text>
-    <text x="10" y="51">before</text>
-    <rect x="70" y="36" width="410" height="22" class="fill-sheet" stroke="currentColor"/><text x="275" y="51" text-anchor="middle">41 counted bits, count = 41</text>
-    <g class="mark"><rect x="480" y="36" width="80" height="22" class="fill-mark" stroke="currentColor"/><text class="on-fill" x="520" y="51" text-anchor="middle">0x33</text></g>
-    <rect x="560" y="36" width="150" height="22" fill="none" stroke="currentColor"/><text x="635" y="51" text-anchor="middle">15 zeros</text>
-    <text x="480" y="76" font-size="11">from the last load, not counted</text>
-    <text x="10" y="115">v &gt;&gt; 41</text>
-    <rect x="70" y="100" width="410" height="22" fill="none" stroke="currentColor" stroke-dasharray="3 3"/><text x="275" y="115" text-anchor="middle">41 zeros</text>
-    <g class="acc"><rect x="480" y="100" width="80" height="22" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="520" y="115" text-anchor="middle">0x33</text><rect x="560" y="100" width="80" height="22" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="600" y="115" text-anchor="middle">0x44</text></g>
-    <g class="mark"><rect x="640" y="100" width="70" height="22" class="fill-mark" stroke="currentColor"/><text class="on-fill" x="675" y="115" text-anchor="middle">55</text></g>
-    <text x="70" y="140" font-size="11">v = 0x33445566778899aa, loaded from p = 7; of 0x55 the top 7 bits fit</text>
-    <text x="10" y="185">after</text>
-    <rect x="70" y="170" width="410" height="22" class="fill-sheet" stroke="currentColor"/><text x="275" y="185" text-anchor="middle">the same 41 bits</text>
-    <g class="acc"><rect x="480" y="170" width="80" height="22" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="520" y="185" text-anchor="middle">0x33</text><rect x="560" y="170" width="80" height="22" class="fill-acc" stroke="currentColor"/><text class="on-fill" x="600" y="185" text-anchor="middle">0x44</text></g>
-    <g class="mark"><rect x="640" y="170" width="70" height="22" class="fill-mark" stroke="currentColor"/><text class="on-fill" x="675" y="185" text-anchor="middle">55</text></g>
-    <text x="70" y="212" font-size="11">bits |= v &gt;&gt; 41; count = 41 | 56 = 57; p = 7 + (63 - 41) / 8 = 9</text>
-    <text x="70" y="232" font-size="11">0x33 ORed over the same 8 bits; the 7 bits of 0x55 are not counted, p points to it</text>
-  </g>
-</svg>
-</div>
-<figcaption>The second refill of the example: v &gt;&gt; count puts the byte at p right below the counted bits, where its bits already were; count becomes 57, p moves over 2 bytes.</figcaption>
-</figure>
-
 The comment on lines 203 to 206 states the precondition: `count` is at least 0 when this half runs. A
 shift by a negative amount is undefined in C. `count` only goes negative when a page takes more bits than
 it has, and that can happen only after the stream ran out, which is in the other half: while 8 bytes are
