@@ -17,3 +17,4 @@
 .an-stage .st-bar { fill: none; stroke: var(--muted); }
 .an-stage .st-fill { fill: var(--accent); }
 .an-stage .st-fill.st-other { fill: var(--muted); fill-opacity: 0.45; }
+.an-stage .st-zoom { fill: none; stroke: var(--ink); stroke-width: 1.5; }
