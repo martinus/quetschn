@@ -377,6 +377,10 @@ lookups and 8 refills in a row. Each `b[i] = lit_decode(...)` depends only on th
 That is the point of the whole format choice: the 8 chains are independent, and an out-of-order CPU
 starts the lookup of stream 1 while stream 0's is still waiting for the cache ([chapter 3](#ch-cpu)).
 
+@anim streams wide The 674 literals of chapter 16's page, dealt out to 8 streams and decoded a round at a time, or in one stream. Literals, code lengths and stream sizes come from the real codec; the count of dependent steps is a model, one step per decoded literal.
+
+The same for one round, as a picture:
+
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 330" font-size="12" role="img" aria-label="one stream is one chain of 40 dependent lookups; 8 streams are 8 chains of 5 that run side by side">

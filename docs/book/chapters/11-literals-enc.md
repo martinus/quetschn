@@ -324,6 +324,11 @@ x >> 8 & lanes   = 0x002400240012001b    odd:  tables 7, 5, 3, 1 = 36, 36, 18, 2
 <figcaption>x with one byte lane per table, and the two masks that widen it: even keeps the shaded bytes in place, odd shifts the others down by one byte.</figcaption>
 </figure>
 
+The same on a whole stream of a real page, stream 0 of [chapter 16](#ch-trace)'s page, with its 85
+literals in chunks of 25:
+
+@anim pricing The sums of stream 0 of chapter 16's page in x[0], one add per literal, and their move into the 16-bit lanes of even[0] and odd[0] after each chunk; or, as a choice, the same adds in 8-bit lanes only. Code lengths, literals and the sums of all 8 streams come from the real tables and lit_cost().
+
 ### Why one sum per stream, and not one per page
 
 To choose a table, one sum over all literals would do. The 8 sums per table are for what comes after

@@ -1,0 +1,19 @@
+.an-stage svg text.st-muted, .an-stage svg .st-muted text { fill: var(--muted); }
+.an-stage svg text.st-head { font-weight: 600; }
+.an-stage svg text.st-hex { fill: var(--muted); }
+.an-stage svg text.st-tnow { fill: var(--paper); font-weight: 600; }
+.an-stage svg text.st-hide { opacity: 0; }
+.an-stage .st-empty { fill: var(--paper); stroke: var(--rule); stroke-dasharray: 2 2; }
+.an-stage .st-cell { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .st-now { fill: var(--accent); stroke: var(--accent); }
+.an-stage .st-new { fill: var(--mark); stroke: var(--mark); }
+.an-stage .st-spare { fill: var(--warn); stroke: var(--mark); stroke-dasharray: 2 2; }
+.an-stage .st-seg { fill: var(--sheet); stroke: var(--muted); stroke-width: 0.5; }
+.an-stage .st-done { fill: var(--accent); fill-opacity: 0.3; stroke: var(--muted); stroke-width: 0.5; }
+.an-stage .st-hide { opacity: 0; }
+.an-stage .st-junk { fill: var(--warn); stroke: var(--mark); stroke-dasharray: 2 2; }
+.an-stage .st-win { fill: none; stroke: var(--mark); stroke-width: 1.5; }
+.an-stage .st-cur { stroke: var(--ink); stroke-width: 2; }
+.an-stage .st-bar { fill: none; stroke: var(--muted); }
+.an-stage .st-fill { fill: var(--accent); }
+.an-stage .st-fill.st-other { fill: var(--muted); fill-opacity: 0.45; }
