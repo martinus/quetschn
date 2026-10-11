@@ -67,7 +67,8 @@ file() {
 
 IFS=, read -r -a specs <<<"$codecs"
 baseline=$(file "${specs[0]}")
-printf '%-16s %8s %9s %20s %14s %20s\n' codec "Σ cost" "raw" "cold p50 / p99 ns" "warm p99 ns" "Δ cold p99 [min, max]"
+printf '%-16s %8s %9s %13s %20s %14s %20s\n' codec "Σ cost" "raw" "write mean ns" "cold p50 / p99 ns" "warm p99 ns" \
+    "Δ cold p99 [min, max]"
 for spec in "${specs[@]}"; do
     name=$(file "$spec")
     # the block of this codec in a summary: its name, and its level if it has one
@@ -84,6 +85,10 @@ for spec in "${specs[@]}"; do
     cold_p99=$(for ((r = 1; r <= runs; r++)); do
         block "$out/latency$r/summary.txt" | awk '$1 == "decompress" && $2 == "cold" { print $5; exit }'
     done | median)
+    # the mean, not a percentile: a change of the encoder moves every page a little
+    write_mean=$(for ((r = 1; r <= runs; r++)); do
+        block "$out/latency$r/summary.txt" | awk '$1 == "compress" { print $7; exit }'
+    done | median)
     warm_p99=$(for ((r = 1; r <= runs; r++)); do
         block "$out/latency$r/summary.txt" | awk '$1 == "decompress" && $2 == "warm" { print $5; exit }'
     done | median)
@@ -95,6 +100,7 @@ for spec in "${specs[@]}"; do
         done)
         delta="$(median <<<"$deltas") [$(sort -n <<<"$deltas" | head -1), $(sort -n <<<"$deltas" | tail -1)]"
     fi
-    printf '%-16s %8s %9s %20s %14s %20s\n' "$spec" "$cost" "$raw" "$cold_p50 / $cold_p99" "$warm_p99" "$delta"
+    printf '%-16s %8s %9s %13s %20s %14s %20s\n' "$spec" "$cost" "$raw" "$write_mean" "$cold_p50 / $cold_p99" \
+        "$warm_p99" "$delta"
 done
 echo "$((SECONDS - start))s, latency: median of $runs runs on $sample_pages sampled pages, Δ against ${specs[0]}"

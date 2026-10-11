@@ -50,15 +50,18 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * So dst can have any size, and a page that does not fit is an error, as for
  * the other compressors. Before each sequence the encoder checks that its
  * literals and ENC_ROOM bytes more are free between the two: a sequence's
- * copies write up to 16 bytes past its literals, and its at most two flushes
- * move the bitstream down by at most 16 bytes, writing 8 bytes below it. A page
- * that does not fit stops the writes there, and seqlz_compress() returns 0. It
- * can happen up to ENC_ROOM bytes before dst is full. With the two pages zram
- * gives, it never happens: a sequence covers at least 4 bytes of the page, and
- * its token and offset take at most 31 bits, also with an escaped token, see
- * SEQLZ_MAX_ESCAPE_LEN. So the bitstream has at most SEQLZ_PAGE / 4 * 31 + 31
- * bits, 3972 bytes for 4 KiB pages, and with a page of literals that leaves
- * more than ENC_ROOM bytes free; for 16 KiB pages 15 876 bytes.
+ * copies write up to 16 bytes past its literals, and its flushes write at most
+ * 15 bytes below where the bitstream was before it. A sequence has at most two
+ * flushes: the first moves the bitstream down by at most 7 bytes, as it has at
+ * most 60 bits (see below), and the second writes 8 bytes below that. 16 + 15
+ * bytes fit into ENC_ROOM. A page that does not fit stops the writes there, and
+ * seqlz_compress() returns 0. It can happen up to ENC_ROOM bytes before dst is
+ * full. With the two pages zram gives, it never happens: a sequence covers at
+ * least 4 bytes of the page, and its token and offset take at most 31 bits,
+ * also with an escaped token, see SEQLZ_MAX_ESCAPE_LEN. So the bitstream has at
+ * most SEQLZ_PAGE / 4 * 31 + 31 bits, 3972 bytes for 4 KiB pages, and with a
+ * page of literals that leaves more than ENC_ROOM bytes free; for 16 KiB pages
+ * 15 876 bytes.
  *
  * Bits are collected in a 64-bit accumulator and written 8 bytes at a time;
  * then the write position moves down by the whole bytes, and the at most 7 bits
@@ -227,9 +230,9 @@ static __always_inline void encoder_init(struct seqlz_encoder *e,
 }
 
 /*
- * Writes the last bits and the u16, and copies the bitstream from the back of
- * dst to right after the literals, the right way round. Returns the length of
- * the page, or 0 if it did not fit into the dst_cap bytes at d.
+ * Writes the u16, and copies the bitstream from the back of dst to right after
+ * the literals, the right way round. Returns the length of the page, or 0 if
+ * it did not fit into the dst_cap bytes at d.
  */
 static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 				   unsigned int dst_cap)
@@ -241,10 +244,13 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 
 	if (e->p == e->lit)
 		return 0;
-	if (e->cnt > 0) {
-		put_unaligned_le64(e->acc << ((64U - e->cnt) & 63U), e->p - 8);
+	/*
+	 * Every sequence ends with enc_flush(), which already wrote the bits
+	 * left over on top of the byte below p, zeros below them: that byte is
+	 * the bitstream's last.
+	 */
+	if (e->cnt > 0)
 		e->p--;
-	}
 	in = e->p;
 	bytes = (unsigned int)(end - in);
 	put_unaligned_le16((u16)n_lit, d);

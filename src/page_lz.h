@@ -79,8 +79,10 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * the first match it finds. One is the offset of the match before, which
  * repeats often. The other is the last position whose 5 bytes had the same
  * hash, from the hash table. Hashing 5 bytes instead of 4 finds fewer and
- * longer matches: less time to compress for a little more memory. Matches of 4
- * bytes still come from the repeated offset.
+ * longer matches: less time to compress, and with the trained tables smaller
+ * pages too. A match of 4 bytes at a new offset takes about as many bits as
+ * its 4 coded literals, and the greedy matcher then misses a longer match
+ * behind it. Matches of 4 bytes still come from the repeated offset.
  *
  * Unlike lz4 it tries every position, also after a long stretch without a
  * match, where lz4 starts to skip. Skipping needed more state in the loop:

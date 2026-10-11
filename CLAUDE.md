@@ -7,7 +7,7 @@ rename.
 
 ## Goal and how designs are judged
 
-Get as close as possible to `lz4`'s speed and to `zstd`'s compression (`zstd` = zram default, level 3),
+Get as close as possible to `lz4`'s speed and to `zstd`'s compression (`zstd` at level 3, zram's default level for it),
 without more memory than `lz4` and without recompression. It might be unreachable, so a design is
 judged by how much closer it gets, not by whether it arrives.
 
@@ -83,8 +83,10 @@ issue (#151 to #157, from the review of 10th October 2026).
 - Memory is what `kmalloc()` or `vmalloc()` hands out, not what is asked for: 8192 and 4112 bytes in
   two allocations come as 16 KiB, as a union as 8 KiB (#154).
 - `tools/kernel-port/check.sh`: W=1 without a warning on x86-64, arm64, arm and s390, no new
-  checkpatch `--strict` finding. Stack frames stay below 1024 bytes, the 32-bit `FRAME_WARN`; the
-  deepest is 640 (`code_literals()`, gcc, x86-64), 992 with KASAN and UBSan.
+  checkpatch `--strict` finding. Stack frames stay below 1024 bytes, the 32-bit `FRAME_WARN` of older
+  kernels (1280 now, 2048 on 64-bit); `check.sh` prints the three deepest and fails at 1024. The
+  deepest are `code_literals()` and `decode_literals()`, 640 (gcc 16.2.1, x86-64 defconfig, `W=1`),
+  1000 and 952 with KASAN and UBSan as `stress.sh` sets them.
 - Nothing in the copy names this repository, our machines, phones or dumps. `port.py` fails on names
   (`FORBIDDEN`), not on wording like "on pages of a phone". It fails too on a rewrite in `REWRITES` that
   matches no comment any more: change or remove it with the comment it was for.
