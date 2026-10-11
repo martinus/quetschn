@@ -18,10 +18,10 @@ python3 docs/book/lint.py            # dashes and banned words in the prose
   `@anim <name> [wide] <caption>` is an animation, `anim/<name>.js` on the frame `anim/core.js`
   (controls, a sentence per step, both themes); if `anim/<name>.c` exists, it is built with `src/`
   and the JSON it prints is the animation's data, so the numbers are the codec's own.
-  `@stepper decode` and `@stepper match` are the step-throughs of chapters 14 and 9: `stepper/instrument.py` puts a hook in front of
-  the statements of a copy of `seqlz_decode()`, on the same line, `stepper/trace.c` compresses the
-  pages with the real compressor and records the copy decoding them, and `stepper/stepper.js` plays
-  the trace. It needs a C compiler.
+  `@stepper decode` and `@stepper match` are the step-throughs of chapters 14 and 9:
+  `stepper/instrument.py` puts a hook in front of the statements of a copy of `seqlz_decode()` or
+  `seqlz_match_page()`, on the same line, `stepper/trace.c` and `trace_match.c` run the copy on the
+  pages, and `stepper.js` and `match.js` play the trace. Both need a C compiler.
 - `build.py --check` fails if a non-blank line of `src/` (the generated `.inc` tables aside) is in no
   listing, and warns about links to ids that do not exist.
 - `STYLE.md` is the brief the chapters were written to, `REVIEW.md` the one they were checked with.
