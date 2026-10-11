@@ -216,7 +216,7 @@ at most 10 bits on 4 KiB pages, 5120 bits, and 2048 of them on 16 KiB pages, 204
 
 ### A worked example with real code lengths
 
-`docs/seqlz.md` prices the 4 literals `65 20 65 00`, the letter `e`, a space, `e` again and a zero
+Take the 4 literals `65 20 65 00`, the letter `e`, a space, `e` again and a zero
 byte. Here are their `lit_cost` entries from the tables of this commit, printed by a test program,
 with table 7 in the top byte:
 
@@ -237,8 +237,7 @@ after 00:  0x241f241b121d1b14
 
 Read the last one byte by byte from the right: table 0 has `0x14 = 20` bits, table 1 `0x1b = 27`,
 table 2 `0x1d = 29`, table 3 `0x12 = 18`, table 4 `0x1b = 27`, table 5 `0x24 = 36`, table 6
-`0x1f = 31`, table 7 `0x24 = 36`. Those are the sums in the table of
-[`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-literals-one-table-per-page-in-8-streams),
+`0x1f = 31`, table 7 `0x24 = 36`. Those are the sums of the code lengths above,
 from 4 adds instead of 32. Then the split:
 
 ```text
@@ -442,7 +441,7 @@ Two different reasons are behind the two terms.
 ([chapter 1](#ch-zram)). A page that is a few bytes smaller often lands in the same class and saves
 nothing, while every read of it pays for decoding the literals. Coding the literals whenever they
 save anything at all gave less than 0.1 points (0.1% of a page) more on the dumps of September 2026,
-in userspace ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-literals-one-table-per-page-in-8-streams)).
+in userspace ([explored-designs.md, "seqlz-fast-lit: one of 8 literal tables per page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 
 **The 51 bytes.** A page with coded literals costs a fixed time to read, whatever the number of
 literals: the decoder has to bring the page's 2 KiB literal table into the cache, and it decodes the

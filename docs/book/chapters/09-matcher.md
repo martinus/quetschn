@@ -108,12 +108,10 @@ arm64 store it, goes through it like this:
 <figcaption>The 5 bytes 10 00 56 34 12 become slot 1533; the 3 bytes after them do not count.</figcaption>
 </figure>
 
-The bytes `20 00 56 34 12`, the start of the next pointer, give the product `0x519a6d9760000000` and slot
-`0x519`, 1305. Both numbers are the ones
-[`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-table-of-positions-is-a-cache-not-a-map)
-gives; they come from a few lines of C against `src/page_lz.h`. One byte of difference moves the slot
-from 1533 to 1305, and that is what a hash has to do: similar inputs land far apart, so that the
-table is used evenly.
+The bytes `20 00 56 34 12`, the start of the next pointer, give the product `0x519a6d9760000000` and
+slot `0x519`, 1305. Both numbers come from a few lines of C against `src/page_lz.h`. One byte of
+difference moves the slot from 1533 to 1305, and that is what a hash has to do: similar inputs land far
+apart, so that the table is used evenly.
 
 **Why the top bits.** In a multiplication, bit `k` of the product depends only on bits 0 to `k` of the
 two factors: a carry moves up, never down. The input sits in bits 24 to 63 of `v << 24`, so bits 0 to
@@ -295,9 +293,9 @@ uses zstd 3"
 **Two candidates.** At each position there are two places where the next 4 bytes might have been
 before. One is the **repeat offset**: the offset of the match before, which costs no lookup and which
 the format sends in 0 bits (offset class 0). On memory pages it repeats often, e.g. in an array of
-structs, where the same field comes back every 16 or 24 bytes. On the two desktop dumps of
+structs, where the same field comes back every 16 or 24 bytes. On three desktop dumps of
 `docs/seqlz.md`, 18% to 25% of seqlz's matches use it
-([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#finding-the-matches));
+([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes));
 [chapter 2](#ch-compression)'s 30.55% is another count, the share of all sequences on the pages the
 tables were trained on. The
 other is the last position whose 5 bytes had the same hash, from the table.
@@ -428,9 +426,9 @@ them. Why that helps is in the [next section](#ch-matcher--position).
 
 ::: why A cache of 8 KiB, not a map
 Each slot holds one position, the last one stored there. A new position overwrites the old one, there
-is no list, and a collision loses the older position. That "costs a match now and then, never a wrong
-result", because every candidate is compared before it is used
-([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-table-of-positions-is-a-cache-not-a-map)).
+is no list, and a collision loses the older position. That costs a match now and then, never a wrong
+result, because every candidate is compared before it is used
+([one position](#ch-matcher--position)).
 
 - **2 bytes per slot.** A position in a page of 4 KiB needs 12 bits, so `u16` is the smallest type that
   holds it, also for 16 KiB pages. A table of 4096 pointers would take 32 KiB per CPU. `lz4` in the
@@ -585,11 +583,9 @@ it, and that is also where the next sequence's literals start.
 @listing src/page_lz.h 168-185
 
 The positions inside a match were skipped, so they are not in the table. Lines 173 to 175 store one of
-them: the position 2 bytes before the end of the match, under the hash of its 5 bytes. "Which is where
-the next match often starts", in the words of
-[docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-table-of-positions-is-a-cache-not-a-map):
-data that repeats once tends to repeat again, and the end of one match is often near the start of the
-next. `lz4`'s fast mode stores the same position.
+them: the position 2 bytes before the end of the match, under the hash of its 5 bytes. That is where the
+next match often starts: data that repeats once tends to repeat again, and the end of one match is often
+near the start of the next. `lz4`'s fast mode stores the same position.
 
 ::: why One position, not all of them, and not the start
 Storing every position of a match would mean a hash, a load and a store per byte of the match, where the
@@ -631,8 +627,7 @@ The numbers in this section come from running the code: `seqlz_find()` from `src
 few lines of C, and for the step-by-step tables a copy of `page_lz.h` with a `printf()` added after line
 139, compiled with `gcc -O2 -Isrc`.
 
-**An array of pointers.** The page holds 512 pointers of 8 bytes, `0x7f1234560010 + 16 * i`, the page of
-[docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#idea-1-say-that-again-instead-of-repeating-bytes).
+**An array of pointers.** The page holds 512 pointers of 8 bytes, `0x7f1234560010 + 16 * i`.
 In memory the first two are `10 00 56 34 12 7f 00 00` and `20 00 56 34 12 7f 00 00`. The first positions
 the loop tries:
 
@@ -733,6 +728,6 @@ What the matcher misses is older places. The table keeps one position per slot, 
 same bytes appeared at several earlier places, it sees only the last one, and a longer match at an older
 place is not found. More positions per slot, a hash chain, lazy steps: each was measured, and each costs
 about as much time as it saves bytes
-([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-table-of-positions-is-a-cache-not-a-map)).
+([explored-designs.md, "seqlz-fast-lit: one of 8 literal tables per page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 `zstd` 3 searches harder, and that is part of why it stores pages smaller, at about twice the time to
 write one.

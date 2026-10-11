@@ -46,7 +46,7 @@ tools/               see tools/README.md; seqlz-ref/ = reference decoders writte
                      in the Mi 9T's kernel, swap-fault/, phone-apps/, android-emu/ (emulator corpus, 4
                      and 16 KiB pages), collect/, samecode/ (the kernel copy's machine code, old
                      against new), seqlz-compress/, seqlz-worst/, seqlz-bound/, swap-bursts/
-docs/                plan.md, format.md (spec), seqlz.md (explainer), measuring.md (all commands),
+docs/                plan.md, format.md (spec), seqlz.md (overview: result, choices), measuring.md (all commands),
                      explored-designs.md (log of every measured design), plots/*.svg; book/ = "seqlz, line by line",
                      every line of src/ explained, built by docs/book/build.py (see its README)
 cmake/               kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)

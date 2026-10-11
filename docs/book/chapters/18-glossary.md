@@ -3,9 +3,7 @@
 The terms of the book, in five groups: compression and the format, the kernel, the CPU, the names of
 codecs and machines, and measurements. Within a group they are in alphabetical order. Each entry links to
 the chapter that explains the term in depth. Many of the compression terms sound alike and are not the
-same thing; they follow the glossary of
-[`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#glossary), and the book
-uses them in that sense throughout.
+same thing; the book uses each in the one sense given here, throughout.
 
 ## Compression and the format {#glossary--format}
 

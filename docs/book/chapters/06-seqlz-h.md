@@ -184,7 +184,7 @@ The six classes take the top of the token, above the 9 bits of the two lengths.
 `SEQLZ_TOKEN_SYMBOLS` is `6 << (4 + 5)`, $6 \cdot 512 = 3072$. A shift, not a multiplication, because the
 class is a bit field: token `t` has `ll` in bits 0 to 3, `ml - 4` in bits 4 to 8 and the class in bits 9
 to 11. [Chapter 4](#ch-format--token) draws the 12 bits of token 2098, the sequence that
-[`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)
+[chapter 7](#ch-internal--examples)
 takes apart: 2 literals, a match of 7 bytes, 16 bytes back. 16 is a multiple of 8 below 256, class 4,
 sent as $16 / 8 = 2$ in 5 bits.
 
@@ -675,10 +675,11 @@ Worked examples, computed with this function:
 | 20 | 100 | 3 | 15 | 31 | $15 + 496 + 1536 = 2047$ |
 | 0 | 0 | 0 | 0 | 0 | 0 |
 
-Token 49 is the sequence an array of pointers repeats in `docs/seqlz.md`'s example: one literal, a
-match of 7 bytes, the repeat offset; it has a 4-bit code. Token 1010 is the first sequence of the format's worked example, a
-page of `ab` repeated. Token 2047 has both fields at their caps, so both length values follow it:
-`ll - 15 = 5` and `ml - 35 = 65`. Token 0 ends a page that is full: no literals, no match.
+Token 49 is the sequence an array of pointers repeats in [chapter 9](#ch-matcher--back)'s example: one
+literal, a match of 7 bytes, the repeat offset; it has a 4-bit code. Token 1010 is the first sequence of
+the format's worked example, a page of `ab` repeated. Token 2047 has both fields at their caps, so both
+length values follow it: `ll - 15 = 5` and `ml - 35 = 65`. Token 0 ends a page that is full: no
+literals, no match.
 
 gcc compiles the function without a branch, with two conditional moves for the caps and one for
 `ml == 0`. The encoder calls it once per sequence, in `encode_emit()`.

@@ -35,7 +35,7 @@ the development machine, per page, as of 5th October 2026
 This loop decodes every page several times, which flatters seqlz, see
 [the branches](#ch-cpu--branches). In a swap-in in the kernel, measured in a VM on the same CPU,
 `zcomp_decompress()` takes 2.0 µs for seqlz and 1.4 µs for lz4
-([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#why-it-is-nearly-as-fast-as-lz4)).
+([The decoder in a fault, found](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
 :::
 
 seqlz gets more instructions per cycle because more of its work is independent: 8 streams of
