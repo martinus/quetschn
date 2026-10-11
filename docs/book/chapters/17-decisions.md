@@ -890,8 +890,7 @@ decode more than one page per fault, and neither is built.
 
 `zstd` at level 3, zram's default level for it, stores pages 2% and 10% smaller than `seqlz-fast-lit` on
 the two desktop dumps by the stored bytes of `docs/seqlz.md`'s result table, 1012 against 1035 and 1197
-against 1331 bytes per page; the section of `docs/seqlz.md` on why `zstd` is smaller says 3% for the
-first dump.
+against 1331 bytes per page.
 As Σ zsmalloc cost on four whole dumps, two of the desktop, named by their dates, and two of the phone
 ([Levels 3 and 4](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)):
 
@@ -904,15 +903,18 @@ As Σ zsmalloc cost on four whole dumps, two of the desktop, named by their date
 This table has the desktop dump of 28th September 2026. Elsewhere in this chapter the second desktop
 dump is the one of 24th September.
 
-Three things make the difference, each measured
-([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#why-zstd-still-stores-pages-smaller)):
+Three things make the difference, each measured:
 
 1. **Better matches.** `lz4hc`'s matches coded by seqlz take 3% and 7% fewer bytes than seqlz's greedy
-   matcher. A matcher that searches that much takes more time than zram's writes can spend, as levels 3
+   matcher
+   ([Not evaluated yet](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#not-evaluated-yet)).
+   A matcher that searches that much takes more time than zram's writes can spend, as levels 3
    and 4 showed.
-2. **A literal table of the page's own.** Coding the literals is worth 2.3 and 4.7 points to `zstd` 3. A
+2. **A literal table of the page's own.** Coding the literals is worth 2.3 and 4.7 points to `zstd` 3
+   ([seqlz-fast-lit: one of 8 literal tables per page](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)). A
    table per page instead of the best of 8 fixed ones would save seqlz another 0.3% and 4.6%, 2.7 and
-   60.6 bytes per page, for 13% to 15% slower writes. The second desktop dump, of 24th September, is
+   60.6 bytes per page, for 13% to 15% slower writes
+   ([Per page: its own literal table](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)). The second desktop dump, of 24th September, is
    the one whose literals fit the 8 tables badly.
 3. **Adaptive sequence coding.** `zstd` codes `ll`, `ml` and the offset with three tables it can build
    for the data, three lookups per sequence. seqlz's one fixed token table is what keeps its decoder fast.

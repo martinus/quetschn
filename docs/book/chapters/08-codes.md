@@ -552,7 +552,7 @@ format's offset classes for multiples of 8 are there for the same reason
 The escape has a 4-bit code, as short as the most frequent tokens. Each of the 2496 tokens without a
 code is rare, but together they are frequent: 14 to 38 of about 200 sequences per page on the
 project's dumps take the escape, at 16 bits each before the offset
-([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)).
+([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
 Giving more of them codes would take code space from the frequent ones: 11 bits have room for 2048
 codes, fewer than the 3072 tokens. The other direction, a token table of 10 bits, in which 320
 tokens got a code instead of 512 at the time, was measured on the Mi 9T and not taken; the numbers

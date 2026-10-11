@@ -673,7 +673,9 @@ Since the tables are part of the format, a decoder has to have exactly the right
 
 Fixed tables cost bytes: a table fitted to each page would code it tighter. That was measured several
 ways, and none paid for its time: a literal table of each page's own made writes 13% and 15% slower
-on the two desktop dumps for 2.7 and 60.6 bytes less per page, 0.3% and 4.6% of the stored size, and tables trained on a phone's own pages saved at most 1% on another
-dump of that phone ([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-bytes-of-a-page)).
+on the two desktop dumps for 2.7 and 60.6 bytes less per page, 0.3% and 4.6% of the stored size
+([Per page: its own literal table](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)),
+and tables trained on a phone's own pages saved at most 1% on another dump of that phone
+([The format written down](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
 How the code lengths become the encoder's codes and the decoder's lookup tables at run time is
 [chapter 8](#ch-codes).

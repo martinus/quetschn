@@ -142,10 +142,10 @@ Martin's voice, blog-post register. These rules are hard:
 - Headings state the point when they can: "The hash keeps 5 bytes, not 4" beats "The hash".
 - "we" for the reader and the book walking through the code together, "you" for the reader. The
   author of the code is "the code" or "seqlz", or "the project"; do not invent quotes from people.
-- Use the terms of `docs/seqlz.md`'s glossary consistently: page, literal, match, offset, repeat
-  offset, `ll`, `ml`, sequence, token, offset class, offset bits, length value, escape, symbol, code,
-  code length, prefix code, Huffman code, complete, table, literal table, bitstream, header, coded
-  literals, stream, stored size, work memory, size class, matcher, encoder, decoder.
+- Use the terms of the book's glossary, `chapters/18-glossary.md`, consistently: page, literal, match,
+  offset, repeat offset, `ll`, `ml`, sequence, token, offset class, offset bits, length value, escape,
+  symbol, code, code length, prefix code, Huffman code, complete, table, literal table, bitstream,
+  header, coded literals, stream, stored size, work memory, size class, matcher, encoder, decoder.
 
 ## Facts and secrets
 

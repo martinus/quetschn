@@ -6,7 +6,8 @@ decoder can be written from it alone, and it says which compressed pages are val
 format as `src/` writes and reads it. Sentences marked *Why:* explain a choice and are
 not part of the format; the measurements behind them are in
 [explored-designs.md](explored-designs.md). How seqlz works, for a reader new to compression, is
-in [seqlz.md](seqlz.md).
+in the book [seqlz, line by line](https://martin.ankerl.com/quetschn/), the result and the numbers in
+[seqlz.md](seqlz.md).
 
 `seqlz-fast` and `seqlz-fast-lit` are the same format: `seqlz-fast` always stores the literals as they
 are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both.

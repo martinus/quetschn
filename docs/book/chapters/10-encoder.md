@@ -164,8 +164,6 @@ and needs a `dst` of 847.
 
 The bound adds the most literals and the most bits, which no page has at once, so the real margin is
 larger. A page of random bytes, the worst case for literals, has almost no sequences.
-[`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-encoder-one-pass-over-the-page)
-says 28 bits and "about 3600 bytes": that is the same count with the escape's 4 bits of today's tables.
 
 **The accumulator.** Lines 66 to 72 describe how bits get to memory, which the next sections go through
 line by line: bits are collected in a 64-bit variable and written 8 bytes at a time; then `p` moves down

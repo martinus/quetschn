@@ -80,7 +80,7 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 
 | document | read it if you want to |
 | --- | --- |
-| [How seqlz works](docs/seqlz.md) | understand the codec, also without having written a compressor before |
+| [seqlz in short](docs/seqlz.md) | see the result against zram's codecs and the choices with their numbers; the book below has the details |
 | [seqlz, line by line](https://martin.ankerl.com/quetschn/) | read every line of `src/` explained, with the decoder and the matcher step by step on real pages; the book's sources are in [`docs/book/`](docs/book) |
 | [The seqlz format](docs/format.md) | write a decoder, or check one |
 | [Measuring](docs/measuring.md) | benchmark, in a kernel VM, in userspace or on a phone, and collect pages |

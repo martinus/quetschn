@@ -263,8 +263,7 @@ packs them. With the real tables:
 
 The zero byte has a 2-bit code in tables 1 to 4, which are for pages with many zeros; `e` has a 4-bit
 code in table 0, which fits text. For these two literals table 3 wins with 7 bits, against 16 bits
-as raw bytes. `docs/seqlz.md` has the same example with four literals
-([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-literals-one-table-per-page-in-8-streams)).
+as raw bytes. [Chapter 11](#ch-literals-enc--pricing) has the same example with four literals.
 
 The two macros size this:
 
@@ -338,8 +337,8 @@ either way.
 
 What a page touches is much less than 43 280 bytes. The decoder reads `token.decode`, the `decode` of
 `ll` and `ml`, and with coded literals the `decode` of one literal table: $8 + 1 + 1 + 2 = 12$ KiB,
-small enough for the L1 cache, one of the reasons `docs/seqlz.md` gives for the decoder's speed
-([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#why-it-is-nearly-as-fast-as-lz4)).
+small enough for the L1 cache, one of the reasons for the decoder's speed
+([chapter 3](#ch-cpu--cache)).
 The encoder reads `token.enc`, 6 KiB, the 128-byte `enc` of `ll` and `ml`, `lit_cost`, 2 KiB, and
 one literal table's `enc`, 1 KiB.
 
@@ -562,12 +561,11 @@ Build it from the repository's root with
 
 ### Token 49: one literal, a match of 7, the repeat offset
 
-Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is one of the three tokens with
-the shortest code, 4 bits, `0001`, and `docs/seqlz.md` shows where it comes from: in an array of
-pointers, each pointing 16 bytes further than the one before, every 8-byte pointer is one literal,
-its low byte, which changes, and a match of its 7 other bytes, 8 bytes back, the same offset as the
-sequence before
-([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)).
+Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is one of the three tokens
+with the shortest code, 4 bits, `0001`, and [chapter 9](#ch-matcher--back) shows where it comes from: in
+an array of pointers, each pointing 16 bytes further than the one before, every 8-byte pointer is one
+literal, its low byte, which changes, and a match of its 7 other bytes, 8 bytes back, the same offset as
+the sequence before.
 
 | field | computation | value |
 | --- | --- | --- |
@@ -588,8 +586,8 @@ The value bit is 0, so the sequence can take the fast path.
 
 ### Token 2098: two literals, a match of 7, 16 bytes back
 
-`docs/seqlz.md` uses this sequence as its example: 2 literals, a match of 7 bytes, offset 16. The
-offset is a multiple of 8 below 256, class 4, sent as $16 / 8 = 2$ in 5 bits. The token is
+[Chapter 4](#ch-format--token) uses this sequence as its example: 2 literals, a match of 7 bytes, offset
+16. The offset is a multiple of 8 below 256, class 4, sent as $16 / 8 = 2$ in 5 bits. The token is
 $2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has 9 bits, `101100111`.
 
 | field | computation | value |
@@ -627,7 +625,7 @@ shifts for every class, with the numbers from the entry.
 
 Token 1552 is $0 + 16 \cdot 1 + 512 \cdot 3$: no literals, a match of 5, an offset below the page size in 12
 bits. On the two desktop dumps, 29% and 36% of the matches at a class 3 offset are 5 bytes long
-([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)),
+([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)),
 and this token has an 8-bit code.
 
 | field | value |
@@ -667,7 +665,7 @@ With `n = 0`, the entry describes a token whose code is already gone: `N` 0, `BA
 lines as any other: `(br.bits << 0) >> 52` is the next 12 bits, 1000, and the decoder moves on by 12.
 This is the one place where the decoder does take a token apart at run time, by calling
 `token_entry()`: for an escaped token, which is about 14 to 38 of some 200 sequences per page on the
-project's dumps ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#one-sequence-a-token-and-the-offset)).
+project's dumps ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
 Those already pay for a refill and 12 more bits.
 
 ### The last sequence

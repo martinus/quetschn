@@ -114,7 +114,7 @@ save nothing, so `lz4` matches are 4 bytes or longer, and the format stores `ml 
 is spent on lengths 0 to 3 that never occur. seqlz does the same. In its format a match of 4 bytes at a
 new offset of up to 12 bits costs about as many bits as its 4 bytes as coded literals, often more, so
 shorter ones are not worth looking for
-([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#idea-1-say-that-again-instead-of-repeating-bytes)).
+([chapter 4](#ch-format--token)).
 A 5-byte match at a 12-bit offset, about 21 bits, is cheaper than its 5 literals, about 35 bits
 ([explored-designs.md, "The matcher without its step"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 There is a practical side too: 4 bytes are one 32-bit load and one compare, which is how the matcher
