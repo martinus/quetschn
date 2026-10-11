@@ -34,52 +34,81 @@ BookAnim.define('refill', function (ctx) {
   }
   refill(1); drop(15); refill(2); drop(23); refill(3);
 
-  var CW = 10.5, X0 = 76, W = X0 + 64 * CW + 8 * 2 + 84, H = 268;
-  var root = ctx.svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'The 64-bit register, the loaded value, and the stream with p' }, ctx.stage);
-  function bx(i) { return X0 + i * CW + Math.floor(i / 8) * 2; }
+  var root = ctx.svg('svg', { viewBox: '0 0 848 268', role: 'img', 'aria-label': 'The 64-bit register, the loaded value, and the stream with p' }, ctx.stage);
+  /*
+   * The layout. Wide: each 64-bit row in one line with its label on the left, the 16 bytes of the
+   * stream in one row. On a phone (ctx.narrow, 360 units): a row's label above it and its 64 bits in
+   * 2 lines of 32, the stream in 2 rows of 8 bytes.
+   */
+  var L;
+  function layout() {
+    var n = ctx.narrow;
+    L = n ? { W: 360, X0: 8, CW: 10.5, per: 32, lineH: 23, bitFont: 11.5, BW: 36, perRow: 8, regH: 64 }
+          : { W: 848, X0: 76, CW: 10.5, per: 64, lineH: 0, bitFont: 10.5, BW: 34, perRow: 16, regH: 32 };
+    L.SY = n ? 22 + 3 * L.regH + 12 : 150;
+    L.H = n ? L.SY + 2 * 46 + 52 : 268;
+    root.setAttribute('viewBox', '0 0 ' + L.W + ' ' + L.H);
+  }
+  function bx(i) { var c = i % L.per; return L.X0 + c * L.CW + Math.floor(c / 8) * 2; }
+  function by(y, i) { return y + Math.floor(i / L.per) * L.lineH; }
 
   function row(y, label, v, cls, count, mark) {
-    ctx.svg('text', { x: X0 - 8, y: y + 14, 'text-anchor': 'end', 'font-size': 12, class: 'rf-lab', text: label }, root);
+    if (ctx.narrow) {
+      ctx.svg('text', { x: L.X0, y: y - 4, 'font-size': 12, class: 'rf-lab', text: label + (mark != null ? ', ' + mark : '') }, root);
+    } else {
+      ctx.svg('text', { x: L.X0 - 8, y: y + 14, 'text-anchor': 'end', 'font-size': 12, class: 'rf-lab', text: label }, root);
+      if (mark != null) ctx.svg('text', { x: bx(63) + L.CW + 6, y: y + 14, 'font-size': 12, class: 'rf-lab', text: mark }, root);
+    }
     for (var i = 0; i < 64; i++) {
       var bit = Number((v >> BigInt(63 - i)) & 1n);
-      var c = cls(i);
-      ctx.svg('rect', { x: bx(i), y: y, width: CW - 1, height: 20, class: c }, root);
-      ctx.svg('text', { x: bx(i) + (CW - 1) / 2, y: y + 14, 'text-anchor': 'middle', 'font-size': 10.5, class: c.indexOf('rf-count') >= 0 ? 'rf-on' : 'rf-t', text: bit }, root);
+      var c = cls(i), yy = by(y, i);
+      ctx.svg('rect', { x: bx(i), y: yy, width: L.CW - 1, height: 20, class: c }, root);
+      ctx.svg('text', { x: bx(i) + (L.CW - 1) / 2, y: yy + 14, 'text-anchor': 'middle', 'font-size': L.bitFont, class: c.indexOf('rf-count') >= 0 ? 'rf-on' : 'rf-t', text: bit }, root);
     }
-    if (mark != null) ctx.svg('text', { x: bx(63) + CW + 6, y: y + 14, 'font-size': 12, class: 'rf-lab', text: mark }, root);
   }
 
   function draw(k) {
     var s = S[k];
+    layout();
     while (root.firstChild) root.removeChild(root.firstChild);
-    ctx.svg('text', { x: bx(0), y: 14, 'font-size': 11, class: 'rf-lab', text: 'bit 63' }, root);
-    ctx.svg('text', { x: bx(63) + CW, y: 14, 'font-size': 11, 'text-anchor': 'end', class: 'rf-lab', text: 'bit 0' }, root);
+    if (!ctx.narrow) {
+      ctx.svg('text', { x: bx(0), y: 14, 'font-size': 11, class: 'rf-lab', text: 'bit 63' }, root);
+      ctx.svg('text', { x: bx(63) + L.CW, y: 14, 'font-size': 11, 'text-anchor': 'end', class: 'rf-lab', text: 'bit 0' }, root);
+    }
+    var y0 = ctx.narrow ? 22 : 22;
     // the register: counted bits on top, the rest
-    row(22, 'bits', s.bits, function (i) { return i < s.count ? 'rf-count' : 'rf-rest'; }, s.count, 'count ' + s.count);
-    if (s.v != null) row(54, 'v', s.v, function () { return 'rf-v'; });
-    if (s.sh != null) row(86, 'v >> ' + (s.phase === 'p' ? S[k - 2].count : s.phase === 'or' || s.phase === 'shift' ? S[k].count : ''), s.sh, function (i) { return i < (s.phase === 'p' ? S[k - 2].count : s.count) ? 'rf-zero' : 'rf-v'; });
+    row(y0, 'bits', s.bits, function (i) { return i < s.count ? 'rf-count' : 'rf-rest'; }, s.count, 'count ' + s.count);
+    if (s.v != null) row(y0 + L.regH, 'v', s.v, function () { return 'rf-v'; });
+    if (s.sh != null) row(y0 + 2 * L.regH, 'v >> ' + (s.phase === 'p' ? S[k - 2].count : s.phase === 'or' || s.phase === 'shift' ? S[k].count : ''), s.sh, function (i) { return i < (s.phase === 'p' ? S[k - 2].count : s.count) ? 'rf-zero' : 'rf-v'; });
     // the stream, p and the 8 bytes a load reads
-    var SY = 150, BW = 34;
-    ctx.svg('text', { x: X0 - 8, y: SY + 18, 'text-anchor': 'end', 'font-size': 12, class: 'rf-lab', text: 'stream' }, root);
+    var SY = L.SY, BW = L.BW;
+    if (ctx.narrow) ctx.svg('text', { x: L.X0, y: SY - 6, 'font-size': 12, class: 'rf-ptrt', text: 'stream, p = ' + s.p }, root);
+    else ctx.svg('text', { x: L.X0 - 8, y: SY + 18, 'text-anchor': 'end', 'font-size': 12, class: 'rf-lab', text: 'stream' }, root);
     var loadAt = s.phase === 'load' || s.phase === 'shift' || s.phase === 'or' ? s.p : -1;
+    function bpos(j) { return { x: L.X0 + (j % L.perRow) * (BW + 4), y: SY + Math.floor(j / L.perRow) * 46 }; }
     for (var j = 0; j < 16; j++) {
-      var x = X0 + j * (BW + 4), used = j < s.p;
+      var q = bpos(j), used = j < s.p;
       var c = used ? 'rf-used' : 'rf-byte';
       if (loadAt >= 0 && j >= loadAt && j < loadAt + 8) c += ' rf-load';
-      ctx.svg('rect', { x: x, y: SY, width: BW, height: 26, rx: 3, class: c }, root);
-      ctx.svg('text', { x: x + BW / 2, y: SY + 18, 'text-anchor': 'middle', 'font-size': 13, class: used ? 'rf-ut' : '', text: STREAM[j].toString(16).padStart(2, '0') }, root);
-      ctx.svg('text', { x: x + BW / 2, y: SY + 42, 'text-anchor': 'middle', 'font-size': 10, class: 'rf-lab', text: j }, root);
+      if (ctx.narrow && j === s.p) c += ' rf-at';
+      ctx.svg('rect', { x: q.x, y: q.y, width: BW, height: 26, rx: 3, class: c }, root);
+      ctx.svg('text', { x: q.x + BW / 2, y: q.y + 18, 'text-anchor': 'middle', 'font-size': 13, class: used ? 'rf-ut' : '', text: STREAM[j].toString(16).padStart(2, '0') }, root);
+      ctx.svg('text', { x: q.x + BW / 2, y: q.y + 40, 'text-anchor': 'middle', 'font-size': ctx.narrow ? 11 : 10, class: 'rf-lab', text: j }, root);
     }
-    var px = X0 + s.p * (BW + 4) + BW / 2;
-    ctx.svg('path', { d: 'M' + px + ',' + (SY + 62) + ' l-6,10 h12 z', class: 'rf-ptr an-move' }, root);
-    ctx.svg('text', { x: px, y: SY + 88, 'text-anchor': 'middle', 'font-size': 12, class: 'rf-ptrt', text: 'p = ' + s.p }, root);
-    // the legend
-    [['rf-count', 'counted bits'], ['rf-rest', 'below count: not counted'], ['rf-v', 'the loaded value'], ['rf-used', 'bytes p has passed']].forEach(function (L, n) {
-      var x = X0 + n * 160;
-      ctx.svg('rect', { x: x, y: H - 16, width: 12, height: 12, class: L[0] }, root);
-      ctx.svg('text', { x: x + 18, y: H - 6, 'font-size': 12, class: 'rf-lab rf-key', text: L[1] }, root);
+    // p: an arrow under its byte; on a phone the byte at p is marked and p is in the heading
+    if (!ctx.narrow) {
+      var px = bpos(Math.min(s.p, 15)).x + BW / 2, py = SY + 62;
+      ctx.svg('path', { d: 'M' + px + ',' + py + ' l-6,10 h12 z', class: 'rf-ptr an-move' }, root);
+      ctx.svg('text', { x: px, y: py + 26, 'text-anchor': 'middle', 'font-size': 12, class: 'rf-ptrt', text: 'p = ' + s.p }, root);
+    }
+    // the legend, in two rows on a phone
+    [['rf-count', 'counted bits'], ['rf-rest', 'below count: not counted'], ['rf-v', 'the loaded value'], ['rf-used', 'bytes p has passed']].forEach(function (Lg, n) {
+      var x = ctx.narrow ? L.X0 + (n % 2) * 176 : L.X0 + n * 160;
+      var y = ctx.narrow ? L.H - 38 + Math.floor(n / 2) * 22 : L.H - 16;
+      ctx.svg('rect', { x: x, y: y, width: 12, height: 12, class: Lg[0] }, root);
+      ctx.svg('text', { x: x + 18, y: y + 10, 'font-size': 12, class: 'rf-lab rf-key', text: ctx.narrow && Lg[0] === 'rf-rest' ? 'below count' : Lg[1] }, root);
     });
     ctx.say(s.say);
   }
-  return { steps: S.length, draw: draw, interval: 2000 };
+  return { steps: S.length, draw: draw, interval: 2000, narrow: true };
 });

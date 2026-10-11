@@ -12,3 +12,4 @@
 .an-stage .rf-load { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: none; }
 .an-stage .rf-ptr { fill: var(--mark); }
 .an-stage svg text.rf-ptrt { fill: var(--mark); font-weight: 600; }
+.an-stage .rf-at { stroke: var(--mark); stroke-width: 3; }

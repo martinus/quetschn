@@ -1,8 +1,9 @@
 /*
  * The book's animations: a figure with controls (start, back, play, step, a slider), a sentence for
  * the current step, and a stage the animation draws into. An animation is a file anim/<name>.js that
- * calls BookAnim.define(name, setup); setup(ctx) returns { steps, draw(k), interval }; steps is a number,
- * or a function when the reader's choices change it. draw(k) draws
+ * calls BookAnim.define(name, setup); setup(ctx) returns { steps, draw(k), interval, narrow }; steps is
+ * a number, or a function when the reader's choices change it; narrow: true says that draw(k) draws a
+ * layout of its own when ctx.narrow is true. draw(k) draws
  * step k from nothing or over what is there; it must give the same picture for k whatever came before.
  */
 (function () {
@@ -50,6 +51,7 @@
   };
   var defs = {};
   var calm = matchMedia('(prefers-reduced-motion: reduce)');
+  var NARROW = 600;
   var NS = 'http://www.w3.org/2000/svg';
 
   function el(tag, cls, text, parent) {
@@ -104,9 +106,14 @@
         return e;
       },
       // extra controls of an animation go into the bar, e.g. a choice of input
-      bar: bar
+      bar: bar,
+      // true where the stage is narrower than NARROW pixels, e.g. on a phone: then draw(k) draws a
+      // layout of its own, about 360 units wide, instead of scaling the wide one down
+      narrow: stage.clientWidth < NARROW
     };
     var a = defs[name](ctx), i = 0, timer = null;
+    // an animation with a narrow layout says so with narrow: true; the others keep scrolling sideways
+    fig.classList.toggle('narrow', !!a.narrow && ctx.narrow);
     function n() { return typeof a.steps === 'function' ? a.steps() : a.steps; }
     function go(k) {
       i = Math.max(0, Math.min(n() - 1, k));
@@ -147,6 +154,11 @@
     document.addEventListener('book-theme', function () { setTimeout(function () { go(i); }, 0); });
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { go(i); });
     calm.addEventListener('change', function () { ctx.calm = calm.matches; });
+    // the other layout when the stage gets narrower or wider than NARROW, e.g. a phone turned
+    if (a.narrow && window.ResizeObserver) new ResizeObserver(function () {
+      var nw = stage.clientWidth < NARROW;
+      if (nw !== ctx.narrow) { ctx.narrow = nw; fig.classList.toggle('narrow', nw); go(i); }
+    }).observe(stage);
     go(0);
   }
 

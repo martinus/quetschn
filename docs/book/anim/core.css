@@ -18,6 +18,9 @@ figure.anim.playing .an-ctl .i-pause { display: block; }
 .an-stage svg { display: block; max-width: 100%; height: auto; margin-inline: auto; color: var(--ink); font-family: var(--mono); }
 /* on a phone a drawing keeps a readable size and scrolls sideways in the stage */
 .an-stage > svg { min-width: 560px; }
+/* an animation that draws its narrow layout: one unit about one pixel, no sideways scrolling */
+figure.anim.narrow .an-stage { padding: 0.6rem 0.4rem; }
+figure.anim.narrow .an-stage > svg { min-width: 0; width: 100%; }
 .an-stage svg text { fill: currentColor; }
 figure.anim figcaption { padding: 0 0.9rem 0.8rem; font-size: 0.85rem; color: var(--muted); }
 /* moves between steps; none where the reader asks for less motion */
