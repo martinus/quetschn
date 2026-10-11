@@ -45,7 +45,7 @@ int main(void) {
     static unsigned int idx[SEQLZ_PAGE], len[SEQLZ_PAGE];
     static struct seqlz_state st;
     struct seqlz_tables* t = malloc(seqlz_tables_size());
-    unsigned int n, n_lit, d = 0, used = 0, seqs = 0, i;
+    unsigned int n, n_lit, matched = 0, seqs = 0, i;
     unsigned long pos = 0;
     const u8* q;
 
@@ -62,22 +62,23 @@ int main(void) {
         fprintf(stderr, "lines.c: the page has raw literals\n");
         return 1;
     }
+    n_lit &= SEQLZ_LIT_CODED - 1U;
     /* where the bitstream starts, as seqlz_decode() gets it */
-    q = decode_literals(t, comp, n, n_lit & (SEQLZ_LIT_CODED - 1U), scratch);
+    q = decode_literals(t, comp, n, n_lit, scratch);
     if (!q)
         return 1;
     g_q = q;
     g_nbits = 8UL * (unsigned long)(comp + n - q);
 
     /*
-     * as in seqlz_decode(): when the literals left fill the rest of the page, they are the last
-     * sequence, which has no token
+     * as in seqlz_decode(): when the literals left fill the rest of the page, the matches so far
+     * cover all bytes but the literals, and the literals left are the last sequence, which has no
+     * token
      */
-    n_lit &= SEQLZ_LIT_CODED - 1U;
-    while (n_lit - used != SEQLZ_PAGE - d && seqs < SEQLZ_PAGE) {
+    while (matched != SEQLZ_PAGE - n_lit && seqs < SEQLZ_PAGE) {
         unsigned int ix = peek(pos, SEQLZ_TOKEN_BITS);
         u32 tok = t->token.decode[ix];
-        unsigned int nl, ml;
+        unsigned int ml;
 
         idx[seqs] = ix;
         /* the code's length; an escape's entry has it only in TOK_DROP */
@@ -94,18 +95,16 @@ int main(void) {
         }
         seqs++;
         pos += TOK_DROP(tok);
-        nl = TOK_LL(tok);
         ml = TOK_ML(tok);
-        if (nl == SEQLZ_LL_CAP)
-            nl += value(&pos, &t->ll);
+        if (TOK_LL(tok) == SEQLZ_LL_CAP)
+            value(&pos, &t->ll);
         if (ml == SEQLZ_ML_CAP + 4U)
             ml += value(&pos, &t->ml);
-        used += nl;
-        d += nl + ml;
+        matched += ml;
     }
     /* the walk must end where the bits end: fewer than 8 bits left, in the last byte */
-    if (n_lit - used != SEQLZ_PAGE - d || pos > g_nbits || g_nbits - pos >= 8) {
-        fprintf(stderr, "lines.c: walk ends at bit %lu of %lu, byte %u\n", pos, g_nbits, d);
+    if (matched != SEQLZ_PAGE - n_lit || pos > g_nbits || g_nbits - pos >= 8) {
+        fprintf(stderr, "lines.c: walk ends at bit %lu of %lu, %u bytes matched\n", pos, g_nbits, matched);
         return 1;
     }
     if (seqs != 179) {

@@ -151,6 +151,17 @@ struct bit_writer {
         FAIL("no code for symbol ", sym);
     }
 
+    // a length value: below 16 its own symbol, else the position of its top bit and the bits below
+    void value(seqlz_ref_code const& c, unsigned int v) {
+        if (v < 16) {
+            symbol(c, v);
+            return;
+        }
+        auto const b = static_cast<unsigned int>(std::bit_width(v)) - 1U;
+        symbol(c, 12 + b);
+        put(v - (1U << b), b);
+    }
+
     // a token, escaped when it has no code
     void token(seqlz_ref_code const& c, unsigned int tok) {
         if (seqlz_default_own.token[tok] != 0) {
@@ -179,11 +190,7 @@ std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int c) {
     if (c == 1) {
         w.put(1, 4);
     }
-    // ll = 15 + value(LL) = PAGE: the value has its top bit as the symbol, the rest as extra bits
-    auto const v = SEQLZ_PAGE - 15U;
-    auto const b = static_cast<unsigned int>(std::bit_width(v)) - 1U;
-    w.symbol(r.ll, 12 + b);
-    w.put(v - (1U << b), b);
+    w.value(r.ll, SEQLZ_PAGE - 15U); // ll = 15 + value(LL) = PAGE
     auto c_page = literals_only(SEQLZ_PAGE);
     c_page.insert(c_page.end(), w.bytes.begin(), w.bytes.end());
     return c_page;
@@ -194,11 +201,7 @@ std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int c) {
 std::vector<unsigned char> one_match(seqlz_ref const& r, unsigned int* padding) {
     auto w = bit_writer{};
     w.token(r.tok, 1 + 16 * 31);
-    // ml = 35 + value(ML) = PAGE - 1
-    auto const v = SEQLZ_PAGE - 1U - 35U;
-    auto const b = static_cast<unsigned int>(std::bit_width(v)) - 1U;
-    w.symbol(r.ml, 12 + b);
-    w.put(v - (1U << b), b);
+    w.value(r.ml, SEQLZ_PAGE - 1U - 35U); // ml = 35 + value(ML) = PAGE - 1
     auto c_page = std::vector<unsigned char>{1, 0, 7};
     c_page.insert(c_page.end(), w.bytes.begin(), w.bytes.end());
     *padding = static_cast<unsigned int>(8 * w.bytes.size()) - w.n;
@@ -399,19 +402,10 @@ std::vector<unsigned char> coded_literals(seqlz_ref const& r, unsigned int n, F 
         c.insert(c.end(), s.bytes.begin(), s.bytes.end());
     }
     auto seq = bit_writer{};
-    auto value = [&](seqlz_ref_code const& code, unsigned int v) {
-        if (v < 16) {
-            seq.symbol(code, v);
-            return;
-        }
-        auto const bits = static_cast<unsigned int>(std::bit_width(v)) - 1U;
-        seq.symbol(code, 12 + bits);
-        seq.put(v - (1U << bits), bits);
-    };
     // ll and ml - 4 at their caps, class 0 with the offset 1 a page starts with
     seq.token(r.tok, 15 + 16 * 31);
-    value(r.ll, n - 15);
-    value(r.ml, SEQLZ_PAGE - n - 35);
+    seq.value(r.ll, n - 15);
+    seq.value(r.ml, SEQLZ_PAGE - n - 35);
     c.insert(c.end(), seq.bytes.begin(), seq.bytes.end());
     return c;
 }

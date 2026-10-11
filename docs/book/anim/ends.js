@@ -308,7 +308,7 @@ BookAnim.define('ends', function (ctx) {
       if (!row[ML]) return head + 'It has no token and no bits: the decoder knows it from the literals left. Nothing is put, p stays, ' + plural(row[CNT], 'bit') + ' stay in acc.';
       var bits = [];
       bits.push('token ' + row[TOK] + ' in ' + row[TLEN] + (row[ESC] ? ' (it has no code: the escape\'s ' + (row[TLEN] - 12) + ' and 12 bits)' : ''));
-      if (row[ML]) bits.push('offset class ' + row[CLS] + ' in ' + row[OB] + (row[CLS] === 0 ? ' (the offset before)' : ''));
+      bits.push('offset class ' + row[CLS] + ' in ' + row[OB] + (row[CLS] === 0 ? ' (the offset before)' : ''));
       if (row[LLB]) bits.push('ll value in ' + row[LLB]);
       if (row[MLB]) bits.push('ml value in ' + row[MLB]);
       var mv = s.pPrev - s.p, before = s.i > 0 ? S[s.i - 1][CNT] : 0;

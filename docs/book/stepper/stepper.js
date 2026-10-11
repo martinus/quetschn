@@ -38,16 +38,19 @@
       page = data.pages[id];
       steps = page.steps;
       seqStarts = [];
-      // a sequence starts at its token; the last one has none, it is the copy of the literals left
-      steps.forEach(function (s, k) { if (is(s, 'if (tok >> TOK_ESCAPE_AT)') || is(s, LAST)) seqStarts.push(k); });
       page.nLit = page.lit.length;
+      // a sequence starts at its token; the last one has none, it is the copy of the literals left,
+      // whose count the trace records as nl 0, outside the loop: it is set here
+      steps.forEach(function (s, k) {
+        if (is(s, LAST)) s[F.nl] = page.nLit - s[F.lit];
+        if (is(s, 'if (tok >> TOK_ESCAPE_AT)') || is(s, LAST)) seqStarts.push(k);
+      });
       // when each byte of the page is final, and whether a literal or a match wrote it
       when = new Int32Array(C.PAGE).fill(-1);
       kind = new Uint8Array(C.PAGE);
       steps.forEach(function (s, k) {
         var a = s[F.d], n = 0, t = 0;
-        if (is(s, 'd += nl;')) { n = s[F.nl]; t = 1; }
-        if (is(s, LAST)) { n = page.nLit - s[F.lit]; t = 1; }
+        if (is(s, 'd += nl;') || is(s, LAST)) { n = s[F.nl]; t = 1; }
         if (is(s, 'd += len;')) { n = s[F.len]; t = 2; }
         for (var b = a; b < a + n && b < C.PAGE; b++) { when[b] = k; kind[b] = t; }
       });
@@ -83,8 +86,7 @@
       seqStarts.forEach(function (a, q) {
         var b = q + 1 < seqStarts.length ? seqStarts[q + 1] : end, ll = 0, ml = 0, lit = 0, k;
         for (k = a; k < b; k++) {
-          if (is(steps[k], 'd += nl')) { ll = steps[k][F.nl]; lit = steps[k][F.lit]; }
-          if (is(steps[k], LAST)) { lit = steps[k][F.lit]; ll = page.nLit - lit; }
+          if (is(steps[k], 'd += nl') || is(steps[k], LAST)) { ll = steps[k][F.nl]; lit = steps[k][F.lit]; }
           if (is(steps[k], 'd += len')) ml = steps[k][F.len];
         }
         var litBits = 0;
@@ -176,7 +178,7 @@
       if (t.indexOf('if (nl == SEQLZ_LL_CAP)') === 0) return 'The slow path. ' + (nl === C.LL_CAP ? 'nl is ' + C.LL_CAP + ': a literal length value follows.' : 'nl < ' + C.LL_CAP + ': no literal length value.');
       if (t.indexOf('nl += seqlz_br_value(&br, &t->ll)') === 0) return 'Reads the literal length value from the ll table: nl = ' + C.LL_CAP + ' + ' + (n[F.nl] - C.LL_CAP) + ' = ' + n[F.nl] + '.';
       if (t.indexOf('if (lit > lit_end') === 0) return 'The literals must be there and fit the page: ' + nl + ' ≤ ' + (page.nLit - s[F.lit]) + ' left, and ' + nl + ' ≤ ' + (C.PAGE - d) + '.';
-      if (t.indexOf(LAST) === 0) { var m = page.nLit - s[F.lit]; return 'Sequence ' + seqOf(k) + ', the last: ' + (m ? 'copy_literals() copies the ' + m + ' literals left, to the end of the page.' : 'no literals are left, the last match ended at the end of the page: copy_literals() copies nothing.'); }
+      if (t.indexOf(LAST) === 0) return 'Sequence ' + seqOf(k) + ', the last: ' + (nl ? 'copy_literals() copies the ' + nl + ' literals left, to the end of the page.' : 'no literals are left, the last match ended at the end of the page: copy_literals() copies nothing.');
       if (t.indexOf('copy_literals(') === 0) return nl ? 'Copies ' + nl + ' literals, checked: 16 bytes at a time where there is room, the rest one by one.' : 'No literals to copy.';
       if (t.indexOf('if ((unsigned long)d - (unsigned long)lit == end_gap)') === 0) {
         var left = page.nLit - s[F.lit], room = C.PAGE - d;
@@ -236,10 +238,10 @@
       }
       if (p >= 0 && kids[p]) keepVisible(inBox, kids[p]);
       var l = s[F.lit], lk = litBox.children, t = at(s);
-      var copying = /^(copy16|copy_literals)/.test(t), nCopy = t.indexOf(LAST) === 0 ? page.nLit - l : s[F.nl];
+      var copying = /^(copy16|copy_literals)/.test(t);
       for (var j = 0; j < lk.length; j++) {
         lk[j].classList.toggle('b-used', l >= 0 && j < l);
-        lk[j].classList.toggle('b-now', copying && j >= l && j < l + nCopy);
+        lk[j].classList.toggle('b-now', copying && j >= l && j < l + s[F.nl]);
       }
       if (l >= 0 && lk[Math.min(l, lk.length - 1)]) keepVisible(litBox, lk[Math.min(l, lk.length - 1)]);
     }
@@ -256,7 +258,7 @@
       var ctx = U.cells(canvas, function (b) { return when[b] >= 0 && when[b] < k ? kind[b] : 0; }, [col.empty, col.lit, col.match], col.paper);
       // the bytes the current copy writes, and where a match copies from
       var d = s[F.d], n = 0, src = -1;
-      if (/^(copy16|copy_literals)/.test(t)) n = /^copy16/.test(t) ? 16 : t.indexOf(LAST) === 0 ? page.nLit - s[F.lit] : s[F.nl];
+      if (/^(copy16|copy_literals)/.test(t)) n = /^copy16/.test(t) ? 16 : s[F.nl];
       if (/^copy_match/.test(t)) { n = s[F.len]; src = d - s[F.off]; }
       function outline(a, len, color) {
         ctx.strokeStyle = color; ctx.lineWidth = 1.5;

@@ -242,9 +242,9 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 	if (e->p == e->lit)
 		return 0;
 	/*
-	 * Every sequence ends with enc_flush(), which already wrote the bits
-	 * left over on top of the byte below p, zeros below them: that byte is
-	 * the bitstream's last.
+	 * Every sequence with a match ends with enc_flush(), which already
+	 * wrote the bits left over on top of the byte below p, zeros below
+	 * them: that byte is the bitstream's last.
 	 */
 	if (e->cnt > 0)
 		e->p--;
