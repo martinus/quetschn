@@ -11,6 +11,11 @@
  * instead of one after the other as the decoder runs into them. 512 bytes per
  * iteration, 8 lines where they have 64 bytes: with one line per iteration,
  * the loop took more instructions than the prefetches.
+ *
+ * A table need not start a cache line: struct seqlz_tables is aligned to 8
+ * bytes, and the literal and length tables are not at a multiple of 64 in it.
+ * Then the loop misses the line of the table's last bytes, and the prefetch of
+ * end - 1 asks for it. Where p starts a line, the loop asked for it already.
  */
 #define PREFETCH_STEP 512U
 
@@ -23,6 +28,7 @@ static inline void prefetch_lines(const void *p, unsigned long size)
 	for (; q < end; q += PREFETCH_STEP)
 		for (k = 0; k < PREFETCH_STEP; k += L1_CACHE_BYTES)
 			prefetch(q + k);
+	prefetch(end - 1);
 }
 
 /* prefetch_lines() takes multiples of PREFETCH_STEP */
