@@ -103,7 +103,7 @@ static void seqlz_test_example(struct kunit *test)
 			0);
 	for (k = 0; k < PAGE_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b.out[k], k % 2 ? 'b' : 'a');
-	/* without its last byte the last token is cut */
+	/* without its last byte the match is cut */
 	KUNIT_EXPECT_EQ(test,
 			decompress(test, &b, example, sizeof(example) - 1),
 			-EINVAL);
@@ -385,27 +385,50 @@ static struct maker *get_maker(struct kunit *test)
 	return m;
 }
 
-/*
- * A page of n raw literals k * 7 and one sequence that takes the whole page:
- * a token of class cls, its 4 offset bits if cls is 1, then ll. Valid only
- * for n = PAGE_SIZE and class 0. *padding gets the bits after the last code.
- */
-static unsigned int one_sequence(struct maker *m, u8 *c, unsigned int n,
-				 unsigned int cls, unsigned int *padding)
+/* A page of n raw literals k * 7 and no bits: valid only for n = PAGE_SIZE */
+static unsigned int literals_only(u8 *c, unsigned int n)
 {
-	struct bits w = { .p = c + 2 + n };
 	unsigned int k;
 
 	c[0] = n;
 	c[1] = n >> 8;
 	for (k = 0; k < n; k++)
 		c[2 + k] = k * 7;
+	return 2 + n;
+}
+
+/*
+ * A page of PAGE_SIZE raw literals and a token that takes them all, of class
+ * cls, its 4 offset bits if cls is 1, then ll: invalid, the last sequence has
+ * no token.
+ */
+static unsigned int one_sequence(struct maker *m, u8 *c, unsigned int cls)
+{
+	unsigned int len = literals_only(c, PAGE_SIZE);
+	struct bits w = { .p = c + len };
+
 	token(m, &w, SEQLZ_LL_CAP + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS)));
 	if (cls == 1)
 		put(&w, 1, 4);
 	put_len_value(m, &w, &m->ll, PAGE_SIZE - SEQLZ_LL_CAP);
+	return len + bytes(&w);
+}
+
+/*
+ * A page of one literal, 7, and a match of the rest of the page from 1 back,
+ * the offset a page starts with. *padding gets the bits after the last code.
+ */
+static unsigned int one_match(struct maker *m, u8 *c, unsigned int *padding)
+{
+	struct bits w = { .p = c + 3 };
+
+	c[0] = 1;
+	c[1] = 0;
+	c[2] = 7;
+	token(m, &w, 1 + (SEQLZ_ML_CAP << SEQLZ_LL_BITS));
+	put_len_value(m, &w, &m->ml, PAGE_SIZE - 1 - 4 - SEQLZ_ML_CAP);
 	*padding = 8 * bytes(&w) - w.n;
-	return 2 + n + bytes(&w);
+	return 3 + bytes(&w);
 }
 
 static void seqlz_test_one_sequence(struct kunit *test)
@@ -415,10 +438,10 @@ static void seqlz_test_one_sequence(struct kunit *test)
 	struct bufs b;
 
 	get_bufs(test, &b);
-	len = one_sequence(m, b.c, PAGE_SIZE, 0, &padding);
+	len = one_match(m, b.c, &padding);
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
 	for (k = 0; k < PAGE_SIZE; k++)
-		KUNIT_ASSERT_EQ(test, b.out[k], (u8)(k * 7));
+		KUNIT_ASSERT_EQ(test, b.out[k], 7);
 	/* a byte more, and if there is room, a bit after the last code */
 	b.c[len] = 0;
 	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len + 1), -EINVAL);
@@ -427,11 +450,18 @@ static void seqlz_test_one_sequence(struct kunit *test)
 		KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
 	}
 
-	/* the last sequence needs class 0 */
-	len = one_sequence(m, b.c, PAGE_SIZE, 1, &padding);
+	/* a page of literals only has no bits */
+	len = literals_only(b.c, PAGE_SIZE);
+	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+	for (k = 0; k < PAGE_SIZE; k++)
+		KUNIT_ASSERT_EQ(test, b.out[k], (u8)(k * 7));
+	/* and as many literals as the page has bytes */
+	len = literals_only(b.c, PAGE_SIZE - 1);
 	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
-	/* and as many literals as the header has */
-	len = one_sequence(m, b.c, PAGE_SIZE - 1, 0, &padding);
+	/* the last sequence has no token, of any class */
+	len = one_sequence(m, b.c, 0);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+	len = one_sequence(m, b.c, 1);
 	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
 }
 
@@ -496,14 +526,13 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 	}
 
 	/*
-	 * ll and ml - 4 above what the token holds, class 0, so offset 1, then
-	 * the last sequence
+	 * ll and ml - 4 above what the token holds, class 0, so offset 1; the
+	 * last sequence, without literals, has no bits
 	 */
 	w = (struct bits){ .p = c + at };
 	token(m, &w, SEQLZ_LL_CAP + (SEQLZ_ML_CAP << SEQLZ_LL_BITS));
 	put_len_value(m, &w, &m->ll, n - SEQLZ_LL_CAP);
 	put_len_value(m, &w, &m->ml, PAGE_SIZE - n - 4 - SEQLZ_ML_CAP);
-	token(m, &w, 0);
 	return at + bytes(&w);
 }
 

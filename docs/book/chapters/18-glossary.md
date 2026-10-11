@@ -91,7 +91,7 @@ same thing; the book uses each in the one sense given here, throughout.
 - **sentinel**: the 1 bit a literal stream keeps below its last real bit, so that the stream needs no
   count of its bits: the position of that 1 is the count. [Chapter 13](#ch-literals-dec--sentinel)
 - **sequence**: `ll` literals followed by one match; a page is a list of them, and the last one has
-  literals only. [Chapter 4](#ch-format)
+  literals only and no token. [Chapter 4](#ch-format)
 - **stream**: one of the 8 parts coded literals are split into, literal $k$ into stream $k \bmod 8$, so the
   decoder can work on 8 at a time. [Chapter 11](#ch-literals-enc)
 - **symbol**: whatever a code stands for: a token, a byte value, a length value symbol. [Chapter 2](#ch-compression)

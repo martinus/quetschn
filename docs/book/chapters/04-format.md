@@ -434,19 +434,26 @@ larger, 1.6 to 2.8 bytes, and no read faster
 
 A page does not say how many sequences it has, and its bitstream has no length field. Instead:
 
-- **The last sequence is the one whose literals fill the page.** After its literals are copied, the
-  page has all of its 4096 bytes, and decoding stops. It has no match, so its token must have `mlf =
-  0` and class 0, which means no offset bits either. Any other token there makes the page invalid. A
-  page whose last match reaches the end of the page gets one more sequence with `ll = 0`: token 0.
+- **The last sequence has no token.** Every match is at least 4 bytes. So once the literals left,
+  `n - used`, are as many as the bytes the page still needs, `PAGE - |out|`, no match fits any more:
+  the literals left are the last sequence, and decoding copies them and stops. The decoder knows `n`
+  from the header and `PAGE` from the page size, so the last sequence needs no bits at all. A page
+  whose last match reaches the end of the page ends with 0 literals left, and a page of literals
+  only, `n = PAGE`, has no sequence with a match and an empty `B`.
 - **The bitstream ends where its bits end.** After the last bit the decoder needs, fewer than 8 bits
   of `B` are left, all of them in its last byte, and all of them 0. The same holds for each literal
   stream. A page with a byte too many, or a bit 1 in the padding, is invalid.
 
-*Why:* zram stores no checksum. A page damaged in memory has to be caught by the decoder, and these
-rules catch most damage at one compare per page, at no cost in bytes: the compressor writes nothing
-else anyway. Measured, the strict end costs a warm read 0.07 to 0.10 µs on the phone's little core
+*Why:* zram stores no checksum. A page damaged in memory has to be caught by the decoder, and the
+strict end catches most damage at one compare per page, at no cost in bytes: the compressor writes
+nothing else anyway. Measured, the strict end costs a warm read 0.07 to 0.10 µs on the phone's little core
 and nothing in the kernel VM on the PC
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)).
+
+Until 11th October 2026 the last sequence had a token too: its `ll`, `mlf = 0` and class 0, so token
+0 when the last match had filled the page. It told the decoder only what it knew already, and took
+8.7 to 9.3 bits per page, about 1.2 bytes, on the pages of three zram dumps
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 
 Every sequence but the last writes at least 4 bytes, so a decoder stops after at most `PAGE / 4 + 1`
 sequences, 1025 on a 4 KiB page, also on a page that is not valid. That bounds the work per page.
@@ -471,13 +478,15 @@ group is the layout, the second the literal streams, the third the sequences.
 8. An escaped token of 3072 or more.
 9. A sequence's `ll` larger than the literals left, `n - used`, or than the room left in the page,
    `PAGE - |out|`.
-10. The page is full after a sequence's literals, and its token does not have `mlf = 0` and class 0.
-11. A match with offset 0, or an offset larger than the bytes written so far, `|out|`.
-12. A match longer than the room left in the page, `ml > PAGE - |out|`.
-13. At the end, not all `n` literals used.
-14. At the end, 8 or more bits of `B` left, or a bit 1 among the fewer than 8 left. This includes a
+10. A match with offset 0, or an offset larger than the bytes written so far, `|out|`.
+11. A match longer than the room left in the page, `ml > PAGE - |out|`.
+12. At the end, 8 or more bits of `B` left, or a bit 1 among the fewer than 8 left. This includes a
     page that needs more bits than it has: a decoder may read zeros past the end, and then fails
     this check, because it used bits that are not there.
+
+A header with more literals than the sequences use breaks rule 9 or 11: the literals left are then
+more than the bytes left after every match, so the end is never reached, and the next token's `ll`
+or match does not fit.
 
 `seqlz_decode()` checks every one of them, in its own order and often in a cheaper form, see
 [chapter 14](#ch-decode). The fuzz target `fuzz/seqlz_diff_fuzz.c` gives any input to it and to
@@ -492,22 +501,22 @@ they are coded), `used` is how many of them are copied, `out` is the page being 
 
 ```text
 loop:
+    if n - used == PAGE - |out|:                the last sequence
+        append lits[used] to lits[n - 1] to out
+        stop
     token: ll, mlf, c
     x = read(offset bits of class c)
     off = (c == 0) ? last : x as the offset of class c
     if ll == 15: ll = 15 + value(LL)
     if ll > n - used or ll > PAGE - |out|: invalid
     append lits[used] to lits[used + ll - 1] to out; used = used + ll
-    if |out| == PAGE:                           the last sequence
-        if mlf != 0 or c != 0: invalid
-        stop
     ml = mlf + 4
     if mlf == 31: ml = 35 + value(ML)
     last = off
     if off == 0 or off > |out| or ml > PAGE - |out|: invalid
     ml times: append the byte off places before the end of out
 
-at the stop: used == n, and fewer than 8 bits of B left, all 0, else invalid
+at the stop: fewer than 8 bits of B left, all 0, else invalid
 ```
 
 The match is copied one byte at a time, each byte after the one before is written. So it can repeat
@@ -523,15 +532,15 @@ not; that is what the fuzzers check.
 
 ## A page of `ab`, bit by bit {#ch-format--example}
 
-The 9 bytes `02 00 61 62 dc 65 ef db 8a` are a 4 KiB page of `ab` 2048 times. `seqlz-fast` and
+The 8 bytes `02 00 61 62 dc 65 ef db` are a 4 KiB page of `ab` 2048 times. `seqlz-fast` and
 `seqlz-fast-lit` both write exactly these bytes: 2 literals are far from saving 51 bytes, the
 minimum for coding them.
 
 - `02 00`: `h = 2`. The top bit is clear, so the literals are raw, and `n = 2`.
 - `61 62`: the 2 literals, `a` and `b`.
-- `dc 65 ef db 8a`: `B`, 40 bits.
+- `dc 65 ef db`: `B`, 32 bits.
 
-@anim abbits The 9 bytes read as the spec reads them, one field per step, with the codes of the real 4 KiB tables; the page fills up below.
+@anim abbits The 8 bytes read as the spec reads them, one field per step, with the codes of the real 4 KiB tables; the page fills up below.
 
 Step by step, with the codes of the real 4 KiB tables:
 
@@ -543,29 +552,29 @@ Step by step, with the codes of the real 4 KiB tables:
 | `111101` | `symbol(ML)` = 23 | `mlf` is 31, so a length value: $b = 23 - 12 = 11$ |
 | `11111011011` | `read(11)` = 2011 | value $2^{11} + 2011 = 4059$, `ml = 35 + 4059 = 4094` |
 | | | copy 4094 bytes from 2 back: `abab...`, the page has 4096 bytes |
-| `10001010` | `symbol(TOK)` = 0 | `ll = 0`, `mlf = 0`, class 0, no offset bits |
-| | | no literals to copy, the page is full: the last sequence, valid |
+| | | 0 literals left for 0 bytes of the page: the last sequence, no token |
 
-After the last code, 0 bits of `B` are left, fewer than 8 and all zero. All 2 literals are used. The
-page is valid.
+After the last code, 0 bits of `B` are left, fewer than 8 and all zero. The page is valid.
 
 The match is the case where copying byte by byte matters: it starts 2 bytes back and is 4094 bytes
-long, so after its first 2 bytes it copies bytes it wrote itself. A page of 4096 bytes takes 9 bytes.
+long, so after its first 2 bytes it copies bytes it wrote itself. A page of 4096 bytes takes 8 bytes.
+Until 11th October 2026 it took 9: the last sequence had a token, token 0 with the 8-bit code
+`10001010`, which said "0 literals, the end" where the decoder could see that already.
 
 ::: try Decode it with the spec's decoder
-In the repository, write the 9 bytes to a file and give it to the reference decoder. It prints
+In the repository, write the 8 bytes to a file and give it to the reference decoder. It prints
 whether the page is valid and the SHA-256 of the decoded page, which is the SHA-256 of `ab` 2048
 times:
 
 ```text
-printf '\x02\x00\x61\x62\xdc\x65\xef\xdb\x8a' > /tmp/ab.seqlz
+printf '\x02\x00\x61\x62\xdc\x65\xef\xdb' > /tmp/ab.seqlz
 python3 tools/seqlz-ref/seqlz_ref.py /tmp/ab.seqlz
 /tmp/ab.seqlz valid 2c888a3809c425e853a6ac08e1c1ffd9393fe3e49419e8f71ac23ab0362617a3
 python3 -c "import hashlib; print(hashlib.sha256(b'ab' * 2048).hexdigest())"
 2c888a3809c425e853a6ac08e1c1ffd9393fe3e49419e8f71ac23ab0362617a3
 ```
 
-Flip any bit of the 9 bytes and run it again: most flips make the page invalid. The same 9 bytes go
+Flip any bit of the 8 bytes and run it again: most flips make the page invalid. The same 8 bytes go
 through the real `seqlz_decode()` one statement at a time in [chapter 14](#ch-decode--example).
 :::
 
@@ -582,14 +591,14 @@ bytes 18 to 24:  cdefghi       the same 7 bytes as at 2 to 8, 16 bytes back
 bytes 25 to 4095: z, 4071 times
 ```
 
-`seqlz_compress()` writes it in 26 bytes, with and without coded literals the same: 15 literals
+`seqlz_compress()` writes it in 25 bytes, with and without coded literals the same: 15 literals
 cannot save 51 bytes.
 
 ```text
-0f 00  61 62 63 64 65 66 67 68 69 6a 6b 6c 78 79 7a  cd 96 71 6e 21 f7 e1 c5 00
+0f 00  61 62 63 64 65 66 67 68 69 6a 6b 6c 78 79 7a  cd 96 71 6e 21 f7 e1 80
 ```
 
-`h = 15`, raw literals, and the 15 literals are `abcdefghijklxyz`. `B` is 9 bytes, 72 bits:
+`h = 15`, raw literals, and the 15 literals are `abcdefghijklxyz`. `B` is 8 bytes, 64 bits:
 
 | bits | read as | means |
 | --- | --- | --- |
@@ -604,7 +613,7 @@ cannot save 51 bytes.
 | | | append `z`; 26 bytes |
 | `111101` | `symbol(ML)` = 23 | $b = 11$ |
 | `11111000011` | `read(11)` = 1987 | `ml = 35 + 2^11 + 1987 = 4070`: `z` 4070 more times; 4096 bytes |
-| `10001010` | `symbol(TOK)` = 0 | `ll = 0`, the page is full: the last sequence |
+| | | 0 literals left for 0 bytes of the page: the last sequence |
 | `0000000` | | 7 bits left, in the last byte, all 0: valid |
 
 A few things to see here:
@@ -620,10 +629,10 @@ A few things to see here:
   the literals.
 - **The third match changes the class but not the bits' meaning.** Offset 1 is not the repeat offset
   any more, `last` is 16 now, so it goes as class 1 with 4 bits.
-- **The padding.** 65 bits are used, 7 are left in the last byte, and they are 0. With an eighth bit
+- **The padding.** 57 bits are used, 7 are left in the last byte, and they are 0. With an eighth bit
   left, or one of them 1, the page would be invalid.
 
-`python3 tools/seqlz-ref/seqlz_ref.py` agrees: it decodes the 26 bytes to the page above.
+`python3 tools/seqlz-ref/seqlz_ref.py` agrees: it decodes the 25 bytes to the page above.
 
 ## No version in the page {#ch-format--version}
 

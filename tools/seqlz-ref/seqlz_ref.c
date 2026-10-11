@@ -188,8 +188,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         b = (struct bits){src + start, 8U * (len - start), 0};
     }
 
-    /* "Decoding" */
-    for (;;) {
+    /* "Decoding": until the literals left fill the rest of the page */
+    while (n - used != page - size) {
         unsigned int tk, ll, mlf, c, x, off, ml, k;
 
         /* "Tokens" */
@@ -212,12 +212,6 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
             return -1;
         for (k = 0; k < ll; k++)
             out[size++] = lits[used++];
-        if (size == page) {
-            /* the last sequence */
-            if (mlf != 0 || c != 0)
-                return -1;
-            break;
-        }
         ml = mlf + 4U;
         if (mlf == 31U) {
             if (value(&b, &r->ml, &x))
@@ -231,6 +225,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         for (k = 0; k < ml; k++, size++)
             out[size] = out[size - off];
     }
-    /* "at the stop: used == n", B ends here; that no bit after B was used, every read checked */
-    return used == n && ends_here(&b) == 0 ? 0 : -1;
+    /* the last sequence, the literals left; B ends here, that no bit after B was used, every read checked */
+    while (used < n)
+        out[size++] = lits[used++];
+    return ends_here(&b) == 0 ? 0 : -1;
 }

@@ -152,15 +152,16 @@ and needs a `dst` of 847.
    comes only with 15 literals or more, and those 15 bytes alone are worth $15 / 4 \times 31 = 116$ bits of the
    budget; an `ml` value only with a match of 35 bytes or more, worth 271 bits. So "31 bits per 4 bytes
    covered" holds for every sequence, with its length values.
-4. The last sequence has no match and may cover 0 bytes; it gets 31 bits of its own.
+4. The last sequence has no match and may cover 0 bytes, but it has no bits at all, not even a
+   token.
 
 | | 4 KiB pages | 16 KiB pages |
 | --- | --- | --- |
-| bits at most, `SEQLZ_PAGE / 4 * 31 + 31` | $1024 \times 31 + 31 = 31\,775$ | $4096 \times 31 + 31 = 127\,007$ |
-| bytes of bitstream at most | 3972 ($31\,775 / 8 = 3971.9$) | 15 876 |
-| the u16 + every byte a literal + that bitstream | $2 + 4096 + 3972 = 8070$ | $2 + 16\,384 + 15\,876 = 32\,262$ |
+| bits at most, `SEQLZ_PAGE / 4 * 31` | $1024 \times 31 = 31\,744$ | $4096 \times 31 = 126\,976$ |
+| bytes of bitstream at most | 3968 | 15 872 |
+| the u16 + every byte a literal + that bitstream | $2 + 4096 + 3968 = 8066$ | $2 + 16\,384 + 15\,872 = 32\,258$ |
 | two pages | 8192 | 32 768 |
-| left over, must be ≥ `ENC_ROOM` | 122 | 506 |
+| left over, must be ≥ `ENC_ROOM` | 126 | 510 |
 
 The bound adds the most literals and the most bits, which no page has at once, so the real margin is
 larger. A page of random bytes, the worst case for literals, has almost no sequences.
@@ -400,23 +401,24 @@ where a 16-byte read would go past `src_end`. Line 188 moves `lit` on by the rea
 The casts `(unsigned int)(e->src_end - in)` turn the pointer difference, at most a page, into the type of
 `k + 16U`, so that the compare is between two unsigned numbers of the same width.
 
-@listing src/seqlz_compress.c 190-198
+@listing src/seqlz_compress.c 190-195
 
-**The last sequence.** The matcher marks it with `ml` 0. Its token is `seqlz_token(ll, 0, 0)`: `ml - 4` 0
-(the `ml ? ... : 0` in `seqlz_token()` takes care that 0 - 4 is not computed) and class 0. That
-combination ends the page, see [the format chapter](#ch-format--token). Line 193 puts the token's code,
-lines 194 and 195 the `ll` value if there are 15 literals or more, line 196 flushes, and the function
-returns without touching `last`: there is no next sequence.
+**The last sequence.** The matcher marks it with `ml` 0. Its literals are copied above, like those of
+any sequence, and that is all: it has no token, no offset and no length value, so line 195 returns
+before anything goes into the bitstream. The decoder knows the last sequence from the literals left,
+see [the format chapter](#ch-format--end). Until 11th October 2026 this branch wrote the token
+`seqlz_token(ll, 0, 0)`, an `ll` value if there were 15 literals or more, and a flush, about 9 bits per
+page.
 
-@listing src/seqlz_compress.c 199-218
+@listing src/seqlz_compress.c 196-215
 
-**The class and the token.** Line 200 asks `seqlz_off_class()` ([chapter 6](#ch-header)) for the offset's
-class and how many of its bits follow the token, without a branch. Line 201 builds the token with that
+**The class and the token.** Line 197 asks `seqlz_off_class()` ([chapter 6](#ch-header)) for the offset's
+class and how many of its bits follow the token, without a branch. Line 198 builds the token with that
 class and gets its code. For the first sequence of the page of `ab`: `off` 2, `last` 1, so the offset is
 new and below 16: class 1, 4 bits. The token is $2 + 16 \times 31 + 512 \times 1 = 1010$
 (the match length field is capped at 31), with the 11-bit code `11011100011`.
 
-**Token and offset in one put.** Lines 206 to 209 shift the code left by the number of offset bits and
+**Token and offset in one put.** Lines 203 to 206 shift the code left by the number of offset bits and
 OR the offset's bits in. The offset is shifted right by `SEQLZ_OFF_SHIFT(cls)`, 3 for classes 4 and 5,
 which send the offset divided by 8, else 0. Then it is ANDed with `0U - (cls != 0)`:
 
@@ -428,7 +430,7 @@ which send the offset divided by 8, else 0. Then it is ANDed with `0U - (cls != 
 Class 0 sends no offset bits, `raw_bits` is 0, and without the mask the offset would be ORed straight into
 the low bits of the token's code. Classes 1 to 5 need no mask: `seqlz_off_class()` picks a class whose
 bits hold the offset, e.g. an offset of 24 with a repeat offset of 8 is class 4, and `24 >> 3 = 3` fits
-its 5 bits. The comment on lines 203 and 204 says this. Masking only class 0, instead of masking every
+its 5 bits. The comment on lines 200 and 201 says this. Masking only class 0, instead of masking every
 offset to `raw_bits` bits, came with the change that loaded the matcher's values one position ahead
 (commit `996248b`); the repository gives no number for this part on its own. For the page of `ab`: `0x6e3 << 4 | 2 = 0x6e32`, 15 bits.
 
@@ -437,9 +439,9 @@ round of work on the compressor, "token and offset in one put" took 21 786 to 21
 x86-64
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
 
-**The length values, and when the flushes come.** With 15 literals or more, lines 210 to 213 put the `ll`
-value and flush. With a match of 35 bytes or more, `ml - 4 >= 31`, lines 214 and 215 put the `ml` value.
-Line 216 flushes. So a sequence flushes once, or twice when it has an `ll` value, and the bit budget of
+**The length values, and when the flushes come.** With 15 literals or more, lines 207 to 210 put the `ll`
+value and flush. With a match of 35 bytes or more, `ml - 4 >= 31`, lines 211 and 212 put the `ml` value.
+Line 213 flushes. So a sequence flushes once, or twice when it has an `ll` value, and the bit budget of
 the long comment holds at every put:
 
 | put | `cnt` before at most | bits at most | `cnt` after at most |
@@ -453,12 +455,12 @@ the long comment holds at every put:
 and an `ml` value after a long escaped token could reach $7 + 31 + 20 + 20 = 78$ bits, and the top bits
 would be lost. On 16 KiB pages the values have 22 bits, and the budget is 60.
 
-Line 217 remembers the offset for the next sequence's class 0. In the matcher, `last` changed at the
+Line 214 remembers the offset for the next sequence's class 0. In the matcher, `last` changed at the
 same moment, so both agree on what the repeat offset is.
 
 ## encoder_init() {#ch-encoder--init}
 
-@listing src/seqlz_compress.c 220-230
+@listing src/seqlz_compress.c 217-227
 
 One assignment of a compound literal: `(struct seqlz_encoder){ ... }` is a struct value written in
 place, and every field it does not name is 0, so `acc` and `cnt` start at 0. `p` starts at the end of
@@ -467,13 +469,13 @@ format's repeat offset at the start of a page, and the matcher's.
 
 ## encoder_finish(): the bitstream turned around {#ch-encoder--finish}
 
-@listing src/seqlz_compress.c 232-256
+@listing src/seqlz_compress.c 229-253
 
-Line 240: `end` is the end of `dst`, `out` where the bitstream goes, right after the literals. Line 242
+Line 237: `end` is the end of `dst`, `out` where the bitstream goes, right after the literals. Line 239
 counts the literals from where `lit` stands.
 
-Line 245 is the failure check: `p == lit` only after a failed room check, because a successful one
-leaves at least 16 bytes between them. Lines 252 and 253 take in the bits that are left, at most 7. They
+Line 242 is the failure check: `p == lit` only after a failed room check, because a successful one
+leaves at least 16 bytes between them. Lines 249 and 250 take in the bits that are left, at most 7. They
 are in memory already: every sequence ends with a flush, which wrote them as the top bits of the byte
 below `p`, with zeros below them. So that byte is the bitstream's last, and `p` only moves down by one to
 count it. The format wants exactly this: the bitstream ends in its last byte, and the bits after the
@@ -481,16 +483,16 @@ last code are 0, see [when a page is valid](#ch-format--validity). Until 11th Oc
 that byte a second time; without it the bytes were the same on 6000 made-up pages and on the tests,
 and only `seqlz_compress()`'s machine code changed (#180).
 
-Line 254 is where the bitstream starts in memory, line 255 how many bytes it has. Line 256 writes the
+Line 251 is where the bitstream starts in memory, line 252 how many bytes it has. Line 253 writes the
 u16 at the front, now that the count is known, little endian: for the page of pointers 557 literals,
 `2d 02`. The top bit, `SEQLZ_LIT_CODED`, stays 0: the literals are raw. If they get coded,
 `code_literals()` rewrites the u16 later.
 
-@listing src/seqlz_compress.c 257-280
+@listing src/seqlz_compress.c 254-277
 
-Byte `k` of the bitstream is at `end - 1 - k`. Line 262 checks whether the place it goes to,
+Byte `k` of the bitstream is at `end - 1 - k`. Line 259 checks whether the place it goes to,
 `out .. out + bytes`, ends before the place it comes from begins, `in`. If so the copy can go 8 bytes at a
-time (lines 263 to 265): load the 8 bytes at `end - 8 - k` little endian, store them big endian at `out +
+time (lines 260 to 262): load the 8 bytes at `end - 8 - k` little endian, store them big endian at `out +
 k`. A little-endian load makes the byte at the highest address the top byte of the number; a big-endian
 store writes the top byte to the lowest address. So the byte at `end - 1 - k` goes to `out + k`, the
 byte at `end - 2 - k` to `out + k + 1`, and so on: the 8 bytes are reversed. Compiled with `gcc -O2` for
@@ -498,17 +500,17 @@ x86-64 the loop is a load, a `bswap` and a store; `clang -O2` for arm64 uses `re
 
 For the page of pointers, the last 8 bytes of `dst` are `22 22 22 22 22 22 b0 d8`.
 `get_unaligned_le64()` reads them as `0xd8b0222222222222`, and `put_unaligned_be64()` writes `d8 b0 22 22
-22 22 22 22` at `out`: the bitstream's first 8 bytes in order. Lines 266 and 267 copy the 0 to 7 bytes
+22 22 22 22` at `out`: the bitstream's first 8 bytes in order. Lines 263 and 264 copy the 0 to 7 bytes
 left one at a time, the same reversal.
 
 If the two places overlap, which happens only when the page nearly fills `dst` (the free room left is
-less than the bitstream), lines 269 to 277 take the slow way: reverse the bitstream where it is, swapping
+less than the bitstream), lines 266 to 274 take the slow way: reverse the bitstream where it is, swapping
 the bytes at the two ends and moving inward, then `memmove()` it down, which is defined for overlapping
 memory. With the smallest `dst` each of the 22 500 made-up pages above would take, which leaves at most
 31 bytes of room and so sends every page with a longer bitstream down this path, the bytes were the same
 as with two pages.
 
-Line 279 returns the length of the page: the u16, the literals, the bitstream.
+Line 276 returns the length of the page: the u16, the literals, the bitstream.
 
 The last steps of the [animation above](#ch-encoder--layout) do all of this for chapter 16's page; its
 smallest `dst` takes the in-place path.
@@ -521,20 +523,20 @@ matters, and it is called from both `compress_page()` and `encode_raw()`.
 `seqlz_encode()` writes a page from sequences the caller made, for tests and tools that try other
 matchers or check the format. Its first half is `encode_raw()`.
 
-@listing src/seqlz_compress.c 282-314
+@listing src/seqlz_compress.c 279-311
 
-Line 292: `dst_cap` must be at least 34 bytes, the u16 and `ENC_ROOM`. That matters for more than
+Line 289: `dst_cap` must be at least 34 bytes, the u16 and `ENC_ROOM`. That matters for more than
 speed: with a smaller `dst`, `p` would start below `lit + 32`, or even below `lit`, and the room check's
 `(size_t)` cast would turn a negative room into a huge one. The tables must have a code for every symbol
 (`all_symbols`), there must be at least one sequence, at most `SEQLZ_MAX_SEQUENCES`, and at most a page
 of literals.
 
-Lines 301 to 314 check the sequences before a single byte is written, by the rules a decoder checks
+Lines 298 to 311 check the sequences before a single byte is written, by the rules a decoder checks
 (see [chapter 14](#ch-decode)): `pos` is the position in the page, `lits` the literals counted. Each
-sequence's literals must stay in the page (line 304). The last sequence's match is ignored, it has none
-(line 306). Every other one needs a match of at least 4 bytes and an offset from 1 to `pos`, the bytes
-before the match (lines 308 to 310). At the end the sequences must fill the page exactly, and use every
-literal (line 313).
+sequence's literals must stay in the page (line 301). The last sequence's match is ignored, it has none
+(line 303). Every other one needs a match of at least 4 bytes and an offset from 1 to `pos`, the bytes
+before the match (lines 305 to 307). At the end the sequences must fill the page exactly, and use every
+literal (line 310).
 
 ::: warn Why a match below 4 bytes is not only invalid but dangerous
 `encode_emit()` computes `ml - 4` in unsigned arithmetic. For `ml` 3 that wraps to 4 294 967 295, far above
@@ -548,7 +550,7 @@ and failed within seconds against the old encoder. `seqlz_compress()` was never 
 makes only valid sequences.
 :::
 
-@listing src/seqlz_compress.c 315-324
+@listing src/seqlz_compress.c 312-321
 
 Then the encoding is a loop. `encoder_init()` gets `literals + n_literals` as `src_end`, so the 16-byte
 copies never read past the caller's literals. Each sequence goes to `encode_emit()` with its literals,
@@ -560,7 +562,7 @@ what makes `encode_emit()` write it as the end of the page. `encoder_finish()` r
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc). Here they are
 out of order, because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 600-610
+@listing src/seqlz_compress.c 597-607
 
 `seqlz_encode()` is `encode_raw()` and then, if `coded` is set and the page was written,
 `code_literals()`, which codes the literals with one of the 8 literal tables if that saves enough, and
@@ -568,13 +570,13 @@ returns the new length or `len` unchanged. The conditional operator reads `(len 
 code_literals(...)`. `code_literals()` gets the caller's literals as `raw`, a copy it can read while it
 writes the coded ones over the raw ones in `dst`.
 
-@listing src/seqlz_compress.c 612-634
+@listing src/seqlz_compress.c 609-631
 
 `compress_page()` is the compressor's version of `encode_raw()` without the checks: its sequences come
-from the matcher and are valid by construction. Line 618 rejects a `dst` below 34 bytes and tables that
-cannot write every symbol. Line 620 sets up the encoder with the end of the page as `src_end`, line 621
+from the matcher and are valid by construction. Line 615 rejects a `dst` below 34 bytes and tables that
+cannot write every symbol. Line 617 sets up the encoder with the end of the page as `src_end`, line 618
 runs the matcher with `encode_emit()` as its receiver, and that one line is the whole compression loop
-once the compiler has inlined it. Line 622 finishes the page.
+once the compiler has inlined it. Line 619 finishes the page.
 
 `seqlz_compress()` is what zram calls, through the glue of [chapter 15](#ch-zram-glue). `coded` is the
 level: `false` is `seqlz-fast`, raw literals, `true` is `seqlz-fast-lit`. For the coded literals it passes
@@ -585,12 +587,12 @@ sequences, and the round trip fuzzer checks that for `seqlz_find()`'s sequences 
 
 The kernel's copy keeps only `compress_page()` and `seqlz_compress()`, the latter renamed to
 `seqlz_compress_page()`, because the kernel's interface function, which takes the level and the work
-memory, is called `seqlz_compress()`. It also drops the `!t->all_symbols` test from line 618, because
+memory, is called `seqlz_compress()`. It also drops the `!t->all_symbols` test from line 615, because
 the kernel's tables are checked when they are generated ([chapter 15](#ch-zram-glue--init)).
 
 ## The page of ab, bit by bit {#ch-encoder--example}
 
-The format chapter takes the 9 bytes `02 00 61 62 dc 65 ef db 8a` apart, a page of `ab` 2048 times; see
+The format chapter takes the 8 bytes `02 00 61 62 dc 65 ef db` apart, a page of `ab` 2048 times; see
 [the example](#ch-format--example). Here they come into being. The numbers are from running
 `seqlz_compress()` with raw literals into two pages, and from a copy of `seqlz_compress.c` with a
 `printf()` in `enc_put()` and `enc_flush()`.
@@ -606,19 +608,18 @@ offset 2 that runs to the end of the page, 4094 bytes. The last sequence has 0 l
 | token and offset | class 1, token 1010, code `11011100011`, offset `0010` | `0x6e32` | 15 |
 | `ml` value | $4090 - 31 = 4059$: code `111101`, extra `11111011011` | `0xdc65efdb` | 32 |
 | flush | `acc << 32` = `0xdc65efdb00000000` stored at `end - 8`: `00 00 00 00 db ef 65 dc`; `p` = `end - 4` | `0xdc65efdb` | 0 |
-| last sequence | token 0, code `10001010` | `0xdc65efdb8a` | 8 |
-| flush | `acc << 56` = `0x8a00000000000000`: `8a` at `end - 5`; `p` = `end - 5` | | 0 |
-| finish | `cnt` is 0, no partial byte; 5 bytes of bitstream; u16 = 2 | | |
+| last sequence | 0 literals, then the return of line 195: no token, nothing put | `0xdc65efdb` | 0 |
+| finish | `cnt` is 0, no partial byte; 4 bytes of bitstream; u16 = 2 | | |
 
-The first flush is 32 bits, 4 whole bytes, and the second 8 bits, so on this page no byte is ever
-partial. Note the `acc` of the last sequence: the old bits `dc65efdb` are still in it, and the shift by 56
-drops them. The last 5 bytes of `dst` are now `8a db ef 65 dc`. `encoder_finish()` writes `02 00` at the
-front, and since 5 is less than 8, it copies byte by byte from `end - 1` down: `dc 65 ef db 8a`, right
-after `61 62`. 9 bytes. The 14 more bytes of `abab` that the literal copy wrote past `d + 4` are
-overwritten by the bitstream or lie beyond the 9 bytes returned.
+The flush is 32 bits, 4 whole bytes, so on this page no byte is ever partial. The old bits `dc65efdb`
+are still in `acc` after it, which does not matter: the next put shifts them out, and here no put comes.
+The last 4 bytes of `dst` are now `db ef 65 dc`. `encoder_finish()` writes `02 00` at the front, and
+since 4 is less than 8, it copies byte by byte from `end - 1` down: `dc 65 ef db`, right after `61 62`.
+8 bytes. The 14 more bytes of `abab` that the literal copy wrote past `d + 4` are overwritten by the
+bitstream or lie beyond the 8 bytes returned.
 
-The 40 bits, in the order the decoder reads them: `11011100011` (token 1010) `0010` (offset 2) `111101`
-(symbol 23 of the `ml` table) `11111011011` (2011) `10001010` (token 0).
+The 32 bits, in the order the decoder reads them: `11011100011` (token 1010) `0010` (offset 2) `111101`
+(symbol 23 of the `ml` table) `11111011011` (2011).
 
 ::: try Compress a page yourself
 In the repository, save this as `ab.c` and build it with `gcc -O2 -Isrc -o ab ab.c src/seqlz_compress.c
@@ -649,7 +650,7 @@ int main(void)
 }
 ```
 
-It prints `02 00 61 62 dc 65 ef db 8a`. With `true` instead of `false` the result is the same: 2 literals
+It prints `02 00 61 62 dc 65 ef db`. With `true` instead of `false` the result is the same: 2 literals
 are too few to save the 51 bytes coded literals must save.
 :::
 

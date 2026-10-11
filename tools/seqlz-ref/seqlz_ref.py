@@ -143,7 +143,7 @@ def decode(page, tables, page_bits):
         return (1 << b) + bits.read(b)
 
     out, used, last = bytearray(), 0, 1
-    while True:
+    while n - used != size - len(out):
         t = bits.symbol(tok_codes)
         if t == 3072:
             t = bits.read(12)
@@ -158,10 +158,6 @@ def decode(page, tables, page_bits):
             raise Invalid
         out += bytes(lits[used : used + ll])
         used += ll
-        if len(out) == size:
-            if mlf != 0 or c != 0:
-                raise Invalid
-            break
         ml = mlf + 4
         if mlf == 31:
             ml = 35 + value(ml_codes)
@@ -170,7 +166,8 @@ def decode(page, tables, page_bits):
             raise Invalid
         for _ in range(ml):
             out.append(out[-off])
-    if used != n or not bits.ends_here(8 * len(bits.data)):
+    out += bytes(lits[used:])
+    if not bits.ends_here(8 * len(bits.data)):
         raise Invalid
     return bytes(out)
 

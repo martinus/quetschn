@@ -537,7 +537,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 	u8 *const d_end = d + SEQLZ_PAGE;
 	const u8 *lit, *lit_end, *lit_bound;
 	u8 *d_fast;
-	unsigned long lit_fast, in_fast;
+	unsigned long lit_fast, in_fast, end_gap;
 	struct seqlz_bit_reader br;
 	unsigned int n_lit, last = 1, tok, skip = 0;
 
@@ -588,6 +588,16 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 			  (unsigned long)s_end - FAST_IN_ROOM :
 			  0;
 
+	/*
+	 * The literals left fill the rest of the page when d_end - d is
+	 * lit_end - lit, that is when d - lit is end_gap: one compare of the two
+	 * pointers the loop moves. Numbers, as d and lit point into different
+	 * buffers.
+	 */
+	end_gap = (unsigned long)d_end - (unsigned long)lit_end;
+	/* a page of literals only has no sequence with a match, no token */
+	if (n_lit == SEQLZ_PAGE)
+		goto last_literals;
 	tok = next_token(&br, &t->token);
 	for (;;) {
 		unsigned int nl, len, off, back, raw;
@@ -621,8 +631,9 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		 * The fast path: no length value follows, and there is room,
 		 * see d_fast. Then nl is at most 14 and len at most 34, and the
 		 * copies are 16 literal bytes and 16 to 40 bytes of match,
-		 * without loops. The last sequence never takes it: its literals
-		 * end at the end of the page, too close.
+		 * without loops. The page's last match never takes it: after
+		 * it fewer than 8 bits are left, and the fast path needs 8 bytes
+		 * of input, so it never misses the end below.
 		 */
 		if (!(tok & (1U << TOK_VALUE_AT)) && d <= d_fast &&
 		    (unsigned long)lit <= lit_fast &&
@@ -657,16 +668,6 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		copy_literals(d, d_end, lit, lit_bound, nl);
 		d += nl;
 		lit += nl;
-		if (d == d_end) {
-			/*
-			 * the page is full, so this must be the last sequence:
-			 * ml - 4 = 0 and class 0
-			 */
-			if (len != 4U || TOK_BACK(tok) != 0U)
-				return -EINVAL;
-			break;
-		}
-
 		if (len == SEQLZ_ML_CAP + 4U) {
 			seqlz_br_refill(&br);
 			len += seqlz_br_value(&br, &t->ml);
@@ -678,16 +679,25 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 			return -EINVAL;
 		copy_match(d, d_end, off, len);
 		d += len;
+		/*
+		 * The literals left fill the rest of the page, see end_gap:
+		 * every match has at least 4 bytes, so none can follow. They are
+		 * the last sequence, which has no token.
+		 */
+		if ((unsigned long)d - (unsigned long)lit == end_gap)
+			break;
 		tok = next_token(&br, &t->token);
 		skip = 0;
 	}
+last_literals:
+	/* the last sequence: the literals left, as many as the page has room */
+	copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));
 	/*
 	 * The page must end where its bits end: every byte read, fewer than 8
 	 * bits left in the last one, and those 0, as the compressor writes
 	 * them. zram has no checksum, so this is what tells a damaged page.
 	 */
-	if (d != d_end || lit != lit_end || br.count < 0 || br.p != br.end ||
-	    br.count >= 8 ||
+	if (br.count < 0 || br.p != br.end || br.count >= 8 ||
 	    (br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))))
 		return -EINVAL;
 	return 0;

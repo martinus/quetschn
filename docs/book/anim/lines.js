@@ -1,7 +1,8 @@
 /*
- * The 180 token lookups of chapter 16's page (anim/lines.c finds their 11-bit indices with the real
- * codec), and the cache lines of the token table they touch: most significant bit first, as seqlz
- * reads its bitstream, against the same bits read the other way, the index bit-reversed.
+ * The 179 token lookups of chapter 16's page, one for each sequence but the last (anim/lines.c finds
+ * their 11-bit indices with the real codec), and the cache lines of the token table they touch: most
+ * significant bit first, as seqlz reads its bitstream, against the same bits read the other way, the
+ * index bit-reversed.
  */
 BookAnim.define('lines', function (ctx) {
   var D = ctx.data, IDX = D.idx, LEN = D.len, NL = IDX.length, BITS = 11;
@@ -125,7 +126,7 @@ BookAnim.define('lines', function (ctx) {
   }
 
   function sentence(k, n, first, last, count, newIn) {
-    if (k === 0) return 'Chapter 16\'s page has ' + NL + ' sequences, and each starts with a lookup in the token table: 2048 entries of 4 bytes, 16 to a cache line, 128 lines. Each lookup reads the entry the next 11 bits of the bitstream point to.';
+    if (k === 0) return 'Chapter 16\'s page has ' + (NL + 1) + ' sequences, and each but the last, which has no token, starts with a lookup in the token table: 2048 entries of 4 bytes, 16 to a cache line, 128 lines. Each lookup reads the entry the next 11 bits of the bitstream point to.';
     if (k === STEPS - 1) return 'All ' + NL + ' token lookups of this page: most significant bit first they touch ' + count[0] + ' of the 128 lines, bits reversed ' + count[1] + '. These are this page\'s numbers; the chapter\'s 42.5 against 55.3 lines are the mean of 20 000 pages.';
     var l = LEN[last], s = bin(IDX[last]), a = IDX[last], b = rev(a);
     var na = Object.keys(codeLines(0, last)).length, nb = Object.keys(codeLines(1, last)).length;
@@ -137,7 +138,7 @@ BookAnim.define('lines', function (ctx) {
 
   return {
     steps: STEPS, draw: draw, interval: 600, wide: 760,
-    // one token lookup per sequence, step k is lookup k
+    // one token lookup per sequence, step k is lookup k; the last sequence has none and gets the last step
     link: {
       label: 'its token\u2019s cache line (chapter 3)',
       seqAt: function (k) { return k === 0 || k === STEPS - 1 ? null : k - 1; },

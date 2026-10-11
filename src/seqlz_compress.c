@@ -56,12 +56,12 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * most 60 bits (see below), and the second writes 8 bytes below that. 16 + 15
  * bytes fit into ENC_ROOM. A page that does not fit stops the writes there, and
  * seqlz_compress() returns 0. It can happen up to ENC_ROOM bytes before dst is
- * full. With the two pages zram gives, it never happens: a sequence covers at
- * least 4 bytes of the page, and its token and offset take at most 31 bits,
- * also with an escaped token, see SEQLZ_MAX_ESCAPE_LEN. So the bitstream has at
- * most SEQLZ_PAGE / 4 * 31 + 31 bits, 3972 bytes for 4 KiB pages, and with a
- * page of literals that leaves more than ENC_ROOM bytes free; for 16 KiB pages
- * 15 876 bytes.
+ * full. With the two pages zram gives, it never happens: a sequence with a
+ * match covers at least 4 bytes of the page, and its token and offset take at
+ * most 31 bits, also with an escaped token, see SEQLZ_MAX_ESCAPE_LEN; the last
+ * sequence has no bits. So the bitstream has at most SEQLZ_PAGE / 4 * 31 bits,
+ * 3968 bytes for 4 KiB pages, and with a page of literals that leaves more than
+ * ENC_ROOM bytes free; for 16 KiB pages 15 872 bytes.
  *
  * Bits are collected in a 64-bit accumulator and written 8 bytes at a time;
  * then the write position moves down by the whole bytes, and the at most 7 bits
@@ -153,7 +153,7 @@ static __always_inline u32 token_code(const struct seqlz_tables *t,
 
 /*
  * Writes one sequence: its literals from in, then its token, offset and length
- * values. ml is 0 for the last sequence.
+ * values. ml is 0 for the last sequence, which has only its literals.
  */
 static __always_inline void encode_emit(void *ctx, const u8 *in,
 					unsigned int ll, unsigned int ml,
@@ -187,15 +187,12 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 		e->lit[k] = in[k];
 	e->lit += ll;
 
-	if (ml == 0) {
-		/* the last sequence: no match, so ml - 4 = 0 and class 0 */
-		code = token_code(t, seqlz_token(ll, 0, 0), &tlen);
-		enc_put(e, code, tlen);
-		if (ll >= SEQLZ_LL_CAP)
-			put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
-		enc_flush(e);
+	/*
+	 * The last sequence: no token, the decoder knows it from the literals
+	 * left, which fill the rest of the page.
+	 */
+	if (ml == 0)
 		return;
-	}
 	/* token and offset in one put, the length values after them */
 	cls = seqlz_off_class(off, e->last, &raw_bits);
 	code = token_code(t, seqlz_token(ll, ml, cls), &tlen);

@@ -305,6 +305,7 @@ BookAnim.define('ends', function (ctx) {
         return head + 'p − lit is ' + roomOf(row) + ', less than ll + ' + ROOM + ' = ' + (row[LL] + ROOM) +
           ': the page does not fit. p is set to lit, nothing is written.';
       }
+      if (!row[ML]) return head + 'It has no token and no bits: the decoder knows it from the literals left. Nothing is put, p stays, ' + plural(row[CNT], 'bit') + ' stay in acc.';
       var bits = [];
       bits.push('token ' + row[TOK] + ' in ' + row[TLEN] + (row[ESC] ? ' (it has no code: the escape\'s ' + (row[TLEN] - 12) + ' and 12 bits)' : ''));
       if (row[ML]) bits.push('offset class ' + row[CLS] + ' in ' + row[OB] + (row[CLS] === 0 ? ' (the offset before)' : ''));

@@ -326,13 +326,14 @@ int main(int argc, char** argv) {
             auto last = 1U;
             auto extra = 0U;
             for (auto const& s : sequences) {
-                auto const cls = s.match == 0 ? 0U : seqlz_off_class(s.offset, last, &extra);
+                // the last sequence, without a match, has no token and no length value
+                if (s.match == 0) {
+                    continue;
+                }
+                auto const cls = seqlz_off_class(s.offset, last, &extra);
                 counts.token[seqlz_token(s.literals, s.match, cls)] += 1;
                 if (s.literals >= SEQLZ_LL_CAP) {
                     counts.ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
-                }
-                if (s.match == 0) {
-                    continue;
                 }
                 if (s.match - 4U >= SEQLZ_ML_CAP) {
                     counts.ml[seqlz_len_symbol(s.match - 4U - SEQLZ_ML_CAP, &extra)] += 1;

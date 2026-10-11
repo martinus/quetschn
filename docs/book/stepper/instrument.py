@@ -12,13 +12,16 @@ instrument.py match <src/page_lz.h> <out.h>
 import sys
 
 # seqlz_decode(): statements a step stops in front of, as their line starts after the indentation.
-# The hook is STEP_IN() inside the loop over the sequences, where its variables exist, else STEP_OUT()
+# The hook is STEP_IN() inside the loop over the sequences, where its variables exist, else STEP_OUT().
+# Never the body of an if without braces: the hook would become the body.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
     "q = decode_literals(t, s, src_len, n_lit, scratch);",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
     "d_fast = d_end - FAST_PAGE_ROOM;",
+    "end_gap = (unsigned long)d_end - (unsigned long)lit_end;",
+    "if (n_lit == SEQLZ_PAGE)",
     "tok = next_token(&br, &t->token);",
     "if (tok >> TOK_ESCAPE_AT) {",
     "idx = (unsigned int)(br.bits >>",
@@ -43,15 +46,14 @@ DECODE_STOPS = [
     "nl += seqlz_br_value(&br, &t->ll);",
     "if (lit > lit_end || nl > (unsigned int)(lit_end - lit) ||",
     "copy_literals(d, d_end, lit, lit_bound, nl);",
-    "if (d == d_end) {",
-    "if (len != 4U || TOK_BACK(tok) != 0U)",
-    "break;",
+    "copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));",
     "if (len == SEQLZ_ML_CAP + 4U) {",
     "len += seqlz_br_value(&br, &t->ml);",
     "if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||",
     "copy_match(d, d_end, off, len);",
+    "if ((unsigned long)d - (unsigned long)lit == end_gap)",
     "skip = 0;",
-    "if (d != d_end || lit != lit_end || br.count < 0 || br.p != br.end ||",
+    "if (br.count < 0 || br.p != br.end || br.count >= 8 ||",
     "return 0;",
 ]
 

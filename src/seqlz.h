@@ -42,8 +42,10 @@
  *
  * Everything goes into one bitstream, most significant bit first: per sequence
  * the token, the offset's bits, then the length values. A page does not store
- * how many sequences it has. The last one has no match, its token has
- * ml - 4 = 0 and class 0, and its literals end at the end of the page.
+ * how many sequences it has. The last one has no match and no bits: its
+ * literals are the ones left, and they end at the end of the page. A decoder
+ * knows it is there when the literals left are as many as the bytes the page
+ * still needs, as every match has at least 4 bytes.
  *
  * A page starts with a u16, little endian: the number of literals of all
  * sequences. The literals follow, all of them one after the other, then the
@@ -357,12 +359,12 @@ unsigned int seqlz_encode(const struct seqlz_tables *t,
 int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		 unsigned int src_len, void *dst, void *scratch);
 
-/* the token of a sequence, see the top of this file */
+/* the token of a sequence with a match, see the top of this file */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 				       unsigned int cls)
 {
 	unsigned int a = min(ll, SEQLZ_LL_CAP);
-	unsigned int b = ml ? min(ml - 4, SEQLZ_ML_CAP) : 0;
+	unsigned int b = min(ml - 4, SEQLZ_ML_CAP);
 
 	return a + (b << SEQLZ_LL_BITS) +
 	       (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
