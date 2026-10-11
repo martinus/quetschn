@@ -260,7 +260,7 @@ run in the kernel VM
 When the matcher is done, `compress_page()` calls `encoder_finish()` ([chapter 10](#ch-encoder)).
 At this point the literals fill `dst + 2` to `dst + 676`, and the bitstream fills the last 271 bytes
 of the 8192-byte buffer, backwards. 2168 is a multiple of 8, so after the last sequence's flush no
-bits are left in the accumulator, and `e.cnt` is 0: no last partial byte to write.
+bits are left in the accumulator, and `e.cnt` is 0: no partial last byte to count, `p` stays.
 
 `encoder_finish()` writes the literal count, 674, as the u16 at the start, `a2 02`. Then it copies the
 bitstream from the end of the buffer to right after the literals. The gap between them is

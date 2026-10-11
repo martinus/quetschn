@@ -964,8 +964,11 @@ default for 32-bit in the tree CI uses), against 2048 on 64-bit; since `check.sh
 warning, a frame that grows past that fails CI. s390 is big-endian. For a sense of the margin: in the kernel copy built as `check.sh` builds it for x86-64, `defconfig`
 with gcc 16.2.1 and the Makefile's `-O3`, gcc's `-fstack-usage` gives 640 bytes each for
 `code_literals()` and `decode_literals()`, the deepest frames. With KASAN and UBSan added, in their
-default configuration, they grow to 1000 and 952 bytes. These numbers were measured for this book on
-10th October 2026, at commit `a2d57dd`; clang and 32-bit arm were not measured.
+default configuration, they grow to 1000 and 952 bytes. Since 11th October `check.sh` prints the three
+deepest frames of each build and fails at 1024 bytes, the limit the project keeps. On the tree at
+`986c24e0fe44` they were 560 bytes for `seqlz_compress()` on arm64, 384 on 32-bit arm and 536 on s390,
+all with clang; the CI machine's compilers give a little different numbers, e.g. 648 for
+`code_literals()` with Ubuntu's gcc.
 
 ### KUnit tests in UML
 

@@ -42,12 +42,13 @@ docstring calls the kernel's order.
 Lines 2 and 3 are an include guard. If two headers both include this one, the second `#include` finds
 `SEQLZ_COMPAT_H` defined and skips everything up to the `#endif` in line 193.
 
-The comment in lines 5 to 14 lists what the header provides, and names two files of the kernel that do
-the same thing: `lib/bootconfig.c`, which the userspace tool in `tools/bootconfig/` compiles too, and
-whose `#ifdef __KERNEL__` picks the kernel's headers only in a kernel build; and
-`lib/decompress_unxz.c`, which is compiled both into the kernel and into the small decompressor that
-unpacks the kernel at boot, with `#ifdef`s for each. So the pattern has precedent in the place where
-seqlz wants to go.
+The comment in lines 5 to 14 lists what the header provides, and names two files of the kernel's
+`lib/` that the kernel's own `tools/` build outside the kernel too: `lib/bootconfig.c`, which the
+userspace tool in `tools/bootconfig/` compiles, and whose `#ifdef __KERNEL__` picks the kernel's
+headers only in a kernel build; and `lib/rbtree.c`, which the tests in `tools/testing/` compile against
+the stand-in headers of `tools/include/`. So the pattern has precedent in the place where seqlz wants
+to go. The comment named `lib/decompress_unxz.c` until 11th October; nothing in `tools/` builds it,
+it is shared with the decompressor that unpacks the kernel at boot, a different case (#183).
 
 Lines 12 and 13 make a promise that shapes the rest of the file: nothing here defines `bool`, `true`,
 `false` or `NULL`. In C++ these are keywords or come from the standard library, and a macro of the same

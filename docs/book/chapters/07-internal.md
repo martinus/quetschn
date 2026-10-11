@@ -605,7 +605,7 @@ $2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has 9 bits, `10
 The entry is `0x0393bec9`, the upper row of the diagram above. Here is what the decoder does with it,
 on these lines of `seqlz_decode()` ([chapter 14](#ch-decode)):
 
-@listing src/seqlz_decompress.c 607-611
+@listing src/seqlz_decompress.c 613-617
 
 Say the register holds the code, then `00010`, then whatever follows: `0xb38bffffffffffff`, with the
 first bit of the stream as bit 63. The top 11 bits are `10110011100`, index 1436, one of the 4
@@ -653,7 +653,7 @@ Symbol 3072 has a 4-bit code, `0011`, so it fills the indices 384 to 511 with
 `token_entry(3072, 4) = 1U << 31 | 4 << 14 = 0x80010000`, the lower row of the diagram. The decoder
 handles it before everything else:
 
-@listing src/seqlz_decompress.c 589-601
+@listing src/seqlz_decompress.c 595-607
 
 Take token 1797, $5 + 16 \cdot 16 + 512 \cdot 3$: 5 literals, a match of 20, class 3. It is too rare to have
 a code, its `enc[]` is 0, so the encoder writes the escape's `0011`, then 1797 in 12 bits,

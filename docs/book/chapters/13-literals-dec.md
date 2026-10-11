@@ -10,7 +10,7 @@ from the scratch as if the page had stored them raw.
 Decoding one Huffman code is a chain: look up the next 10 bits in the literal table, write the byte,
 shift the stream by the code's length. Only after the shift are the next code's bits known. 8
 streams are 8 such chains with nothing between them, and the CPU works on them at the same time.
-This chapter covers lines 245 to 427 of `src/seqlz_decompress.c`: the representation of a stream,
+This chapter covers lines 251 to 433 of `src/seqlz_decompress.c`: the representation of a stream,
 its refill, the decode of one literal, the header with the stream sizes, the check that each stream
 ends where its size says, and `decode_literals()` itself. The page layout is in
 [chapter 4](#ch-format), the literal table's entries in [chapter 7](#ch-internal--lit-table), and the
@@ -19,7 +19,7 @@ prefetch and the sequences' bit reader, `seqlz_br_refill()` and friends, in
 
 ## A stream is a pointer and 64 bits with a 1 at the end {#ch-literals-dec--sentinel}
 
-@listing src/seqlz_decompress.c 245-253
+@listing src/seqlz_decompress.c 251-259
 
 The comment describes how one stream is kept while it is decoded, in two values:
 
@@ -98,7 +98,7 @@ Here is one stream in three states, from the page that [chapter 11](#ch-literals
 
 The file has `lit_load_tail()` first, because `lit_refill()` calls it. We go the other way round.
 
-@listing src/seqlz_decompress.c 268-283
+@listing src/seqlz_decompress.c 274-289
 
 `lit_refill()` takes a stream's pointer by address, its bits by value, and `end`, the end of the
 whole compressed page, `s + src_len`, not the end of the stream. It returns the new bits and moves
@@ -158,7 +158,7 @@ whether enough bits are left.
 
 ### lit_load_tail(): the last bytes, out of the loop
 
-@listing src/seqlz_decompress.c 254-266
+@listing src/seqlz_decompress.c 260-272
 
 When fewer than 8 bytes of the input are left at `ip`, an 8-byte load would read past the end of the
 compressed page, which `seqlz_decode()` promises never to do ([chapter 6](#ch-header)): the bytes
@@ -180,7 +180,7 @@ is at byte 144, 7 bytes before the end, and goes through `lit_load_tail()`.
 
 ## lit_decode(): one literal, or one that does not count {#ch-literals-dec--decode}
 
-@listing src/seqlz_decompress.c 285-298
+@listing src/seqlz_decompress.c 291-304
 
 `lt` is the decode table of the page's literal table, 1024 entries of a u16 each
 ([chapter 7](#ch-internal--lit-table)), built by `build_lit()` ([chapter 8](#ch-codes)). An entry is
@@ -203,7 +203,7 @@ end of `decode_literals()`. A caller computes `mask` with arithmetic, not with a
 
 ## The sizes of the 8 streams {#ch-literals-dec--sizes}
 
-@listing src/seqlz_decompress.c 300-323
+@listing src/seqlz_decompress.c 306-329
 
 The header of a page with coded literals has, from byte 3 on, `width` bytes that hold the 8 stream
 sizes, `width` bits each, the lowest bit first ([chapter 4](#ch-format)). `lit_stream_sizes()` reads
@@ -242,7 +242,7 @@ The zeros at the top of the last loads are `h`'s zeros, not bytes of the page. T
 
 ## Does a stream end where its size says? {#ch-literals-dec--ends}
 
-@listing src/seqlz_decompress.c 325-341
+@listing src/seqlz_decompress.c 331-347
 
 The format says a stream's codes must end in its last byte: they take at most `8 * size` bits and
 fewer than 8 bits less, and the bits after the last code are 0 ([format.md, "Coded
@@ -290,7 +290,7 @@ tell a damaged page from a valid one.
 
 ## decode_literals(), from the header to the bitstream {#ch-literals-dec--main}
 
-@listing src/seqlz_decompress.c 343-352
+@listing src/seqlz_decompress.c 349-358
 
 `decode_literals()` takes the tables, the compressed page `s` with its length, the number of literals
 `n_lit` from the page's u16 (`seqlz_decode()` has cleared the top bit, `SEQLZ_LIT_CODED`), and `out`,
@@ -308,7 +308,7 @@ same decoder source read pages 250 ns apart at p50; measured again, the alignmen
 
 ### The width, and the first checks
 
-@listing src/seqlz_decompress.c 353-371
+@listing src/seqlz_decompress.c 359-377
 
 - `end` is one past the last byte of the input. Every read of this function stays below it.
 - `width` comes from byte 2, bits 3 to 5: `(s[2] >> SEQLZ_LIT_WIDTH_AT) & 7`, where 7 is written as
@@ -328,7 +328,7 @@ same decoder source read pages 250 ns apart at p50; measured again, the alignmen
 - `i`, `k`, `j`, `rest`, `steps` and `r` are loop counters and the tail's numbers; `total` the sum of
   the sizes; `lt` the decode table.
 
-@listing src/seqlz_decompress.c 372-384
+@listing src/seqlz_decompress.c 378-390
 
 The checks come before anything is read from the streams:
 
@@ -361,7 +361,7 @@ the streams may be empty here; whether it is long enough is the sequence loop's 
 
 ### Full rounds: 8 streams, 5 literals each
 
-@listing src/seqlz_decompress.c 385-399
+@listing src/seqlz_decompress.c 391-405
 
 A round is 40 literals, 5 from each stream, `SEQLZ_LIT_STREAMS * SEQLZ_LIT_ROUNDS`. The loop runs while
 a whole round is left.
@@ -482,7 +482,7 @@ The same for one round, as a picture:
 
 ### The rest: the same steps for all 8 streams
 
-@listing src/seqlz_decompress.c 400-427
+@listing src/seqlz_decompress.c 406-433
 
 After the full rounds fewer than 40 literals are left. `rest` is how many, `steps = rest / 8` how many
 complete steps of all 8 streams they make, and `r = rest % 8` how many streams have one literal more.

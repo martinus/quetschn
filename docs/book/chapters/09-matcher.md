@@ -21,7 +21,7 @@ where every other codec in zram hashes 4.
 
 @listing src/page_lz.h 1-11
 
-Line 1 is the licence and lines 2, 3 and 183 are the include guard, as in every header of `src/`
+Line 1 is the licence and lines 2, 3 and 185 are the include guard, as in every header of `src/`
 ([chapter 5](#ch-compat)).
 
 The comment on lines 5 to 9 says why this is a header and not a `.c` file. Every function in it is
@@ -261,7 +261,7 @@ encoder writes them. The kernel's copy has only the encoder, and there `port.py`
 calls `encode_emit()` by name.
 
 ::: why One pass, not two
-"Each sequence goes to the encoder as soon as it is found" (line 90) means that matching and encoding
+"Each sequence goes to the encoder as soon as it is found" (line 92) means that matching and encoding
 are one loop. Two passes, the matcher into an array and the encoder over the array, took 24 257 instead
 of 22 848 cycles per page, and the mispredictions went from 293 to 319 per page: "the branches of the
 encoder lose the history of the matcher's branches, which predicted them"
@@ -272,9 +272,9 @@ and a sequence the matcher just found is a good hint for the branches that write
 
 ## Greedy, two candidates, every position {#ch-matcher--plan}
 
-@listing src/page_lz.h 76-95
+@listing src/page_lz.h 76-97
 
-The comment on lines 76 to 92 is the whole design in three paragraphs. Here it is in more words.
+The comment on lines 76 to 94 is the whole design in three paragraphs. Here it is in more words.
 
 **Greedy.** At each position the matcher looks for a match, and if it finds one, it takes it, extends it
 and jumps over it. It does not check whether a match that starts one byte later would be longer, which
@@ -321,7 +321,7 @@ commit `055e7b5`, 30th September 2026). The 3% are from boots with only `lzo-rle
 with all four codecs the writes gained 0.05 µs.
 :::
 
-The signature on lines 93 and 94: `table` is the hash table, `src` the page, `emit` and `ctx` the
+The signature on lines 95 and 96: `table` is the hash table, `src` the page, `emit` and `ctx` the
 receiver. `__always_inline` comes from `seqlz_compat.h` and is `inline` plus GCC's `always_inline`
 attribute, so the compiler inlines it even where its own cost model would not. Without it, a 90-line
 function with two callers might stay a function, and `emit` would stay an indirect call.
@@ -387,15 +387,15 @@ The picture to keep in mind for the rest of the chapter, with the numbers of a r
 
 ## The state of the loop, and why reading a candidate is always safe {#ch-matcher--state}
 
-@listing src/page_lz.h 96-122
+@listing src/page_lz.h 98-124
 
-**Positions, not pointers.** Line 101 sets `limit` to 4088, the first position that is not tried. All
+**Positions, not pointers.** Line 103 sets `limit` to 4088, the first position that is not tried. All
 the matcher's places are `unsigned int` positions in the page, not pointers: the limit is then a
 constant the compiler can put into the compare instruction, and the table stores positions anyway.
 Changing the loop from pointers to positions took 21 916 to 21 786 cycles per page, a small step of the
 [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions).
 
-The variables of line 102:
+The variables of line 104:
 
 | variable | meaning | starts at |
 | --- | --- | --- |
@@ -409,20 +409,20 @@ Position 0 is never tried: there is nothing before it to match. `last` starts at
 starts every page with a repeat offset of 1 (see [offsets](#ch-format--offsets)), and the encoder can
 then send a match at offset 1 in class 0, without offset bits.
 
-**The repeat offset as a negative index.** Line 107: `back` is `-last`, a `long`. The load at the repeat
-offset on line 137 is `src + pos + back`, which C reads as `(src + pos) + back`: a pointer plus a
+**The repeat offset as a negative index.** Line 109: `back` is `-last`, a `long`. The load at the repeat
+offset on line 139 is `src + pos + back`, which C reads as `(src + pos) + back`: a pointer plus a
 negative number, one addressing operation. With `src + pos - last` the subtraction would be an
 instruction of its own on every position. `long` because it is negative and is added to a pointer; an
 `unsigned int` would wrap around to a large positive number.
 
-**Loaded one position ahead.** Lines 115 and 116 declare two more values, and the comment on lines 108
+**Loaded one position ahead.** Lines 117 and 118 declare two more values, and the comment on lines 110
 to 114 says what they are for: `v` holds the 8 bytes at `pos`, `h` their hash, `cand` the table's
 entry and `cand_bytes` the 4 bytes at that entry. "Each of them needs the one before": the hash needs
-`v`, the table load needs `h`, the candidate's bytes need `cand`. Lines 119 to 122 compute them for
+`v`, the table load needs `h`, the candidate's bytes need `cand`. Lines 121 to 124 compute them for
 position 1 before the loop, and the loop always computes them for the next position before it needs
 them. Why that helps is in the [next section](#ch-matcher--position).
 
-**The table: 4096 positions of 2 bytes, cleared for each page.** Line 118 sets the table to zeros:
+**The table: 4096 positions of 2 bytes, cleared for each page.** Line 120 sets the table to zeros:
 `sizeof(u16) << SEQLZ_HASH_BITS` is $2 \times 4096 = 8192$ bytes. The table lives in `struct seqlz_state`
 (see [chapter 6](#ch-header)), which zram allocates once per CPU, and it is reused for every page.
 
@@ -451,7 +451,7 @@ result", because every candidate is compared before it is used
 
 Clearing the table has a second effect that the loop depends on. Every entry is now a position of this
 page: 0 if nothing was stored, else a position stored earlier on this page, and both are before `pos`.
-So line 122 can load 4 bytes at `src + cand` without checking anything, and so can every later load of
+So line 124 can load 4 bytes at `src + cand` without checking anything, and so can every later load of
 a candidate. A slot that was never written is not "empty"; it says "position 0", a real place, and if
 the 4 bytes there match, it is a real match. The page of `ab` repeated finds its only match that way: at
 position 2 the slot of `ababa` was never written, holds 0, and the 4 bytes at 0, `abab`, equal the 4
@@ -459,31 +459,31 @@ bytes at 2.
 
 The other candidate is safe for a similar reason: `last` starts at 1 and `pos` at 1, so the first load
 at the repeat offset reads position 0. After a match, `last` is that match's offset, which is at most
-the match's start, and `pos` only grows, so `pos - last` stays at 0 or more. The comment on lines 133 to
+the match's start, and `pos` only grows, so `pos - last` stays at 0 or more. The comment on lines 135 to
 135 says this in one sentence: both candidates point into the page, before `pos`.
 
 ## One position: two candidates, one branch {#ch-matcher--position}
 
-@listing src/page_lz.h 124-149
+@listing src/page_lz.h 126-151
 
-This is the loop over the positions, and lines 125 to 148 are the path of a position without a match,
+This is the loop over the positions, and lines 127 to 150 are the path of a position without a match,
 the path taken most often: on the phone's pages, a run without a match is 4 positions long on average
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept)).
 
-Line 124 runs while `pos < limit`. Each position reads 8 bytes at `pos + 1` (line 125), so the last one
+Line 126 runs while `pos < limit`. Each position reads 8 bytes at `pos + 1` (line 127), so the last one
 tried, 4087, reads up to byte 4095, the last byte of the page. That is the reason for `limit`: "every
 try reads 8 bytes". The last 8 bytes of a page are never the start of a match; they end up in the last
 sequence's literals unless a match runs over them.
 
-Line 125 loads the next position's 8 bytes and line 126 hashes them, before anything else. Line 128
+Line 127 loads the next position's 8 bytes and line 128 hashes them, before anything else. Line 130
 takes the first 4 bytes at `pos` from `v`, which holds 8 bytes starting there: the cast to `u32` keeps
 the low 32 bits, and in a little-endian load those are the first 4 bytes. One load saved per position.
 
-Lines 137 and 139 test both candidates. `rep_hit` compares the 4 bytes at the repeat offset with
+Lines 139 and 141 test both candidates. `rep_hit` compares the 4 bytes at the repeat offset with
 `cur`, `cand_hit` the 4 bytes at the table's candidate, loaded during the position before. A compare in
-C gives 0 or 1, and line 142 combines them with `|`, the bitwise OR, not `||`. With `||` the C rules
+C gives 0 or 1, and line 144 combines them with `|`, the bitwise OR, not `||`. With `||` the C rules
 say the second operand is evaluated only if the first is false, and compilers often make that a
-second branch. With `|` both are computed and one branch decides. The comment on lines 129 to 136 gives
+second branch. With `|` both are computed and one branch decides. The comment on lines 131 to 138 gives
 the reason: with a branch for each candidate, the matcher mispredicted almost twice as often as `lz4`.
 
 ::: measured One branch for both candidates
@@ -494,15 +494,15 @@ candidates and deciding with one branch took that to 329, and the p99 of the col
 x86-64, userspace, September 2026, with an older matcher).
 :::
 
-Line 141 stores the current position in the table, before the branch, so that it is stored whether or
+Line 143 stores the current position in the table, before the branch, so that it is stored whether or
 not there is a match. The `(u16)` cast is exact, since `pos` is below 4096. It also has to come before
-line 146: if the next position has the same hash as this one, `table[h]` for the next position must
-already be `pos`, as it was in the loop before the loads moved ahead. The comment on lines 112 and 113
+line 148: if the next position has the same hash as this one, `table[h]` for the next position must
+already be `pos`, as it was in the loop before the loads moved ahead. The comment on lines 114 and 115
 says this: "the entry is still read after the position before it was stored, so the matches are the
 same".
 
-Lines 143 to 148 are the miss: move to the next position, take over its 8 bytes and hash computed on
-lines 125 and 126, and load its table entry and the 4 bytes at its candidate.
+Lines 145 to 150 are the miss: move to the next position, take over its 8 bytes and hash computed on
+lines 127 and 128, and load its table entry and the 4 bytes at its candidate.
 
 On an in-order core such as the phone's Cortex-A55, which waits at every load whose value is not
 there yet ([chapter 3](#ch-cpu--in-order)), a position without a match is one chain: load 8 bytes,
@@ -529,9 +529,9 @@ while (pos < limit) {
 	...
 ```
 
-Each line waits for the one before it. In today's loop the compares on lines 137 and 139 use `v` and
+Each line waits for the one before it. In today's loop the compares on lines 139 and 141 use `v` and
 `cand_bytes`, which were loaded at the end of the previous position; the chain for position `pos + 1`
-starts on line 125 and ends on line 147, and its results are needed only at the compares of the next
+starts on line 127 and ends on line 149, and its results are needed only at the compares of the next
 iteration.
 
 ::: measured One position ahead: 3.4% fewer cycles on the A55, the same bytes
@@ -547,9 +547,9 @@ right one with a compare was 9% slower: more instructions.
 
 ## A hit: back, forward, emit {#ch-matcher--hit}
 
-@listing src/page_lz.h 150-165
+@listing src/page_lz.h 152-167
 
-Line 150 picks the match's source `m`, the earlier position the bytes are copied from. If the repeat
+Line 152 picks the match's source `m`, the earlier position the bytes are copied from. If the repeat
 offset hit, it is `pos - last`; else the table's candidate. When both hit, the repeat offset wins: its
 offset costs 0 bits. Whether the table's candidate would give a longer match is not checked. Measured
 offline on 20 000 pages of two dumps, always taking the longer of the two made pages about 1 byte larger, not
@@ -558,7 +558,7 @@ page; either needs a second call of `seqlz_match_len()`
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept),
 "The longer of the two candidates").
 
-**Backwards.** Lines 155 to 158 extend the match to the left while the byte before `pos` equals the byte
+**Backwards.** Lines 157 to 160 extend the match to the left while the byte before `pos` equals the byte
 before `m`. Three conditions: `pos > anchor`, so the match does not reach into the sequence before, whose
 bytes are already written; `m > 0`, so `src[m - 1]` exists; and the bytes are equal. Each step moves
 both by one, so the offset `pos - m` stays the same.
@@ -570,21 +570,21 @@ of a later place repeat bytes from the inside of an earlier match, the matcher f
 one inserted position near that match's end, and the backward extension recovers the bytes before it.
 [The trace below](#ch-matcher--back) shows such a case.
 
-**Forwards.** Line 159 counts the match length. The first 4 bytes are known to be equal, from the 4-byte
+**Forwards.** Line 161 counts the match length. The first 4 bytes are known to be equal, from the 4-byte
 compare, so the count starts 4 bytes in and adds 4. `src + SEQLZ_PAGE` is the end: a match may run to the
 last byte of the page.
 
-**Emit.** Line 161 sets the new repeat offset, line 162 its negative index. Line 163 hands the sequence
+**Emit.** Line 163 sets the new repeat offset, line 164 its negative index. Line 165 hands the sequence
 to the receiver: its literals start at `anchor`, there are `pos - anchor` of them, then the match of
 `len` bytes at offset `last`. In the compressor this is where `encode_emit()` copies the literals and
-writes the bits. Lines 164 and 165 jump over the match: the next position to try is the first byte after
+writes the bits. Lines 166 and 167 jump over the match: the next position to try is the first byte after
 it, and that is also where the next sequence's literals start.
 
 ## One position of a match goes into the table {#ch-matcher--insert}
 
-@listing src/page_lz.h 166-183
+@listing src/page_lz.h 168-185
 
-The positions inside a match were skipped, so they are not in the table. Lines 171 to 173 store one of
+The positions inside a match were skipped, so they are not in the table. Lines 173 to 175 store one of
 them: the position 2 bytes before the end of the match, under the hash of its 5 bytes. "Which is where
 the next match often starts", in the words of
 [docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-table-of-positions-is-a-cache-not-a-map):
@@ -599,10 +599,10 @@ other, and not kept
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 :::
 
-The `if` on line 171 does two things. It keeps the 8-byte loads inside the page, as `limit` does in the
-loop, and it skips the work when the loop is about to end. Lines 174 to 177 restart the one-ahead
-state at the new `pos`: its 8 bytes, hash, table entry and candidate bytes, as lines 119 to 122 did before
-the loop. Note the order again: the insert on line 172 comes before the load of `table[h]` on line 176,
+The `if` on line 173 does two things. It keeps the 8-byte loads inside the page, as `limit` does in the
+loop, and it skips the work when the loop is about to end. Lines 176 to 179 restart the one-ahead
+state at the new `pos`: its 8 bytes, hash, table entry and candidate bytes, as lines 121 to 124 did before
+the loop. Note the order again: the insert on line 174 comes before the load of `table[h]` on line 178,
 so if the new position has the same hash as `pos - 2`, it finds `pos - 2`.
 
 When the loop ends, the bytes from `anchor` to the end of the page are not in any sequence yet. Line
@@ -690,7 +690,7 @@ At the second copy:
 
 The copy starts at 398, but 398 and 399 miss: their 5 bytes were last at 124 and 125, inside the match,
 never inserted. Slot 3419 even holds 139, a collision with other bytes. Position 400 has the bytes of
-126, the one position the match inserted, and hits. Then lines 155 to 158 step back: `src[399]` is
+126, the one position the match inserted, and hits. Then lines 157 to 160 step back: `src[399]` is
 `f9` and `src[125]` is `f9`, `src[398]` is `3c` and `src[124]` is `3c`, `src[397]` is `fe` and
 `src[123]` is not. The sequence `seqlz_find()` returns is 270 literals (128 to 397) and a match of 14 at
 offset 274, starting at 398, as if it had been found there. Without the backward extension the 2 bytes
