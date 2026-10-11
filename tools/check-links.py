@@ -37,6 +37,10 @@ def main():
     files = subprocess.run(["git", "ls-files", "*.md"], cwd=REPO, check=True, capture_output=True, text=True)
     broken = links = 0
     for name in files.stdout.split():
+        # the book's Markdown links to the ids of the page docs/book/build.py makes of it, and build.py
+        # checks those links against that page; its README is ordinary Markdown
+        if name.startswith("docs/book/") and name != "docs/book/README.md":
+            continue
         md = REPO / name
         for m in LINK.finditer(FENCE.sub("", md.read_text())):
             link = m.group(1) or m.group(2)
