@@ -592,6 +592,16 @@ the decoder against the reference, nothing found
 
 ## The example page, sequence by sequence {#ch-decode--example}
 
+Below, `seqlz_decode()` runs on two pages, one statement at a time: the format's example of
+[chapter 4](#ch-format--example), and the made-up page of [chapter 16](#ch-trace), which has coded
+literals and takes the fast path most of the time. It is the function of this chapter, recorded while
+it decoded the pages when the book was built, so every number in it is what the code computes. Step
+with the buttons or the arrow keys, and with shift from one sequence to the next.
+
+@stepper decode
+
+The same in prose, for the example page:
+
 The 9 bytes `02 00 61 62 dc 65 ef db 8a` are the format's example ([chapter 4](#ch-format--example)): a
 4 KiB page of `ab` repeated 2048 times. Here is what `seqlz_decode()` does with them, from a copy of the
 function with `printf()`s in it.

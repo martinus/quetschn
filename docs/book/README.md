@@ -15,6 +15,10 @@ python3 docs/book/lint.py            # dashes and banned words in the prose
   their line numbers and a link to them on GitHub. `::: why|kernel|cpu|measured|warn|try <title>`
   up to `:::` is a box. `$...$` outside code is a formula in the text, `$$...$$` on a line of its own
   one by itself; KaTeX renders them at build time, so the page needs no script for them.
+  `@stepper decode` is the step-through of chapter 14: `stepper/instrument.py` puts a hook in front of
+  the statements of a copy of `seqlz_decode()`, on the same line, `stepper/trace.c` compresses the
+  pages with the real compressor and records the copy decoding them, and `stepper/stepper.js` plays
+  the trace. It needs a C compiler.
 - `build.py --check` fails if a non-blank line of `src/` (the generated `.inc` tables aside) is in no
   listing, and warns about links to ids that do not exist.
 - `STYLE.md` is the brief the chapters were written to, `REVIEW.md` the one they were checked with.

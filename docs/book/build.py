@@ -15,6 +15,10 @@ Directives, each on a line of its own, outside fenced code:
   $$ tex $$
       a formula of its own, on a line of its own
 
+  @stepper decode
+      the step-through of seqlz_decode(): stepper/instrument.py and stepper/trace.c record the
+      real function decoding the pages, stepper/stepper.js plays it; needs a C compiler
+
 $tex$ in a line is a formula in the text, outside code spans; \$ is a dollar sign. KaTeX renders
 them at build time (math.mjs, `npm install` in docs/book first), so the page needs no script.
 
@@ -132,6 +136,78 @@ def render_listing(path, a, b):
             f'<pre class="code numbered"><code>{rows}</code></pre></figure>')
 
 
+# icons of the step-through's buttons, 24 x 24, drawn with the text colour
+ICONS = {
+    "first": '<path d="M6 5v14M18 6l-8 6 8 6z"/>',
+    "prevseq": '<path d="M12 6l-7 6 7 6zM20 6l-7 6 7 6z"/>',
+    "prev": '<path d="M15 6l-7 6 7 6"/>',
+    "play": '<path class="i-play" d="M8 5l11 7-11 7z"/><path class="i-pause" d="M8 5v14M16 5v14"/>',
+    "next": '<path d="M9 6l7 6-7 6"/>',
+    "nextseq": '<path d="M4 6l7 6-7 6zM12 6l7 6-7 6z"/>',
+}
+STEP_BUTTONS = [("first", "To the start"), ("prevseq", "Previous sequence (shift + left)"),
+                ("prev", "Step back (left)"), ("play", "Play or pause"), ("next", "Step (right)"),
+                ("nextseq", "Next sequence (shift + right)")]
+STEPPER_PAGES = [("ab", "ab × 2048, 9 bytes"), ("slab", "chapter 16’s page, 796 bytes")]
+
+
+def run_trace():
+    """the trace of the real seqlz_decode() on the step-through's pages, and its first and last line"""
+    import tempfile
+    sd = HERE / "stepper"
+    with tempfile.TemporaryDirectory() as tmp:
+        lines = subprocess.run([sys.executable, str(sd / "instrument.py"), str(REPO / "src/seqlz_decompress.c"),
+                                f"{tmp}/dec_inst.c"], capture_output=True, text=True, check=True).stdout.split()
+        srcs = [str(REPO / f"src/seqlz_{n}.c") for n in ("codes", "compress", "default_tables", "lit_sets")]
+        subprocess.run(["cc", "-O1", "-I", str(REPO / "src"), "-I", tmp, str(sd / "trace.c"), *srcs,
+                        "-o", f"{tmp}/trace"], check=True)
+        out = subprocess.run([f"{tmp}/trace"], capture_output=True, text=True, check=True).stdout
+    return out, int(lines[0]), int(lines[1])
+
+
+def render_stepper(what, where):
+    if what != "decode":
+        sys.exit(f"{where}: unknown stepper {what}")
+    trace, a, b = run_trace()
+    path = "src/seqlz_decompress.c"
+    hl = highlight_lines("\n".join(src_lines(path)[a - 1:b]), "c")
+    rows = "".join(f'<span class="line"><span class="ln" data-n="{a + i}"></span><span class="lc">{h}</span></span>'
+                   for i, h in enumerate(hl))
+    pages = "".join(f'<button type="button" data-page="{pid}" aria-pressed="false">{html.escape(t)}</button>'
+                    for pid, t in STEPPER_PAGES)
+    buttons = "".join(f'<button type="button" class="icon" data-do="{k}" title="{t}" aria-label="{t}">'
+                      f'<svg viewBox="0 0 24 24" aria-hidden="true">{ICONS[k]}</svg></button>' for k, t in STEP_BUTTONS)
+    sid = "stepper-" + what
+    return (f'<style>{(HERE / "stepper" / "stepper.css").read_text()}</style>'
+            f'<figure class="stepper" id="{sid}" tabindex="-1" aria-label="seqlz_decode() step by step">'
+            f'<div class="st-bar"><div class="st-pages" role="group" aria-label="Page">{pages}</div>'
+            f'<div class="st-ctl">{buttons}</div>'
+            f'<input type="range" class="st-scrub" min="0" value="0" aria-label="Step">'
+            f'<span class="st-pos"></span></div>'
+            f'<p class="st-say" aria-live="polite"></p>'
+            f'<div class="st-grid"><div class="st-code"><pre class="code numbered"><code>{rows}</code></pre></div>'
+            f'<div class="st-state">'
+            f'<section><h4>The bit reader&rsquo;s 64 bits</h4><div class="st-bits"></div><div class="st-regline"></div></section>'
+            f'<section><h4>The variables</h4><div class="st-vars"></div>'
+            f'<div class="st-legend">nl, len and off are set further down in each sequence; before that the copy shows 0, '
+            f'the real function has whatever was on the stack</div></section>'
+            f'<section><h4>The compressed page</h4><div class="st-bytes"></div>'
+            f'<div class="st-legend">header, <span class="b-lit">literals</span>, <span class="b-bits">the sequences&rsquo; bitstream</span>; '
+            f'the outlined byte is the next one the bit reader loads</div></section>'
+            f'<section><h4 class="st-lithead"></h4><div class="st-litbytes"></div></section>'
+            f'<section><h4>The page, 4096 bytes</h4><div class="st-page"><canvas width="384" height="384" aria-hidden="true"></canvas></div>'
+            f'<div class="st-window"></div>'
+            f'<div class="st-legend">written by a <span class="k-lit">literal</span> or a <span class="k-match">match</span>; '
+            f'outlined: what this step writes, and in the colour of a match where it copies from</div></section>'
+            f'</div></div>'
+            f'<figcaption>The real <code>seqlz_decode()</code> of <code>{path}</code>, lines {a} to {b}, decoding two pages: '
+            f'a copy of the function with a hook in front of its statements recorded every step when this book was built. '
+            f'The highlighted line is the one about to run. Keys: left and right step, with shift a sequence.</figcaption>'
+            f'</figure>'
+            f'<script type="application/json" id="{sid}-data">{trace}</script>'
+            f'<script>{(HERE / "stepper" / "stepper.js").read_text()}</script>')
+
+
 def render_fence(lang, body):
     hl = highlight_lines(body, lang or "text")
     return (f'<pre class="code snippet" data-lang="{html.escape(lang or "")}"><code>'
@@ -232,6 +308,11 @@ def preprocess(text, where):
             a = int(m.group(2))
             b = int(m.group(3) or a)
             out.append(stash(render_listing(m.group(1), a, b)))
+            i += 1
+            continue
+        m = re.match(r"^@stepper\s+(\w+)\s*$", line)
+        if m:
+            out.append(stash(render_stepper(m.group(1), f"{where}:{i + 1}")))
             i += 1
             continue
         if line.startswith("@listing"):
