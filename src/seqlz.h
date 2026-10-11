@@ -77,9 +77,9 @@
 #define SEQLZ_MAX_BITS 8U
 /*
  * The longest code of a token: its decode table has 2048 entries, 8 KiB. With
- * 10 bits more tokens take the escape and pages are larger, and only in-order
- * cores wrote them faster ("Six choices made on the PC, measured on the
- * phone", 1 and 7).
+ * 10 bits more tokens take the escape: pages are larger and decode slower,
+ * and only in-order cores read cold pages faster, with half the table to
+ * prefetch ("The token table in 10 bits again").
  */
 #define SEQLZ_TOKEN_BITS 11U
 /*
