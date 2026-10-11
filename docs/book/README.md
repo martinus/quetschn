@@ -15,7 +15,10 @@ python3 docs/book/lint.py            # dashes and banned words in the prose
   their line numbers and a link to them on GitHub. `::: why|kernel|cpu|measured|warn|try <title>`
   up to `:::` is a box. `$...$` outside code is a formula in the text, `$$...$$` on a line of its own
   one by itself; KaTeX renders them at build time, so the page needs no script for them.
-  `@stepper decode` is the step-through of chapter 14: `stepper/instrument.py` puts a hook in front of
+  `@anim <name> [wide] <caption>` is an animation, `anim/<name>.js` on the frame `anim/core.js`
+  (controls, a sentence per step, both themes); if `anim/<name>.c` exists, it is built with `src/`
+  and the JSON it prints is the animation's data, so the numbers are the codec's own.
+  `@stepper decode` and `@stepper match` are the step-throughs of chapters 14 and 9: `stepper/instrument.py` puts a hook in front of
   the statements of a copy of `seqlz_decode()`, on the same line, `stepper/trace.c` compresses the
   pages with the real compressor and records the copy decoding them, and `stepper/stepper.js` plays
   the trace. It needs a C compiler.
