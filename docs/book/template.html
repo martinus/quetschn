@@ -3,6 +3,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..100,500..800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
+{{KATEX_CSS}}
 /* Layout: a technical book. Fixed contents rail on the left, one reading column, code listings
    as wide as the kernel's 80 columns; the hex of a compressed page is the recurring motif. */
 :root {
@@ -38,7 +39,10 @@
   --c-kw: #d78fc4; --c-ty: #5bbfd3; --c-cm: #7d8c86; --c-pp: #e0b04f; --c-nu: #f0956a; --c-fn: #dde3e1; --c-st: #8fca8f;
   color-scheme: dark;
 }
-html { scroll-padding-top: 4rem; }
+/* a link to a heading puts it near the top, with nothing of the section before it in view; a
+   chapter's label sits above its title, so the title keeps room for it */
+html { scroll-padding-top: 0.75rem; }
+.chapterhead h1 { scroll-margin-top: 2.2rem; }
 body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.62;
        font-optical-sizing: auto; -webkit-text-size-adjust: 100%; }
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
@@ -49,7 +53,17 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .rail { position: sticky; top: env(safe-area-inset-top, 0px); height: 100vh; overflow-y: auto; border-right: 1px solid var(--rule);
         padding-block: 1.5rem 3rem; padding-inline: 1.1rem; font-family: var(--display); font-size: 0.84rem; line-height: 1.35; }
 .rail .brand { font-weight: 800; font-stretch: 75%; font-size: 1.25rem; letter-spacing: 0.01em; color: var(--ink); text-decoration: none; display: block; margin-bottom: 0.2rem; }
-.rail .brandsub { color: var(--muted); font-size: 0.78rem; margin: 0 0 1.2rem; }
+.rail .brandsub { color: var(--muted); font-size: 0.78rem; margin: 0 0 0.8rem; }
+.railtools { display: flex; gap: 0.5rem; margin: 0 0 1.1rem; }
+.tool { font: inherit; font-size: 0.8rem; font-weight: 700; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule);
+        border-radius: 4px; padding: 0.25rem 0.65rem; cursor: pointer; }
+.tool:hover { color: var(--accent); }
+/* the contents hidden on a wide screen: one column, and a button to bring them back */
+.showrail { display: none; position: fixed; z-index: 10; top: calc(env(safe-area-inset-top, 0px) + 0.8rem); left: 0.8rem; }
+body.railhidden .layout { grid-template-columns: minmax(0, 1fr); }
+body.railhidden .rail { display: none; }
+body.railhidden .showrail { display: block; }
+.scrim { display: none; }
 .rail ol { list-style: none; margin: 0; padding: 0; }
 .rail a { color: var(--ink); text-decoration: none; }
 .rail a:hover { color: var(--accent); }
@@ -98,6 +112,10 @@ p, ul, ol { margin: 0 0 1rem; }
 li { margin-bottom: 0.25rem; }
 strong { font-weight: 600; }
 hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
+
+/* ---- formulas, KaTeX ---- */
+.katex { font-size: 1.08em; }
+.katex-display { margin: 1.1rem 0 1.3rem; overflow-x: auto; overflow-y: hidden; padding-block: 0.15rem; }
 
 /* ---- code ---- */
 code, kbd, pre, svg text { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
@@ -163,12 +181,16 @@ figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
           transform: translateX(-102%); transition: transform 0.2s, visibility 0.2s; visibility: hidden;
           padding-top: calc(env(safe-area-inset-top, 0px) + 1.2rem); }
   body.navopen .rail { transform: none; visibility: visible; box-shadow: 0 0 40px rgba(0,0,0,0.25); }
+  body.navopen .scrim { display: block; position: fixed; inset: 0; z-index: 15; background: rgba(0, 0, 0, 0.35); }
+  body.railhidden .rail { display: block; }
+  .showrail, body.railhidden .showrail { display: none; }
+  html { scroll-padding-top: calc(env(safe-area-inset-top, 0px) + 3.6rem); }
   .hexpage { font-size: 0.86rem; gap: 0.25rem; }
   .hexpage span { padding: 0.3rem 0.38rem; }
   .topbar { display: flex; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; align-items: center; gap: 0.8rem;
             padding: 0.55rem 16px; background: var(--paper); border-bottom: 1px solid var(--rule); font-family: var(--display); font-size: 0.9rem; }
   .topbar button { font: inherit; font-weight: 700; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: 0.3rem 0.7rem; cursor: pointer; }
-  .topbar .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .topbar .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
   main { padding-inline: 16px; }
   .title { padding-block: 2.5rem 2rem; }
   body { font-size: 16.5px; }
@@ -176,11 +198,18 @@ figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } html { scroll-behavior: auto; } }
 </style>
 
-<div class="topbar"><button type="button" id="navbtn" aria-controls="rail" aria-expanded="false">Contents</button><span class="where" id="where"></span></div>
+<script>
+/* the theme chosen before, set before the page is drawn */
+try { var t = localStorage.getItem('book-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+<div class="topbar"><button type="button" id="navbtn" aria-controls="rail" aria-expanded="false">Contents</button><span class="where" id="where"></span><button type="button" class="themebtn">Dark</button></div>
+<button type="button" class="tool showrail" id="showrail" aria-controls="rail">Contents</button>
+<div class="scrim" id="scrim"></div>
 <div class="layout">
 <nav class="rail" id="rail" aria-label="Contents">
   <a class="brand" href="#top">seqlz, line by line</a>
   <p class="brandsub">The source of a page compressor for zram, explained</p>
+  <div class="railtools"><button type="button" class="tool themebtn">Dark</button><button type="button" class="tool" id="hiderail">Hide contents</button></div>
   <ol>
 {{TOC}}
   </ol>
@@ -212,7 +241,45 @@ figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
   }
   btn.addEventListener('click', function () { setNav(!document.body.classList.contains('navopen')); });
   rail.addEventListener('click', function (e) { if (e.target.closest('a')) setNav(false); });
+  document.getElementById('scrim').addEventListener('click', function () { setNav(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setNav(false); });
+
+  /* "Hide contents": on a narrow screen it closes the menu, on a wide one it hides the rail */
+  var narrow = matchMedia('(max-width: 62rem)');
+  function setHidden(h) {
+    document.body.classList.toggle('railhidden', h);
+    try { localStorage.setItem('book-rail', h ? 'hidden' : 'shown'); } catch (e) {}
+  }
+  try { if (localStorage.getItem('book-rail') === 'hidden') document.body.classList.add('railhidden'); } catch (e) {}
+  document.getElementById('hiderail').addEventListener('click', function () {
+    if (narrow.matches) setNav(false); else setHidden(true);
+  });
+  document.getElementById('showrail').addEventListener('click', function () { setHidden(false); });
+  function hideLabel() { document.getElementById('hiderail').textContent = narrow.matches ? 'Close' : 'Hide contents'; }
+  narrow.addEventListener('change', hideLabel);
+  hideLabel();
+
+  /* light and dark: the system's choice until a button sets one, which is remembered */
+  var dark = matchMedia('(prefers-color-scheme: dark)');
+  function isDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    return t ? t === 'dark' : dark.matches;
+  }
+  var themeBtns = document.querySelectorAll('.themebtn');
+  function label() {
+    themeBtns.forEach(function (b) { b.textContent = isDark() ? 'Light' : 'Dark'; b.setAttribute('aria-label', isDark() ? 'Switch to light mode' : 'Switch to dark mode'); });
+  }
+  themeBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var t = isDark() ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('book-theme', t); } catch (e) {}
+      label();
+      document.dispatchEvent(new CustomEvent('book-theme', { detail: t }));
+    });
+  });
+  dark.addEventListener('change', label);
+  label();
 
   var chaps = Array.prototype.slice.call(document.querySelectorAll('.chapterhead h1'));
   var subs = Array.prototype.slice.call(document.querySelectorAll('.chapter h2[id]'));

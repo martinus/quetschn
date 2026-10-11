@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds the book: chapters/*.md -> seqlz-line-by-line.html.
+r"""Builds the book: chapters/*.md -> seqlz-line-by-line.html.
 
 Directives, each on a line of its own, outside fenced code:
 
@@ -12,11 +12,18 @@ Directives, each on a line of its own, outside fenced code:
   :::
       a box; kinds: why, kernel, cpu, measured, warn, try
 
+  $$ tex $$
+      a formula of its own, on a line of its own
+
+$tex$ in a line is a formula in the text, outside code spans; \$ is a dollar sign. KaTeX renders
+them at build time (math.mjs, `npm install` in docs/book first), so the page needs no script.
+
 Fenced code (```c, ```text, ```python) is highlighted the same way, without
 line numbers. Raw HTML (figures with inline SVG) passes through.
 
 python3 build.py [--check]  --check fails if a line of src/ is in no listing
 """
+import base64
 import html
 import json
 import pathlib
@@ -134,6 +141,58 @@ def render_fence(lang, body):
 STASH = []
 
 
+class Math:
+    """KaTeX in one node process for the whole build, one formula per request"""
+
+    def __init__(self):
+        self.proc = None
+
+    def render(self, tex, display, where):
+        if self.proc is None:
+            self.proc = subprocess.Popen(["node", str(HERE / "math.mjs")], cwd=HERE, text=True,
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.proc.stdin.write(json.dumps([tex, display]) + "\n")
+        self.proc.stdin.flush()
+        out = json.loads(self.proc.stdout.readline())
+        if isinstance(out, dict):
+            sys.exit(f"{where}: formula {tex!r}: {out['error']}")
+        return out
+
+
+MATH = Math()
+# a code span, or $...$ that starts and ends next to a non-space and is not part of a word or number
+CODE_SPAN = re.compile(r"(``.*?``|`[^`]*`)")
+INLINE_MATH = re.compile(r"(?<![\\$\w])\$(?=\S)(.+?)(?<=[^\s\\])\$(?![\w$])")
+
+
+def katex_css():
+    """KaTeX's stylesheet with its fonts in it, woff2 only: the page loads nothing from elsewhere"""
+    dist = HERE / "node_modules" / "katex" / "dist"
+    css = (dist / "katex.min.css").read_text()
+
+    def font(m):
+        data = base64.b64encode((dist / "fonts" / f"{m.group(1)}.woff2").read_bytes()).decode()
+        return f'src:url(data:font/woff2;base64,{data}) format("woff2")'
+    return re.sub(r'src:url\(fonts/([\w-]+)\.woff2\) format\("woff2"\)[^;}]*', font, css)
+
+
+def math_line(line, where):
+    """the formulas of one line of markdown, rendered and stashed"""
+    m = re.fullmatch(r"\s*\$\$(.+)\$\$\s*", line)
+    if m:
+        return stash(MATH.render(m.group(1).strip(), True, where))
+    parts = CODE_SPAN.split(line)
+    for k in range(0, len(parts), 2):
+        parts[k] = INLINE_MATH.sub(lambda m: stash_inline(MATH.render(m.group(1), False, where)), parts[k])
+        parts[k] = parts[k].replace("\\$", "$")
+    return "".join(parts)
+
+
+def stash_inline(h):
+    STASH.append(h)
+    return f"XSTASHX{len(STASH) - 1}XSTASHX"
+
+
 def stash(h):
     STASH.append(h)
     return f"\n\nXSTASHX{len(STASH) - 1}XSTASHX\n\n"
@@ -201,7 +260,7 @@ def preprocess(text, where):
             out.append(stash(f'<aside class="box box-{kind}"><div class="boxhead">{head}</div>{inner}</aside>'))
             i = j + 1
             continue
-        out.append(line)
+        out.append(math_line(line, f"{where}:{i + 1}"))
         i += 1
     return "\n".join(out)
 
@@ -287,7 +346,8 @@ def build():
     if git("status", "--porcelain", "--", "src"):
         print("warning: src/ has changes that are not committed, the listings show them")
     tpl = (HERE / "template.html").read_text()
-    out = (tpl.replace("{{TOC}}", "\n".join(toc_html))
+    out = (tpl.replace("{{KATEX_CSS}}", katex_css())
+              .replace("{{TOC}}", "\n".join(toc_html))
               .replace("{{BODY}}", allhtml)
               .replace("{{COMMIT}}", commit))
     OUT.write_text(out)
@@ -299,10 +359,31 @@ def build():
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         '<style>body { margin: 0; }</style>\n' + head + '</style>\n</head>\n<body>\n' + body
         + '\n<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>\n'
-        '<script>mermaid.initialize({ startOnLoad: true, theme: '
-        'matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral" });</script>\n'
-        '</body>\n</html>\n')
+        + MERMAID_SCRIPT + '</body>\n</html>\n')
     print(f"wrote {STANDALONE}")
+
+
+# the charts drawn again in the other theme when the reader switches it, from their source
+MERMAID_SCRIPT = """<script>
+(function () {
+  var charts = Array.prototype.slice.call(document.querySelectorAll('pre.mermaid'));
+  var sources = charts.map(function (c) { return c.innerHTML; });
+  var system = matchMedia('(prefers-color-scheme: dark)');
+  function theme() {
+    var t = document.documentElement.getAttribute('data-theme');
+    return (t ? t === 'dark' : system.matches) ? 'dark' : 'neutral';
+  }
+  function draw() {
+    charts.forEach(function (c, i) { c.removeAttribute('data-processed'); c.innerHTML = sources[i]; });
+    mermaid.initialize({ startOnLoad: false, theme: theme() });
+    mermaid.run({ nodes: charts });
+  }
+  document.addEventListener('book-theme', draw);
+  system.addEventListener('change', draw);
+  draw();
+})();
+</script>
+"""
 
 
 def check_coverage():
