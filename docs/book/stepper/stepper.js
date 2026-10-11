@@ -204,11 +204,16 @@
       if (l >= 0 && lk[Math.min(l, lk.length - 1)]) keepVisible(litBox, lk[Math.min(l, lk.length - 1)]);
     }
 
+    var calm = matchMedia('(prefers-reduced-motion: reduce)');
+    function scrollBox(box, top) { box.scrollTo({ top: Math.max(0, top), behavior: calm.matches ? 'auto' : 'smooth' }); }
+    // the byte boxes scroll only when the byte leaves them; the boxes are position: relative, so
+    // offsetTop counts from their top
     function keepVisible(box, child) {
-      // the boxes are position: relative, so offsetTop counts from their top
       var top = child.offsetTop, h = box.clientHeight;
-      if (top < box.scrollTop || top > box.scrollTop + h - child.offsetHeight) box.scrollTop = Math.max(0, top - h / 2);
+      if (top < box.scrollTop || top > box.scrollTop + h - child.offsetHeight) scrollBox(box, top - h / 3);
     }
+    // the current line of code stays at one height, a third down, and the code moves under it
+    function followLine(row) { scrollBox(codeBox, row.offsetTop - codeBox.clientHeight / 3); }
 
     function colors() {
       var cs = getComputedStyle(fig);
@@ -253,7 +258,7 @@
       var s = steps[i];
       fig.querySelectorAll('.st-code .line.now').forEach(function (r) { r.classList.remove('now'); });
       var r = rows[s[F.line]];
-      if (r) { r.classList.add('now'); keepVisible(codeBox, r); }
+      if (r) { r.classList.add('now'); followLine(r); }
       say.textContent = explain(i);
       drawBits(s); drawVars(s); drawInput(s); drawPage(i);
       scrub.value = i;
@@ -285,6 +290,12 @@
     });
     fig.querySelectorAll('.st-pages button').forEach(function (b) {
       b.addEventListener('click', function () { play(false); load(b.getAttribute('data-page')); });
+    });
+    var cmBtn = fig.querySelector('.st-cm');
+    cmBtn.addEventListener('click', function () {
+      var show = fig.classList.toggle('nocomments') === false;
+      cmBtn.setAttribute('aria-pressed', show ? 'true' : 'false');
+      go(i);
     });
     scrub.addEventListener('input', function () { play(false); go(+scrub.value); });
     fig.addEventListener('keydown', function (ev) {

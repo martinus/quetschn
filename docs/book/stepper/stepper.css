@@ -15,8 +15,13 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .st-pos { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .st-say { margin: 0; min-height: 3.4em; padding: 0.6rem 0.9rem; background: var(--why); font-family: var(--body); font-size: 0.95rem; line-height: 1.5; }
 .st-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 1rem; padding: 0.8rem; }
-.st-code { max-height: 36rem; overflow: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--sheet); position: relative; }
-.st-code pre.code { font-size: 12px; }
+.st-code { height: 36rem; overflow: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--sheet); position: relative; }
+/* room above and below the code, so that every line can sit a third down the pane */
+.st-code pre.code { font-size: 12px; padding-block: 12rem 24rem; }
+.stepper.nocomments .cmline { display: none; }
+.st-cm { font: inherit; font-size: 0.78rem; color: var(--muted); background: transparent; border: 1px solid var(--rule); border-radius: 4px;
+         padding: 0.15rem 0.5rem; cursor: pointer; }
+.st-cm[aria-pressed="true"] { color: var(--ink); border-color: var(--muted); }
 .st-code .line.now { background: color-mix(in srgb, var(--accent) 24%, transparent); box-shadow: inset 3px 0 var(--accent); }
 .st-state { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
 .st-state h4 { margin: 0 0 0.35rem; font-size: 0.74rem; font-weight: 700; font-stretch: 75%; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
@@ -52,5 +57,6 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 @media (max-width: 62rem) {
   .stepper { --stepw: 100%; margin-left: 0; }
   .st-grid { grid-template-columns: minmax(0, 1fr); }
-  .st-code { max-height: 20rem; }
+  .st-code { height: 20rem; }
+  .st-code pre.code { padding-block: 6.7rem 13.3rem; }
 }

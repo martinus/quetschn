@@ -171,19 +171,23 @@ def render_stepper(what, where):
     trace, a, b = run_trace()
     path = "src/seqlz_decompress.c"
     hl = highlight_lines("\n".join(src_lines(path)[a - 1:b]), "c")
-    rows = "".join(f'<span class="line"><span class="ln" data-n="{a + i}"></span><span class="lc">{h}</span></span>'
-                   for i, h in enumerate(hl))
+    def only_comment(h):
+        # a line with nothing but a comment, or blank: folded away while comments are hidden
+        return not re.sub(r'<span class="cm">.*?</span>', "", h).strip()
+    rows = "".join(f'<span class="line{" cmline" if only_comment(h) else ""}"><span class="ln" data-n="{a + i}"></span>'
+                   f'<span class="lc">{h}</span></span>' for i, h in enumerate(hl))
     pages = "".join(f'<button type="button" data-page="{pid}" aria-pressed="false">{html.escape(t)}</button>'
                     for pid, t in STEPPER_PAGES)
     buttons = "".join(f'<button type="button" class="icon" data-do="{k}" title="{t}" aria-label="{t}">'
                       f'<svg viewBox="0 0 24 24" aria-hidden="true">{ICONS[k]}</svg></button>' for k, t in STEP_BUTTONS)
     sid = "stepper-" + what
     return (f'<style>{(HERE / "stepper" / "stepper.css").read_text()}</style>'
-            f'<figure class="stepper" id="{sid}" tabindex="-1" aria-label="seqlz_decode() step by step">'
+            f'<figure class="stepper nocomments" id="{sid}" tabindex="-1" aria-label="seqlz_decode() step by step">'
             f'<div class="st-bar"><div class="st-pages" role="group" aria-label="Page">{pages}</div>'
             f'<div class="st-ctl">{buttons}</div>'
             f'<input type="range" class="st-scrub" min="0" value="0" aria-label="Step">'
-            f'<span class="st-pos"></span></div>'
+            f'<span class="st-pos"></span>'
+            f'<button type="button" class="st-cm" aria-pressed="false" title="Show the comment lines of the code">comments</button></div>'
             f'<p class="st-say" aria-live="polite"></p>'
             f'<div class="st-grid"><div class="st-code"><pre class="code numbered"><code>{rows}</code></pre></div>'
             f'<div class="st-state">'
