@@ -49,11 +49,10 @@ the number of extra bits from bit 4. `build_values()` ORs the code's length into
 | 5 | 5 | 5 | 0 | `0x500` |
 | 16 | 16 to 31 | 16 | 4 | `0x1040` |
 | 18 | 64 to 127 | 64 | 6 | `0x4060` |
-| 24 | 4096 to 8191 | 4096 | 12 | `0x1000c0` |
+| 23 | 2048 to 4095 | 2048 | 11 | `0x800b0` |
 
-Symbol 24 is the largest for 4 KiB pages, `SEQLZ_LEN_SYMBOLS - 1`, and its 12 extra bits still fit
-the field of 4 bits. No valid page uses it ([chapter 6](#ch-header--length-values)), but the table
-has its entry all the same. The decoder's `seqlz_br_value()` ([chapter 12](#ch-dec-basics)) adds the base
+Symbol 23 is the largest for 4 KiB pages, `SEQLZ_LEN_SYMBOLS - 1`, and its 11 extra bits fit the
+field of 4 bits; on 16 KiB pages symbol 25 has 13. The decoder's `seqlz_br_value()` ([chapter 12](#ch-dec-basics)) adds the base
 and the extra bits; for the value 100 that is symbol 18, base 64, and the 6 bits `100100`, 36.
 
 ## first_codes(): the first code of each length {#ch-codes--first-codes}
@@ -185,26 +184,27 @@ code of 12 bits. The loop at lines 47 and 48 counts lengths up to 11 only, so `k
 
 ### The real tables
 
-The `ll` table has 25 lengths: `4 4 4 4 4 5 4 5 5 5 5 5 6 6 6 6 3 3 4 5 6 8 8 8 8`. Two codes of 3
-bits, seven of 4, seven of 5, five of 6, none of 7, four of 8:
+The `ll` table has 24 lengths: `4 4 3 4 4 5 5 5 5 5 5 5 6 6 6 6 3 3 4 6 8 8 8 8`. Three codes of 3
+bits, five of 4, seven of 5, five of 6, none of 7, four of 8:
 
 ```text
-k = 2 * 32 + 7 * 16 + 7 * 8 + 5 * 4 + 0 * 2 + 4 * 1 = 64 + 112 + 56 + 20 + 4 = 256 = 1 << 8
+k = 3 * 32 + 5 * 16 + 7 * 8 + 5 * 4 + 0 * 2 + 4 * 1 = 96 + 80 + 56 + 20 + 4 = 256 = 1 << 8
 
-next[1] = 0       next[5] = (4 + 7) << 1 = 22
+next[1] = 0       next[5] = (6 + 5) << 1 = 22
 next[2] = 0       next[6] = (22 + 7) << 1 = 58
 next[3] = 0       next[7] = (58 + 5) << 1 = 126
-next[4] = (0 + 2) << 1 = 4                   next[8] = (126 + 0) << 1 = 252
+next[4] = (0 + 3) << 1 = 6                   next[8] = (126 + 0) << 1 = 252
 ```
 
-The two 3-bit codes go to symbols 16 and 17, `000` and `001`: the values 16 to 63, which are the
-literal runs of 31 to 78 bytes. The 4-bit codes start at 4, `0100`, for symbols 0 to 4, 6 and 18.
-The four 8-bit codes are 252 to 255, `11111100` to `11111111`, the last four entries of the table.
-`next[7]` is 126 although no code has 7 bits; `next[8]` then continues from it.
+The three 3-bit codes go to symbols 2, 16 and 17, `000`, `001` and `010`: the value 2, a literal run
+of 17 bytes, and the values 16 to 63, which are the literal runs of 31 to 78 bytes. The 4-bit codes
+start at 6, `0110`, for symbols 0, 1, 3, 4 and 18. The four 8-bit codes are 252 to 255, `11111100` to
+`11111111`, the last four entries of the table. `next[7]` is 126 although no code has 7 bits;
+`next[8]` then continues from it.
 
 The token table, with `bits = 11`, has no code shorter than 4 bits: `next[1]` to `next[4]` are 0, then
-`next[5] = 8`, `next[6] = 24`, `next[7] = 58`, `next[8] = 138`, `next[9] = 330`, `next[10] = 744`
-and `next[11] = 1640`. Its 408 codes of 11 bits are the numbers 1640 to 2047, the last 408 entries.
+`next[5] = 8`, `next[6] = 24`, `next[7] = 58`, `next[8] = 140`, `next[9] = 330`, `next[10] = 744`
+and `next[11] = 1638`. Its 410 codes of 11 bits are the numbers 1638 to 2047, the last 410 entries.
 
 ## build_token(): a code is one range of the table {#ch-codes--build-token}
 
@@ -261,7 +261,7 @@ entries in all, because the ranges of a complete code cover the table exactly on
 
 @listing src/seqlz_codes.c 84-103
 
-The same steps for the `ll` and `ml` tables, with three differences: 25 symbols (27 on 16 KiB pages),
+The same steps for the `ll` and `ml` tables, with three differences: 24 symbols (26 on 16 KiB pages),
 codes of at most `SEQLZ_MAX_BITS`, 8, and the entries of [chapter 7](#ch-internal--value-table). The
 encoder's entry is `c | l << 16` in a `u32`, no cast needed. The decode entry is
 `length_entry(s) | l`, the base and extra bits with the code's length in bits 0 to 3.
@@ -269,7 +269,7 @@ encoder's entry is `c | l << 16` in a `u32`, no cast needed. The decode entry is
 Symbol 18 of the `ll` table has the 4-bit code `1010`, `c = 10`: `enc[18] = 10 | 4 << 16 = 0x4000a`,
 and the 16 entries `10 << 4 = 160` to 175 get `0x4060 | 4 = 0x4064`.
 
-The loop runs to `SEQLZ_LEN_SYMBOLS`, so `enc[25]` to `enc[31]`, which the encoder's array has for its
+The loop runs to `SEQLZ_LEN_SYMBOLS`, so `enc[24]` to `enc[31]`, which the encoder's array has for its
 mask ([chapter 7](#ch-internal--decode-tables)), are not written here. They stay 0 from the
 `memset()` in `seqlz_tables_init()`.
 
@@ -457,7 +457,7 @@ Lines 1 to 8 are the generator's: the SPDX line in the kernel's order, `GPL-2.0-
 designated initializer, each field by name; being `const`, the compiler puts it in read-only data.
 There are 16 lengths per line, so token `s` is at line `11 + s / 16`, column `s % 16`. Line 13 has
 tokens 32 to 47, and its third number, token 34, is 4. Line 14 has tokens 48 to 63, and token 49 is 4
-as well. Line 203 is the escape, 4. The `ll` and `ml` lines are the 25 lengths each that
+as well. Line 203 is the escape, 4. The `ll` and `ml` lines are the 24 lengths each that
 `first_codes()` turned into codes above.
 
 ### Training: counts, then lengths

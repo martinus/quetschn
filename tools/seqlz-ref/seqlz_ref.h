@@ -11,8 +11,8 @@ extern "C" {
 /* The tables of docs/format.md, "The tables": code lengths, one byte per symbol. */
 struct seqlz_ref_tables {
     const unsigned char* tok;        /* 3073 symbols, the escape last */
-    const unsigned char* ll;         /* 13 + page_bits symbols */
-    const unsigned char* ml;         /* 13 + page_bits symbols */
+    const unsigned char* ll;         /* 12 + page_bits symbols */
+    const unsigned char* ml;         /* 12 + page_bits symbols */
     const unsigned char (*lit)[256]; /* the 8 literal tables */
 };
 

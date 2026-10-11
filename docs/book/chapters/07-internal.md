@@ -76,16 +76,16 @@ took the compressor to 4.7% fewer instructions ([chapter 3](#ch-cpu--ubsan) has 
 @listing src/seqlz_internal.h 28-33
 
 `ENC_LEN_SYMBOLS` is that power of 2: 32 entries in the encoder's table of length values, where
-`SEQLZ_LEN_SYMBOLS` is 25 for 4 KiB pages and 27 for 16 KiB pages. The entries 25 to 31 are never
+`SEQLZ_LEN_SYMBOLS` is 24 for 4 KiB pages and 26 for 16 KiB pages. The entries 24 to 31 are never
 used for a valid length; `seqlz_tables_init()` sets them to 0 with the rest of the struct.
 
 A `static_assert(condition, message)` is checked by the compiler, not at run time: if the condition
 is false, the build fails with the message. It costs nothing in the program. `seqlz_compat.h` maps
 it to C11's `_Static_assert` where the kernel's headers do not have it. The two here prove:
 
-- `SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS`, `25 <= 32`: every length value's symbol has an entry in
+- `SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS`, `24 <= 32`: every length value's symbol has an entry in
   `enc[]`, so the mask never folds a real symbol onto another one. If a later change gave the page
-  more bits, e.g. `QUETSCHN_PAGE_BITS` 20, the symbols would be 33 and the build would stop here
+  more bits, e.g. `QUETSCHN_PAGE_BITS` 21, the symbols would be 33 and the build would stop here
   instead of the encoder writing wrong codes.
 - the longest code of each table, 11, 8 and 10 bits, is below 16. `first_codes()` in
   [chapter 8](#ch-codes) counts the codes of each length in an array of 16, `of_len[16]`, indexed by
@@ -674,5 +674,6 @@ The last sequence of a page has no match and no token, so the table has nothing 
 decoder knows it has come from the literals left ([chapter 4](#ch-format--end)). Until 11th October
 2026 it had a token, e.g. token 0 when it had no literals, whose 8-bit code gives `0x02020008`: `N` 8,
 `BACK` 0, `DROP` 8, `LL` 0, `ML` 4. The decoder then checked `len != 4U || TOK_BACK(tok) != 0U`, the
-format's rule for that token, read straight from the entry. Token 0 is still in the table, for a
-sequence of no literals and a match of 4 bytes at the repeat offset.
+format's rule for that token, read straight from the entry. Token 0 is still a token, no literals and
+a match of 4 bytes at the repeat offset, but that is rare, and since the tables were trained again
+without the last sequences it has no code: it is sent escaped.

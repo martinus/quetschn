@@ -43,8 +43,8 @@ int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsign
     if (page_bits != 12U && page_bits != 14U)
         return -1;
     r->page_bits = page_bits;
-    if (make_code(&r->tok, t->tok, TOKENS + 1U) || make_code(&r->ll, t->ll, 13U + page_bits) ||
-        make_code(&r->ml, t->ml, 13U + page_bits))
+    if (make_code(&r->tok, t->tok, TOKENS + 1U) || make_code(&r->ll, t->ll, 12U + page_bits) ||
+        make_code(&r->ml, t->ml, 12U + page_bits))
         return -1;
     for (k = 0; k < 8U; k++)
         if (make_code(&r->lit[k], t->lit[k], 256U))

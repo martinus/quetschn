@@ -145,6 +145,19 @@ TEST_CASE("seqlz: pages from random sequences come back, with every kind of copy
     }
 }
 
+TEST_CASE("seqlz: the largest length value a page needs is the last length symbol") {
+    auto extra = 0U;
+    // ll - 15 of a page of literals only, and ml - 35 of a match of all but the page's first byte
+    CHECK(seqlz_len_symbol(page_size - SEQLZ_LL_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
+    CHECK(extra == QUETSCHN_PAGE_BITS - 1);
+    CHECK(seqlz_len_symbol(page_size - 1 - 4 - SEQLZ_ML_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
+    // the direct symbols end at 15, the ranges start at 16
+    CHECK(seqlz_len_symbol(15, &extra) == 15);
+    CHECK(extra == 0);
+    CHECK(seqlz_len_symbol(16, &extra) == 16);
+    CHECK(extra == 4);
+}
+
 TEST_CASE("seqlz: the token holds ll and ml - 4 up to their caps and the offset class") {
     auto constexpr ml_shift = SEQLZ_LL_BITS, cls_shift = SEQLZ_LL_BITS + SEQLZ_ML_BITS;
     CHECK(seqlz_token(0, 4, 0) == 0);
@@ -649,14 +662,13 @@ TEST_CASE("seqlz: seqlz_encode() rejects sequences that do not make a page, befo
 
 TEST_CASE("seqlz: the compressor needs a code for every symbol") {
     // a complete code where one match length symbol has none: fine for the decoder, not for the
-    // encoder. 4 KiB pages: two codes of 2 bits, ten of 5 and twelve of 6, 2/4 + 10/32 + 12/64 = 1. 16 KiB
-    // pages: two of 2 bits, eight of 5 and sixteen of 6, 2/4 + 8/32 + 16/64 = 1. The last symbol none.
+    // encoder. 4 KiB pages: two codes of 2 bits, eleven of 5 and ten of 6, 2/4 + 11/32 + 10/64 = 1. 16 KiB
+    // pages: two of 2 bits, nine of 5 and fourteen of 6, 2/4 + 9/32 + 14/64 = 1. The last symbol none.
     auto l = seqlz_default_own;
 #if QUETSCHN_PAGE_BITS == 12
-    unsigned char const ml[SEQLZ_LEN_SYMBOLS] = {2, 2, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0};
+    unsigned char const ml[SEQLZ_LEN_SYMBOLS] = {2, 2, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0};
 #else
-    unsigned char const ml[SEQLZ_LEN_SYMBOLS] = {2, 2, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6,
-                                                 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0};
+    unsigned char const ml[SEQLZ_LEN_SYMBOLS] = {2, 2, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0};
 #endif
     std::memcpy(l.ml, ml, sizeof(ml));
     auto* t = static_cast<seqlz_tables*>(::operator new(seqlz_tables_size()));

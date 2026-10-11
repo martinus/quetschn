@@ -200,8 +200,8 @@ tables are fixed: they are part of the format and are not in the page. There are
 | table | symbols | longest code | codes |
 | --- | --- | --- | --- |
 | `TOK`, the tokens and the escape | 3073 | 11 bits | the token of each sequence |
-| `LL`, literal length values | 25 (27 on 16 KiB pages) | 8 bits | the rest of a long `ll` |
-| `ML`, match length values | 25 (27 on 16 KiB pages) | 8 bits | the rest of a long `ml` |
+| `LL`, literal length values | 24 (26 on 16 KiB pages) | 8 bits | the rest of a long `ll` |
+| `ML`, match length values | 24 (26 on 16 KiB pages) | 8 bits | the rest of a long `ml` |
 | literal tables 0 to 7 | 256 each | 10 bits | the coded literals |
 
 A table holds only the **code length** of each symbol, 0 for a symbol without a code. The codes
@@ -218,9 +218,9 @@ the order of the symbols' numbers. Here is the rule applied to the real token ta
   6 bits.
 
 Every table is **complete**: its codes use up all bit strings, the sum of $2^{-l}$ over all codes is
-exactly 1 ([chapter 2](#ch-compression--complete)). For the token table that is 4 codes of 4 bits, 4 of 5, 5 of 6, 11 of 7, 27 of 8, 42 of 9,
-76 of 10 and 408 of 11 bits, 577 codes. Counted in units of $\frac{1}{2048}$:
-$4 \cdot 128 + 4 \cdot 64 + 5 \cdot 32 + 11 \cdot 16 + 27 \cdot 8 + 42 \cdot 4 + 76 \cdot 2 + 408 = 2048$. So every string of 11 bits starts with exactly one
+exactly 1 ([chapter 2](#ch-compression--complete)). For the token table that is 4 codes of 4 bits, 4 of 5, 5 of 6, 12 of 7, 25 of 8, 42 of 9,
+75 of 10 and 410 of 11 bits, 577 codes. Counted in units of $\frac{1}{2048}$:
+$4 \cdot 128 + 4 \cdot 64 + 5 \cdot 32 + 12 \cdot 16 + 25 \cdot 8 + 42 \cdot 4 + 75 \cdot 2 + 410 = 2048$. So every string of 11 bits starts with exactly one
 code, and a decoder never meets bits that are no code. That is what lets `seqlz_decode()` look up 11
 bits in a table of 2048 entries without checking the entry; the table is built in
 [chapter 8](#ch-codes).
@@ -410,8 +410,9 @@ else:       b = s - 12;  value = 2^b + read(b)
 
 Values below 16 are a symbol of their own. A larger value is sent as the position of its highest
 bit, $b$, as the symbol $12 + b$, followed by the $b$ bits below the highest one as plain bits. The
-symbols 16 to 24 stand for $b = 4$ to 12, the ranges 16 to 31, 32 to 63, and so on up to 4096 to 8191.
-That is 25 symbols on 4 KiB pages, $13 + P$, and 27 on 16 KiB pages. E.g. the value 100 is in the
+symbols 16 to 23 stand for $b = 4$ to 11, the ranges 16 to 31, 32 to 63, and so on up to 2048 to 4095.
+That is 24 symbols on 4 KiB pages, $12 + P$, and 26 on 16 KiB pages: no value a page needs reaches
+4096. E.g. the value 100 is in the
 range 64 to 127, so $b = 6$, the symbol is 18, and `read(6)` is $100 - 64 = 36$. In the real `LL`
 table symbol 18 has the code `1010`, so `ll = 115` costs the token, 4 bits of code and 6 plain bits.
 
@@ -595,14 +596,14 @@ bytes 25 to 4095: z, 4071 times
 cannot save 51 bytes.
 
 ```text
-0f 00  61 62 63 64 65 66 67 68 69 6a 6b 6c 78 79 7a  cd 96 71 6e 21 f7 e1 80
+0f 00  61 62 63 64 65 66 67 68 69 6a 6b 6c 78 79 7a  cd 76 71 6e 21 f7 e1 80
 ```
 
 `h = 15`, raw literals, and the 15 literals are `abcdefghijklxyz`. `B` is 8 bytes, 64 bits:
 
 | bits | read as | means |
 | --- | --- | --- |
-| `11001101100` | `symbol(TOK)` = 12 | `ll = 12`, `mlf = 0`, class 0 |
+| `11001101011` | `symbol(TOK)` = 12 | `ll = 12`, `mlf = 0`, class 0 |
 | | class 0: no bits | `off = last = 1`, the start value |
 | | | append `abcdefghijkl`, then 4 bytes from 1 back: `llll`; 16 bytes |
 | `101100111` | `symbol(TOK)` = 2098 | `ll = 2`, `mlf = 3`, class 4 |

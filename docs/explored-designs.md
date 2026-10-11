@@ -73,6 +73,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [seqlz-fast-lit: one of 8 literal tables per page](#seqlz-fast-lit-one-of-8-literal-tables-per-page)
 - [A page ends where its bits end: no damaged page with bytes or bits too many decodes, 0.1 µs on the A55, kept](#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)
 - [The last sequence without a token: 1.2 bytes per page less, kept](#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)
+- [The tables trained again without the last sequences, and one length symbol less: 0.2 bytes per page less](#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5191,6 +5192,47 @@ variant has fewer instructions than `main`.
 
 The 4 KiB tables still count a token for every last sequence, one count per page too many for the
 tokens `(ll, 0, 0)`. They change with the next training, together with #182.
+
+## The tables trained again without the last sequences, and one length symbol less: 0.2 bytes per page less
+
+*The tables of 7th October counted a token for every page's last sequence, and an `ll` value for 15
+literals or more, which the last sequence has not had since
+[The last sequence without a token](#the-last-sequence-without-a-token-12-bytes-per-page-less-kept).
+And both length tables had a last symbol, 4096 to 8191 on 4 KiB pages, that no page needs: the largest
+length value is `ll - 15` of a page of literals only, 4081 (#182). The symbol is gone,
+`SEQLZ_LEN_SYMBOLS` is `12 + QUETSCHN_PAGE_BITS`, and the tables are trained again on the pages and
+with the seeds of 7th October: `train-rz-phone5`, 524 912 pages, k-means seeds 1 to 32, and for 16 KiB
+pages `emu-a17-16k-a-train`. Pages get 0.1 to 0.2 bytes smaller, in the same time.* Code: `src/seqlz.h`,
+`bench/seqlz_counts_*.txt`, `src/seqlz_default_tables_*.inc`, the hashes in docs/format.md, both
+reference decoders.
+
+**What changed in the tables.** The literal counts are the ones of 7th October to the byte, so are the
+8 literal tables: the matcher did not change. The tokens lost 524 912 counts, one per training page,
+343 924 of them token 0, the last sequence of a page whose last match fills it. As a sequence of its
+own, no literals and a match of 4 at the repeat offset, token 0 is rare and has no code any more; it
+is sent escaped. Four other tokens move by one bit, token 2227 gets an 11-bit code, and 124 of the
+577 codes change their bits, since canonical codes follow from all the lengths. In the `ll` table symbols 2, 6, 19 and 20 move by one or
+two bits, in the `ml` table symbol 10 gets 7 bits instead of 8.
+
+**Memory**, the harness's zsmalloc cost in bytes per page on whole dumps, `seqlz-fast` /
+`seqlz-fast-lit`. Only the third desktop dump has pages in the training set, 60 132 of them:
+
+| dump | tables of 7th October | trained again |
+| --- | ---: | ---: |
+| first desktop dump | 1083.2 / 998.6 | 1083.0 / 998.4 |
+| second desktop dump, 24th September | 1448.7 / 1258.6 | 1448.5 / 1258.5 |
+| third desktop dump, 28th September | 1402.2 / 1238.4 | 1402.0 / 1238.2 |
+| Mi 9T, 4th October | 949.2 / 895.7 | 949.0 / 895.6 |
+
+Less than a byte per page, as #182 guessed: the length tables get the 1/256 of their code space that
+the unused symbol had, and the token table the codes the last sequences no longer need.
+
+**Time.** `tools/quick-bench.sh` on the first desktop dump, both builds with
+`QUETSCHN_ALIGN_FUNCTIONS`, twice each: `seqlz-fast` writes in 2634 and 2637 ns against 2629 and 2634,
+cold p99 3030 and 3010 ns against 3010 and 3010, `seqlz-fast-lit` 3110 ns cold p99 in all four runs.
+`perf stat` on `--decode-loop`: 45 725 659 instructions per loop over 2000 pages against 45 723 551,
+one more per page, for the escaped token 0. Not measured in the kernel VM or on the phone: the code is
+the same, and so are the sizes of the decode tables, 256 entries for each length table.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 

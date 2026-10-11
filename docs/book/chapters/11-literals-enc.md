@@ -64,7 +64,7 @@ the page.
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 280" font-size="12" role="img" aria-label="dst before and after code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
-  <text x="20" y="22">dst after compress_page(): 208 bytes, raw literals</text>
+  <text x="20" y="22">dst after compress_page(): 209 bytes, raw literals</text>
   <rect x="20" y="30" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="50" text-anchor="middle">c9 00</text>
   <rect x="80" y="30" width="440" height="30" fill="none" stroke="currentColor"/>
@@ -76,7 +76,7 @@ the page.
   <text x="20" y="74" text-anchor="middle">0</text>
   <text x="80" y="74" text-anchor="middle">2</text>
   <text x="520" y="74" text-anchor="middle">203</text>
-  <text x="600" y="74" text-anchor="middle">208</text>
+  <text x="600" y="74" text-anchor="middle">209</text>
 
   <line x1="300" y1="78" x2="300" y2="106" stroke="currentColor"/>
   <path d="M296 100 L300 108 L304 100 Z" fill="currentColor"/>
@@ -95,7 +95,7 @@ the page.
     <text x="536" y="130">memmove()</text>
   </g>
 
-  <text x="20" y="194">dst after code_literals(): 150 bytes</text>
+  <text x="20" y="194">dst after code_literals(): 151 bytes</text>
   <rect x="20" y="200" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="220" text-anchor="middle">c9 80</text>
   <rect x="80" y="200" width="30" height="30" class="fill-sheet" stroke="currentColor"/>
@@ -136,7 +136,7 @@ the page.
   <text x="380" y="244" text-anchor="middle">112</text>
   <text x="415" y="244" text-anchor="middle">129</text>
   <text x="450" y="244" text-anchor="middle">145</text>
-  <text x="530" y="244" text-anchor="middle">150</text>
+  <text x="530" y="244" text-anchor="middle">151</text>
   <text x="170" y="262" text-anchor="middle">q[0]</text>
   <text x="450" y="262" text-anchor="middle">q[8]</text>
 </svg>
@@ -145,8 +145,8 @@ the page.
 </figure>
 
 The offsets under the second row are the values of `q[0]` to `q[8]` for this page, measured from
-`d`. Bytes 2 to 149 of the first row are overwritten: by byte 2, by the 5 bytes of sizes, by the
-streams, and by the bitstream at its new place. Bytes 150 to 207 keep what they held, but they are no
+`d`. Bytes 2 to 150 of the first row are overwritten: by byte 2, by the 5 bytes of sizes, by the
+streams, and by the bitstream at its new place. Bytes 151 to 208 keep what they held, but they are no
 longer part of the page.
 
 ## Pricing all 8 tables with one add per literal {#ch-literals-enc--pricing}
@@ -787,8 +787,8 @@ It is `memmove()`, not `memcpy()`, because source and destination can overlap: t
 down by `2 + n - coded`, more than 38 bytes, and a bitstream is often longer than that. `memmove()` is
 defined for overlapping ranges, `memcpy()` is not.
 
-In the example, the bitstream of 5 bytes moves from byte 203 to byte 145, and the page goes from 208
-to 150 bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
+In the example, the bitstream of 6 bytes moves from byte 203 to byte 145, and the page goes from 209
+to 151 bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
 the back of `dst` to behind the raw literals ([chapter 10](#ch-encoder)). Copying it only once, to
 behind the coded literals, was built and measured: the writes got up to 0.3 µs slower in the kernel
 VM and 0.8 µs on the A55, `seqlz-fast` too, because gcc laid out the matcher's loop differently
@@ -802,8 +802,8 @@ The page of this chapter: 200 letters, each drawn from `etaoinshrdlu` and a spac
 classic linear congruential generator, `seed = seed * 1103515245 + 12345` with `seed = 1`, taking
 `(seed >> 16) % 13`; then 3896 zero bytes. The first 24 letters are `oh  asridistliuthtoo hha`. The
 matcher finds 2 sequences: 201 literals followed by a match of 3895 bytes at offset 1, and the last
-sequence with no literals, which takes no bits. Compressed with `coded = false` the page has 208
-bytes; with `coded = true`, 150:
+sequence with no literals, which takes no bits. Compressed with `coded = false` the page has 209
+bytes; with `coded = true`, 151:
 
 ```text
 000  c9 80 00 33 c6 18 63 84 43 56 4e e0 00 96 ca 9f
@@ -815,7 +815,7 @@ bytes; with `coded = true`, 150:
 060  ac 98 5f b2 7b 2e 20 54 f8 8a 50 b7 1a 29 cc a0
 070  4b f6 52 65 2c eb 69 f5 ac 05 62 82 be 76 9f 52
 080  40 32 ca 63 24 4a 50 10 7c c0 90 6a ca 56 fb e9
-090  b2 d6 dc 75 ef 14
+090  b2 d6 df 3a f7 8a 00
 ```
 
 The offsets on the left are hexadecimal. Taken apart by hand:
@@ -833,8 +833,8 @@ The offsets on the left are hexadecimal. Taken apart by hand:
   24 and 32 of the page.
 - Stream 0 ends with byte 26, `0x1a`, which is `80`. It has 147 bits, 18 whole bytes and 3 bits, so
   the last byte holds `100` and 5 zero bits.
-- `d6 dc 75 ef 14` from byte 145 on is the sequences' bitstream, the same 5 bytes that followed the
-  raw literals in the 208-byte page.
+- `d6 df 3a f7 8a 00` from byte 145 on is the sequences' bitstream, the same 6 bytes that followed
+  the raw literals in the 209-byte page.
 
 Did it pass the rule? The pricing gave these bits per stream:
 
@@ -847,7 +847,7 @@ Did it pass the rule? The pricing gave these bits per stream:
 
 Table 0 wins. Its sizes add up to `coded = 137`, and `137 + 51 = 188` is less than
 `201 - 201 / 16 = 189`. One byte more and this page would have kept its raw literals. It saves 58
-bytes, 28% of the 208 bytes the page takes with raw literals.
+bytes, 28% of the 209 bytes the page takes with raw literals.
 
 ::: try Compress a page of your own
 In a scratch directory, with the repository's path in `$R` (`R=/path/to/quetschn`):

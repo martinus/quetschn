@@ -100,8 +100,8 @@ point at another worktree's `_deps`. To skip the network, reuse doctest:
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
-cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 130 cases, ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 109 cases
+cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 131 cases, ctest 2/2 with kernel tree
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 110 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
