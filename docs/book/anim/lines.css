@@ -1,0 +1,8 @@
+.an-stage .ln-free { fill: var(--paper); stroke: var(--rule); stroke-width: 1; }
+.an-stage .ln-seen { fill: var(--accent); fill-opacity: 0.3; stroke: var(--rule); stroke-width: 1; }
+.an-stage .ln-cur { fill: var(--mark); stroke: var(--mark); stroke-width: 1; }
+.an-stage .ln-code { fill: none; stroke: var(--accent); stroke-width: 2; }
+.an-stage svg text.ln-lab, .an-stage svg tspan.ln-lab { fill: var(--muted); }
+.an-stage svg tspan.ln-code-t { fill: var(--accent); font-weight: 700; }
+.an-stage svg text.ln-cur-t { fill: var(--mark); font-weight: 600; }
+.an-stage svg text.ln-on-cur { fill: var(--paper); font-weight: 700; }

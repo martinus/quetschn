@@ -1,0 +1,18 @@
+.an-stage svg text.ab-head { fill: var(--muted); font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.an-stage svg text.ab-note, .an-stage svg text.ab-lab { fill: var(--muted); }
+.an-stage svg text.ab-lab-now { fill: var(--ink); font-weight: 600; }
+.an-stage svg text.ab-tf { fill: var(--paper); }
+.an-stage .ab-hdr { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .ab-lit { fill: var(--warn); stroke: var(--rule); }
+.an-stage .ab-bits { fill: var(--why); stroke: var(--rule); }
+.an-stage .ab-on { stroke: var(--accent); stroke-width: 2.5; }
+.an-stage .ab-unread { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .ab-code { fill: var(--accent); }
+.an-stage .ab-plain { fill: var(--mark); }
+.an-stage .ab-done { opacity: 0.5; }
+.an-stage .ab-br { stroke: var(--muted); }
+.an-stage .ab-br-now { stroke: var(--accent); stroke-width: 2; }
+.an-stage .ab-empty { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .ab-litfill { fill: var(--mark); }
+.an-stage .ab-matchfill { fill: var(--accent); }
+.an-stage svg text.ab-key { font-family: var(--display); }

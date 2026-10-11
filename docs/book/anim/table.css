@@ -1,0 +1,10 @@
+.an-stage .tb-row { fill: var(--sheet); }
+.an-stage .tb-row-hot { fill: var(--why); stroke: var(--accent); stroke-width: 2; }
+.an-stage .tb-bit { fill: var(--paper); stroke: var(--ink); stroke-width: 1; }
+.an-stage .tb-used { fill: var(--sheet); stroke: var(--rule); stroke-width: 1; }
+.an-stage .tb-window { fill: none; stroke: var(--accent); stroke-width: 2.6; }
+.an-stage .tb-brace { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+.an-stage svg text.tb-acc { fill: var(--accent); }
+.an-stage svg text.tb-mark { fill: var(--mark); }
+.an-stage svg text.tb-mut { fill: var(--muted); }
+.an-stage svg text.tb-bold { font-weight: 600; }

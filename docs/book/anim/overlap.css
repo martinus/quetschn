@@ -1,0 +1,10 @@
+.an-stage .ov-empty { fill: var(--paper); stroke: var(--rule); stroke-dasharray: 3 3; }
+.an-stage .ov-lit { fill: var(--sheet); stroke: var(--ink); }
+.an-stage .ov-match { fill: var(--why); stroke: var(--accent); }
+.an-stage .ov-bad { fill: var(--warn); stroke: var(--mark); }
+.an-stage .ov-now { stroke: var(--accent); stroke-width: 3; }
+.an-stage .ov-src { stroke: var(--mark); stroke-width: 3; }
+.an-stage svg text.ov-tm { fill: var(--accent); font-weight: 600; }
+.an-stage svg text.ov-idx, .an-stage svg text.ov-key { fill: var(--muted); }
+.an-stage .ov-arc { stroke: var(--muted); opacity: 0.45; }
+.an-stage .ov-arc-now { stroke: var(--accent); stroke-width: 2.4; }

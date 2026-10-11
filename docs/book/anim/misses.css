@@ -1,0 +1,11 @@
+.an-stage .ms-miss { fill: var(--accent); fill-opacity: 0.22; stroke: var(--accent); stroke-width: 1.2; }
+.an-stage .ms-pre { stroke-dasharray: 4 2; }
+.an-stage .ms-work { fill: var(--mark); stroke: var(--mark); }
+.an-stage .ms-wait { fill: var(--sheet); stroke: var(--muted); stroke-width: 0.6; stroke-dasharray: 2 2; }
+.an-stage .ms-track { stroke: var(--rule); }
+.an-stage .ms-axis { stroke: var(--muted); }
+.an-stage .ms-now { stroke: var(--ink); stroke-width: 1.5; }
+.an-stage .ms-tot { fill: var(--muted); fill-opacity: 0.3; stroke: var(--muted); }
+.an-stage .ms-tot-now { fill: var(--accent); stroke: var(--accent); }
+.an-stage svg text.ms-lab { fill: var(--muted); }
+.an-stage svg text.ms-live, .an-stage svg text.ms-tot-t { fill: var(--accent); font-weight: 600; }

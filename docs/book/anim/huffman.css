@@ -1,0 +1,13 @@
+.an-stage .hf-edge { fill: none; stroke: var(--muted); stroke-width: 1.4; transition: d 0.35s ease, opacity 0.35s ease; }
+.an-stage .hf-edge.hf-path { stroke: var(--accent); stroke-width: 2.6; }
+.an-stage .hf-leaf { fill: var(--sheet); stroke: var(--ink); stroke-width: 1; }
+.an-stage .hf-pill { fill: var(--paper); stroke: var(--ink); stroke-width: 1; }
+.an-stage .hf-hot .hf-leaf, .an-stage .hf-hot .hf-pill { stroke: var(--accent); stroke-width: 2.6; }
+.an-stage .hf-onpath .hf-pill { stroke: var(--accent); stroke-width: 2; }
+.an-stage svg text.hf-code { fill: var(--accent); font-weight: 600; }
+.an-stage svg text.hf-bit { fill: var(--muted); font-weight: 600; paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
+.an-stage svg text.hf-bit.hf-on, .an-stage svg text.hf-acc { fill: var(--accent); }
+.an-stage svg text.hf-mut { fill: var(--muted); }
+.an-stage .hf-bar { fill: var(--rule); }
+.an-stage .hf-bar-on { fill: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .an-stage .hf-edge { transition: none; } }

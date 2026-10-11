@@ -1,0 +1,45 @@
+{
+  "parts": [
+    {
+      "chapters": [
+        {"file": "00-preface.md", "numbered": false, "label": "Preface"}
+      ]
+    },
+    {
+      "id": "part-1", "label": "Part I", "title": "Before the code",
+      "intro": "What zram needs from a codec, how LZ compression and Huffman codes work, what makes code slow on a CPU, and the seqlz format on one page. Read this part first if you have never written a compressor or kernel code.",
+      "chapters": [
+        {"file": "01-zram.md"},
+        {"file": "02-compression.md"},
+        {"file": "03-cpu.md"},
+        {"file": "04-format.md"}
+      ]
+    },
+    {
+      "id": "part-2", "label": "Part II", "title": "The code, line by line",
+      "intro": "Every line of <code>src/</code>, in the order a reader needs it: the kernel's vocabulary, the constants of the format, the tables, the compressor and the decompressor, and the glue to zram.",
+      "chapters": [
+        {"file": "05-compat.md"},
+        {"file": "06-seqlz-h.md"},
+        {"file": "07-internal.md"},
+        {"file": "08-codes.md"},
+        {"file": "09-matcher.md"},
+        {"file": "10-encoder.md"},
+        {"file": "11-literals-enc.md"},
+        {"file": "12-dec-basics.md"},
+        {"file": "13-literals-dec.md"},
+        {"file": "14-decode.md"},
+        {"file": "15-zram-glue.md"}
+      ]
+    },
+    {
+      "id": "part-3", "label": "Part III", "title": "The whole picture",
+      "intro": "One page followed through every function, and the design decisions with the measurements behind them.",
+      "chapters": [
+        {"file": "16-trace.md"},
+        {"file": "17-decisions.md"},
+        {"file": "18-glossary.md", "numbered": false, "label": "Appendix"}
+      ]
+    }
+  ]
+}

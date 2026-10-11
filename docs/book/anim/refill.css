@@ -1,0 +1,15 @@
+.an-stage .rf-count { fill: var(--accent); }
+.an-stage .rf-rest { fill: var(--sheet); stroke: var(--rule); stroke-width: 0.5; }
+.an-stage .rf-v { fill: var(--why); stroke: var(--rule); stroke-width: 0.5; }
+.an-stage .rf-zero { fill: var(--paper); stroke: var(--rule); stroke-width: 0.5; stroke-dasharray: 2 2; }
+.an-stage svg text.rf-on { fill: var(--paper); }
+.an-stage svg text.rf-t { fill: var(--ink); }
+.an-stage svg text.rf-lab { fill: var(--muted); }
+.an-stage svg text.rf-key { font-family: var(--display); }
+.an-stage svg text.rf-ut { fill: var(--muted); }
+.an-stage .rf-byte { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .rf-used { fill: var(--paper); stroke: var(--rule); stroke-dasharray: 3 3; }
+.an-stage .rf-load { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: none; }
+.an-stage .rf-ptr { fill: var(--mark); }
+.an-stage svg text.rf-ptrt { fill: var(--mark); font-weight: 600; }
+.an-stage .rf-at { stroke: var(--mark); stroke-width: 3; }

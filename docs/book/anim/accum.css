@@ -1,0 +1,24 @@
+/* the encoder's accumulator, anim/accum.js */
+.an-stage .ac-on { fill: var(--sheet); stroke: var(--ink); stroke-width: 0.6; }
+.an-stage .ac-off { fill: var(--paper); stroke: var(--rule); }
+.an-stage .ac-new { fill: var(--accent); stroke: var(--accent); }
+.an-stage .ac-out { fill: var(--mark); stroke: var(--mark); }
+.an-stage .ac-p0 { fill: var(--accent); }
+.an-stage .ac-p1 { fill: var(--ink); }
+.an-stage .ac-p2 { fill: var(--mark); }
+.an-stage .ac-sep { stroke: var(--muted); stroke-width: 1; }
+.an-stage .ac-brace { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+.an-stage .ac-fan { stroke: var(--mark); stroke-width: 1; opacity: 0.7; }
+.an-stage .ac-empty { fill: var(--paper); stroke: var(--rule); stroke-dasharray: 3 3; }
+.an-stage .ac-fin { fill: var(--sheet); stroke: var(--mark); stroke-width: 1.2; }
+.an-stage .ac-part { fill: var(--paper); stroke: var(--mark); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.an-stage .ac-below { fill: var(--paper); stroke: var(--muted); stroke-dasharray: 2 2; }
+.an-stage .ac-hit { stroke: var(--accent); stroke-width: 2.4; stroke-dasharray: none; }
+.an-stage .ac-ptr { stroke: var(--ink); stroke-width: 2.4; }
+.an-stage svg text.ac-tin { fill: var(--paper); font-weight: 600; }
+.an-stage svg text.ac-faint, .an-stage svg text.ac-muted { fill: var(--muted); }
+.an-stage svg text.ac-fint, .an-stage svg text.ac-hex { fill: var(--mark); font-weight: 600; }
+.an-stage svg text.ac-sub, .an-stage svg text.ac-ptrt { font-weight: 600; }
+.an-stage svg text.ac-big { font-weight: 600; }
+.an-stage .ac-on { stroke-width: 1.2; }
+.an-stage svg tspan.ac-muted { fill: var(--muted); font-weight: 400; }

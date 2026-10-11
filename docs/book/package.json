@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "KaTeX renders the book's formulas at build time, see build.py",
+  "dependencies": {
+    "katex": "0.19.0"
+  }
+}

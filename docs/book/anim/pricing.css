@@ -1,0 +1,16 @@
+.an-stage svg text.pr-muted, .an-stage svg .pr-muted text { fill: var(--muted); }
+.an-stage svg text.pr-head { font-weight: 600; }
+.an-stage svg text.pr-num { font-weight: 600; }
+.an-stage svg text.pr-tnow { fill: var(--paper); font-weight: 600; }
+.an-stage .pr-todo { fill: var(--paper); stroke: var(--rule); stroke-dasharray: 2 2; }
+.an-stage .pr-done { fill: var(--sheet); stroke: var(--rule); }
+.an-stage .pr-now { fill: var(--accent); stroke: var(--accent); }
+.an-stage .pr-empty { fill: var(--paper); stroke: var(--rule); stroke-dasharray: 3 3; }
+.an-stage .pr-cost { fill: var(--sheet); stroke: var(--muted); }
+.an-stage .pr-best { fill: var(--accent); stroke: var(--accent); }
+.an-stage .pr-lane { fill: var(--paper); stroke: var(--muted); }
+.an-stage .pr-fill { fill: var(--accent); fill-opacity: 0.22; }
+.an-stage .pr-lane.pr-bad { fill: var(--warn); stroke: var(--mark); stroke-width: 2.5; }
+.an-stage .pr-wide { fill: var(--sheet); stroke: var(--muted); }
+.an-stage .pr-even.pr-hot, .an-stage .pr-lane.pr-even { stroke: var(--accent); stroke-width: 2.5; }
+.an-stage .pr-odd.pr-hot, .an-stage .pr-lane.pr-odd { stroke: var(--mark); stroke-width: 2.5; }
