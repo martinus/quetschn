@@ -56,9 +56,9 @@ Lines 28 to 36 list the six offset classes, the same table as in
 sequence before, and costs no bits at all. Classes 1 to 3 are offsets by size, in 4, 8 and 12 bits.
 Classes 4 and 5 are for multiples of 8 from 16 on: they send the offset divided by 8, 3 bits less
 than class 2 or 3. Line 35 gives the reason in one sentence: memory pages are full of 8-byte aligned
-data, pointers and 8-byte fields, so the same value often repeats 8, 16 or 24 bytes later. On the two
-desktop dumps the project measures with, 72% and 56% of the offsets from 16 to 255 that are not the
-repeat offset are multiples of 8, and 62% and 41% of those from 256 on
+data, pointers and 8-byte fields, so the same value often repeats 8, 16 or 24 bytes later. On the
+zram pages of a desktop, 64% of the offsets from 16 to 255 that are not the repeat offset are
+multiples of 8, and 52% of those from 256 on
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 
 Lines 38 to 41 describe the **length values**. A token holds `ll` up to 14 and `ml - 4` up to 30 as
@@ -140,8 +140,9 @@ a table the page touches is then a wait for memory.
 The token table is the larger trade. With 10 bits instead of 11 it would be 4 KiB, but fewer tokens fit
 a code of their own and more take the longer escape, so pages get larger. On the Mi 9T this was measured
 twice ([item 1 and item 7](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#six-choices-made-on-the-pc-measured-on-the-phone-the-token-table-and-the-prefetches-matter-the-rest-does-not)
-of "Six choices made on the PC, measured on the phone"). Pages were 4.8 bytes larger on the phone's
-pages and 2 to 6 bytes on four dumps; 320 tokens got a code of their own instead of 512.
+of "Six choices made on the PC, measured on the phone"). Pages were 4.8 bytes larger on the phone
+pages it was timed on, and 3.5 bytes on average over desktop and phone pages; 320 tokens got a code
+of their own instead of 512.
 In item 1, 10 bits read cold 2.0 to 2.7 µs faster on the A76, the big out-of-order core, and 2.3 to 3.2
 µs on the A55, the little in-order core: the decoder prefetched 64 lines of the token table less. Item 7
 measured again after the decoder had stopped prefetching the token table on the A76. Then 10 bits gave
@@ -153,7 +154,7 @@ Since then today's `seqlz_decode()` prefetches the token table on every core aga
 ([chapter 14](#ch-decode)), so 10 bits would mean 64 lines less to load on every core. That is why it
 was measured once more, on 11th October 2026, and why the comment changed
 ([`docs/explored-designs.md`, "The token table in 10 bits again"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-token-table-in-10-bits-again-the-a55s-cold-reads-13-µs-faster-x86-64-2-to-4-slower-not-kept)).
-With 10 bits the pages were 1.6 to 5.4 bytes larger on the four dumps. On the Mi 9T's A55 the cold
+With 10 bits the pages were 3.5 bytes larger on average. On the Mi 9T's A55 the cold
 reads of coded pages were 1.3 µs faster, about 0.4 µs less per page written; on the A76 the cold reads
 were between two copies of the same code, and the warm reads 0.16 µs slower, as more tokens take the
 escape and a second lookup. In the kernel VM on x86-64 the swap-ins were 2% to 4% slower. The gain of
@@ -191,7 +192,7 @@ sent as $16 / 8 = 2$ in 5 bits.
 
 Why 6 classes and not more: "Offset classes from a histogram" searched 29 539 layouts of classes
 offline, priced with the probabilities of 12.2 million sequences. The best layout with 8 classes saves
-0.11 to 0.15 bits per sequence, 3.5 and 4.4 bytes per page, about 0.1% of a page, and that is an upper
+0.11 to 0.15 bits per sequence, 4.0 bytes per page, about 0.1% of a page, and that is an upper
 bound: more classes mean more tokens for the same 2048 codes, so more escapes, which the model does not
 count. With 6 classes the best layout saves 0.03 bits
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)).
@@ -277,7 +278,7 @@ tables, because `seqlz_all_symbols()` below asks for a code for every length val
 each table's code space. It went when the tables were trained again (#182).
 
 Sending a length value's symbol in 5 plain bits instead, with no table, was measured twice and made
-pages larger without a faster read, the first time by 3.2 and 2.8 bytes on two dumps; the second time
+pages larger without a faster read, the first time by 3.0 bytes per page; the second time
 is in [chapter 4](#ch-format--length-values).
 
 @listing src/seqlz.h 137-143
@@ -512,8 +513,8 @@ tables**, each a code for the 256 byte values. Both numbers here were measured.
 
 `SEQLZ_LIT_BITS` is 10: no literal code is longer than 10 bits, so a literal table's decode table has
 1024 entries of 2 bytes, 2 KiB. With 9 bits it would be 1 KiB, half the cache lines on a cold read. On
-the Mi 9T that was no faster on either core, and the second desktop dump got 64 bytes per page larger,
-most likely pages whose literals need codes longer than 9 bits
+the Mi 9T that was no faster on either core, and pages got 20 bytes larger on average, most of it on
+desktop pages whose literals most likely need codes longer than 9 bits
 ([item 2 of "Six choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#2-the-literal-tables-in-9-bits-no-faster-up-to-64-bytes-larger-not-kept)).
 
 `SEQLZ_LIT_SETS` is 8: the encoder picks, for each page, the table that codes its literals in the fewest
@@ -566,9 +567,9 @@ bytes on 4 KiB pages, which needs 10 bits, and 2560 on 16 KiB pages, which needs
 `SEQLZ_SIZE_BITS_MAX` comes from.
 
 The width is stored as `w - 5` in 3 bits, which holds exactly the 8 widths 5 to 12. Widths of 3 and 4
-bits are left out, because only 0.1% to 3% of the pages would use them, and they would need a fourth
-bit. Until 5th October 2026 each size took 2 bytes, a header of 19 bytes; what `w` bits saved is in
-[chapter 4](#ch-format--layout).
+bits are left out, because only 1.8% of the pages with coded literals would use them, and they would
+need a fourth bit. Until 5th October 2026 each size took 2 bytes, a header of 19 bytes; what `w` bits
+saved is in [chapter 4](#ch-format--layout).
 
 `SEQLZ_LIT_WIDTH_AT` and `SEQLZ_LIT_ZERO_AT` are where the fields of byte 2 start, bit 3 and bit 6. The
 encoder writes `set | (w - 5) << 3`. The decoder reads the width as `(byte >> 3) & 7` and rejects the

@@ -113,7 +113,7 @@ room for a page of literals, at `d + 2 + 4096`, and moved it down at the end; th
 pages and refused anything smaller. zram gives two pages. zswap, the kernel's compressed cache in front
 of another swap device, gives one, and `lz4`, `lzo` and `zstd` take any buffer and fail when the page
 does not fit ([#122](https://github.com/martinus/quetschn/issues/122)). The layout from both ends takes any `dst`,
-writes the same bytes, and made writes in the kernel VM 0.16 to 0.24 µs faster per page; on the Mi 9T
+writes the same bytes, and made writes in the kernel VM 0.20 µs faster per page; on the Mi 9T
 they stayed within 0.22 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept),
 commit `66aab11`).
@@ -679,6 +679,6 @@ coded literals must save.
 
 What this design gives up is the buffer of one page. The page is written with raw literals first, so a
 page whose raw form does not fit fails, also where its coded form would. With a `dst` of exactly one
-page, as zswap gives, that costs 0.1% to 0.5% more memory on four dumps
+page, as zswap gives, that costs 0.2% more memory on desktop and phone pages
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept)).
 zram gives two pages, and there it costs nothing.

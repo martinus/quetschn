@@ -147,7 +147,7 @@ first, and in the end the whole page fault in a virtual machine and on the phone
 ([`docs/plan.md` §3.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#32-decompression-is-a-tail-latency-problem-not-a-throughput-problem)).
 
 ::: measured How much of a swap-in is the codec
-In a virtual machine on a Ryzen 9 7950X, with the pages of one of the project's desktop dumps, a cold
+In a virtual machine on a Ryzen 9 7950X, with pages the project's desktop swapped into zram, a cold
 swap-in with `lz4` takes 3.51 µs, of which 1.43 µs are `zcomp_decompress()`; with `seqlz-fast-lit` it
 takes 4.13 µs, of which 2.04 µs are the codec. The kernel's part, the fault, the swap entry, zram's
 slot, is about 1.9 µs for every codec. So a codec 40% slower than `lz4` makes a swap-in about 20%
@@ -445,62 +445,62 @@ the benchmark logs.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 300" role="img" aria-label="Stored bytes per page against time per page written for lz4, lzo-rle, seqlz-fast-lit and zstd 3 on the first desktop dump, with the lower left hull from lzo-rle through seqlz-fast-lit to zstd 3.">
+<svg viewBox="0 0 720 360" role="img" aria-label="Stored bytes per page against time per page written for lz4, lzo-rle, seqlz-fast-lit and zstd 3, means over the pages of a desktop's zram, with the lower left hull from lzo-rle through seqlz-fast-lit to zstd 3.">
   <g fill="none" stroke="currentColor" stroke-width="1">
-    <line x1="70" y1="260" x2="690" y2="260"/><line x1="70" y1="260" x2="70" y2="30"/>
+    <line x1="70" y1="320" x2="690" y2="320"/><line x1="70" y1="320" x2="70" y2="30"/>
   </g>
   <g class="mut" fill="none" stroke="currentColor" stroke-width="0.6">
-    <line x1="215.9" y1="260" x2="215.9" y2="30"/><line x1="361.8" y1="260" x2="361.8" y2="30"/>
-    <line x1="507.6" y1="260" x2="507.6" y2="30"/><line x1="653.5" y1="260" x2="653.5" y2="30"/>
-    <line x1="70" y1="202.5" x2="690" y2="202.5"/><line x1="70" y1="145" x2="690" y2="145"/>
-    <line x1="70" y1="87.5" x2="690" y2="87.5"/>
+    <line x1="215.9" y1="320" x2="215.9" y2="30"/><line x1="361.8" y1="320" x2="361.8" y2="30"/>
+    <line x1="507.6" y1="320" x2="507.6" y2="30"/><line x1="653.5" y1="320" x2="653.5" y2="30"/>
+    <line x1="70" y1="247.5" x2="690" y2="247.5"/><line x1="70" y1="175" x2="690" y2="175"/>
+    <line x1="70" y1="102.5" x2="690" y2="102.5"/><line x1="70" y1="30" x2="690" y2="30"/>
   </g>
   <g font-size="11">
-    <text x="70" y="276" text-anchor="middle">0</text><text x="215.9" y="276" text-anchor="middle">4</text>
-    <text x="361.8" y="276" text-anchor="middle">8</text><text x="507.6" y="276" text-anchor="middle">12</text>
-    <text x="653.5" y="276" text-anchor="middle">16</text>
-    <text x="64" y="264" text-anchor="end">0</text><text x="64" y="206" text-anchor="end">400</text>
-    <text x="64" y="149" text-anchor="end">800</text><text x="64" y="91" text-anchor="end">1200</text>
-    <text x="64" y="34" text-anchor="end">1600</text>
-    <text x="380" y="294" text-anchor="middle">time per page written, write + 0.34 × cold read, µs</text>
+    <text x="70" y="336" text-anchor="middle">0</text><text x="215.9" y="336" text-anchor="middle">4</text>
+    <text x="361.8" y="336" text-anchor="middle">8</text><text x="507.6" y="336" text-anchor="middle">12</text>
+    <text x="653.5" y="336" text-anchor="middle">16</text>
+    <text x="64" y="324" text-anchor="end">0</text><text x="64" y="251.5" text-anchor="end">500</text>
+    <text x="64" y="179" text-anchor="end">1000</text><text x="64" y="106.5" text-anchor="end">1500</text>
+    <text x="64" y="34" text-anchor="end">2000</text>
+    <text x="380" y="354" text-anchor="middle">time per page written, write + 0.34 × cold read, µs</text>
     <text x="70" y="20">stored bytes per page</text>
   </g>
   <g class="acc" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4">
-    <path d="M290.3,64.4 L338.4,111.2 L627.6,114.5"/>
+    <path d="M301.4,99.6 L352.1,148.5 L645.7,159.8"/>
   </g>
   <g fill="currentColor">
-    <circle cx="293.9" cy="51.6" r="4.5"/>
-    <circle cx="290.3" cy="64.4" r="4.5"/>
-    <circle cx="627.6" cy="114.5" r="4.5"/>
+    <circle cx="302.5" cy="87.6" r="4.5"/>
+    <circle cx="301.4" cy="99.6" r="4.5"/>
+    <circle cx="645.7" cy="159.8" r="4.5"/>
   </g>
-  <g class="acc"><circle cx="338.4" cy="111.2" r="5.5" fill="currentColor"/></g>
+  <g class="acc"><circle cx="352.1" cy="148.5" r="5.5" fill="currentColor"/></g>
   <g font-size="11" class="halo">
-    <text x="302" y="48">lz4, 6.14 µs, 1450 B</text>
-    <text x="282" y="68" text-anchor="end">lzo-rle, 6.04 µs, 1361 B</text>
-    <text x="348" y="134">seqlz-fast-lit, 7.36 µs, 1035 B</text>
-    <text x="627.6" y="101" text-anchor="middle">zstd 3, 15.29 µs, 1012 B</text>
-    <text x="322" y="84" class="acc">247 B/µs</text>
-    <text x="460" y="104" class="acc">2.9 B/µs</text>
+    <text x="311" y="84">lz4, 6.38 µs, 1602 B</text>
+    <text x="293" y="117" text-anchor="end">lzo-rle, 6.35 µs, 1520 B</text>
+    <text x="360" y="170">seqlz-fast-lit, 7.74 µs, 1183 B</text>
+    <text x="690" y="146" text-anchor="end">zstd 3, 15.79 µs, 1105 B</text>
+    <text x="334" y="118" class="acc">243 B/µs</text>
+    <text x="440" y="148" class="acc">9.7 B/µs</text>
   </g>
 </svg>
 </div>
-<figcaption>The four codecs of the table below on the first desktop dump; the dashed line is the hull, and the slopes are the exchange rates between its neighbours.</figcaption>
+<figcaption>The four codecs of the table below, means over the pages; the dashed line is the hull, and the slopes are the exchange rates between its neighbours.</figcaption>
 </figure>
 
 Read the figure from the right; its numbers are the ones of the table in the next section, measured
-on 5th October 2026. Going from `zstd` 3 to `seqlz-fast-lit` saves 7.93 µs per page written
-and costs 23 bytes per page, 2.9 bytes per µs: whoever values a µs at less than 2.9 bytes should run
-`zstd`. Going from `seqlz-fast-lit` to `lzo-rle` saves 1.32 µs and costs 326 bytes, 247 bytes per µs:
+on 5th October 2026. Going from `zstd` 3 to `seqlz-fast-lit` saves 8.05 µs per page written
+and costs 78 bytes per page, 9.7 bytes per µs: whoever values a µs at less than 9.7 bytes should run
+`zstd`. Going from `seqlz-fast-lit` to `lzo-rle` saves 1.39 µs and costs 337 bytes, 243 bytes per µs:
 whoever values a µs at more than that should run `lzo-rle`. In between, `seqlz-fast-lit` has the
-lowest score. `lz4` is not on the hull of this dump: `lzo-rle` is faster and smaller here.
+lowest score. `lz4` is not on the hull: `lzo-rle` is faster and smaller in these runs.
 
 With the times of a real swap-out and swap-in in the virtual machine, which the project measured
 later and which are the numbers its plan quotes, `seqlz-fast-lit` has the lowest score for any lambda
-from 3.1 to 155 bytes per µs on the first desktop dump and from 10.3 to 211 on the second; the hull is
-`lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and `zstd` 3
+from 6.8 to 190 bytes per µs; the hull is `lz4`, `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and
+`zstd` 3
 ([explored-designs.md, "The score with the swap times"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
 Whoever runs `lz4` or `lzo-rle` today instead of `zstd` says, by that choice, that a µs is worth more
-than 3 to 10 bytes to them.
+than about 7 bytes to them.
 
 ## The codecs zram has, and where seqlz sits {#ch-zram--codecs}
 
@@ -516,31 +516,31 @@ result down, in whole bytes like `lz4` and `lzo`, or in bits with codes like `zs
 [Chapter 2](#ch-compression) explains both halves from zero.
 
 This is where seqlz sits, measured in the real kernel in a virtual machine
-(`tools/zram-vm/run.sh`), on one CPU of a Ryzen 9 7950X fixed at 4.5 GHz, on 20 000 pages from each of
-two zram dumps of the project's desktop, of 23rd and 24th September 2026. A program in the VM writes
+(`tools/zram-vm/run.sh`), on one CPU of a Ryzen 9 7950X fixed at 4.5 GHz, on 40 000 pages the
+project's desktop swapped into zram in September 2026. A program in the VM writes
 each page to zram with `pwrite()` and reads it back with `pread()`; each time is the whole system call,
 zram and zsmalloc included, the median of 3 runs, and for a cold read the compressed page is flushed from
-the CPU caches first. Means over the pages, first dump / second dump, measured on 5th October 2026
+the CPU caches first. Means over the pages, measured on 5th October 2026
 with the tables seqlz had before 7th October
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost)):
 
 | codec | stored bytes per page | write, µs | cold read, µs | time per page written, µs |
 | --- | --- | --- | --- | --- |
-| `lz4` | 1450 / 1755 | 5.28 / 5.75 | 2.53 / 2.54 | 6.14 / 6.61 |
-| `lzo-rle` | 1361 / 1679 | 5.11 / 5.69 | 2.73 / 2.83 | 6.04 / 6.65 |
-| **`seqlz-fast-lit`** | **1035 / 1331** | **6.44 / 7.13** | **2.70 / 2.88** | **7.36 / 8.11** |
-| `zstd` 3 | 1012 / 1197 | 13.49 / 14.40 | 5.29 / 5.53 | 15.29 / 16.28 |
+| `lz4` | 1602 | 5.52 | 2.54 | 6.38 |
+| `lzo-rle` | 1520 | 5.40 | 2.78 | 6.35 |
+| **`seqlz-fast-lit`** | **1183** | **6.79** | **2.79** | **7.74** |
+| `zstd` 3 | 1105 | 13.95 | 5.41 | 15.79 |
 
-The time per page written is the write plus 0.34 times the cold read, e.g. for `lz4` on the first
-dump $5.28 + 0.34 \times 2.53 = 6.14$ µs. In these runs of 5th October 2026, `seqlz-fast-lit` stores
-pages 24% and 21% smaller than `lzo-rle`, 29% and 24% smaller than `lz4`, and within 2% and 10% of
-`zstd` 3, for 22% and 24% more time than `lz4` to write a page.
+The time per page written is the write plus 0.34 times the cold read, e.g. for `lz4`
+$5.52 + 0.34 \times 2.54 = 6.38$ µs. In these runs of 5th October 2026, `seqlz-fast-lit` stores
+pages 22% smaller than `lzo-rle`, 26% smaller than `lz4`, and within 6% of
+`zstd` 3, for 23% more time than `lz4` to write a page.
 
 ::: warn The read times in this table flatter the decoder
 The project's read benchmark in the VM reads every page several times in a row in each run, warm and
 cold, and that trains the CPU's branch predictor on the page: the predictor guesses the outcome of
 each `if` from its past ([chapter 3](#ch-cpu--branches)). In a real swap-in, which decodes a page once, `seqlz-fast-lit` mispredicts about 110 branches
-per page more, and its reads are 0.52 and 0.72 µs slower than `lz4`'s instead of the 0.17 and 0.34 µs
+per page more, and its reads are 0.62 µs slower than `lz4`'s instead of the 0.25 µs
 above
 ([explored-designs.md, "The decoder in a fault, found"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
 The hull of the previous section uses the swap times. On the phone, in its own Linux 4.14 kernel,
@@ -561,9 +561,9 @@ The plan writes the merge argument as six criteria. Their status on 9th October 
 
 | | criterion | status, as in [`docs/plan.md` §1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#1-goal-and-success-criteria) |
 | --- | --- | --- |
-| C1 | at least 8% less Σ zsmalloc cost than the better of `lzo-rle` and `lz4` | met: 24% and 21% less than `lzo-rle` on two desktop dumps, 28% less than `lz4` on the phone |
+| C1 | at least 8% less Σ zsmalloc cost than the better of `lzo-rle` and `lz4` | met: 22% less than `lzo-rle` on the desktop, 28% less than `lz4` on the phone |
 | C2 | a lower p99 cold read time than `lz4`, on x86-64 and on an arm64 little core | not met |
-| C3 | a p99 write time within 1.2 times `lz4`'s | at the bar: 1.21 and 1.19 times |
+| C3 | a p99 write time within 1.2 times `lz4`'s | at the bar: 1.20 times |
 | C4 | beats `lz4` with a trained dictionary too | met: 20.4% less |
 | C5 | work memory per CPU at most `lz4`'s 16 416 bytes | met with 4 KiB pages |
 | C6 | the decoder safe for any input and bounded in time | met |

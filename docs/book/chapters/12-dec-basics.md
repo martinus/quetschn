@@ -83,7 +83,7 @@ loop's overhead to an eighth.
 :::
 
 ::: measured What the prefetches are worth on a phone
-On the Mi 9T, in its own kernel, 20 000 pages of the second phone dump, clocks fixed: without any table
+On the Mi 9T, in its own kernel, 20 000 of the phone's zram pages, clocks fixed: without any table
 prefetch, the Cortex-A55 read cold pages 14.5 µs slower on average and 30 µs slower at p99; even the 32
 lines of the two length tables were worth 2.8 µs to it. The A76 was 1.2 µs faster without any
 prefetch in that run
@@ -122,7 +122,7 @@ where the table does not start a line, that is the line the loop missed, and whe
 loop asked for already, one instruction for nothing. Aligning the tables to 64 bytes instead would make
 `struct seqlz_tables` need 64-byte alignment, which the tests and tools that get it from `malloc()` do
 not give. On x86-64 the change made no difference that showed, cold reads of 1602 and 1609 ns against
-1610 and 1618 on one desktop dump in two runs; it was not measured on the phone.
+1610 and 1618 on a desktop's zram pages, in two runs; it was not measured on the phone.
 :::
 
 @listing src/seqlz_decompress.c 34-40

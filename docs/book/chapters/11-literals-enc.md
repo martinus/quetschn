@@ -420,8 +420,8 @@ pages, where a stream has at most {{k16.ch11.lit_stream_max}} bytes. `header = S
 bytes of u16, byte 2, and `width` bytes that hold 8 sizes of `width` bits each, `8 * width` bits.
 
 Until 5th October 2026 every size had 2 bytes, a header of 19 bytes; what `w` bits save is in
-[chapter 4](#ch-format--layout). On the two desktop dumps the largest stream of a page with coded
-literals was below 128 bytes on 85% and 69% of the pages, so the header is now mostly 9 to 11 bytes.
+[chapter 4](#ch-format--layout). On a desktop's zram pages the largest stream of a page with coded
+literals was below 128 bytes on 77% of the pages, so the header is now mostly 9 to 11 bytes.
 Widths of 3 and 4 bits would pay only on pages whose streams are all below 16 bytes, and such pages
 rarely pass the rule below.
 
@@ -443,8 +443,8 @@ Two different reasons are behind the two terms.
 **The $\frac{1}{16}$.** zsmalloc stores a page in a size class, and classes are at least 16 bytes apart
 ([chapter 1](#ch-zram)). A page that is a few bytes smaller often lands in the same class and saves
 nothing, while every read of it pays for decoding the literals. Coding the literals whenever they
-save anything at all gave less than 0.1 points (0.1% of a page) more on the dumps of September 2026,
-in userspace ([explored-designs.md, "seqlz-fast-lit: one of 8 literal tables per page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
+save anything at all gave less than 0.1 points (0.1% of a page) more on a desktop's zram pages of
+September 2026, in userspace ([explored-designs.md, "seqlz-fast-lit: one of 8 literal tables per page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 
 **The 51 bytes.** A page with coded literals costs a fixed time to read, whatever the number of
 literals: the decoder has to bring the page's 2 KiB literal table into the cache, and it decodes the
@@ -452,13 +452,13 @@ literals into a buffer of work memory first ([chapter 13](#ch-literals-dec)). On
 core, which has few cache misses in flight, that fixed cost is several µs.
 
 ::: measured 51 bytes instead of 19, on the Mi 9T and on the PC
-Before 5th October 2026 the minimum was 19 bytes. In the Mi 9T's own kernel, 20 000 pages of the
-second phone dump, clocks fixed, a minimum of 51 coded 24.9% instead of 38.8% of the pages. Pages
+Before 5th October 2026 the minimum was 19 bytes. In the Mi 9T's own kernel, 20 000 of the phone's
+zram pages, clocks fixed, a minimum of 51 coded 24.9% instead of 38.8% of the pages. Pages
 got 7.9 bytes larger on average, and the time per page written ($\text{write} + 0.34 \times \text{cold read}$) got 2.7 µs
 shorter on the Cortex-A55 and 1.1 µs shorter on the Cortex-A76. $\frac{2}{16}$ of the literals instead of $\frac{1}{16}$
-coded about as few pages, for 12.3 bytes and less time saved. In the kernel VM on a Ryzen 9 7950X, 51
-costs 11 bytes per page on the whole first desktop dump for 0.1 µs, within what two boots of the same
-build differ. 51 is the best of the three minimums measured, 19, 51 and 115, not a measured optimum.
+coded about as few pages, for 12.3 bytes and less time saved. On desktop pages 51 costs 9 bytes per
+page, for 0.1 µs in the kernel VM on a Ryzen 9 7950X, within what two boots of the same build
+differ. 51 is the best of the three minimums measured, 19, 51 and 115, not a measured optimum.
 Measured again with the prefetches of items 4 and 7 of "Six choices" (the compressed data prefetched, the
 tables only where it helps), 51 saved 0.8 µs on the A55 and 0.4 µs on the A76, both within the noise
 there; it stayed. Sources:
@@ -469,8 +469,8 @@ choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.m
 :::
 
 The rule does not count the header of `3 + w` bytes. That is deliberate: when the sizes shrank from
-2 bytes to `w` bits, counting the smaller header would have coded 64.2% instead of 53.6% of the pages on
-the first desktop dump, and on the phone's pages it would have saved 2 bytes per page for 251 ns more
+2 bytes to `w` bits, counting the smaller header would have coded 64.7% instead of 56.3% of a
+desktop's pages, and on the phone's pages it would have saved 2 bytes per page for 251 ns more
 per page written on the A55 than the rule that was kept ([explored-designs.md, "Stream sizes in as many
 bits as the largest needs"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)). So the rule kept the old 19 bytes as its constant,
 and the same pages as before got coded with a smaller header. The {{ch11.coded_min}} of today replaced that 19.
@@ -528,9 +528,9 @@ literals costs no byte of it.
 The first version moved the raw literals and the bitstream to the end of `dst` and wrote the coded
 literals from its front, so all three had to fit at once. zram gives the compressor two pages, which
 is plenty; zswap gives exactly one page, and there pages with coded literals failed to fit more
-often, which cost 1.6% to 2.9% more memory on four dumps. With the raw literals in the matcher's
-table it costs 0.08% to 0.50%, and in the kernel VM writes got 0.08 to 0.18 µs faster. In zram's two
-pages the output is the same byte for byte, checked on 80 000 pages of four dumps. Source:
+often, which cost 2.0% more memory. With the raw literals in the matcher's table it costs 0.23%, and
+in the kernel VM writes got 0.12 µs faster. In zram's two pages the output is the same byte for byte,
+checked on 80 000 desktop and phone pages. Source:
 [explored-designs.md, "Coded literals from the matcher's
 table"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept).
 :::
@@ -568,7 +568,7 @@ stream needs 5 live values, and 8 streams would be 40, far more than the 16 gene
 x86-64. The kernel measurements of the step from one loop of 4 streams to "8 streams, 4 in one loop,
 twice" are in the steps table of [explored-designs.md, "seqlz-fast-lit: one of 8 literal tables per
 page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page):
-7590 ns at p50 and 12 030 ns at p99 per write, on the second desktop dump, against 7530 and 12 030 ns
+7590 ns at p50 and 12 030 ns at p99 per write, on a desktop's zram pages, against 7530 and 12 030 ns
 with 4 streams in one loop, two other changes earlier.
 
 ### Blocks of 32 literals
@@ -798,11 +798,11 @@ defined for overlapping ranges, `memcpy()` is not.
 In the example, the bitstream of {{ch11.bs}} bytes moves from byte {{ch11.raw.bs}} to byte {{ch11.q.8}}, and the page goes from {{letters.len}}
 to {{letters.coded.len}} bytes. One more copy of the bitstream could be saved: the encoder already copies it once, from
 the back of `dst` to behind the raw literals ([chapter 10](#ch-encoder)). Copying it only once, to
-behind the coded literals, was built and measured: the writes got up to 0.3 µs slower in the kernel
-VM and 0.8 µs on the A55, `seqlz-fast` too, because gcc laid out the matcher's loop differently
+behind the coded literals, was built and measured: the writes got 0.2 µs slower in the kernel VM
+and 0.8 µs on the A55, `seqlz-fast` too, because gcc laid out the matcher's loop differently
 ([explored-designs.md, "The bitstream copied once, behind the literals raw or
 coded"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-bitstream-copied-once-behind-the-literals-raw-or-coded-writes-up-to-03-µs-slower-in-the-vm-and-08-µs-on-the-a55-not-kept)).
-The copy of 400 to 600 bytes on a third of the pages stayed.
+The copy of about 460 bytes on a third of the pages stayed.
 
 ## The example page, byte by byte {#ch-literals-enc--example}
 
@@ -910,7 +910,7 @@ item 8 of "Six
 choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#8-coded-literals-on-the-a55-78-instructions-per-literal-at-one-per-cycle)).
 On the phone this is where `seqlz-fast`, which never calls `code_literals()`, gains: in an earlier
 measurement on the Mi 9T's little core, `seqlz-fast-lit` stored 55 bytes per page less than
-`seqlz-fast` and took 4.2 µs more per page written ([explored-designs.md, "A second phone
-dump"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-second-phone-dump-after-12-hours-of-use-seqlz-fast-reads-faster-than-lzo-rle-at-p99)).
+`seqlz-fast` and took 4.2 µs more per page written
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-second-phone-dump-after-12-hours-of-use-seqlz-fast-reads-faster-than-lzo-rle-at-p99)).
 Which of the two a phone should use depends on how it values a byte against a µs, and that is not
 settled.

@@ -15,7 +15,8 @@ For each chapter assigned to you, in this order of importance:
    src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c` in a scratch directory outside the repository, or python3; tools/seqlz-ref/seqlz_ref.py has load_tables(12)). Check that
    numbers inside SVG diagrams match the text. Links to GitHub docs: the anchor must be the GitHub
    slug of an existing heading (lowercase, drop characters that are not letters, digits, spaces,
-   hyphens or underscores, spaces to hyphens).
+   hyphens or underscores, spaces to hyphens). A measurement quoted per dump ("24 and 2 bytes", "on the first
+   desktop dump") is a finding: the book gives the mean over the dumps, see STYLE.md.
 2. **Every line explained.** After each `@listing`, every line of it is explained or obviously
    covered by the prose. A listing whose lines are only paraphrased, or skipped, gets the missing
    explanation added (what, how in C/CPU terms, why).
