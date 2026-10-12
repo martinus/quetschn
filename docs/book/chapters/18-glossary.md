@@ -72,6 +72,8 @@ same thing; the book uses each in the one sense given here, throughout.
 - **match**: bytes that appeared earlier in the page, written as a length and an offset. [Chapter 2](#ch-compression)
 - **matcher**: the first half of the compressor, which walks through the page and finds matches;
   `seqlz_match_page()` in `src/page_lz.h`. [Chapter 9](#ch-matcher)
+- **`mlf`**: the match length field of the token, `ml - 4`, 0 to 31; 31 means that `ml` is 35 or more
+  and a length value follows. [Chapter 4](#ch-format--token)
 - **MSB first**: most significant bit first. The sequences' bitstream is read from the top bit of a
   64-bit register, so the next token is its top {{ch18.bits.token}} bits. [Chapter 12](#ch-dec-basics)
 - **offset**: how many bytes back the copy of a match starts. [Chapter 2](#ch-compression)

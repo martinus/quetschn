@@ -249,7 +249,8 @@ table's cache lines. [Chapter 3](#ch-cpu--msb-first) shows it with the numbers.
 
 ## One sequence: the token {#ch-format--token}
 
-Each sequence starts with a **token**, one symbol of `TOK` that holds three numbers:
+Each sequence starts with a **token**, one symbol of `TOK` that holds three numbers: the literal
+length `ll`, the **match length field** `mlf`, which is `ml - 4`, and the offset class `c`:
 
 ```text
 token = min(ll, 15) + 16 * min(ml - 4, 31) + 512 * class

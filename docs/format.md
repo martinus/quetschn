@@ -299,9 +299,9 @@ mlf = (token >> 4) & 31  the match length minus 4, 0 to 31; 31 means 31 or more
 c   = token >> 9         the class of the offset, 0 to 5
 ```
 
-That is 16 * 32 * 6 = 3072 tokens. A match is at least 4 bytes, so the token stores `ml - 4`. *Why:*
-one code for the three numbers lets frequent combinations share a short code, and shorter matches
-cost more bits than the literals they replace.
+That is 16 * 32 * 6 = 3072 tokens. A match is at least 4 bytes, so the token stores `ml - 4`, the
+**match length field** `mlf`. *Why:* one code for the three numbers lets frequent combinations share a
+short code, and shorter matches cost more bits than the literals they replace.
 
 Symbol 3072 of `TOK` is the **escape**: it is followed by the token's number in 12 bits. Any token can
 be sent escaped, also one that has a code of its own; it means the same. *Why:* there are only 2048
