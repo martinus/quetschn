@@ -11,8 +11,7 @@ The loop has two paths. The **fast path** is for a sequence without a length val
 the end of the page, of the literals and of the input: it copies a fixed 16 bytes of literals and 16 to
 40 bytes of match without loops and without checks of room, and it looks up the next token before it
 copies. The **slow path** is for everything else: length values, every check, loops, and the end of the
-page. On the pages of the first desktop dump, 178.5 of the 207 sequences of an average page take the
-fast path
+page. On a desktop's zram pages, 178.5 of the 207 sequences of an average page take the fast path
 ([explored-designs.md, "The fast path's condition"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)).
 
 <pre class="mermaid">
@@ -188,7 +187,7 @@ end. "count is at least 0": the bits taken since the last refill or `next_token(
 above, so `count` cannot have gone negative, and `v >> count` is a defined shift.
 
 ::: measured The refill without its branch
-7th October 2026, x86-64 in userspace, gcc 16.2.1, 19 577 pages of the first desktop dump, each decoded
+7th October 2026, x86-64 in userspace, gcc 16.2.1, 19 577 of a desktop's zram pages, each decoded
 once: branch misses per page went from 130 to 101, cycles from about 6960 to about 6700. Refilling on
 every fast sequence instead took out the branch too, but its loads cost 500 cycles more on a page the
 predictor knows, and was not kept. In the kernel VM, `MODE=swap`, CPU 2 of the Ryzen 9 7950X at 4.5 GHz,

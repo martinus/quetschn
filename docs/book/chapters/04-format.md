@@ -184,8 +184,8 @@ seed 1, each word followed by a space. `seqlz-fast` stores it in {{ch04.text.raw
 A stream holds every 8th literal, and a literal code has at most 10 bits. On a 4 KiB page that is at
 most 512 literals of 10 bits, 640 bytes, which needs 10 bits; on a 16 KiB page 2560 bytes, 12 bits.
 So `w` from 5 to 12 holds every case. Most pages have streams below 128 bytes, 7 bits. With 2 bytes
-per size, as until 5th October 2026, the header was 19 bytes, and pages were 5.2 and 5.5 bytes
-larger on average on the two desktop dumps
+per size, as until 5th October 2026, the header was 19 bytes, and pages were 5.3 bytes larger on
+average
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
 Widths of 3 and 4 bits are left out: few pages would use them.
 :::
@@ -402,8 +402,8 @@ class into the token, with plain bits after it, cost 0.4 points of memory (a poi
 8758 to 8168 cycles per page, because each sequence then needs one table lookup on the chain from one
 token to the next, not two
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
-The classes 4 and 5 for multiples of 8 came later and saved 24 and
-2 bytes per page in the kernel, for about 0.2 µs more per page written
+The classes 4 and 5 for multiples of 8 came later and saved 13 bytes
+per page in the kernel, for about 0.2 µs more per page written
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 :::
 
@@ -438,8 +438,8 @@ The symbol of a length value could be 5 plain bits, which would take two tables 
 It was measured twice. The first time the verdict was "the tables cost the format two tables once,
 the 5 bits cost every page 3 bytes"
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)).
-The second time, on the decoder of 10th October 2026 and timed, 5 plain bits made pages 0.2% to 0.3%
-larger, 1.6 to 2.8 bytes, and no read faster
+The second time, on the decoder of 10th October 2026 and timed, 5 plain bits made pages 0.2% larger,
+2.2 bytes, and no read faster
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept)).
 :::
 
@@ -465,7 +465,7 @@ and nothing in the kernel VM on the PC
 
 Until 11th October 2026 the last sequence had a token too: its `ll`, `mlf = 0` and class 0, so token
 0 when the last match had filled the page. It told the decoder only what it knew already, and took
-8.7 to 9.3 bits per page, about 1.2 bytes, on the pages of three zram dumps
+9.0 bits per page, about 1.2 bytes, on the zram pages of a desktop and a phone
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 
 Every sequence but the last writes at least 4 bytes, so a decoder stops after at most `PAGE / 4 + 1`
@@ -679,7 +679,7 @@ script's output.
 
 The training pages are not published, because memory pages hold keys and passwords. For 4 KiB pages
 they are 524 912 pages: the resident pages of a desktop, 60 132 pages of its zram dump of 28th
-September 2026, and the first zram dump of a Xiaomi Mi 9T phone, counted five times, so that the
+September 2026, and a zram dump of a Xiaomi Mi 9T phone, counted five times, so that the
 phone does not lose what the desktop's pages gain. The 8 literal tables come from k-means: pages whose
 literals look alike go into one group, and each group gets the Huffman code of its literals. The
 counts cannot give a page back: they are sums over hundreds of pages and say nothing about which
@@ -698,10 +698,10 @@ Since the tables are part of the format, a decoder has to have exactly the right
 | `LIT_4k` | `{{ch04.sha.LIT}}` |
 
 Fixed tables cost bytes: a table fitted to each page would code it tighter. That was measured several
-ways, and none paid for its time: a literal table of each page's own made writes 13% and 15% slower
-on the two desktop dumps for 2.7 and 60.6 bytes less per page, 0.3% and 4.6% of the stored size
+ways, and none paid for its time: a literal table of each page's own made writes 14% slower for 32
+bytes less per page, 2.4% of the stored size
 ([Per page: its own literal table](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)),
-and tables trained on a phone's own pages saved at most 1% on another dump of that phone
+and tables trained on a phone's own pages saved 0.6% on pages of that phone they were not trained on
 ([The format written down](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
 How the code lengths become the encoder's codes and the decoder's lookup tables at run time is
 [chapter 8](#ch-codes).

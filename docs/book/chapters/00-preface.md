@@ -1,12 +1,11 @@
 # What this book is, and how to read it {#preface}
 
 seqlz is a compressor for single memory pages, written for zram, the compressed swap device of Linux.
-On the pages a desktop swapped into zram, `seqlz-fast-lit` stores a page in 24% and 21% fewer bytes
-than `lzo-rle`, zram's default, and takes 22% and 24% more time than `lz4` to write a page and 7% and
-13% more to read one. `zstd` stores pages 2% and 10% smaller still, for twice the time to write and
-about twice the time to read. Each pair of numbers is two zram dumps of one desktop, measured in the
-real kernel in a virtual machine on a Ryzen 9 7950X fixed at 4.5 GHz, on 5th October 2026 with the
-tables seqlz had before 7th October; the setup is in
+On the pages a desktop swapped into zram, `seqlz-fast-lit` stores a page in 22% fewer bytes than
+`lzo-rle`, zram's default, and takes 23% more time than `lz4` to write a page and 10% more to read
+one. `zstd` stores pages 6% smaller still, for twice the time to write and about twice the time to
+read. Measured in the real kernel in a virtual machine on a Ryzen 9 7950X fixed at 4.5 GHz, on 5th
+October 2026 with the tables seqlz had before 7th October; the setup is in
 [`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost).
 
 All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code lengths in
@@ -109,9 +108,9 @@ compute it again) or measured, and then the text says on what and links to where
 recorded it. Measurements are from the time they were made; the tables and the code changed since,
 so a number from September 2026 is not always the number you would get today.
 
-**Dumps, points and issues.** Most measurements run on zram dumps of the project's desktop: "the
-first" and "the second desktop dump" are the ones of 23rd and 24th September 2026, and a third, of
-28th September, is named by its date. Memory is often given in **points**: a point is 1% of a page,
+**Dumps, points and issues.** Most measurements run on zram dumps, copies of the pages that a desktop
+or a phone had swapped into zram, and a number is the mean over the dumps it was measured on.
+Memory is often given in **points**: a point is 1% of a page,
 41 bytes on 4 KiB pages. "0.3% smaller" is a share of the stored size instead, the bytes zram spends
 on the pages ([chapter 1](#ch-zram--size-classes)). A number like #153 is an issue in the project's
 GitHub repository, e.g. [#153](https://github.com/martinus/quetschn/issues/153), and the text links

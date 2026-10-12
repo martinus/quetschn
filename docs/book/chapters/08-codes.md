@@ -522,12 +522,12 @@ This prints {{tok.symbols}} and the `TOK_4k` hash of `format.md`, `{{ch08.tok.co
 :::
 
 The 4 KiB counts are from {{ch08.counts4k.pages|grp}} pages: the resident pages of a desktop, 60 132 pages of that
-desktop's zram dump of 28th September 2026, and the first zram dump of a Xiaomi Mi 9T, five times.
-Swapped pages made the second desktop dump 5% smaller than tables trained without them, and each copy
-more of the phone dump gave some of that back to the phone; with five, the phone was within 0.07% of
-the tables before and the desktop dumps 0.3% and 4.0% smaller. Trained on the measured dump itself,
-which no real table can be, the tables would be only 1.5% and 2.5% smaller on the desktop dumps and
-0.7% on the phone: that is the bound of what any training of these tables could still get
+desktop's zram dump of 28th September 2026, and a zram dump of a Xiaomi Mi 9T, five times. Swapped
+pages made the desktop's zram pages 3.0% smaller than tables trained without them, and each copy more
+of the phone dump gave some of that back to the phone; with five, the phone was within 0.07% of the
+tables before and the desktop 2.1% smaller. Trained on the measured pages themselves, which no real
+table can be, the tables would be only 2.0% smaller on the desktop and 0.7% on the phone: that is the
+bound of what any training of these tables could still get
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
 
 The pages themselves are not in the repository, because memory pages hold keys and passwords. The
@@ -574,8 +574,8 @@ format's offset classes for multiples of 8 are there for the same reason
 ([chapter 4](#ch-format--offsets)).
 
 The escape has a {{tok.len.3072}}-bit code, as short as the most frequent tokens. Each of the {{ch08.tok.escaped}} tokens without a
-code is rare, but together they are frequent: 14 to 38 of about 200 sequences per page on the
-project's dumps take the escape, at 16 bits each before the offset
+code is rare, but together they are frequent: on desktop pages, 14 to 38 of about 200 sequences per
+page take the escape, at 16 bits each before the offset
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
 Giving more of them codes would take code space from the frequent ones: 11 bits have room for 2048
 codes, fewer than the 3072 tokens. The other direction, a token table of 10 bits, in which 320
@@ -605,12 +605,12 @@ other 7 differ: tables 1 to 4 give `0x00` 2 bits, table 6 gives `0xff` {{lit.6.l
 @assert ch08.litinc.line60 <= 17 and min(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 4 and max(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 7 and lit[0].len[0x60] > 7 and lit[0].len[0x6a] > 7 and lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2 and ch08.lit[0].max == ch08.lit[1].max == ch08.lit[2].max == ch08.lit[3].max == ch08.lit[4].max == ch08.lit[5].max == ch08.lit[6].max == ch08.lit[7].max == 10
 
 ::: measured 8 literal tables, not 1, 16 or 64
-k-means trained on the resident pages and priced on the two desktop dumps, as the share of
-`seqlz-fast`'s output saved: 1 table 7.3% and 6.3%, 4 tables 9.2% and 9.1%, 8 tables of 10 bits
-10.2% and 12.5%, 16 tables 10.6% and 13.1%, 64 tables 11.4% and 14.4%
+k-means trained on the resident pages of a desktop and priced on its zram pages, as the share of
+`seqlz-fast`'s output saved: 1 table 6.8%, 4 tables 9.2%, 8 tables of 10 bits 11.4%, 16 tables
+11.9%, 64 tables 12.9%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
-16 tables were built and measured in the kernel VM: 2 and 8 bytes per page less, and twice the decode
-tables made cold reads 0.26 and 0.28 µs slower, so they were dropped
+16 tables were built and measured in the kernel VM: 5 bytes per page less, and twice the decode
+tables made cold reads 0.27 µs slower, so they were dropped
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 :::
 
@@ -621,15 +621,15 @@ device has tables of its own. That is a decision of the format, with numbers beh
 
 - **Not per page.** "A page of 4 KiB is too small to carry tables of its own"
   ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#the-idea)). A page's own
-  literal table, where it saved 16 bytes, together with one of 4 token tables made writes 43% slower
-  for pages 2.6% and 6.6% smaller
+  literal table, where it saved 16 bytes, together with one of 4 token tables made writes 44% slower
+  for pages 4.6% smaller
   ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
   And the decoder would have to build a table for every page, where now it reads one that is already
   built.
 - **Not per device.** zram can hand a codec a dictionary per device, which could have carried tables
-  trained on that device's pages. Trained on one zram dump of the Mi 9T, such tables saved 0.3% and
-  1.0% on the phone's other dump and cost 0.9% and 1.0% on the desktop; even on their own pages they
-  saved only 1.1% to 1.7%. So the tables became part of the format on 5th October 2026, and the
+  trained on that device's pages. Trained on a zram dump of the Mi 9T, such tables saved 0.6% on other
+  zram pages of the same phone and cost 1.0% on a desktop's; even on their own pages they saved only
+  1.4%. So the tables became part of the format on 5th October 2026, and the
   dictionary is ignored, as `lzo` ignores it
   ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)).
 - **No version.** A page does not say which tables it was written with. zram's pages live only as
@@ -641,8 +641,8 @@ device has tables of its own. That is a decision of the format, with numbers beh
 The 16 KiB variants, `seqlz_default_tables_16k.inc` and `seqlz_lit_sets_16k.inc`, are the same
 construction with counts from {{ch08.counts16k.pages|grp}} pages of a zram dump of the Android 17 emulator with 16 KiB
 pages. They give {{k16.ch08.tok.coded}} tokens a code, again with a {{k16.tok.len.3072}}-bit escape, below that page size's limit of
-$31 - 14 - 12 = 5$ bits. On a second dump of the emulator they made `seqlz-fast-lit` 2.6% smaller than
-the 16 KiB tables before them, which were trained on desktop pages
+$31 - 14 - 12 = 5$ bits. On zram pages of the emulator that were not in the training, they made
+`seqlz-fast-lit` 2.6% smaller than the 16 KiB tables before them, which were trained on desktop pages
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator and no real phone, and the format for 16 KiB pages is not fixed yet; the
 kernel's copy is built for 4 KiB pages only

@@ -634,7 +634,7 @@ shifts for every class, with the numbers from the entry.
 ### A class 3 token, and one with a length value
 
 Token 1552 is $0 + 16 \cdot 1 + 512 \cdot 3$: no literals, a match of 5, an offset below the page size in 12
-bits. On the two desktop dumps, 29% and 36% of the matches at a class 3 offset are 5 bytes long
+bits. On desktop pages, 33% of the matches at a class 3 offset are 5 bytes long
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)),
 and this token has an {{tok.len.1552}}-bit code.
 
@@ -676,8 +676,8 @@ With `n = 0`, the entry describes a token whose code is already gone: `N` 0, `BA
 `DROP` $0 + 12 = {{ch07.esc1797.DROP}}$, `LL` {{ch07.esc1797.LL}}, `ML` {{ch07.esc1797.ML}}, `{{ch07.esc1797.entry}}`. From here the escaped token goes through the same
 lines as any other: `(br.bits << 0) >> 52` is the next 12 bits, 1000, and the decoder moves on by 12.
 This is the one place where the decoder does take a token apart at run time, by calling
-`token_entry()`: for an escaped token, which is about 14 to 38 of some 200 sequences per page on the
-project's dumps ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
+`token_entry()`: for an escaped token, which on desktop pages is about 14 to 38 of some 200 sequences
+per page ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
 Those already pay for a refill and 12 more bits.
 
 ### The last sequence

@@ -194,8 +194,8 @@ The compressor here is **greedy**: it takes the first match it finds and moves o
 looking whether a match that starts one byte later would be longer. Searching more pays in bytes:
 `zstd` 3 looks for a long match first and checks one byte later, `lz4hc` searches chains of older
 positions. It costs time on every write. The project measured a seqlz that searches a hash chain, picks the
-match that saves the most bits by the tables and looks one position ahead, level 3: 2.7% to 4.3%
-smaller pages for about twice the time to write, and did not keep it, nor the deeper level 4
+match that saves the most bits by the tables and looks one position ahead, level 3: 3.3% smaller
+pages for about twice the time to write, and did not keep it, nor the deeper level 4
 ([`docs/plan.md` §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)).
 
 ## Fixed-width numbers waste bits {#ch-compression--entropy}
@@ -225,7 +225,7 @@ counts in
 what they need at least: a value that occurs with probability $p$ carries $-\log_2 p$ bits of
 information, and the average of that over all values, the **entropy**, is the least number of bits per
 value any code can reach on average. Here it is {{ch02.cls.entropy}} bits. (These are shares of all sequences in the
-training counts, which count the pages of a phone's zram dump five times; on the desktop dumps, 18% to 25% of
+training counts, which count the pages of a phone's zram dump five times; on a desktop's zram pages, 18% to 25% of
 the matches use the repeat offset, see [chapter 9](#ch-matcher--plan).) Class 0, at {{ch02.cls.0.share}}%, carries
 {{ch02.cls.0.info}} bits; class 3, at {{ch02.cls.3.share}}%, carries {{ch02.cls.3.info}}. A good code gives class 0 fewer than 3 bits and class 3 more.
 
@@ -270,8 +270,8 @@ $2 \times ({{ch02.cls.0.share}}\% + {{ch02.cls.4.share}}\%) + 3 \times ({{ch02.c
 fixed width and {{ch02.cls.entropy}} for the entropy. The gap to the entropy is what a Huffman code cannot get: every
 code is a whole number of bits, so a symbol with probability 0.9, which carries 0.15 bits, still costs
 1. Coders with fractional bits exist, arithmetic coding and ANS, which `zstd` uses for its sequences as
-FSE, but their decoders do more work per symbol. On the project's dumps, Huffman codes fitted to the
-pages are 1.4 to 3.5 bytes per page above the entropy, 0.2% to 0.3%, so seqlz stays with Huffman codes
+FSE, but their decoders do more work per symbol. On desktop and phone pages, Huffman codes fitted to
+the pages are 2.3 bytes per page above the entropy, 0.3%, so seqlz stays with Huffman codes
 ([explored-designs.md, "How tight the bits are"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#how-tight-the-bits-are-ans-would-give-03-at-most-the-offsets-have-2-16-literal-tables-01-to-2)).
 
 seqlz does not give the offset class a code of its own; it puts the class into one symbol together with
@@ -480,9 +480,8 @@ code, and part of the format; a page says only which of {{ch02.LIT_SETS}} litera
 sequence is one token, which holds `ll`, `ml - 4` and the offset class, with its Huffman code, then the
 offset in as many plain bits as the class says, then length values only for long runs. The decoder does
 one table lookup per sequence, where `zstd` steps three FSE states. What seqlz gives up is tables that
-fit the page. A literal table of each page's own, where that saves 16 bytes, made writes 13% and 15%
-slower on the project's two desktop dumps, for 2.7 and 60.6 bytes less per page, 0.3% and 4.6% of the
-stored size, and was not kept
+fit the page. A literal table of each page's own, where that saves 16 bytes, made writes 14% slower,
+for 32 bytes less per page, 2.4% of the stored size, and was not kept
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-choices-with-their-numbers)).
 
 The example page from the start of this chapter, `cat=1,dog=2;cat=3,dog=4;` and zeros after, is {{cat.len}} bytes
@@ -517,8 +516,8 @@ for each of the three offsets, and {{ch02.lz4.ml_bytes}} bytes to say {{ch02.cat
 @assert cat.escapes == 2
 
 ::: measured Where the bytes come from
-Which of the two ideas gives `zstd` its ratio was estimated on the project's first desktop dump, with
-the same good matches from `lz4hc` level 9 costed in several formats: in `lz4`'s format they take
+Which of the two ideas gives `zstd` its ratio was estimated on the zram pages of a desktop, with the
+same good matches from `lz4hc` level 9 costed in several formats: in `lz4`'s format they take
 30.7% of the page, with `ll`, `ml` and offsets entropy coded 25.8%, with repeat offsets as in `zstd`
 25.1%, and with entropy coded literals as well 23.6%. The model is trained on the pages it is
 measured on, so the numbers are on the optimistic side. Coding the sequences in bits is the largest
@@ -527,9 +526,8 @@ step, and that is what seqlz is built on
 :::
 
 Fixed tables cost the most on pages that are unlike the training pages. Against Huffman codes fitted to
-each dump itself, an upper bound, seqlz's tables lose 4.6 to 14.4 bytes per page on three of the
-project's dumps, and 75.7 bytes on the second desktop dump, whose literals and tokens fit the tables
-badly
+the pages themselves, an upper bound, seqlz's tables lose 25.3 bytes per page on average over desktop
+and phone pages, most of it on desktop pages whose literals and tokens fit the tables badly
 ([explored-designs.md, "How tight the bits are"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#how-tight-the-bits-are-ans-would-give-03-at-most-the-offsets-have-2-16-literal-tables-01-to-2)).
 How well a fixed table fits pages from devices and programs nobody trained on is the open question of
 this design.

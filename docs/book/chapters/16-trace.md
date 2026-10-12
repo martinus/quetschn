@@ -246,10 +246,9 @@ The names `kworker/0:1` and `kworker/1:2` share their first 8 bytes. Record 30, 
 But the hash table keeps one position per hash, the newest, and for `kwork` that is record 28,
 `kworker/1:2`, 64 bytes back. So the matcher emits {{ch16.s.98.ml}} bytes at offset {{ch16.s.98.off}} (sequence 98) and then {{ch16.s.99.ml}} at
 offset {{ch16.s.99.off}} (sequence 99), {{ch16.s.98_99_bits}} bits. The project measured a table that keeps the 2 newest positions per
-hash in the same 8 KiB and takes the longer match: 11 bytes less per page on its two dumps in the
-zsmalloc model, for 4400 to 4700 more compression cycles, about 1 µs per page written. That is about
-11 bytes per µs, at the edge of what the score accepts over both dumps, and it was dropped, without a
-run in the kernel VM
+hash in the same 8 KiB and takes the longer match: 11 bytes less per page in the zsmalloc model, for
+4400 to 4700 more compression cycles, about 1 µs per page written. That is about 11 bytes per µs, at
+the edge of what the score accepts, and it was dropped, without a run in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 :::
 
@@ -787,9 +786,9 @@ no table that saves enough. Change `N_REC`, the names or the pointer step, and w
 sequences, the classes and the size class move.
 :::
 
-This page was built for the walk and is not typical. On the first desktop dump the project measures,
-in the kernel VM with the tables of 7th October 2026, `seqlz-fast-lit` stores a page in 1037.5 bytes
-of zsmalloc memory on average and `seqlz-fast` in 1123.7, so coded literals save 86 bytes per page
-there, against {{ch16.zs.saved}} on this page
+This page was built for the walk and is not typical. On a desktop's zram pages, in the kernel VM with
+the tables of 7th October 2026, `seqlz-fast-lit` stores a page in 1161.0 bytes of zsmalloc memory on
+average and `seqlz-fast` in 1298.1, so coded literals save 137 bytes per page there, against
+{{ch16.zs.saved}} on this page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
 How much a page gains depends on its literals: without the text, this page gains nothing.

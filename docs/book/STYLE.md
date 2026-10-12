@@ -22,6 +22,10 @@ For every listing, the prose after it covers:
    `docs/plan.md`, `docs/explored-designs.md` and `git log`. Never invent a measurement. When you quote
    a number, say what it was measured on (which CPU, which pages, kernel VM or userspace) and link the
    source.
+   One number per measurement: where the source has one value per dump, quote their mean, and do not
+   name or number the dumps ("on the first desktop dump", "24 and 2 bytes"); the reader should not
+   have to know how many dumps there were. The per-dump values stay in `explored-designs.md`, which
+   the link leads to.
 4. **Where it connects**: which other function uses this, which chapter explains that.
 
 The reader knows C and general programming. The reader does not know: what zram, zsmalloc, a page,

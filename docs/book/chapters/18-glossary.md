@@ -230,10 +230,9 @@ same thing; the book uses each in the one sense given here, throughout.
 - **`bytelz`**: an experiment with seqlz's matcher and a byte-oriented format, 29.4% against 26.4%, not
   kept. [Chapter 17](#ch-decisions)
 - **dump**: a copy of all pages in zram at one moment, read with `dd` from `/dev/zram0`. The book's
-  numbers come from three dumps of one desktop, of 23rd, 24th and 28th September 2026, two of them in
-  most measurements (the first and second desktop dump are the ones of 23rd and 24th September), and
-  two dumps of the Mi 9T; the 16 KiB numbers come from dumps of the Android 17 emulator. Their contents
-  are never published, since they hold keys and passwords. [Chapter 17](#ch-decisions--unknown)
+  numbers come from dumps of one desktop, of September 2026, and of the Mi 9T, each number the mean
+  over the dumps it was measured on; the 16 KiB numbers come from dumps of the Android 17 emulator.
+  Their contents are never published, since they hold keys and passwords. [Chapter 17](#ch-decisions--unknown)
 - **kernel VM**: `tools/zram-vm/run.sh`, a kernel built with the codecs and booted in a virtual machine
   on one core of a Ryzen 9 7950X fixed at 4.5 GHz. Its swap-in and swap-out times are the ones the
   project decides with. [Chapter 17](#ch-decisions)

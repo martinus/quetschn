@@ -220,9 +220,9 @@ time. The x86 instruction `prefetcht0` came with SSE, the
 Pentium III's extension, although it uses no SSE register. gcc still emits `prefetcht0` for
 `__builtin_prefetch()` with `-mno-sse`; clang emits nothing, without a warning. On x86-64 the kernel's
 `prefetch()` is `__builtin_prefetch()`, so a kernel built with clang has none of the codec's
-prefetches. In the kernel VM this made `seqlz-fast-lit`'s cold reads at p99 22% and 26% slower with
-clang than with gcc, on two desktop dumps (Ryzen 9 7950X at 4.5 GHz, gcc 16.2.1 and clang 22.1.8,
-[`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)).
+prefetches. In the kernel VM this made `seqlz-fast-lit`'s cold reads at p99 24% slower with clang
+than with gcc, on pages a desktop swapped into zram (Ryzen 9 7950X at 4.5 GHz, gcc 16.2.1 and clang
+22.1.8, [`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)).
 
 You can see it with the header itself:
 

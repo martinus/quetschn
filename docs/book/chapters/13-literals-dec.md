@@ -587,8 +587,8 @@ rounds, and the PC's hot loop decoded 2.8% slower, 7627 against 7418 cycles per 
 ([item 3 of "Six
 choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#3-4-literal-streams-instead-of-8-27-bytes-no-faster-not-kept)).
 And on 10th October in the kernel VM, next to a second copy of the same source to measure where the
-code lands: 4 streams read 1.8% slower with gcc 16.2.1 and 0.7% slower with clang 22.1.8, for 0.1% to
-0.2% less memory ([explored-designs.md, "Five
+code lands: 4 streams read 1.8% slower with gcc 16.2.1 and 0.7% slower with clang 22.1.8, for 2.0
+bytes per page less ([explored-designs.md, "Five
 simplifications"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
 A format change for 2.7 bytes and no time is not worth it, so the format stays at 8. The 8 streams
 have nothing to do with the 8 literal tables; that both are 8 is a coincidence.
@@ -609,6 +609,6 @@ The fixed cost per page matters more on that core than the cost per literal: the
 come from memory, and the literals go through the scratch before the sequences copy them into the
 page. That is why the encoder codes literals only where they save 51 bytes and $\frac{1}{16}$ of themselves
 ([chapter 11](#ch-literals-enc--rule)). Decoding the literals into the end of the output page instead,
-which would save the scratch's memory, was built: on 4 KiB pages it made cold reads 0.08 to 0.22 µs
+which would save the scratch's memory, was built: on 4 KiB pages it made cold reads 0.09 to 0.18 µs
 slower in the kernel, and it was not kept ([explored-designs.md, "16 KiB pages,
 tuned"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept)).

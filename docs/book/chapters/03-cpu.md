@@ -25,7 +25,7 @@ how much of that parallel work a piece of code lets it do.
 <!-- undated: an example clock, not a measurement -->
 
 ::: measured seqlz against lz4, the decoder alone
-A loop over 2000 pages of the first desktop dump, the pages in the cache, on the Ryzen 9 7950X of
+A loop over 2000 pages a desktop swapped into zram, the pages in the cache, on the Ryzen 9 7950X of
 the development machine, per page, as of 5th October 2026
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)):
 
@@ -647,8 +647,8 @@ its way, the next stream's load can start.
 
 With 4 streams a literal took about 2.9 cycles to decode, and 8 streams made a page decode faster
 for a few bytes more header; [chapter 13](#ch-literals-dec--cost) has the measurements. Measured
-again in October 2026, 4 streams made reads 0.7% to 1.8% slower in the kernel VM and saved 1.1 to 2.8
-bytes per page, so 8 stayed
+again in October 2026, 4 streams made reads 0.7% to 1.8% slower in the kernel VM and saved 2.0 bytes
+per page, so 8 stayed
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
 
 The encoder has the same chain the other way round: appending a code to a stream is a shift and an
@@ -741,7 +741,7 @@ a refill, once per {{ch03.lit_rounds}} literals of a stream.
 Registers also decided a choice in the matcher. Like lz4, it once moved on faster and faster when it
 found no match for a while. That step needs one more value in the loop, and "the matcher's loop has no
 register to spare". Without it, the pages that compress are written 5% faster, and in the kernel VM
-`seqlz-fast-lit` writes a page 0.21 and 0.25 µs faster on the two desktop dumps, 3%
+`seqlz-fast-lit` writes a page 0.23 µs faster, 3%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 
 ## Loads at any address {#ch-cpu--unaligned}

@@ -139,9 +139,9 @@ When it was introduced on 24th September 2026, the 5-byte hash took 5% fewer cyc
 the cycles say: the slowest pages are the ones with many short matches, and the 5-byte hash finds fewer
 of them ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
 "A hash of 5 bytes: C3 in the kernel"). With today's tables and coded literals the 4-byte hash is
-not even smaller: `seqlz-fast-lit` gets 18 to 35 bytes per page larger with it. Most likely a match of 4
-bytes at a new offset takes more bits than the 4 coded literals it replaces, and the greedy matcher
-then misses the longer match behind it
+not even smaller: `seqlz-fast-lit` gets 24 bytes per page larger with it, on desktop and phone
+pages. Most likely a match of 4 bytes at a new offset takes more bits than the 4 coded literals it
+replaces, and the greedy matcher then misses the longer match behind it
 ([item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)).
 A hash of 6 bytes went further the same way, fewer cycles for more memory, and was dropped.
 :::
@@ -284,8 +284,8 @@ One step of lazy matching, taking the next position's candidate if it is longer 
 24 808 instead of 20 400 compress cycles per page, 21% more, and `seqlz-fast` stayed at 27.0% of the
 page ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
 the paragraph "A hash of 5 bytes: C3 in the kernel", September 2026). Searching harder was built in full as levels 3 and 4: a hash chain, priced by the
-tables' code lengths, with one or two lazy steps. Level 3 stored pages 2.7% to 4.3% smaller than level
-2 for 1.8 to 1.9 times the time to write, and was not kept: "Who values memory that much more than time
+tables' code lengths, with one or two lazy steps. Level 3 stored pages 3.3% smaller than level 2 for
+1.8 times the time to write, and was not kept: "Who values memory that much more than time
 uses zstd 3"
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)).
 :::
@@ -293,8 +293,8 @@ uses zstd 3"
 **Two candidates.** At each position there are two places where the next 4 bytes might have been
 before. One is the **repeat offset**: the offset of the match before, which costs no lookup and which
 the format sends in 0 bits (offset class 0). On memory pages it repeats often, e.g. in an array of
-structs, where the same field comes back every 16 or 24 bytes. On three desktop dumps of
-`docs/seqlz.md`, 18% to 25% of seqlz's matches use it
+structs, where the same field comes back every 16 or 24 bytes. On desktop pages, 18% to 25% of
+seqlz's matches use it
 ([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes));
 [chapter 2](#ch-compression)'s 30.55% is another count, the share of all sequences on the pages the
 tables were trained on. The
@@ -305,10 +305,9 @@ time on data that does not compress. seqlz tries every position.
 
 ::: measured Without `lz4`'s step: writes 3% faster, incompressible pages slower
 The step was `1 + (pos - anchor) >> 6`, as in `lz4`. Without it, on 30th September 2026, in the kernel in a VM (Ryzen 9 7950X,
-CPU fixed at 4.5 GHz, 20 000 pages of each of two desktop dumps), `seqlz-fast-lit` wrote a page 0.21 and
-0.25 µs faster, 3%, at 3.2 bytes more and 2.4 bytes less per page, and the write p99 went from 12 200 to
-11 330 ns and from 12 400 to 11 460 ns. Pages that zram stores raw, because they do not compress, take
-2.3 µs longer each: the whole page is searched.
+CPU fixed at 4.5 GHz, 40 000 zram pages of a desktop), `seqlz-fast-lit` wrote a page 0.23 µs faster,
+3%, at 0.4 bytes more per page, and the write p99 went from 12 300 to 11 400 ns. Pages that zram
+stores raw, because they do not compress, take 2.3 µs longer each: the whole page is searched.
 
 It is not faster because it visits other positions. A step that starts only after 1024 literals visits
 the same positions on almost every page and writes the same bytes, and it was slower than the old step.
@@ -552,9 +551,9 @@ right one with a compare was 9% slower: more instructions.
 Line 152 picks the match's source `m`, the earlier position the bytes are copied from. If the repeat
 offset hit, it is `pos - last`; else the table's candidate. When both hit, the repeat offset wins: its
 offset costs 0 bits. Whether the table's candidate would give a longer match is not checked. Measured
-offline on 20 000 pages of two dumps, always taking the longer of the two made pages about 1 byte larger, not
-smaller, and taking the table's only when it is longer by more than 2 bytes saved 0.3 to 0.6 bytes per
-page; either needs a second call of `seqlz_match_len()`
+offline on 40 000 zram pages of a desktop, always taking the longer of the two made pages about 1 byte
+larger, not smaller, and taking the table's only when it is longer by more than 2 bytes saved 0.5 bytes
+per page; either needs a second call of `seqlz_match_len()`
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept),
 "The longer of the two candidates").
 
@@ -592,8 +591,7 @@ near the start of the next. `lz4`'s fast mode stores the same position.
 ::: why One position, not all of them, and not the start
 Storing every position of a match would mean a hash, a load and a store per byte of the match, where the
 matcher now does nothing at all. Storing the start of each match as well, as `zstd`'s fast mode does, was
-measured: 600 and 500 cycles more per page, for 29 bytes per µs on one desktop dump and nothing on the
-other, and not kept
+measured: 550 cycles more per page for 2.1 bytes per page less, and not kept
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 :::
 
