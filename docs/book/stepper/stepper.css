@@ -7,7 +7,7 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .st-pages button { font: inherit; font-size: 0.82rem; font-weight: 600; color: var(--muted); background: transparent; border: 1px solid var(--rule);
                    border-radius: 4px; padding: 0.2rem 0.6rem; cursor: pointer; }
 .st-pages button[aria-pressed="true"] { color: var(--paper); background: var(--accent); border-color: var(--accent); }
-.st-ctl { display: flex; gap: 0.1rem; }
+.st-ctl { display: flex; flex-wrap: wrap; gap: 0.1rem; }
 .st-ctl .icon { color: var(--ink); }
 .st-ctl .i-pause, .stepper.playing .st-ctl .i-play { display: none; }
 .stepper.playing .st-ctl .i-pause { display: block; }
@@ -17,7 +17,7 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .st-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 1rem; padding: 0.8rem; }
 .st-code { height: 36rem; overflow: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--sheet); position: relative; }
 /* room above and below the code, so that every line can sit a third down the pane */
-.st-code pre.code { font-size: 12px; padding-block: 12rem 24rem; }
+.st-code pre.code { font-size: 0.75rem; padding-block: 12rem 24rem; }
 .stepper.nocomments .cmline { display: none; }
 .st-cm { font: inherit; font-size: 0.78rem; color: var(--muted); background: transparent; border: 1px solid var(--rule); border-radius: 4px;
          padding: 0.15rem 0.5rem; cursor: pointer; }
@@ -25,20 +25,20 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .st-code .line.now { background: color-mix(in srgb, var(--accent) 24%, transparent); box-shadow: inset 3px 0 var(--accent); }
 .st-state { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
 .st-state h4 { margin: 0 0 0.35rem; font-size: 0.74rem; font-weight: 700; font-stretch: 75%; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); }
-.st-bits { font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+.st-bits { font-family: var(--mono); font-size: 0.8125rem; line-height: 1.5; }
 .st-bits span { display: inline-block; width: 1.1ch; text-align: center; }
 .st-bits .r-gap { margin-left: 0.6ch; }
 .st-bits .r-code { background: var(--accent); color: var(--paper); }
 .st-bits .r-off { background: var(--mark); color: var(--paper); }
 .st-bits .r-none { color: var(--muted); opacity: 0.45; }
 .st-regline, .st-legend { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
-.st-vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.8rem, 1fr)); gap: 0.2rem 0.8rem; font-family: var(--mono); font-size: 12.5px; }
+.st-vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.8rem, 1fr)); gap: 0.2rem 0.8rem; font-family: var(--mono); font-size: 0.78125rem; }
 .st-vars .v { display: flex; gap: 0.5rem; }
 .st-vars .vk { color: var(--muted); }
 .st-vars .vtok { grid-column: 1 / -1; font-family: var(--display); font-size: 0.82rem; }
-.st-bytes, .st-litbytes { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; max-height: 7.5rem; overflow: auto; display: flex; flex-wrap: wrap;
+.st-bytes, .st-litbytes { font-family: var(--mono); font-size: 0.71875rem; line-height: 1.55; max-height: 7.5rem; overflow: auto; display: flex; flex-wrap: wrap;
                           gap: 0 0.55ch; border: 1px solid var(--rule); border-radius: 4px; padding: 0.3rem 0.45rem; position: relative; }
-.st-litbytes { gap: 0; max-height: 5.5rem; font-size: 12.5px; }
+.st-litbytes { gap: 0; max-height: 5.5rem; font-size: 0.78125rem; }
 .st-litbytes span { min-width: 1.1ch; text-align: center; }
 .b-hdr { color: var(--muted); } .b-lit { color: var(--mark); } .b-bits { color: var(--accent); }
 .b-used { opacity: 0.4; }
@@ -46,7 +46,7 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .b-now { background: var(--mark); color: var(--paper); opacity: 1; }
 .st-page { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
 .st-page canvas { width: 100%; max-width: 256px; aspect-ratio: 1; image-rendering: pixelated; border: 1px solid var(--rule); }
-.st-window { font-family: var(--mono); font-size: 13px; display: flex; flex-wrap: wrap; margin-top: 0.4rem; }
+.st-window { font-family: var(--mono); font-size: 0.8125rem; display: flex; flex-wrap: wrap; margin-top: 0.4rem; }
 .st-window span { min-width: 1.2ch; text-align: center; border-bottom: 2px solid transparent; }
 .w-lit { color: var(--mark); } .w-match { color: var(--accent); } .w-empty { background: var(--sheet); }
 .w-d { box-shadow: inset 2px 0 var(--ink); }
@@ -56,7 +56,7 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .stepper figcaption { padding: 0 0.8rem 0.8rem; font-size: 0.85rem; color: var(--muted); }
 /* the matcher's panes */
 .m-cmp { display: flex; flex-direction: column; gap: 0.3rem; }
-.m-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.45ch; font-family: var(--mono); font-size: 12.5px; }
+.m-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.45ch; font-family: var(--mono); font-size: 0.78125rem; }
 .m-lab { min-width: 7.5rem; font-family: var(--display); font-size: 0.78rem; color: var(--muted); }
 .m-b { padding: 0 2px; border-radius: 2px; }
 .m-cur { outline: 1.5px solid var(--ink); outline-offset: -1px; }
@@ -65,7 +65,7 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .m-ch { color: var(--muted); margin-left: 0.6ch; white-space: pre; }
 .m-yes { font-family: var(--display); font-size: 0.78rem; font-weight: 700; color: var(--accent); margin-left: 0.6ch; }
 .m-no { font-family: var(--display); font-size: 0.78rem; color: var(--muted); margin-left: 0.6ch; }
-.m-seqs { font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.m-seqs { font-family: var(--mono); font-size: 0.75rem; line-height: 1.6; }
 .m-seqh { font-family: var(--display); font-size: 0.8rem; color: var(--muted); }
 .stepper[data-kind="match"] .st-page canvas { max-width: 232px; }
 @media (max-width: 62rem) {
@@ -73,6 +73,8 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
   .st-grid { grid-template-columns: minmax(0, 1fr); }
   .st-code { height: 20rem; }
   .st-code pre.code { padding-block: 6.7rem 13.3rem; }
+  /* larger text on a phone: the position may take two lines */
+  .st-pos { white-space: normal; }
 }
 /* what a sequence costs, in seqlz and in lz4's format */
 .st-cost .c-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.82rem; margin-bottom: 0.25rem; }
@@ -80,4 +82,4 @@ body.railhidden .stepper { --stepw: min(74rem, calc(100vw - 4rem)); }
 .st-cost .c-bar { flex: 1; display: flex; height: 0.9rem; background: var(--sheet); border-radius: 2px; overflow: hidden; }
 .st-cost .c-code { background: var(--accent); }
 .st-cost .c-lit { background: var(--mark); }
-.st-cost .c-num { min-width: 4.5rem; text-align: right; font-family: var(--mono); font-size: 12px; }
+.st-cost .c-num { min-width: 4.5rem; text-align: right; font-family: var(--mono); font-size: 0.75rem; }

@@ -82,6 +82,7 @@
       U.scrollBox(codeBox, tops[n] - codeBox.clientHeight / 3);
     }
     window.addEventListener('resize', function () { tops = {}; });
+    document.addEventListener('book-size', function () { tops = {}; });
 
     function load(id) {
       var r = view.load(id);

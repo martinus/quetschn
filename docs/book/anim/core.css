@@ -3,7 +3,7 @@ figure.anim { margin: 1.8rem 0; border: 1px solid var(--rule); border-radius: 6p
 figure.anim.wide { --animw: min(66rem, calc(100vw - var(--rail) - 4rem)); width: var(--animw); margin-left: calc(50% - var(--animw) / 2); }
 body.railhidden figure.anim.wide { --animw: min(66rem, calc(100vw - 4rem)); }
 .an-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--rule); }
-.an-ctl { display: flex; gap: 0.1rem; }
+.an-ctl { display: flex; flex-wrap: wrap; gap: 0.1rem; }
 .an-ctl .icon { color: var(--ink); }
 .an-ctl .i-pause, figure.anim.playing .an-ctl .i-play { display: none; }
 figure.anim.playing .an-ctl .i-pause { display: block; }
