@@ -43,7 +43,7 @@
    chapter's label sits above its title, so the title keeps room for it */
 html { scroll-padding-top: 0.75rem; }
 .chapterhead h1 { scroll-margin-top: 2.2rem; }
-body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.62;
+body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 1.0625rem; line-height: 1.62;
        font-optical-sizing: auto; -webkit-text-size-adjust: 100%; }
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -60,6 +60,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .icon { display: inline-grid; place-items: center; width: 2rem; height: 2rem; padding: 0; color: var(--muted); background: transparent;
         border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
 .icon:hover { color: var(--accent); border-color: var(--rule); }
+.icon:disabled { opacity: 0.35; cursor: default; color: var(--muted); border-color: transparent; }
 .icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .themebtn .i-sun, .themebtn.isdark .i-moon { display: none; }
 .themebtn.isdark .i-sun { display: block; }
@@ -86,7 +87,7 @@ body.railhidden .showrail { display: block; }
 
 .topbar { display: none; }
 main { min-width: 0; padding-inline: 1.5rem; padding-block: 0 6rem; }
-.col { max-width: var(--col); margin-inline: auto; }
+.col { max-width: var(--col); margin-inline: auto; overflow-wrap: break-word; }
 
 /* ---- title page ---- */
 .title { padding-block: 4.5rem 3rem; border-bottom: 1px solid var(--rule); margin-bottom: 1rem; }
@@ -127,12 +128,12 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
 code, kbd, pre, svg text { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
 code, kbd { font-family: var(--mono); font-size: 0.84em; }
 :not(pre) > code { background: var(--sheet); padding: 0.05em 0.3em; border-radius: 3px; overflow-wrap: anywhere; }
-pre.code { margin: 0; overflow-x: auto; background: var(--sheet); font-size: 13px; line-height: 1.55; tab-size: 8; -moz-tab-size: 8; }
+pre.code { margin: 0; overflow-x: auto; background: var(--sheet); font-size: 0.8125rem; line-height: 1.55; tab-size: 8; -moz-tab-size: 8; }
 pre.code code { font-size: 1em; display: block; min-width: max-content; }
 pre.snippet { padding: 0.8rem 1rem; margin: 0 0 1.2rem; border-radius: 4px; }
 figure.listing { margin: 1.6rem 0 1.4rem; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
 figure.listing figcaption { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 0.35rem 0.8rem; font-family: var(--display); font-size: 0.8rem; border-bottom: 1px solid var(--rule); background: var(--paper); }
-.lfile { font-family: var(--mono); font-weight: 600; font-size: 0.95em; color: var(--ink); text-decoration: none; }
+.lfile { font-family: var(--mono); font-weight: 600; font-size: 0.95em; color: var(--ink); text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
 a.lfile:hover { color: var(--accent); text-decoration: underline; }
 .lrange { color: var(--muted); font-variant-numeric: tabular-nums; }
 pre.numbered { padding-block: 0.6rem; }
@@ -152,7 +153,7 @@ pre.numbered { padding-block: 0.6rem; }
 .box-measured, .box-try { background: var(--sheet); }
 .boxhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.7rem; margin-bottom: 0.4rem; font-family: var(--display); }
 .boxkind { font-weight: 700; font-stretch: 75%; text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.74rem; color: var(--muted); }
-.boxtitle { font-weight: 700; font-size: 1rem; }
+.boxtitle { font-weight: 700; font-size: 1rem; min-width: 0; overflow-wrap: anywhere; }
 .box p, .box ul, .box ol { font-size: 0.95rem; }
 .box pre.snippet { background: var(--paper); }
 
@@ -200,21 +201,22 @@ figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
   .topbar .where { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
   main { padding-inline: 16px; }
   .title { padding-block: 2.5rem 2rem; }
-  body { font-size: 16.5px; }
+  body { font-size: 1.03125rem; }
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } html { scroll-behavior: auto; } }
 </style>
 
 <script>
-/* the theme chosen before, set before the page is drawn */
+/* the theme and text size chosen before, set before the page is drawn */
 try { var t = localStorage.getItem('book-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+try { var z = +localStorage.getItem('book-size'); if (z >= 0.8 && z <= 2) document.documentElement.style.fontSize = z * 100 + '%'; } catch (e) {}
 </script>
-<div class="topbar"><button type="button" class="icon" id="navbtn" aria-controls="rail" aria-expanded="false" aria-label="Contents" title="Contents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><span class="where" id="where"></span><button type="button" class="icon themebtn" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></div>
+<div class="topbar"><button type="button" class="icon" id="navbtn" aria-controls="rail" aria-expanded="false" aria-label="Contents" title="Contents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><span class="where" id="where"></span><button type="button" class="icon sizebtn" data-step="-1" aria-label="Smaller text" title="Smaller text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19l5-11 5 11M5 15h6M16 8h6"/></svg></button><button type="button" class="icon sizebtn" data-step="1" aria-label="Larger text" title="Larger text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 21l6.5-15 6.5 15M4.6 15.5h7.8M16 8h6M19 5v6"/></svg></button><button type="button" class="icon themebtn" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></div>
 <button type="button" class="icon showrail" id="showrail" aria-controls="rail" aria-label="Show contents" title="Show contents"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
 <div class="scrim" id="scrim"></div>
 <div class="layout">
 <nav class="rail" id="rail" aria-label="Contents">
-  <div class="railhead"><a class="brand" href="#top">seqlz, line by line</a><div class="railtools"><button type="button" class="icon themebtn" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button><button type="button" class="icon" id="hiderail" aria-label="Hide contents" title="Hide contents"><svg class="i-side" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15.5 10l-2 2 2 2"/></svg><svg class="i-cross" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div></div>
+  <div class="railhead"><a class="brand" href="#top">seqlz, line by line</a><div class="railtools"><button type="button" class="icon sizebtn" data-step="-1" aria-label="Smaller text" title="Smaller text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19l5-11 5 11M5 15h6M16 8h6"/></svg></button><button type="button" class="icon sizebtn" data-step="1" aria-label="Larger text" title="Larger text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 21l6.5-15 6.5 15M4.6 15.5h7.8M16 8h6M19 5v6"/></svg></button><button type="button" class="icon themebtn" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button><button type="button" class="icon" id="hiderail" aria-label="Hide contents" title="Hide contents"><svg class="i-side" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15.5 10l-2 2 2 2"/></svg><svg class="i-cross" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div></div>
   <p class="brandsub">The source of a page compressor for zram, explained</p>
   <ol>
 {{TOC}}
@@ -290,6 +292,59 @@ try { var t = localStorage.getItem('book-theme'); if (t === 'light' || t === 'da
   });
   dark.addEventListener('change', label);
   label();
+
+  /* text size: the root font size, which every rem follows; the line at the top of the screen
+     stays there */
+  var sizes = [0.9, 1, 1.1, 1.2, 1.35, 1.5];
+  var sizeBtns = document.querySelectorAll('.sizebtn');
+  function curSize() {
+    var z = parseFloat(document.documentElement.style.fontSize) / 100 || 1, k = 0;
+    for (var i = 1; i < sizes.length; i++) if (Math.abs(sizes[i] - z) < Math.abs(sizes[k] - z)) k = i;
+    return k;
+  }
+  function sizeLabel() {
+    var k = curSize();
+    sizeBtns.forEach(function (b) { b.disabled = b.getAttribute('data-step') < 0 ? k === 0 : k === sizes.length - 1; });
+  }
+  /* what is at (x, y): the character there, else the element, as a function that says how far
+     it has moved since */
+  function anchor(x, y) {
+    var r = null, c;
+    if (document.caretPositionFromPoint) {
+      c = document.caretPositionFromPoint(x, y);
+      if (c && c.offsetNode && c.offsetNode.nodeType === 3) { r = document.createRange(); r.setStart(c.offsetNode, c.offset); }
+    } else if (document.caretRangeFromPoint) {
+      r = document.caretRangeFromPoint(x, y);
+      if (r && r.startContainer.nodeType !== 3) r = null;
+    }
+    var box;
+    if (r) {
+      r.setEnd(r.startContainer, Math.min(r.startOffset + 1, r.startContainer.length));
+      box = function () { return r.getClientRects()[0]; };
+    }
+    if (!box || !box()) {
+      var e = document.elementFromPoint(x, y);
+      if (!e || e.getBoundingClientRect().height > 2 * window.innerHeight) return null;
+      box = function () { return e.getBoundingClientRect(); };
+    }
+    /* y as a fraction of the box, which grows with the text */
+    var b0 = box(), frac = b0.height ? (y - b0.top) / b0.height : 0;
+    return function () { var b1 = box(); return b1 ? b1.top + frac * b1.height - y : 0; };
+  }
+  sizeBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var k = Math.max(0, Math.min(sizes.length - 1, curSize() + +b.getAttribute('data-step')));
+      var x = document.querySelector('.col').getBoundingClientRect().left + 20, y = document.querySelector('.topbar').offsetHeight + 8;
+      var moved = null;
+      for (var n = 0; n < 12 && !moved; n++, y += 24) moved = anchor(x, y);
+      document.documentElement.style.fontSize = sizes[k] * 100 + '%';
+      try { localStorage.setItem('book-size', String(sizes[k])); } catch (e) {}
+      if (moved) window.scrollBy(0, moved());
+      sizeLabel();
+      document.dispatchEvent(new CustomEvent('book-size', { detail: sizes[k] }));
+    });
+  });
+  sizeLabel();
 
   var chaps = Array.prototype.slice.call(document.querySelectorAll('.chapterhead h1'));
   var subs = Array.prototype.slice.call(document.querySelectorAll('.chapter h2[id]'));
