@@ -478,25 +478,25 @@ sequence's `ll`.
 
 ## The rules of a valid page {#ch-format--validity}
 
-A page is valid for a page size and the tables of that page size if none of these holds. The first
+A page is valid for a page size and the tables of that page size if all of these hold. The first
 group is the layout, the second the literal streams, the third the sequences.
 
-1. `len < 2`.
-2. `n > PAGE`.
-3. Raw literals: `2 + n > len`.
-4. Coded literals: `len < 3 + w`.
-5. Coded literals: `t >> 6` is not 0.
-6. Coded literals: `3 + w + s[0] + ... + s[7] > len`.
-7. A literal stream whose codes take more than `8 * s[j]` bits, or 8 or more bits less, or whose bits
-   after the last code are not all 0. A stream without literals must have size 0.
-8. An escaped token of 3072 or more.
-9. A sequence's `ll` larger than the literals left, `n - used`, or than the room left in the page,
-   `PAGE - |out|`.
-10. A match with offset 0, or an offset larger than the bytes written so far, `|out|`.
-11. A match longer than the room left in the page, `ml > PAGE - |out|`.
-12. At the end, 8 or more bits of `B` left, or a bit 1 among the fewer than 8 left. This includes a
-    page that needs more bits than it has: a decoder may read zeros past the end, and then fails
-    this check, because it used bits that are not there.
+1. `len >= 2`.
+2. `n <= PAGE`.
+3. Raw literals: `2 + n <= len`.
+4. Coded literals: `len >= 3 + w`.
+5. Coded literals: `t >> 6` is 0.
+6. Coded literals: `3 + w + s[0] + ... + s[7] <= len`.
+7. Every literal stream's codes take at most `8 * s[j]` bits and fewer than 8 bits less, and its bits
+   after the last code are all 0. So a stream without literals has size 0.
+8. Every escaped token is below 3072.
+9. Every sequence's `ll` is at most the literals left, `n - used`, and at most the room left in the
+   page, `PAGE - |out|`.
+10. Every match's offset is 1 to `|out|`, the bytes written so far.
+11. Every match fits into the room left in the page, `ml <= PAGE - |out|`.
+12. At the end, 0 to 7 bits of `B` are left, and all of them are 0. A page that needs more bits than
+    it has fails this: a decoder may read zeros past the end, but then it used bits that are not
+    there, and fewer than 0 are left.
 
 A header with more literals than the sequences use breaks rule 9 or 11: the literals left are then
 more than the bytes left after every match, so the end is never reached, and the next token's `ll`
