@@ -112,6 +112,11 @@ main { min-width: 0; padding-inline: 1.5rem; padding-block: 0 6rem; }
 .chapno { font-family: var(--display); font-weight: 700; font-stretch: 75%; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); font-size: 0.85rem; }
 .chapterhead h1 { font-family: var(--display); font-weight: 750; font-stretch: 75%; font-size: clamp(2rem, 4.6vw, 2.75rem); line-height: 1.08; margin: 0.3rem 0 0; text-wrap: balance; }
 h2, h3, h4 { font-family: var(--display); text-wrap: balance; line-height: 1.2; }
+/* a click on a title puts it into the address, see the script; # marks the title that is there */
+.hlink { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.hlink::after { content: "#"; margin-left: 0.3em; font-weight: 400; color: var(--muted); opacity: 0; }
+.hlink:hover::after { opacity: 0.6; }
+.hlink.here::after { opacity: 1; color: var(--accent); }
 h2 { font-size: 1.55rem; font-weight: 700; font-stretch: 85%; margin: 2.8rem 0 0.8rem; }
 h3 { font-size: 1.18rem; font-weight: 700; margin: 2rem 0 0.5rem; }
 h4 { font-size: 1rem; font-weight: 700; margin: 1.5rem 0 0.4rem; }
@@ -207,6 +212,8 @@ figure.diagram .scroll > svg, pre.mermaid > svg { min-width: 600px; }
 </style>
 
 <script>
+/* a reload with a title in the address goes to that title, not to where the page was */
+if (location.hash && 'scrollRestoration' in history) history.scrollRestoration = 'manual';
 /* the theme and text size chosen before, set before the page is drawn */
 try { var t = localStorage.getItem('book-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
 try { var z = +localStorage.getItem('book-size'); if (z >= 0.8 && z <= 2) document.documentElement.style.fontSize = z * 100 + '%'; } catch (e) {}
@@ -345,6 +352,43 @@ try { var z = +localStorage.getItem('book-size'); if (z >= 0.8 && z <= 2) docume
     });
   });
   sizeLabel();
+
+  /*
+   * A click on a title puts it into the address, without a jump and without a new entry in the
+   * history, so that a reload comes back to it. Not when the click ends a selection.
+   */
+  var heads = document.querySelectorAll('.col h1[id], .col h2[id], .col h3[id], .col h4[id], .col .part[id] h1');
+  function headId(h) { return h.id || h.parentNode.id; }
+  function markHere() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    heads.forEach(function (h) { h.classList.toggle('here', headId(h) === id); });
+  }
+  heads.forEach(function (h) {
+    if (h.closest('figure')) return;
+    h.classList.add('hlink');
+    h.addEventListener('click', function (e) {
+      if (e.target.closest('a') || !window.getSelection().isCollapsed) return;
+      history.replaceState(history.state, '', '#' + encodeURIComponent(headId(h)));
+      markHere();
+    });
+  });
+  window.addEventListener('hashchange', markHere);
+  markHere();
+  /*
+   * After a load with a title in the address: fonts, charts and animations change the height of
+   * what is above it while the page loads, so it is put back on top until the reader scrolls
+   */
+  var target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  if (target && window.ResizeObserver) {
+    var hold = new ResizeObserver(function () { target.scrollIntoView(); });
+    var release = function () {
+      hold.disconnect();
+      ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (t) { window.removeEventListener(t, release, true); });
+    };
+    ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (t) { window.addEventListener(t, release, true); });
+    hold.observe(document.querySelector('main'));
+    setTimeout(release, 10000);
+  }
 
   var chaps = Array.prototype.slice.call(document.querySelectorAll('.chapterhead h1'));
   var subs = Array.prototype.slice.call(document.querySelectorAll('.chapter h2[id]'));
