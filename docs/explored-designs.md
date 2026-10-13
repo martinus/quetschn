@@ -74,6 +74,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [A page ends where its bits end: no damaged page with bytes or bits too many decodes, 0.1 µs on the A55, kept](#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)
 - [The last sequence without a token: 1.2 bytes per page less, kept](#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)
 - [The tables trained again without the last sequences, and one length symbol less: 0.2 bytes per page less](#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)
+- [The tables trained on phone sessions: up to 1.7% smaller on them, an old phone dump 1.8% larger](#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5233,6 +5234,65 @@ cold p99 3030 and 3010 ns against 3010 and 3010, `seqlz-fast-lit` 3110 ns cold p
 `perf stat` on `--decode-loop`: 45 725 659 instructions per loop over 2000 pages against 45 723 551,
 one more per page, for the escaped token 0. Not measured in the kernel VM or on the phone: the code is
 the same, and so are the sizes of the decode tables, 256 entries for each length table.
+
+## The tables trained on phone sessions: up to 1.7% smaller on them, an old phone dump 1.8% larger
+
+*All tables for 4 KiB pages trained again, on zram dumps of the Mi 9T that are closer to real use than the
+ones before, next to the desktop's pages. On two test sessions of the phone, with web sites none of the
+training sessions loaded, `seqlz-fast-lit` stores 0.6% and 1.7% less, on the desktop dumps 0.3% and
+1.2% less. The phone dump of 3rd October, taken an hour after boot, gets 1.8% larger. In the kernel VM
+the phone pages read 2.2% to 2.7% slower with coded literals.* Code: `bench/seqlz_counts_4k.txt`,
+`src/seqlz_default_tables_4k.inc`, `src/seqlz_lit_sets_4k.inc`, and `tools/phone-dump/` for the dumps.
+
+**The dumps.** Five sessions of 95 minutes on the Mi 9T, each after a reboot, with the apps on the phone:
+web pages in Chrome and Mi Browser (random Wikipedia articles in several languages, news, shops,
+searches), YouTube, Maps at random places, the camera, documents in WPS Office, and `monkey` in the
+apps with content, while `hog` held 1 to 2 GiB. With MIUI's minfree the kernel's lowmemorykiller killed
+every app before its pages reached zram, so the first dump has system services only; the other four
+have lmkd killing by pressure, as current phones do, and hold 310 000 to 476 000 pages from 215 to 245
+processes. A tool reads every process's `pagemap` before and after the `dd` of the zram device and
+gives 87% to 95% of the pages their process and mapping. Two sessions are for testing, with a list of
+web sites the training sessions do not have.
+
+**The training pages.** The three training sessions without the pages that are also in the test
+sessions (95 000, mostly system memory that is the same after every reboot), the resident desktop pages
+of before, and 200 000 swapped desktop pages of 28th September: 1 091 983 pages, `train-mix-1012` in the
+counts' head. The trainer sorts the literal tables by how many pages use them; here they are in the order
+that fits the tables before them best, so that table 0 is still the one for text. The order means
+nothing to the format.
+
+**Bytes per page,** zram's pages, same-filled ones left out, `seqlz-fast` and `seqlz-fast-lit`:
+
+| pages | `seqlz-fast`, before | after | | `seqlz-fast-lit`, before | after | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| phone test session p3 | 1050.2 | 1049.3 | -0.08% | 997.5 | 980.6 | -1.69% |
+| phone test session p5 | 994.9 | 993.7 | -0.12% | 940.4 | 934.5 | -0.63% |
+| phone, 3rd October | 721.5 | 725.0 | +0.48% | 681.6 | 693.8 | +1.79% |
+| phone, 4th October | 923.9 | 923.8 | -0.01% | 871.2 | 873.5 | +0.27% |
+| desktop, 23rd September, sample | 1054.1 | 1054.1 | -0.01% | 972.3 | 969.2 | -0.32% |
+| desktop, 24th September, sample | 1411.5 | 1406.5 | -0.36% | 1224.2 | 1209.8 | -1.18% |
+| resident desktop pages, test | 837.1 | 838.7 | +0.19% | 795.4 | 796.1 | +0.09% |
+| Android 17 emulator, second dump | 1082.3 | 1082.1 | -0.02% | 1025.7 | 1024.3 | -0.14% |
+
+Nearly all of it is in the literal tables: `seqlz-fast`, which uses only the token and length tables,
+moves by less than 0.4%. The dump of 3rd October is the one the tables before were trained on, five
+times over; that it gets worse is expected, by how much is the price of the new sessions.
+
+**The speed.** Kernel VM, `MODE=swap`, 3 boots, the tables before as a variant and a second copy of the
+new ones as control, µs, the new tables against the ones before:
+
+| | swap-out | swap-in warm | swap-in flushed |
+| --- | ---: | ---: | ---: |
+| desktop sample, `seqlz-fast-lit` | +0.01 | -0.02 | -0.03 |
+| phone sample p3, `seqlz-fast-lit` | +0.06 | +0.08, +2.2% | +0.10, +2.7% |
+| phone sample p3, `seqlz-fast` | +0.02 | -0.01 | -0.02 |
+| control, largest difference | 0.05 | 0.01 | 0.01 |
+
+On the phone's pages the literals cost 0.1 µs per read more; the guess is that more of those pages get
+coded literals now, which decode slower than raw ones, not measured. The 17 bytes less per page on p3
+for 0.09 µs more time per page written are 180 bytes per µs, a trade at the end of where
+`seqlz-fast-lit` is on the hull. Not measured: the Mi 9T itself with these tables, and real use of a
+phone rather than a scripted session.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 

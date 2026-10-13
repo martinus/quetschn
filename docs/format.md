@@ -33,7 +33,7 @@ It is one format, and the decoder decodes both.
 ## Status
 
 > [!IMPORTANT]
-> The format for 4 KiB pages is the one of 11th October 2026, and nobody uses it yet. Until seqlz has
+> The format for 4 KiB pages is the one of 13th October 2026, and nobody uses it yet. Until seqlz has
 > users it may still change, the tables included, and such a change updates this file: its rules, the
 > hashes of the tables, the example and this section. Once seqlz is in a kernel, zram's pages still live
 > only as long as the kernel that wrote them, so a change needs no new name in zram, see
@@ -50,6 +50,10 @@ The same day the token and length tables of both page sizes were trained again, 
 sequences, and the length values lost their last symbol, which no page needs, see
 [Length values](#length-values); the literal tables stayed
 ([explored-designs.md](explored-designs.md#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)).
+On 13th October all tables for 4 KiB pages were trained again, on zram dumps of a phone under memory
+pressure next to the desktop's pages, and the example became 9 bytes: its token has no code of its own
+any more
+([explored-designs.md](explored-designs.md#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)).
 
 The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
 since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
@@ -233,10 +237,10 @@ so that a decoder can check that it has the right ones:
 
 | table | SHA-256 |
 | --- | --- |
-| `TOK_4k` | `557b1b495a383ca10bffe70bc2d1de6d67da8547027abc8eb9a291ffe5a6e689` |
-| `LL_4k` | `88ab2871c8fe2a3b055f9cce626b153555872dffe7038da8f084d32a73b145f6` |
-| `ML_4k` | `007f307f23de5ce8e43ef55257f104a3636df2e315f90b375b964dbe7b944645` |
-| `LIT_4k` | `efa140477f179ce5a9c5cc27b462fe5da459839b2ff71e0ee94fef939d63f4c2` |
+| `TOK_4k` | `b174f3b432f9d6bec98baaf902eb98a402b8570274bc0a27b4aec4f4a2e3a29f` |
+| `LL_4k` | `ce0b70bdefdad678f22ef1139cf8284c48b61f720adb007b0a28b0ad3777bf16` |
+| `ML_4k` | `c39358b16a14c2462e092ee13b345e9b5002e59c5efc9521f0967063a7873289` |
+| `LIT_4k` | `43f552dca80dcdffd6dc21231555f1c938580650a1b90b94b8c515120ad9ad9e` |
 | `TOK_16k` | `ef1e31daaca9a6571769c69fce641376aab2d0c86e11614c409e61e2c23a0d8d` |
 | `LL_16k` | `5e9e225ea55c28a9b0f358101521c670e89cbd32cec5e7f02fe608648dabb8b2` |
 | `ML_16k` | `fe6a87649f4b95830e663270eefe4289561269420cba951931f95c5fe38ccfce` |
@@ -390,19 +394,21 @@ Else the page is invalid. A decoder may read past the end of a stream, as long a
 
 ## Example
 
-The 8 bytes `02 00 61 62 dc 65 ef db` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
+The 9 bytes `02 00 61 62 13 f2 2f ff 6c` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
 
 - `02 00`: `h = 2`, raw literals, `n = 2`; then the literals `61 62`, `a` and `b`.
-- `B` is `dc 65 ef db`, 32 bits, read most significant bit first:
+- `B` is `13 f2 2f ff 6c`, 40 bits, read most significant bit first:
 
 | bits | read as | means |
 | --- | --- | --- |
-| `11011100011` | `symbol(TOK)` = 1010 | `ll = 2`, `mlf = 31`, class 1 |
+| `0001` | `symbol(TOK)` = 3072 | the escape: the token has no code of its own |
+| `001111110010` | `read(12)` = 1010 | `ll = 2`, `mlf = 31`, class 1 |
 | `0010` | `read(4)` = 2 | `off = 2` |
 | | | `a b` appended |
-| `111101` | `symbol(ML)` = 23, `b = 11` | |
+| `1111111` | `symbol(ML)` = 23, `b = 11` | |
 | `11111011011` | `read(11)` = 2011 | `ml = 35 + 2^11 + 2011 = 4094`, `ab` repeated |
 | | | 0 literals left for 0 bytes of the page: the last sequence, the end |
+| `00` | | the rest of the last byte |
 
 ## What the compressor writes
 
