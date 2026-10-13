@@ -94,6 +94,9 @@ static inline void klist(const char* k, const unsigned int* v, unsigned int n, i
     fact_str(k, buf);
 }
 
+/* the literal table chapter 16's page is coded with, checked where the encoder picks it */
+#define CH16_SET 3U
+
 /* ---- chapter 14's constants, also for 16 KiB pages */
 
 static void ch14_constants(void) {
@@ -558,9 +561,25 @@ static void ch14(void) {
         fact_str("ch14.ab.idx_bin", binary(idx, SEQLZ_TOKEN_BITS));
         fact_num("ch14.ab.idx", idx);
         kstr("ch14.ab.entry", "0x%08x", e);
-        for (tok_s = 0; tok_s < SEQLZ_TOKEN_SYMBOLS; tok_s++)
-            if (t->token.enc[tok_s] && token_entry(tok_s, t->token.enc[tok_s] >> TOK_ENC_LEN_AT) == e)
-                break;
+        fact_num("ch14.ab.escaped", e >> TOK_ESCAPE_AT);
+        if (e >> TOK_ESCAPE_AT) {
+            /* the escape, as lines 605 to 617 take it: drop its code, refill, the token in 12 bits */
+            fact_num("ch14.ab.esc_n", TOK_DROP(e));
+            seqlz_br_drop(&br, TOK_DROP(e));
+            fact_num("ch14.ab.esc_count", br.count);
+            seqlz_br_refill(&br);
+            fact_num("ch14.ab.esc_count_refill", br.count);
+            tok_s = (unsigned int)(br.bits >> (64U - SEQLZ_ESCAPE_BITS));
+            fact_str("ch14.ab.esc_bits", binary(tok_s, SEQLZ_ESCAPE_BITS));
+            seqlz_br_drop(&br, SEQLZ_ESCAPE_BITS);
+            fact_num("ch14.ab.esc_count2", br.count);
+            e = token_entry(tok_s, 0);
+            kstr("ch14.ab.entry2", "0x%08x", e);
+        } else {
+            for (tok_s = 0; tok_s < SEQLZ_TOKEN_SYMBOLS; tok_s++)
+                if (t->token.enc[tok_s] && token_entry(tok_s, t->token.enc[tok_s] >> TOK_ENC_LEN_AT) == e)
+                    break;
+        }
         fact_num("ch14.ab.tok", tok_s);
         fact_num("ch14.ab.N", TOK_N(e));
         fact_num("ch14.ab.ll", TOK_LL(e));
@@ -594,7 +613,7 @@ static void ch14(void) {
         /* copy_match() with off < 8: stores while 8 bytes fit, then byte by byte */
         fact_num("ch14.ab.store_end", (SEQLZ_PAGE - TOK_LL(e)) / 8 * 8 - 1);
         fact_num("ch14.ab.bytewise", len - (SEQLZ_PAGE - TOK_LL(e)) / 8 * 8);
-        if (len != SEQLZ_PAGE - TOK_LL(e) || tok_s == SEQLZ_TOKEN_SYMBOLS || br.count != 0)
+        if (len != SEQLZ_PAGE - TOK_LL(e) || tok_s == SEQLZ_TOKEN_SYMBOLS || br.count >= 8)
             die("ch14: the page of ab");
     }
 
@@ -856,7 +875,7 @@ static void ch16(void) {
 
             for (lp = 0; lp < 3 && at >= pstart[lp + 1]; lp++)
                 ;
-            lit_part_bits[lp] += t->lit[0].enc[page[at]] & 255U;
+            lit_part_bits[lp] += t->lit[CH16_SET].enc[page[at]] & 255U;
         }
         if (!q[i].ml)
             continue;
@@ -922,7 +941,7 @@ static void ch16(void) {
     kstr("ch16.lit0.text", "%.2f", (double)lit_part_bits[2] / part_lits[2]);
     kstr("ch16.lit0.records", "%.2f", (double)lit_part_bits[1] / part_lits[1]);
     for (i = 128, k = 1; i < 256; i++)
-        k &= (t->lit[0].enc[i] & 255U) == 10;
+        k &= (t->lit[CH16_SET].enc[i] & 255U) == 10;
     fact_num("ch16.lit0.high_all10", k);
     for (k = 0; k < sizeof show / sizeof show[0]; k++) {
         const struct ch16_seq* s = &q[show[k]];
@@ -1014,6 +1033,8 @@ static void ch16(void) {
     }
     stream_bits(raw + SEQLZ_HEADER, n_lit, set, &bytes, sizes);
     fact_num("ch16.lt.set", set);
+    if (set != CH16_SET)
+        die("ch16: the page takes another literal table than CH16_SET");
     fact_num("ch16.lt.bits", best);
     fact_num("ch16.lt.bytes", bytes);
     kstr("ch16.lt.per_lit", "%.2f", (double)best / n_lit);

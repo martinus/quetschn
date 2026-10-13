@@ -9,30 +9,36 @@ BookAnim.define('abbits', function (ctx) {
   function sup(n) { return String(n).replace(/\d/g, function (c) { return '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079'[c]; }); }
   var BITS = '';
   for (var b = B0; b < NB; b++) for (var k = 7; k >= 0; k--) BITS += (BYTES[b] >> k) & 1;
-  var tl = D.tokCode.length, ml = D.mlCode.length;
+  var el = D.escCode.length, tl = D.tokCode.length, ml = D.mlCode.length, E = el ? 1 : 0;
   // the fields of B: [first bit, bits, kind, label under it, the label on a phone]
-  var FIELDS = [
-    [0, tl, 'code', 'token ' + D.tok, 'token ' + D.tok],
-    [tl, D.rawBits, 'plain', 'off = ' + D.off, 'off ' + D.off],
-    [tl + D.rawBits, ml, 'code', 'ML symbol ' + D.mlSym, 'ML ' + D.mlSym],
-    [tl + D.rawBits + ml, D.extra, 'plain', String(D.extraVal), String(D.extraVal)]
-  ];
-  var used = tl + D.rawBits + ml + D.extra, left = NBITS - used;
-  function bitsOf(f) { return BITS.substr(FIELDS[f][0], FIELDS[f][1]); }
+  var FIELDS = (el ? [[0, el, 'code', 'escape', 'esc']] : []).concat([
+    [el, tl, el ? 'plain' : 'code', 'token ' + D.tok, 'token ' + D.tok],
+    [el + tl, D.rawBits, 'plain', 'off = ' + D.off, 'off ' + D.off],
+    [el + tl + D.rawBits, ml, 'code', 'ML symbol ' + D.mlSym, 'ML ' + D.mlSym],
+    [el + tl + D.rawBits + ml, D.extra, 'plain', String(D.extraVal), String(D.extraVal)]
+  ]);
+  var used = el + tl + D.rawBits + ml + D.extra, left = NBITS - used;
+  function bitsOf(f) { return BITS.substr(FIELDS[f + E][0], FIELDS[f + E][1]); }
+  var means = D.tok + ' = ' + D.ll + ' + 16 × ' + D.mlf + ' + 512 × ' + D.cls + ': ll = ' + D.ll + ' literals, mlf = ' + D.mlf + ', offset class ' + D.cls + '.';
   // per step: bytes marked, fields read, page bytes written, the sentence
   var STEPS = [
     { bytes: [], fields: 0, page: 0, say: 'The ' + NB + ' bytes of a compressed page. zram stores them together with their length, ' + NB + ': the format has no length of its own.' },
     { bytes: [0, 1], fields: 0, page: 0, say: 'The u16 h, little endian: ' + hx(BYTES[0]) + ' ' + hx(BYTES[1]) + ' is 2. Its top bit is 0, so the literals are raw, and there are n = 2 of them.' },
     { bytes: [2, 3], fields: 0, page: 0, say: 'The 2 raw literals follow the u16: 61 62, "a" and "b". Everything after them is B, the sequences’ bitstream.' },
-    { bytes: BYTES.map(function (x, i) { return i; }).slice(B0), fields: 0, page: 0, say: 'B is ' + NBITS + ' bits, read from bit 7 of each byte down to bit 0, byte after byte.' },
-    { bytes: [], fields: 1, page: 0, say: 'The first token: its code ' + bitsOf(0) + ', ' + tl + ' bits, is the token ' + D.tok + ' in the TOK table. ' + D.tok + ' = ' + D.ll + ' + 16 × ' + D.mlf + ' + 512 × ' + D.cls + ': ll = ' + D.ll + ' literals, mlf = ' + D.mlf + ', offset class ' + D.cls + '.' },
-    { bytes: [], fields: 2, page: 0, say: 'Class ' + D.cls + ' sends ' + D.rawBits + ' plain bits, ' + bitsOf(1) + ': the offset is ' + D.off + '.' },
-    { bytes: [], fields: 2, page: D.ll, say: 'll = ' + D.ll + ' is below 15, so no length value for it: the ' + D.ll + ' literals go to the page. The page has ' + D.ll + ' bytes, "ab".' },
-    { bytes: [], fields: 3, page: D.ll, say: 'mlf = ' + D.mlf + ' is the largest the token holds, so a length value follows: its code ' + bitsOf(2) + ' is symbol ' + D.mlSym + ' of the ML table, which means ' + D.mlSym + ' − 12 = ' + D.extra + ' extra bits.' },
-    { bytes: [], fields: 4, page: D.ll, say: 'The ' + D.extra + ' extra bits ' + bitsOf(3) + ' are ' + D.extraVal + '. The value is 2' + sup(D.extra) + ' + ' + D.extraVal + ' = ' + D.value + ', and ml = 35 + ' + D.value + ' = ' + D.ml + '.' },
-    { bytes: [], fields: 4, page: 4096, say: 'The match copies ' + D.ml + ' bytes from ' + D.off + ' back. After ' + D.off + ' bytes it copies what it wrote itself: "abab..." up to byte 4095. The page is full.' },
-    { bytes: [], fields: 4, page: 4096, say: '0 literals are left for 0 bytes of the page: the last sequence, which has no token. ' + left + ' bits of B are left' + (left ? ', all 0' : '') + '. The page is valid: 4096 bytes from ' + NB + '.' }
-  ];
+    { bytes: BYTES.map(function (x, i) { return i; }).slice(B0), fields: 0, page: 0, say: 'B is ' + NBITS + ' bits, read from bit 7 of each byte down to bit 0, byte after byte.' }
+  ].concat(el ? [
+    { bytes: [], fields: 1, page: 0, say: 'The first code, ' + BITS.substr(0, el) + ', ' + el + ' bits, is symbol 3072 of the TOK table, the escape: this token has no code of its own.' },
+    { bytes: [], fields: 1 + E, page: 0, say: 'So its number follows in 12 plain bits, ' + bitsOf(0) + ': token ' + means }
+  ] : [
+    { bytes: [], fields: 1, page: 0, say: 'The first token: its code ' + bitsOf(0) + ', ' + tl + ' bits, is the token ' + means }
+  ]).concat([
+    { bytes: [], fields: 2 + E, page: 0, say: 'Class ' + D.cls + ' sends ' + D.rawBits + ' plain bits, ' + bitsOf(1) + ': the offset is ' + D.off + '.' },
+    { bytes: [], fields: 2 + E, page: D.ll, say: 'll = ' + D.ll + ' is below 15, so no length value for it: the ' + D.ll + ' literals go to the page. The page has ' + D.ll + ' bytes, "ab".' },
+    { bytes: [], fields: 3 + E, page: D.ll, say: 'mlf = ' + D.mlf + ' is the largest the token holds, so a length value follows: its code ' + bitsOf(2) + ' is symbol ' + D.mlSym + ' of the ML table, which means ' + D.mlSym + ' − 12 = ' + D.extra + ' extra bits.' },
+    { bytes: [], fields: 4 + E, page: D.ll, say: 'The ' + D.extra + ' extra bits ' + bitsOf(3) + ' are ' + D.extraVal + '. The value is 2' + sup(D.extra) + ' + ' + D.extraVal + ' = ' + D.value + ', and ml = 35 + ' + D.value + ' = ' + D.ml + '.' },
+    { bytes: [], fields: 4 + E, page: 4096, say: 'The match copies ' + D.ml + ' bytes from ' + D.off + ' back. After ' + D.off + ' bytes it copies what it wrote itself: "abab..." up to byte 4095. The page is full.' },
+    { bytes: [], fields: 4 + E, page: 4096, say: '0 literals are left for 0 bytes of the page: the last sequence, which has no token. ' + left + ' bits of B are left' + (left ? ', all 0' : '') + '. The page is valid: 4096 bytes from ' + NB + '.' }
+  ]);
   var X0 = 20;
   var root = ctx.svg('svg', { viewBox: '0 0 744 300', role: 'img', 'aria-label': 'The ' + NB + ' bytes, the ' + NBITS + ' bits of B read field by field, and the page' }, ctx.stage);
 

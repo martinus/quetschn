@@ -186,8 +186,8 @@ code of 12 bits. The loop at lines 47 and 48 counts lengths up to 11 only, so `k
 
 ### The real tables
 
-The `ll` table has {{ll.symbols}} lengths: `{{ch08.ll.lengths}}`. Three codes of 3
-bits, five of 4, seven of 5, five of 6, none of 7, four of 8:
+The `ll` table has {{ll.symbols}} lengths: `{{ch08.ll.lengths}}`. Four codes of 3
+bits, three of 4, six of 5, seven of 6, none of 7, four of 8:
 
 ```text
 k = {{ll.codes_of.3}} * 32 + {{ll.codes_of.4}} * 16 + {{ll.codes_of.5}} * 8 + {{ll.codes_of.6}} * 4 + {{ll.codes_of.7}} * 2 + {{ll.codes_of.8}} * 1 = {{ch08.ll.fill.3}} + {{ch08.ll.fill.4}} + {{ch08.ll.fill.5}} + {{ch08.ll.fill.6}} + {{ch08.ll.fill.8}} = 256 = 1 << 8
@@ -198,11 +198,11 @@ next[3] = {{ch08.ll.next.3}}       next[7] = ({{ch08.ll.next.6}} + {{ll.codes_of
 next[4] = ({{ch08.ll.next.3}} + {{ll.codes_of.3}}) << 1 = {{ch08.ll.next.4}}                   next[8] = ({{ch08.ll.next.7}} + {{ll.codes_of.7}}) << 1 = {{ch08.ll.next.8}}
 ```
 
-@assert (ll.codes_of[1], ll.codes_of[2], ll.codes_of[3], ll.codes_of[4], ll.codes_of[5], ll.codes_of[6], ll.codes_of[7], ll.codes_of[8]) == (0, 0, 3, 5, 7, 5, 0, 4) and ll.len[2] == ll.len[16] == ll.len[17] == 3 and ll.len[0] == ll.len[1] == ll.len[3] == ll.len[4] == ll.len[18] == 4
+@assert (ll.codes_of[1], ll.codes_of[2], ll.codes_of[3], ll.codes_of[4], ll.codes_of[5], ll.codes_of[6], ll.codes_of[7], ll.codes_of[8]) == (0, 0, 4, 3, 6, 7, 0, 4) and ll.len[0] == ll.len[1] == ll.len[16] == ll.len[17] == 3 and ll.len[2] == ll.len[3] == ll.len[4] == 4
 
-The three 3-bit codes go to symbols 2, 16 and 17, `{{ll.code.2}}`, `{{ll.code.16}}` and `{{ll.code.17}}`: the value 2, a literal run
-of 17 bytes, and the values 16 to 63, which are the literal runs of 31 to 78 bytes. The 4-bit codes
-start at {{ch08.ll.next.4}}, `{{ll.code.0}}`, for symbols 0, 1, 3, 4 and 18. The four 8-bit codes are {{ch08.ll.next.8}} to 255, `{{ll.code.20}}` to
+The four 3-bit codes go to symbols 0, 1, 16 and 17, `{{ll.code.0}}`, `{{ll.code.1}}`, `{{ll.code.16}}` and `{{ll.code.17}}`: the values 0
+and 1, literal runs of 15 and 16 bytes, and the values 16 to 63, which are the literal runs of 31 to 78
+bytes. The 4-bit codes start at {{ch08.ll.next.4}}, `{{ll.code.2}}`, for symbols 2, 3 and 4. The four 8-bit codes are {{ch08.ll.next.8}} to 255, `{{ll.code.20}}` to
 `{{ll.code.23}}`, the last four entries of the table. `next[7]` is {{ch08.ll.next.7}} although no code has 7 bits;
 `next[8]` then continues from it.
 
@@ -243,17 +243,17 @@ Token 49, one literal and a match of 7 at the repeat offset, has the {{tok.len.4
 
 ```text
 first index   {{ch07.tok.49.c}} << (11 - {{tok.len.49}})        = {{ch07.tok.49.first}}   {{tok.code.49}} 0000000
-last index    (2 << (11 - {{tok.len.49}})) - 1  = {{ch07.tok.49.last}}   {{tok.code.49}} 1111111
+last index    (({{ch07.tok.49.c}} + 1) << (11 - {{tok.len.49}})) - 1  = {{ch07.tok.49.last}}   {{tok.code.49}} 1111111
 {{ch07.tok.49.entries}} entries of {{ch07.tok.49.entry}}, bytes {{ch08.tok49.byte_first}} to {{ch08.tok49.byte_last}} of the table: {{ch08.tok49.lines}} cache lines of 64 bytes
 ```
 
-@assert tok.len[49] == 4 and ch07.tok[49].c == 1
+@assert tok.len[49] == 4 and ch07.tok[49].c == 0
 
-The four codes of 4 bits are tokens 34, 49 and 2097 and the escape, `{{tok.code.34}}` to `{{tok.code.3072}}`. They take the
-entries 0 to {{ch08.tok.len4.last}} in that order, the first 2 KiB of the table, a quarter of it, in {{ch08.tok.len4.lines}} cache lines.
+The two codes of 4 bits are token 49 and the escape, `{{tok.code.49}}` and `{{tok.code.3072}}`. They take the
+entries 0 to {{ch08.tok.len4.last}} in that order, the first KiB of the table, an eighth of it, in {{ch08.tok.len4.lines}} cache lines.
 Token 2098, with its {{tok.len.2098}}-bit code `{{tok.code.2098}}`, `c = {{ch07.tok.2098.c}}`, has the {{ch07.tok.2098.entries}} entries {{ch07.tok.2098.first}} to {{ch07.tok.2098.last}}.
 
-@assert tok.codes_of[4] == 4 and tok.len[34] == tok.len[2097] == tok.len[3072] == 4 and ch08.tok.len4.bytes == 2048
+@assert tok.codes_of[4] == 2 and tok.len[49] == tok.len[3072] == 4 and ch08.tok.len4.bytes == 1024
 
 The codes are ranges because the bitstream is read most significant bit first, since 6th October
 2026; read the other way, a code's entries were spread over every cache line of the table.
@@ -279,7 +279,7 @@ encoder's entry is `c | l << 16` in a `u32`, no cast needed. The decode entry is
 Symbol 18 of the `ll` table has the {{ll.len.18}}-bit code `{{ll.code.18}}`, `c = {{ch07.ll18.c}}`: `enc[18] = {{ch07.ll18.c}} | {{ll.len.18}} << 16 = {{ch07.ll18.enc}}`,
 and the {{ch07.ll18.entries}} entries `{{ch07.ll18.c}} << 4 = {{ch07.ll18.first}}` to {{ch07.ll18.last}} get `{{ch08.le.18}} | {{ll.len.18}} = {{ch07.ll18.entry}}`.
 
-@assert ll.len[18] == 4
+@assert ll.len[18] == 5
 
 The loop runs to `SEQLZ_LEN_SYMBOLS`, so `enc[{{const.LEN_SYMBOLS}}]` to `enc[31]`, which the encoder's array has for its
 mask ([chapter 7](#ch-internal--decode-tables)), are not written here. They stay 0 from the
@@ -345,9 +345,9 @@ lit_cost[0x65][0] = {{ch07.lit_cost.101}}    table 7 in the top byte, table 0 in
 lit_cost[0x00][0] = {{ch07.lit_cost.0}}
 ```
 
-The zero byte has a 2-bit code in tables 1 to 4 and an {{lit.0.len.0}}-bit one in table 0, which is for text.
+The zero byte has a 2-bit code in tables 1 and 4 and a {{lit.0.len.0}}-bit one in table 0, which is for text.
 
-@assert lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2
+@assert lit[1].len[0] == lit[4].len[0] == 2
 
 ## has_all_symbols(): can the encoder write every page {#ch-codes--all-symbols}
 
@@ -558,22 +558,21 @@ of:
 
 | token | `ll` | `ml` | class | code |
 | --- | --- | --- | --- | --- |
-| 34 | 2 | 6 | 0, the repeat offset | `{{tok.code.34}}` |
-| 49 | 1 | 7 | 0 | `{{tok.code.49}}` |
+| 49 | 1 | 7 | 0, the repeat offset | `{{tok.code.49}}` |
+| 34 | 2 | 6 | 0 | `{{tok.code.34}}` |
 | 2097 | 1 | 7 | 4, a multiple of 8 below 256 | `{{tok.code.2097}}` |
-| 576 | 0 | 8 | 1, below 16 | `{{tok.code.576}}` |
 | 2082 | 2 | 6 | 4 | `{{tok.code.2082}}` |
 | 2112 | 0 | 8 | 4 | `{{tok.code.2112}}` |
 | 2624 | 0 | 8 | 5, a multiple of 8 from 256 | `{{tok.code.2624}}` |
 
-@assert tok.codes_of[4] == tok.codes_of[5] == 4 and tok.len[3072] == tok.len[34] == tok.len[49] == tok.len[2097] == 4 and tok.len[576] == tok.len[2082] == tok.len[2112] == tok.len[2624] == 5
+@assert tok.codes_of[4] == 2 and tok.codes_of[5] == 5 and tok.len[3072] == tok.len[49] == 4 and tok.len[34] == tok.len[2082] == tok.len[2097] == tok.len[2112] == tok.len[2624] == 5
 
-In each of these 7 tokens, `ll + ml` is 8. That fits one sequence per 8-byte value, a pointer or a
+In each of these 6 tokens, `ll + ml` is 8. That fits one sequence per 8-byte value, a pointer or a
 field of 8 bytes, whose low 1 or 2 bytes differ from a value 8 or more bytes before, or none do. The
 format's offset classes for multiples of 8 are there for the same reason
 ([chapter 4](#ch-format--offsets)).
 
-The escape has a {{tok.len.3072}}-bit code, as short as the most frequent tokens. Each of the {{ch08.tok.escaped}} tokens without a
+The escape has a {{tok.len.3072}}-bit code, as short as the most frequent token's. Each of the {{ch08.tok.escaped}} tokens without a
 code is rare, but together they are frequent: on desktop pages, 14 to 38 of about 200 sequences per
 page take the escape, at 16 bits each before the offset
 ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#numbers-the-book-quotes)).
@@ -592,17 +591,18 @@ each training page into the group of the table that codes its literals in the fe
 table the Huffman code of its group's literals, and repeat until the groups stop changing. Where it
 ends depends on where it starts, so the trainer runs it from 32 starting points and keeps the set with
 the fewest bits on the training pages. The tables are then sorted by how many pages use them, table
-0 first.
+0 first; the tables of 13th October 2026 are in the order that fits the tables before them best
+instead, which keeps the table for text at 0. The order means nothing to the format.
 
 @listing src/seqlz_lit_sets_4k.inc 1-17
 
 Table 0 starts at line {{ch08.litinc.line}}, 16 bytes per line: byte `0x00` is {{lit.0.len.0}} bits, `0x0a`, the newline, {{lit.0.len.10}}, and line
 {{ch08.litinc.line20}} has `0x20`, the space, at {{lit.0.len.32}}. Line {{ch08.litinc.line60}} is the bytes `0x60` to `0x6f`, the backtick and the letters
-`a` to `o`: 4 to 7 bits, except the backtick and `j`, with `e` at {{lit.0.len.101}}. Table 0 is a table for text. The
-other 7 differ: tables 1 to 4 give `0x00` 2 bits, table 6 gives `0xff` {{lit.6.len.255}} bits. The shortest code is
-2 bits in {{ch08.lit.min2}} of the tables and 3 or 4 bits in the other {{ch08.lit.min34}}, and every table has codes of 10 bits.
+`a` to `o`: 4 to 8 bits, except the backtick and `j`, with `e` at {{lit.0.len.101}}. Table 0 is a table for text. The
+other 7 differ: tables 1 and 4 give `0x00` 2 bits, table 7 gives `0xff` {{lit.7.len.255}} bits. The shortest code is
+2 bits in {{ch08.lit.min2}} of the tables and 3 to 5 bits in the others, and every table has codes of 10 bits.
 
-@assert ch08.litinc.line60 <= 17 and min(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 4 and max(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 7 and lit[0].len[0x60] > 7 and lit[0].len[0x6a] > 7 and lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2 and ch08.lit[0].max == ch08.lit[1].max == ch08.lit[2].max == ch08.lit[3].max == ch08.lit[4].max == ch08.lit[5].max == ch08.lit[6].max == ch08.lit[7].max == 10
+@assert ch08.litinc.line60 <= 17 and min(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 4 and max(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 8 and lit[0].len[0x60] > 8 and lit[0].len[0x6a] > 8 and lit[1].len[0] == lit[4].len[0] == 2 and lit[7].len[0xff] == 2 and ch08.lit[0].max == ch08.lit[1].max == ch08.lit[2].max == ch08.lit[3].max == ch08.lit[4].max == ch08.lit[5].max == ch08.lit[6].max == ch08.lit[7].max == 10
 
 ::: measured 8 literal tables, not 1, 16 or 64
 k-means trained on the resident pages of a desktop and priced on its zram pages, as the share of

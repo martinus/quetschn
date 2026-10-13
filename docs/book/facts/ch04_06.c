@@ -318,6 +318,8 @@ static void page_walk(const char* name, void (*make)(u8*)) {
             fact_str(K(Q, "code"), tok_code[tok]);
             strcat(all, tok_code[tok]);
         } else {
+            fact_str(K(Q, "esccode"), tok_code[SEQLZ_ESCAPE]);
+            fact_str(K(Q, "tokbits"), bin(tok, SEQLZ_ESCAPE_BITS));
             snprintf(key, sizeof key, "%s%s", tok_code[SEQLZ_ESCAPE], bin(tok, SEQLZ_ESCAPE_BITS));
             fact_str(K(Q, "code"), key);
             strcat(all, key);

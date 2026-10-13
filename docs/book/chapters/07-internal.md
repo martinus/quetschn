@@ -145,13 +145,13 @@ An entry of `token.enc[]` is the code in bits 0 to 11 and the code's length in b
 | 3072 | the escape | `{{tok.code.3072}}` | {{tok.len.3072}} | `{{ch07.tok.3072.enc}}` |
 | 1797 | 5 literals, match of 20, class 3 | none | {{tok.len.1797}} | `{{ch07.tok.1797.enc}}` |
 
-@assert tok.len[1797] == 0 and ch07.tok[34].c == 0
+@assert tok.len[1797] == 0 and ch07.tok[49].c == 0
 
 `TOK_ENC_LEN_AT` is where the length starts, `TOK_ENC_CODE_MASK` is `0xfff`, the mask for the code.
 The encoder's `token_code()` ([chapter 10](#ch-encoder)) reads `te >> TOK_ENC_LEN_AT` and
 `te & TOK_ENC_CODE_MASK`.
 
-Note token 34. Its code is the number 0, but its entry is not 0, because the length is in it too.
+Note token 49. Its code is the number 0, but its entry is not 0, because the length is in it too.
 So an entry of 0 means one thing only: this token has no code. `token_code()` relies on that: if
 `enc[tok]` is 0, it writes the escape's code and then the token in 12 plain bits. No separate flag
 is needed, and no code can be confused with "none", because every real code has a length of at
@@ -232,7 +232,7 @@ packs them. With the real tables:
     <rect x="200" y="40" width="480" height="30" class="fill-sheet"/>
     <rect x="200" y="82" width="480" height="30" class="fill-sheet"/>
     <rect x="200" y="132" width="480" height="30" class="fill-paper"/>
-    <rect x="440" y="132" width="60" height="30" class="fill-acc"/>
+    <rect x="380" y="132" width="60" height="30" class="fill-acc"/>
     <line x1="260" y1="40" x2="260" y2="70"/><line x1="320" y1="40" x2="320" y2="70"/>
     <line x1="380" y1="40" x2="380" y2="70"/><line x1="440" y1="40" x2="440" y2="70"/>
     <line x1="500" y1="40" x2="500" y2="70"/><line x1="560" y1="40" x2="560" y2="70"/>
@@ -255,7 +255,7 @@ packs them. With the real tables:
     <text x="410" y="102">{{lit.4.len.101}}</text><text x="470" y="102">{{lit.3.len.101}}</text><text x="530" y="102">{{lit.2.len.101}}</text>
     <text x="590" y="102">{{lit.1.len.101}}</text><text x="650" y="102">{{lit.0.len.101}}</text>
     <text x="230" y="152">{{ch07.lit_sum.7}}</text><text x="290" y="152">{{ch07.lit_sum.6}}</text><text x="350" y="152">{{ch07.lit_sum.5}}</text>
-    <text x="410" y="152">{{ch07.lit_sum.4}}</text><text x="470" y="152" class="on-fill">{{ch07.lit_sum.3}}</text><text x="530" y="152">{{ch07.lit_sum.2}}</text>
+    <text x="410" y="152" class="on-fill">{{ch07.lit_sum.4}}</text><text x="470" y="152">{{ch07.lit_sum.3}}</text><text x="530" y="152">{{ch07.lit_sum.2}}</text>
     <text x="590" y="152">{{ch07.lit_sum.1}}</text><text x="650" y="152">{{ch07.lit_sum.0}}</text>
   </g>
 </svg>
@@ -263,11 +263,11 @@ packs them. With the real tables:
 <figcaption>Two literals, 0x00 and 0x65, priced in all 8 literal tables with one 64-bit add; table {{ch07.lit_best}} codes them in {{ch07.lit_best_bits}} bits.</figcaption>
 </figure>
 
-The zero byte has a 2-bit code in tables 1 to 4, which are for pages with many zeros; `e` has a {{lit.0.len.101}}-bit
+The zero byte has a 2-bit code in tables 1 and 4, which are for pages with many zeros; `e` has a {{lit.0.len.101}}-bit
 code in table 0, which fits text. For these two literals table {{ch07.lit_best}} wins with {{ch07.lit_best_bits}} bits, against 16 bits
 as raw bytes. [Chapter 11](#ch-literals-enc--pricing) has the same example with four literals.
 
-@assert lit[1].len[0] == lit[2].len[0] == lit[3].len[0] == lit[4].len[0] == 2 and ch07.lit_best == 3
+@assert lit[1].len[0] == lit[4].len[0] == 2 and min(lit[0].len[0], lit[2].len[0], lit[3].len[0], lit[5].len[0], lit[6].len[0], lit[7].len[0]) > 2 and ch07.lit_best == 4
 
 The two macros size this:
 
@@ -569,8 +569,8 @@ Build it from the repository's root with
 
 ### Token 49: one literal, a match of 7, the repeat offset
 
-Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is one of the three tokens
-with the shortest code, {{tok.len.49}} bits, `{{tok.code.49}}`, and [chapter 9](#ch-matcher--back) shows where it comes from: in
+Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is the token with the
+shortest code, {{tok.len.49}} bits, `{{tok.code.49}}`, as short as the escape's, and [chapter 9](#ch-matcher--back) shows where it comes from: in
 an array of pointers, each pointing 16 bytes further than the one before, every 8-byte pointer is one
 literal, its low byte, which changes, and a match of its 7 other bytes, 8 bytes back, the same offset as
 the sequence before.
@@ -585,7 +585,7 @@ the sequence before.
 | `ML` | `((49 >> 4) & 31) + 4` | {{ch07.tok.49.ML}} |
 | value bit | `1 == 15 || 3 == 31` | {{ch07.tok.49.value}} |
 
-@assert tok.codes_of[4] == 4 and tok.len[34] == tok.len[2097] == tok.len[3072] == 4
+@assert tok.codes_of[4] == 2 and tok.len[49] == tok.len[3072] == 4
 
 The entry is `{{ch07.tok.49.N}} | {{ch07.tok.49.DROP}} << 14 | 1 << 19 | 7 << 23 = {{ch07.tok.49.entry}}`, in binary
 `{{ch07.tok.49.bin}}`. A {{tok.len.49}}-bit code is the top {{tok.len.49}} bits of {{ch07.tok.49.entries}} of the 2048

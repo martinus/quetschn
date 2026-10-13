@@ -185,6 +185,12 @@ static void encode_traced(struct trace* r, void (*make)(u8*)) {
             fact_num(key("%s.tok", pre), tok);
             fact_num(key("%s.tlen", pre), tlen);
             str(key("%s.code", pre), "%s", bin(code, tlen));
+            /* an escaped token: the escape's code, then the token in SEQLZ_ESCAPE_BITS bits */
+            fact_num(key("%s.escaped", pre), !T->token.enc[tok]);
+            if (!T->token.enc[tok]) {
+                str(key("%s.esccode", pre), "%s", bin(code >> SEQLZ_ESCAPE_BITS, tlen - SEQLZ_ESCAPE_BITS));
+                str(key("%s.tokbits", pre), "%s", bin(tok, SEQLZ_ESCAPE_BITS));
+            }
             str(key("%s.codehex", pre), "0x%x", code);
             str(key("%s.offbits", pre), "%s", bin(off >> SEQLZ_OFF_SHIFT(cls), raw));
             str(key("%s.put", pre), "0x%llx", (unsigned long long)v);
@@ -599,6 +605,15 @@ static void chapter11(void) {
     fact_num("ch11.slab.s0", (get_unaligned_le16(raw) + SEQLZ_LIT_STREAMS - 1U) / SEQLZ_LIT_STREAMS);
     fact_num("ch11.l190", coded_with(190));
     fact_num("ch11.l195", coded_with(195));
+    /* the most letters below 200 that keep their literals raw, and one more */
+    {
+        unsigned int n = 200;
+
+        while (n > 1 && coded_with(n))
+            n--;
+        fact_num("ch11.lraw", n);
+        fact_num("ch11.lraw_coded", coded_with(n + 1));
+    }
 }
 
 /* ---- chapter 12: the decoder's tools ---- */
@@ -675,7 +690,7 @@ static void chapter12(void) {
                                    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33};
     static u8 page[SEQLZ_PAGE], out[CAP], buf[32];
     struct seqlz_bit_reader r = {made_up, made_up + sizeof made_up, 0, 0};
-    unsigned int off, len, n_lit, n, x, v;
+    unsigned int off, len, n_lit, n, x, v, i;
     u32 e;
     u64 b;
 
@@ -734,9 +749,14 @@ static void chapter12(void) {
     fact_num("ch12.ab.count", r.count);
     fact_num("ch12.ab.at_end", r.p == r.end);
     e = T->token.decode[r.bits >> (64U - SEQLZ_TOKEN_BITS)];
-    if (e >> TOK_ESCAPE_AT)
-        fail("the token of the page of ab is escaped: chapter 12 drops its code and offset at once");
     n = TOK_DROP(e);
+    fact_num("ch12.ab.escaped", e >> TOK_ESCAPE_AT);
+    if (e >> TOK_ESCAPE_AT) {
+        /* the escape's code, the token's 12 bits, then its offset: all in the register already */
+        unsigned int idx = (unsigned int)((r.bits << n) >> (64U - SEQLZ_ESCAPE_BITS));
+
+        n += SEQLZ_ESCAPE_BITS + TOK_DROP(token_entry(idx, 0));
+    }
     fact_num("ch12.ab.tokdrop", n);
     seqlz_br_drop(&r, n);
     str("ch12.ab.bits2", "0x%016llx", (unsigned long long)r.bits);
@@ -769,12 +789,16 @@ static void chapter12(void) {
     fact_num("ch12.ab.count3", r.count);
     fact_num("ch12.ml_tok", SEQLZ_ML_CAP + 4);
     fact_num("ch12.ab.match", v + SEQLZ_ML_CAP + 4);
-    e = T->ml.decode[0];
+    /* the first entry of a direct symbol, one without extra bits */
+    for (i = 0; (T->ml.decode[i] >> 4) & 15U; i++)
+        ;
+    e = T->ml.decode[i];
     str("ch12.ml0.entry", "0x%08x", e);
+    fact_num("ch12.ml0.index", i);
     fact_num("ch12.ml0.n", e & 15U);
     fact_num("ch12.ml0.x", (e >> 4) & 15U);
     fact_num("ch12.ml0.base", (e >> 8) & 0xffffU);
-    str("ch12.ml0.code", "%s", bin(0, e & 15U));
+    str("ch12.ml0.code", "%s", bin(i >> (SEQLZ_MAX_BITS - (e & 15U)), e & 15U));
 }
 
 int main(void) {

@@ -408,12 +408,12 @@ is undefined, and after the OR `all` is never 0.
 `32 - clz` is the number of bits `all` needs, its bit width. The cast to `unsigned int` is because
 `__builtin_clz()` returns `int`. Three examples:
 
-| largest size | `all`, with every size the largest | `clz` | `width` | header bytes |
+| largest size | `all`, the sizes ORed, with bit 4 set | `clz` | `width` | header bytes |
 | --- | --- | --- | --- | --- |
 | {{ch11.s0.bytes}} bytes, the example page | `{{ch11.max.bin}}` = {{ch11.max.all}} | {{ch11.max.clz}} | {{ch11.width}} | {{ch11.header}} |
 | 100 bytes | `0b1110100` = 116 | 25 | 7 | 10 |
 | {{ch11.lit_stream_max}} bytes, the largest a 4 KiB page can have | `0b1010010000` | 22 | 10 | 13 |
-@assert ch11.lit_stream_max == 640 and ch11.max.all == ch11.s0.bytes
+@assert ch11.lit_stream_max == 640 and ch11.max.all >= ch11.s0.bytes and 116 == 100 | 16 and 0b1010010000 == 640 | 16
 
 Smaller sizes can set more low bits in `all`, which changes nothing above its highest bit. `width` is at most 12 on 16 KiB
 pages, where a stream has at most {{k16.ch11.lit_stream_max}} bytes. `header = SEQLZ_LIT_HEADER(width)` is `3 + width`: 2
@@ -678,10 +678,10 @@ stored   = {{ch11.flush.stored}}   at q[0], byte {{ch11.q.0}} of the page
 p       += {{ch11.flush.n}} >> 3 = {{ch11.flush.moved}}               cnt = {{ch11.flush.n}} & 7 = {{ch11.flush.cnt}}
 ```
 
-The bytes `{{ch11.flush.final}}` are final. `{{ch11.flush.part}}` holds {{ch11.flush.cnt}} bits of stream 0, `{{ch11.flush.partbits}}`, and a 0 that is not a bit yet;
-the next flush writes this byte again with its eighth bit. In the finished page, stream 0 starts with
+The bytes `{{ch11.flush.final}}` are final. `{{ch11.flush.part}}` holds {{ch11.flush.cnt}} bits of stream 0, `{{ch11.flush.partbits}}`, and 3 zeros that are no bits yet;
+the next flush writes this byte again with its last 3 bits. In the finished page, stream 0 starts with
 `{{ch11.s0.head4}}`.
-@assert ch11.flush.cnt == 7 and ch11.flush.moved == 2
+@assert ch11.flush.cnt == 5 and ch11.flush.moved == 2
 
 ### store_tail(): at most 7 bytes at the end of a stream
 
@@ -780,8 +780,8 @@ The example's sizes are {{ch11.sizes}} with `width = {{ch11.width}}`:
 {{ch11.sz.7}}
 ```
 
-{{ch11.width}} bytes, `{{ch11.sizes.hex}}`: in binary, little end first, `10011` (19), `10001` (17), and so on.
-@assert ch11.width == 5 and F("ch11.sizes").startswith("19, 17,")
+{{ch11.width}} bytes, `{{ch11.sizes.hex}}`: in binary, little end first, `10010` (18), `10001` (17), and so on.
+@assert ch11.width == 5 and F("ch11.sizes").startswith("18, 17,")
 
 ## The bitstream moves down {#ch-literals-enc--memmove}
 
@@ -832,8 +832,8 @@ The offsets on the left are hexadecimal. Taken apart by hand:
 - `{{ch11.u16}}` is the u16 `{{ch11.u16hex}}`. The top bit is set, coded literals; `{{ch11.u16hex}} & 0x7fff = {{ch11.n}}`
   literals.
 - `{{ch11.byte2}}` is byte 2: table `0x{{ch11.byte2}} & 7 = {{ch11.set}}`, width `5 + (0x{{ch11.byte2}} >> 3 & 7) = {{ch11.width}}`, and bits 6 and 7 are 0.
-  Table {{ch11.set}} is the one that gives `e` and the space 4 bits, the table for text.
-@assert ch11.set == 0 and lit[0].len[0x65] == 4 and lit[0].len[0x20] == 4
+  Table {{ch11.set}} is one of the two tables for text: it gives `e` {{lit.3.len.101}} bits and the space {{lit.3.len.32}}.
+@assert ch11.set == 3 and lit[3].len[0x65] == 4 and lit[0].len[0x65] == 4
 - `{{ch11.sizes.hex}}` are the 8 sizes. As one little-endian number, `{{ch11.sizes.le}}`, cut into {{ch11.width}}-bit
   fields from the bottom: {{ch11.sizes_comma}}. Their sum is {{ch11.coded}}.
 - The streams start at byte $3 + {{ch11.width}} = {{ch11.q.0}}$: stream 0 at {{ch11.q.0}}, stream 1 at {{ch11.q.1}}, then {{ch11.q.2}}, {{ch11.q.3}}, {{ch11.q.4}}, {{ch11.q.5}}, {{ch11.q.6}} and
@@ -856,9 +856,9 @@ Did it pass the rule? The pricing gave these bits per stream:
 | others | | {{ch11.others.min}} to {{ch11.others.max}} |
 
 Table {{ch11.set}} wins. Its sizes add up to `coded = {{ch11.coded}}`, and `{{ch11.coded}} + {{ch11.coded_min}} = {{ch11.rule.lhs}}` is less than
-`{{ch11.n}} - {{ch11.n}} / 16 = {{ch11.rule.rhs}}`. One byte more and this page would have kept its raw literals. It saves {{ch11.saves}}
+`{{ch11.n}} - {{ch11.n}} / 16 = {{ch11.rule.rhs}}`, by 7 bytes; a few letters fewer and this page would have kept its raw literals. It saves {{ch11.saves}}
 bytes, {{ch11.saves_pct}}% of the {{letters.len}} bytes the page takes with raw literals.
-@assert ch11.rule.lhs + 1 == ch11.rule.rhs
+@assert ch11.rule.lhs + 7 == ch11.rule.rhs
 
 ::: try Compress a page of your own
 In a scratch directory, with the repository's path in `$R` (`R=/path/to/quetschn`):
@@ -894,8 +894,8 @@ It prints the page above, 16 bytes to a line, and ends with:
 
 @output ch11-letters 10-11
 
-With 190 letters instead of 200 the literals stay raw, with 195 they are coded.
-@assert ch11.l190 == 0 and ch11.l195 == 1
+With {{ch11.lraw}} letters instead of 200 the literals stay raw, with one more they are coded.
+@assert ch11.lraw < 200 and ch11.lraw_coded == 1
 :::
 
 ## What writing the literals costs {#ch-literals-enc--cost}
