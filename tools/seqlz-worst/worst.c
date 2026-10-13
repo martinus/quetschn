@@ -238,7 +238,7 @@ static unsigned int offset_of_class(const struct built* b, unsigned int cls) {
 
     for (tries = 0; tries < 1000; tries++) {
         off = 1 + below(b->pos < 4095 ? b->pos : 4095);
-        if (off != b->last && seqlz_off_class(off, b->last, &raw) == cls)
+        if (off != b->last && seqlz_off_class(off, b->last, 0U, &raw) == cls)
             return off;
     }
     return 0;

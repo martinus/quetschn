@@ -176,7 +176,12 @@ int seqlz_tables_init(struct seqlz_tables *t,
 	 * zero, so that symbols without a code have code 0, and so have the
 	 * entries of the encoder's tables behind the last symbol
 	 */
+	unsigned int off, raw_bits;
+
 	memset(t, 0, sizeof(*t));
+	/* 0 is no offset; neither repeat offset is 0 */
+	for (off = 1; off < SEQLZ_OFF_TABLE; off++)
+		t->off_class[off] = (u8)seqlz_off_class(off, 0, 0, &raw_bits);
 	if (build_token(lengths->token, &t->token) ||
 	    build_values(lengths->ll, &t->ll) ||
 	    build_values(lengths->ml, &t->ml) || build_lit_sets(t))
