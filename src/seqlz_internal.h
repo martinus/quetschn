@@ -110,12 +110,15 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 /*
  * The token table's entry for token s with a code of n bits. It holds what the
  * decoder needs, ready to use, so that it never takes the token apart:
- *   bits  0..3:  n. The bitstream shifted left by n has the offset's bits on
- *                top.
- *   bits  4..9:  63 - the offset's bits. The bitstream shifted right by this
- *                and then by 1 is the offset's bits, 0 for a class without.
- *   bits 10..11: 3 for classes 4 and 5, whose offset is sent divided by 8
- *   bits 12..14: the offset of classes 1 to 3 divided by 2, 7 for class 0
+ *   bits  0..5:  n. The bitstream shifted left by n has the offset's bits on
+ *                top. 6 bits, so that the entry itself is the shift count.
+ *   bits  6..11: 64 - the offset's bits, mod 64. The bitstream shifted right
+ *                by this is the offset's bits; 0 for a class without.
+ *   bits 12..13: f, the offset is (its bits | z) << f: 3 for classes 4 and 5,
+ *                whose offset is sent divided by 8, 1 to 3 for classes 1 to 3,
+ *                the offsets 2, 4 and 8
+ *   bit  14:     z, 1 for classes 1 to 3. Class 0 has offset 0 so: the
+ *                offset before.
  *   bits 15..19: n + the offset's bits, how far the bitstream moves on
  *   bits 20..23: ll, at most 15
  *   bits 24..29: ml, at most 35
@@ -124,19 +127,19 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
  * Taking the token apart in the decoder cost many instructions per sequence,
  * which in-order cores run at most two per cycle.
  */
-#define TOK_RIGHT_AT 4
-#define TOK_SHIFT_AT 10
-#define TOK_FIXED_AT 12
+#define TOK_RIGHT_AT 6
+#define TOK_F_AT 12
+#define TOK_Z_AT 14
 #define TOK_DROP_AT 15
 #define TOK_LL_AT 20
 #define TOK_ML_AT 24
 #define TOK_VALUE_AT 30
 #define TOK_ESCAPE_AT 31
 /* the fields of an entry e, as listed above */
-#define TOK_N(e) ((e) & 15U)
+#define TOK_N(e) ((e) & 63U)
 #define TOK_RIGHT(e) (((e) >> TOK_RIGHT_AT) & 63U)
-#define TOK_SHIFT(e) (((e) >> TOK_SHIFT_AT) & 3U)
-#define TOK_FIXED(e) (((e) >> TOK_FIXED_AT) & 7U)
+#define TOK_F(e) (((e) >> TOK_F_AT) & 3U)
+#define TOK_Z(e) (((e) >> TOK_Z_AT) & 1U)
 #define TOK_DROP(e) (((e) >> TOK_DROP_AT) & 31U)
 #define TOK_LL(e) (((e) >> TOK_LL_AT) & 15U)
 #define TOK_ML(e) (((e) >> TOK_ML_AT) & 63U)
@@ -147,13 +150,13 @@ static inline u32 token_entry(unsigned int s, unsigned int n)
 		     raw_bits = SEQLZ_RAW_BITS(cls);
 	unsigned int drop = n + raw_bits, ll = s & SEQLZ_LL_CAP,
 		     ml = (s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP;
-	unsigned int shift = SEQLZ_OFF_SHIFT(cls);
+	/* the offsets 2, 4 and 8 of classes 1 to 3 are 1 << cls */
+	unsigned int z = cls - 1U < 3U, f = z ? cls : SEQLZ_OFF_SHIFT(cls);
 
 	if (s == SEQLZ_ESCAPE)
 		return 1U << TOK_ESCAPE_AT | n << TOK_DROP_AT;
-	return n | (63U - raw_bits) << TOK_RIGHT_AT | shift << TOK_SHIFT_AT |
-	       (cls ? SEQLZ_OFF_FIXED(cls) / 2U : 7U) << TOK_FIXED_AT |
-	       drop << TOK_DROP_AT | ll << TOK_LL_AT |
+	return n | ((64U - raw_bits) & 63U) << TOK_RIGHT_AT | f << TOK_F_AT |
+	       z << TOK_Z_AT | drop << TOK_DROP_AT | ll << TOK_LL_AT |
 	       (ml + 4U) << TOK_ML_AT |
 	       (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << TOK_VALUE_AT;
 }

@@ -601,7 +601,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		goto last_literals;
 	tok = next_token(&br, &t->token);
 	for (;;) {
-		unsigned int nl, len, off, raw, fixed;
+		unsigned int nl, len, off, raw, fixed, back;
 
 		if (tok >> TOK_ESCAPE_AT) {
 			/* escape: SEQLZ_ESCAPE_BITS bits of the token follow */
@@ -622,17 +622,17 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		 * bits gets 0, and OR the fixed offset of classes 1 to 3 over
 		 * it; fixed is 7 for class 0, the offset before.
 		 */
-		raw = (unsigned int)(((br.bits << TOK_N(tok)) >> TOK_RIGHT(tok)) >>
-				     1) << TOK_SHIFT(tok);
+		back = TOK_RIGHT(tok);
+		raw = (unsigned int)((br.bits << TOK_N(tok)) >> back)
+		      << TOK_F(tok);
 		seqlz_br_drop(&br, TOK_DROP(tok));
-		fixed = TOK_FIXED(tok);
-		off = raw | fixed << 1;
 		/*
-		 * Class 0: the offset before. Selected with a mask, (fixed + 1)
-		 * >> 3 is 1 only for 7: gcc and clang made a condition a branch,
-		 * and repeats come in no order.
+		 * Without bits, back is 0: the offsets 2, 4 and 8 are 1 << f,
+		 * class 0 the offset before. That choice does not wait for the
+		 * bitstream, the one with raw is the select it always was.
 		 */
-		off ^= (off ^ last) & (0U - ((fixed + 1U) >> 3));
+		fixed = TOK_Z(tok) ? 1U << TOK_F(tok) : last;
+		off = back ? raw : fixed;
 		nl = TOK_LL(tok);
 		len = TOK_ML(tok);
 		/*
