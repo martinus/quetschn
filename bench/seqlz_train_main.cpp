@@ -324,14 +324,13 @@ int main(int argc, char** argv) {
             }
             // the same symbols and the same repeat offset as seqlz_encode()
             auto last = 1U;
-            auto rep2 = SEQLZ_REP2_START;
             auto extra = 0U;
             for (auto const& s : sequences) {
                 // the last sequence, without a match, has no token and no length value
                 if (s.match == 0) {
                     continue;
                 }
-                auto const cls = seqlz_off_class(s.offset, last, rep2, &extra);
+                auto const cls = seqlz_off_class(s.offset, last, &extra);
                 counts.token[seqlz_token(s.literals, s.match, cls)] += 1;
                 if (s.literals >= SEQLZ_LL_CAP) {
                     counts.ll[seqlz_len_symbol(s.literals - SEQLZ_LL_CAP, &extra)] += 1;
@@ -339,10 +338,7 @@ int main(int argc, char** argv) {
                 if (s.match - 4U >= SEQLZ_ML_CAP) {
                     counts.ml[seqlz_len_symbol(s.match - 4U - SEQLZ_ML_CAP, &extra)] += 1;
                 }
-                if (s.offset != last) {
-                    rep2 = last;
-                    last = s.offset;
-                }
+                last = s.offset;
             }
         }
         auto const what = "trained on " + std::to_string(pages) + " pages of " + base;

@@ -167,29 +167,28 @@ TEST_CASE("seqlz: the token holds ll and ml - 4 up to their caps and the offset 
     CHECK(seqlz_token(SEQLZ_LL_CAP, SEQLZ_ML_CAP + 4, 0) == SEQLZ_LL_CAP + (SEQLZ_ML_CAP << ml_shift));
     CHECK(seqlz_token(4000, 3000, 2) == SEQLZ_LL_CAP + (SEQLZ_ML_CAP << ml_shift) + (2U << cls_shift));
     auto bits = 0U;
-    // last 9, rep2 40: the repeat offsets first, then 2 and 8, then by size
-    CHECK(seqlz_off_class(9, 9, 40, &bits) == 0);
+    // last 9: the repeat offset first, then 2, 4 and 8, then the multiples of 8, then by size
+    CHECK(seqlz_off_class(9, 9, &bits) == 0);
     CHECK(bits == 0);
-    CHECK(seqlz_off_class(40, 9, 40, &bits) == 1);
+    CHECK(seqlz_off_class(2, 9, &bits) == 1);
     CHECK(bits == 0);
-    CHECK(seqlz_off_class(2, 9, 40, &bits) == 2);
+    CHECK(seqlz_off_class(4, 9, &bits) == 2);
+    CHECK(seqlz_off_class(8, 9, &bits) == 3);
     CHECK(bits == 0);
-    CHECK(seqlz_off_class(8, 9, 40, &bits) == 3);
-    CHECK(bits == 0);
-    CHECK(seqlz_off_class(8, 8, 40, &bits) == 0);
-    CHECK(seqlz_off_class(16, 9, 40, &bits) == 4);
-    CHECK(bits == 4);
-    CHECK(seqlz_off_class(120, 9, 40, &bits) == 4);
-    CHECK(seqlz_off_class(128, 9, 40, &bits) == 5);
-    CHECK(bits == 7);
-    CHECK(seqlz_off_class(1016, 9, 40, &bits) == 5);
-    CHECK(seqlz_off_class(1, 9, 40, &bits) == 6);
+    CHECK(seqlz_off_class(8, 8, &bits) == 0);
+    CHECK(seqlz_off_class(16, 9, &bits) == 4);
+    CHECK(bits == 5);
+    CHECK(seqlz_off_class(248, 9, &bits) == 4);
+    CHECK(seqlz_off_class(256, 9, &bits) == 5);
     CHECK(bits == 8);
-    CHECK(seqlz_off_class(255, 9, 40, &bits) == 6);
-    CHECK(seqlz_off_class(1024, 9, 40, &bits) == 7);
+    CHECK(seqlz_off_class(2040, 9, &bits) == 5);
+    CHECK(seqlz_off_class(1, 9, &bits) == 6);
+    CHECK(bits == 8);
+    CHECK(seqlz_off_class(255, 9, &bits) == 6);
+    CHECK(seqlz_off_class(2048, 9, &bits) == 7);
     CHECK(bits == page_bits);
-    CHECK(seqlz_off_class(257, 9, 40, &bits) == 7);
-    CHECK(seqlz_off_class(4095, 9, 40, &bits) == 7);
+    CHECK(seqlz_off_class(257, 9, &bits) == 7);
+    CHECK(seqlz_off_class(4095, 9, &bits) == 7);
 }
 
 TEST_CASE("seqlz: a sequence with long lengths and a large offset needs more bits than one refill") {

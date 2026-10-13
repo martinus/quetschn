@@ -179,9 +179,9 @@ int seqlz_tables_init(struct seqlz_tables *t,
 	unsigned int off, raw_bits;
 
 	memset(t, 0, sizeof(*t));
-	/* 0 is no offset; neither repeat offset is 0 */
+	/* 0 is no offset, nor the repeat offset */
 	for (off = 1; off < SEQLZ_OFF_TABLE; off++)
-		t->off_class[off] = (u8)seqlz_off_class(off, 0, 0, &raw_bits);
+		t->off_class[off] = (u8)seqlz_off_class(off, 0, &raw_bits);
 	if (build_token(lengths->token, &t->token) ||
 	    build_values(lengths->ll, &t->ll) ||
 	    build_values(lengths->ml, &t->ml) || build_lit_sets(t))

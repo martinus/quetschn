@@ -81,7 +81,6 @@ struct seqlz_encoder {
 	u8 *lit; /* where the next literal goes */
 	const u8 *src_end; /* copies of 16 literals may read up to here */
 	unsigned int last; /* the offset of the sequence before, class 0 */
-	unsigned int rep2; /* the one before that, class 1 */
 };
 
 /* appends the n bits of v; n < 64 - cnt */
@@ -196,11 +195,10 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 		return;
 	/* token and offset in one put, the length values after them */
 	/*
-	 * The class from the table, then the repeat offsets over it, as
+	 * The class from the table, then the repeat offset over it, as
 	 * arithmetic: as selects gcc made them branches.
 	 */
 	cls = t->off_class[min(off, SEQLZ_OFF_TABLE - 1U)];
-	cls -= (cls - 1U) * (off == e->rep2);
 	cls *= off != e->last;
 	raw_bits = SEQLZ_RAW_BITS(cls);
 	code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
@@ -219,7 +217,6 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 	if (ml - 4 >= SEQLZ_ML_CAP)
 		put_len_value(e, &t->ml, ml - 4 - SEQLZ_ML_CAP);
 	enc_flush(e);
-	e->rep2 ^= (e->rep2 ^ e->last) & (0U - (off != e->last));
 	e->last = off;
 }
 
@@ -232,8 +229,7 @@ static __always_inline void encoder_init(struct seqlz_encoder *e,
 				     .p = d + dst_cap,
 				     .lit = d + SEQLZ_HEADER,
 				     .src_end = src_end,
-				     .last = 1,
-				     .rep2 = SEQLZ_REP2_START };
+				     .last = 1 };
 }
 
 /*

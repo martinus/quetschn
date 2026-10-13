@@ -540,12 +540,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 	unsigned long lit_fast, in_fast, end_gap;
 	struct seqlz_bit_reader br;
 	unsigned int n_lit, tok, skip = 0;
-	/*
-	 * The offset of each class without bits, 0 for the classes with: the
-	 * last offset, the one before it, 2 and 8. Every offset is its bits
-	 * ORed with this, the same instructions for every class.
-	 */
-	unsigned int cand[8] = { 1, SEQLZ_REP2_START, 2, 8 };
+	unsigned int last = 1;
 
 	if (src_len < SEQLZ_HEADER)
 		return -EINVAL;
@@ -606,7 +601,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		goto last_literals;
 	tok = next_token(&br, &t->token);
 	for (;;) {
-		unsigned int nl, len, off, raw;
+		unsigned int nl, len, off, raw, fixed;
 
 		if (tok >> TOK_ESCAPE_AT) {
 			/* escape: SEQLZ_ESCAPE_BITS bits of the token follow */
@@ -624,12 +619,20 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		/*
 		 * The offset: shift the token's code out on top, then the
 		 * offset's bits down, in two shifts so that a class without
-		 * bits gets 0, and OR the class's offset from cand over it.
+		 * bits gets 0, and OR the fixed offset of classes 1 to 3 over
+		 * it; fixed is 7 for class 0, the offset before.
 		 */
 		raw = (unsigned int)(((br.bits << TOK_N(tok)) >> TOK_RIGHT(tok)) >>
 				     1) << TOK_SHIFT(tok);
 		seqlz_br_drop(&br, TOK_DROP(tok));
-		off = raw | cand[TOK_CLASS(tok)];
+		fixed = TOK_FIXED(tok);
+		off = raw | fixed << 1;
+		/*
+		 * Class 0: the offset before. Selected with a mask, (fixed + 1)
+		 * >> 3 is 1 only for 7: gcc and clang made a condition a branch,
+		 * and repeats come in no order.
+		 */
+		off ^= (off ^ last) & (0U - ((fixed + 1U) >> 3));
 		nl = TOK_LL(tok);
 		len = TOK_ML(tok);
 		/*
@@ -655,8 +658,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 			copy16(d, lit);
 			d += nl;
 			lit += nl;
-			cand[1] ^= (cand[1] ^ cand[0]) & (0U - (off != cand[0]));
-			cand[0] = off;
+			last = off;
 			if (off - 1U >= (unsigned int)(d - (u8 *)dst))
 				return -EINVAL;
 			copy_match_fast(d, off, len);
@@ -678,8 +680,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 			seqlz_br_refill(&br);
 			len += seqlz_br_value(&br, &t->ml);
 		}
-		cand[1] ^= (cand[1] ^ cand[0]) & (0U - (off != cand[0]));
-		cand[0] = off;
+		last = off;
 		/* off must point into the page; off - 1 wraps for 0 */
 		if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||
 		    len > (unsigned int)(d_end - d))
