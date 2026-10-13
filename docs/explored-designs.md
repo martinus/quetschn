@@ -6735,10 +6735,24 @@ condition clang branched, 2% more instructions and the A76 20% slower; with mask
 the A55 3.4% and the A76 6.5% more cycles in the hot loop. That one was not timed in the phone's
 kernel.
 
+**Longer lengths in the token instead, not kept either.** Where does the decoder's time go, if not into
+the offsets? Each page of p3 decoded 7 times alone on the Mi 9T, the fastest time fitted against the
+counts of the page (R² 0.86 and 0.88): an escape costs 67 ns on the A55 and 19 on the A76, a length
+value for ll 80 and 24, for ml 54 and 12. With 10.6, 6.1 and 11.3 of them per page that is a quarter of
+the A55's 7.3 µs. A table of the escaped tokens' entries, built once, made no difference: the cost is
+the missed branch, not the entry. Priced with that model, ml with 6 bits in the token and 7 classes that
+all have bits was the one layout smaller and faster, -1.0 bytes per page and -173 ns on the A55. Built,
+with tables trained the same way: 0.06% to 0.14% smaller, one desktop dump 0.02% larger. In the hot
+loop on the Mi 9T the decoder takes 1% fewer instructions but 6% and 10% more branch misses, the A76
+1.2% more cycles, the A55 too noisy to tell; compressing takes 6% more instructions. The matches of 35
+to 66 bytes stay on the fast path now, and its copy loop of varying length misses where the slow path
+did before; 15 escapes per page instead of 12 with 7168 tokens. Code: the branch `ml6-classes7`,
+commit `5b967f0`.
+
 **Why not kept.** On x86-64 the classes are free, on the phones, which are what zram runs on, they cost
 8 to 24 bytes per µs of time per page written, near where `zstd` takes over. The tables trained again
 with today's classes are the cheap part of this: 0.3% to 1.9% smaller than today's tables at the same
-speed. Not measured: a branch over the classes without bits on a core that predicts it better, and
+speed, and today's six classes are close to the best this decoder gives. Not measured: a branch over the classes without bits on a core that predicts it better, and
 whether the 16 KiB tables change any of it.
 
 ## Word model: WKdm-style 64-bit words
