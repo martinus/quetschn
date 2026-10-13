@@ -523,8 +523,8 @@ register instead of 0. Line 245 does it in two steps: `>> 1`, then `>> (63 - x)`
 shift is by 63, and after the first shift bit 63 is 0, so the result is 0. For `x = 11` the two shifts
 are 1 and 52, together $53 = 64 - 11$. No branch, and every shift count is from 0 to 63.
 
-The worked example is the match length value of the example page, with the 4 KiB tables. After the token
-and the offset, {{ch12.ab.tokdrop}} bits, the register is `{{ch12.ab.bits2}}` with `count = {{ch12.ab.count2}}`:
+The worked example is the match length value of the example page, with the 4 KiB tables. After the escape's
+code, the token's 12 bits and the offset, {{ch12.ab.tokdrop}} bits, the register is `{{ch12.ab.bits2}}` with `count = {{ch12.ab.count2}}`:
 
 - The index is the top 8 bits, `{{ch12.ab.idxhex}}`, {{ch12.ab.idx}}. `t->ml.decode[{{ch12.ab.idx}}]` is `{{ch12.ab.entry}}`.
 - `n = {{ch12.ab.low}} & 15 = {{ch12.ab.n}}`: the code is `{{ch12.ab.code}}`, {{ch12.ab.n}} bits, the symbol {{ch12.ab.sym}}.
@@ -533,10 +533,10 @@ and the offset, {{ch12.ab.tokdrop}} bits, the register is `{{ch12.ab.bits2}}` wi
 - `bits << {{ch12.ab.n}}` is `{{ch12.ab.shl}}`, `>> 1` is `{{ch12.ab.shr1}}`, `>> {{ch12.ab.shr2}}` is `{{ch12.ab.xhex}}`, {{ch12.ab.xval}}: the {{ch12.ab.x}}
   bits `{{ch12.ab.xbits}}`.
 - The value is `{{ch12.ab.base}} + {{ch12.ab.xval}} = {{ch12.ab.value}}`, and {{ch12.ab.dropped}} bits are dropped, `count = {{ch12.ab.count3}}`.
-@assert ch12.ab.code == ml.code[ch12.ab.sym] and ch12.ab.base == 2 ** ch12.ab.x and ch12.ab.count3 == 0
+@assert ch12.ab.code == ml.code[ch12.ab.sym] and ch12.ab.base == 2 ** ch12.ab.x and ch12.ab.count3 == ab.b.pad and ch12.ab.escaped == 1
 
 `seqlz_decode()` adds that to the {{ch12.ml_tok}} of the token, and the match is {{ch12.ab.match}} bytes long, as the format's
-example says. The page's {{ab.b.bits}} bits are used up. A direct symbol for comparison: if the top bits are `000...`, `t->ml.decode[0]` is
+example says. The page's {{ab.b.bits}} bits are used up; the {{ab.b.pad}} left are the zeros at the end of the last byte. A direct symbol for comparison: if the top bits are `{{ch12.ml0.code}}...`, `t->ml.decode[{{ch12.ml0.index}}]` is
 `{{ch12.ml0.entry}}`, `n = {{ch12.ml0.n}}`, `x = {{ch12.ml0.x}}`, base {{ch12.ml0.base}}: the symbol {{ch12.ml0.base}} with the code `{{ch12.ml0.code}}`, value {{ch12.ml0.base}}, and the second shift by
 63 gives 0 for the extra bits. All numbers here come from the real functions and tables, through a facts program.
 @assert ch12.ml0.x == 0 and ml.code[ch12.ml0.base] == ch12.ml0.code and ch12.ab.match == 4094

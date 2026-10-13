@@ -140,7 +140,7 @@ page touches.
 
 seqlz reads its bitstream **most significant bit first** ([chapter 4](#ch-format--bitstream)). The
 next code is then the top bits of the index, and the $2^{11-l}$ entries of a code are one range.
-Token 49's code is `{{tok.code.49}}`: its entries are the indices `0001xxxxxxx`, {{ch03.t49.first}}
+Token 49's code is `{{tok.code.49}}`: its entries are the indices `{{tok.code.49}}xxxxxxx`, {{ch03.t49.first}}
 to {{ch03.t49.last}}. At 4 bytes per entry and 16 entries per line, that is lines
 {{ch03.t49.line_first}} to {{ch03.t49.line_last}}. Token 4's code `{{tok.code.4}}` has the
 {{ch03.t4.entries}} entries {{ch03.t4.first}} to {{ch03.t4.last}}, all in line
@@ -153,7 +153,7 @@ bits of the index, and its entries are every $2^l$-th entry of the table. Token 
 {{ch03.t49.lsb.at.2}}, and so on, one in every one of the {{ch03.t49.lsb.lines}} lines, and token
 4's {{ch03.t4.entries}} entries are in {{ch03.t4.lsb.lines}} lines, {{ch03.t4.lsb.line.0}},
 {{ch03.t4.lsb.line.1}}, {{ch03.t4.lsb.line.2}} and so on, {{ch03.t4.lsb.step}} lines apart:
-@assert (ch03.t49.line_first, ch03.t49.line_last, ch03.t4.line_first, ch03.t49.lsb.lines, ch03.t4.lsb.line[0], ch03.t4.lsb.step) == (8, 15, 70, 128, 3, 16)
+@assert (ch03.t49.line_first, ch03.t49.line_last, ch03.t4.line_first, ch03.t49.lsb.lines, ch03.t4.lsb.line[0], ch03.t4.lsb.step) == (0, 7, 61, 128, 5, 16)
 
 <figure class="diagram">
 <div class="scroll">

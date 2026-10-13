@@ -2,8 +2,9 @@
 /*
  * abbits.c: chapter 4's page of ab, compressed by the real code, and the fields of its bitstream as
  * the decoder reads them: the token's code, the offset's bits, the match length value's code and its
- * extra bits, with what each means. Fails if the page is not what abbits.js tells: 2 raw literals, one
- * sequence with a new offset and a match length value, and the last sequence without bits.
+ * extra bits, with what each means; the escape and the token's 12 bits when the token has no code. Fails
+ * if the page is not what abbits.js tells: 2 raw literals, one sequence with a new offset and a match
+ * length value, and the last sequence without bits.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,14 +53,23 @@ int main(void) {
     v = seq[0].match - 4 - SEQLZ_ML_CAP;
     sym = seqlz_len_symbol(v, &extra);
     if (n != 2 || seq[1].literals != 0 || n_lit != 2 || cls == 0 || seq[0].literals >= SEQLZ_LL_CAP ||
-        seq[0].match - 4U < SEQLZ_ML_CAP || seqlz_default_own.token[tok] == 0 || extra == 0) {
+        seq[0].match - 4U < SEQLZ_ML_CAP || extra == 0) {
         fprintf(stderr, "abbits.c: the page of ab is not what abbits.js tells\n");
         return 1;
     }
     printf("{\"len\":%u,\"bytes\":[", len);
     for (k = 0; k < len; k++)
         printf("%s%u", k ? "," : "", dst[k]);
-    printf("],\"tok\":%u,\"tokCode\":\"%s\",", tok, code_of(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, tok));
+    printf("],\"tok\":%u,", tok);
+    if (seqlz_default_own.token[tok]) {
+        printf("\"escCode\":\"\",\"tokCode\":\"%s\",", code_of(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, tok));
+    } else {
+        /* the escape's code, then the token's number in SEQLZ_ESCAPE_BITS plain bits */
+        printf("\"escCode\":\"%s\",\"tokCode\":\"", code_of(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_ESCAPE));
+        for (k = SEQLZ_ESCAPE_BITS; k-- > 0;)
+            putchar('0' + ((tok >> k) & 1));
+        printf("\",");
+    }
     printf("\"ll\":%u,\"mlf\":%u,\"cls\":%u,\"rawBits\":%u,\"off\":%u,",
            seq[0].literals,
            SEQLZ_ML_CAP,

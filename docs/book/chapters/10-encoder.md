@@ -260,14 +260,14 @@ is {{ch10.ptr.s1.ll}} literals and a match of {{ch10.ptr.s1.ml}} at offset {{ch1
 `{{ch10.ptr.s1.putbits}}`, so `acc = {{ch10.ptr.s1.acc}}` and `cnt = {{ch10.ptr.s1.cnt}}`.
 
 - Flush 1: `acc << {{ch10.ptr.f1.shift}}` is `{{ch10.ptr.f1.word}}`. Stored little endian at `p - 8`, the bytes are `{{ch10.ptr.f1.stored}}`:
-  `{{ch10.ptr.f1.e1}}` at `p - 1`, `11011000`, the first 8 bits; `{{ch10.ptr.f1.e2}}` at `p - 2`, `1011000` and a
+  `{{ch10.ptr.f1.e1}}` at `p - 1`, `11010110`, the first 8 bits; `{{ch10.ptr.f1.e2}}` at `p - 2`, `0101000` and a
   0, the 7 bits left. `p` moves down by `{{ch10.ptr.f1.cnt0}} >> 3 = {{ch10.ptr.f1.moved}}`, `cnt` is {{ch10.ptr.f1.cnt1}}.
 - The second sequence, {{ch10.ptr.s2.ll}} literal and {{ch10.ptr.s2.ml}} bytes at offset {{ch10.ptr.s2.off}} again, is token {{ch10.ptr.s2.tok}} in class {{ch10.ptr.s2.cls}}, which has the
   {{ch10.ptr.s2.tlen}}-bit code `{{ch10.ptr.s2.code}}` and no offset bits. `cnt` is {{ch10.ptr.s2.cnt}}, `acc` ends in the bits `{{ch10.ptr.s2.accbits}}`.
 - Flush 2: `acc << {{ch10.ptr.f2.shift}}` is `{{ch10.ptr.f2.word}}`. The store writes `{{ch10.ptr.f2.e2}}` at the new `p - 1` (the same
-  byte as before, now with all its bits) and `{{ch10.ptr.f2.e3}}` below it, `001` and zeros. `p` moves down by {{ch10.ptr.f2.moved}},
+  byte as before, now with all its bits) and `{{ch10.ptr.f2.e3}}` below it, `000` and zeros. `p` moves down by {{ch10.ptr.f2.moved}},
   `cnt` is {{ch10.ptr.f2.cnt1}}.
-@assert ch10.ptr.s1.code + ch10.ptr.s1.offbits == "11011000" + "1011000" and ch10.ptr.s2.code == tok.code[49] and ch10.ptr.f1.cnt1 == 7 and ch10.ptr.f2.cnt1 == 3
+@assert ch10.ptr.s1.code + ch10.ptr.s1.offbits == "11010110" + "0101000" and ch10.ptr.f2.e3 == "00" and ch10.ptr.s2.code == tok.code[49] and ch10.ptr.f1.cnt1 == 7 and ch10.ptr.f2.cnt1 == 3
 
 <figure class="diagram">
 <div class="scroll">
@@ -620,21 +620,22 @@ offset {{ch10.ab.s1.off}} that runs to the end of the page, {{ch10.ab.s1.ml}} by
 | --- | --- | --- | --- |
 | room check | `p - lit` = 8190 ≥ 2 + 32 | | 0 |
 | literals | 16 bytes `abab...` copied to `d + 2`, `lit` moves on by 2 | | 0 |
-| token and offset | class {{ch10.ab.s1.cls}}, token {{ch10.ab.s1.tok}}, code `{{ch10.ab.s1.code}}`, offset `{{ch10.ab.s1.offbits}}` | `{{ch10.ab.s1.acc}}` | {{ch10.ab.s1.cnt}} |
+| token and offset | class {{ch10.ab.s1.cls}}, token {{ch10.ab.s1.tok}}, which has no code: the escape's code `{{ch10.ab.s1.esccode}}` and the token's 12 bits `{{ch10.ab.s1.tokbits}}`, then the offset `{{ch10.ab.s1.offbits}}` | `{{ch10.ab.s1.acc}}` | {{ch10.ab.s1.cnt}} |
 | `ml` value | ${{ch10.ab.s1.ml4}} - 31 = {{ch10.ab.s1.mlv.v}}$: code `{{ch10.ab.s1.mlv.code}}`, extra `{{ch10.ab.s1.mlv.xbits}}` | `{{ch10.ab.s1.mlv.acc}}` | {{ch10.ab.s1.mlv.cnt}} |
 | flush | `acc << {{ch10.ab.f1.shift}}` = `{{ch10.ab.f1.word}}` stored at `end - 8`: `{{ch10.ab.f1.stored}}`; `p` = `end - {{ch10.ab.f1.p}}` | `{{ch10.ab.s1.mlv.acc}}` | {{ch10.ab.f1.cnt1}} |
 | last sequence | 0 literals, then the return of line 195: no token, nothing put | `{{ch10.ab.s1.mlv.acc}}` | {{ch10.ab.f1.cnt1}} |
-| finish | `cnt` is 0, no partial byte; {{ab.b.bytes}} bytes of bitstream; u16 = {{ab.lits}} | | |
+| finish | `cnt` is {{ch10.ab.f1.cnt1}}: the byte below `p` is the last of the bitstream, `p` moves down by 1; {{ab.b.bytes}} bytes of bitstream; u16 = {{ab.lits}} | | |
 
-The flush is {{ab.b.bits}} bits, {{ab.b.bytes}} whole bytes, so on this page no byte is ever partial. The old bits `{{ch10.ab.s1.mlv.acc}}`
-are still in `acc` after it, which does not matter: the next put shifts them out, and here no put comes.
-The last {{ab.b.bytes}} bytes of `dst` are now `{{ch10.ab.f1.e4}} {{ch10.ab.f1.e3}} {{ch10.ab.f1.e2}} {{ch10.ab.f1.e1}}`. `encoder_finish()` writes `{{ch10.ab.u16}}` at the front, and
+The flush has {{ch10.ab.f1.cnt0}} bits: `p` moves down by {{ch10.ab.f1.moved}} whole bytes, and the {{ch10.ab.f1.cnt1}} bits left are already on
+top of the byte below `p`, written by the same 8-byte store, with zeros below them. The old bits
+`{{ch10.ab.s1.mlv.acc}}` are still in `acc` after it, which does not matter: the next put shifts them out, and here no
+put comes. The last {{ab.b.bytes}} bytes of `dst` are now `{{ch10.ab.f1.e5}} {{ch10.ab.f1.e4}} {{ch10.ab.f1.e3}} {{ch10.ab.f1.e2}} {{ch10.ab.f1.e1}}`. `encoder_finish()` writes `{{ch10.ab.u16}}` at the front, and
 since {{ab.b.bytes}} is less than 8, it copies byte by byte from `end - 1` down: `{{ab.b.hex}}`, right after `61 62`.
 {{ab.len}} bytes. The 14 more bytes of `abab` that the literal copy wrote past `d + 4` are overwritten by the
 bitstream or lie beyond the {{ab.len}} bytes returned.
-@assert ch10.ab.f1.cnt1 == 0 and ab.b.bytes == 4 and ab.b.pad == 0
+@assert ab.b.bytes == ch10.ab.f1.moved + 1 and ab.b.pad == 8 - ch10.ab.f1.cnt1
 
-The {{ab.b.bits}} bits, in the order the decoder reads them: `{{ch10.ab.s1.code}}` (token {{ch10.ab.s1.tok}}) `{{ch10.ab.s1.offbits}}` (offset {{ch10.ab.s1.off}}) `{{ch10.ab.s1.mlv.code}}`
+The {{ab.b.bits}} bits, in the order the decoder reads them: `{{ch10.ab.s1.esccode}}` (the escape) `{{ch10.ab.s1.tokbits}}` (token {{ch10.ab.s1.tok}}) `{{ch10.ab.s1.offbits}}` (offset {{ch10.ab.s1.off}}) `{{ch10.ab.s1.mlv.code}}`
 (symbol {{ch10.ab.s1.mlv.sym}} of the `ml` table) `{{ch10.ab.s1.mlv.xbits}}` ({{ch10.ab.s1.mlv.x}}).
 @assert ch10.ab.s1.putbits + ch10.ab.s1.mlv.code + ch10.ab.s1.mlv.xbits == ab.b.bin
 

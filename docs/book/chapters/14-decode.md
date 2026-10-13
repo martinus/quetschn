@@ -644,22 +644,26 @@ The {{ab.len}} bytes `{{ab.hex}}` are the format's example ([chapter 4](#ch-form
 4 KiB page of `ab` repeated 2048 times. Here is what `seqlz_decode()` does with them, from a copy of the
 function with `printf()`s in it.
 
-**Setup.** `src_len = {{ab.len}} >= 2`. The header is `0x0002`: raw literals, `n_lit = {{ab.lits}}`. `2 + 2 <= 8`, so `lit =
-s + 2`, `lit_end = s + 4`, `lit_bound = s_end = s + 8`, and the bit reader starts at `s + 4` with the {{ab.b.bytes}}
-bytes `{{ab.b.hex}}`. `d_fast = dst + {{ch14.ab.dfast}}`. `lit_fast = s + 8 - 16`, as a number {{ch14.ab.lit_fast_below}} below `s`.
-`in_fast = s_end - 8 = s`, since `src_len >= 8`. `end_gap = d_end - lit_end`, as numbers. `n_lit` is not
+**Setup.** `src_len = {{ab.len}} >= 2`. The header is `0x0002`: raw literals, `n_lit = {{ab.lits}}`. `2 + 2 <= {{ab.len}}`, so `lit =
+s + 2`, `lit_end = s + 4`, `lit_bound = s_end = s + {{ab.len}}`, and the bit reader starts at `s + 4` with the {{ab.b.bytes}}
+bytes `{{ab.b.hex}}`. `d_fast = dst + {{ch14.ab.dfast}}`. `lit_fast = s + {{ab.len}} - 16`, as a number {{ch14.ab.lit_fast_below}} below `s`.
+`in_fast = s_end - 8 = s + 1`, since `src_len >= 8`. `end_gap = d_end - lit_end`, as numbers. `n_lit` is not
 4096, so the loop starts.
 
-@assert ab.len == 8 and ab.lits == 2 and ab.b.bytes == 4
+@assert ab.len == 9 and ab.lits == 2 and ab.b.bytes == 5
 
 **The first token.** `count = 0 < {{ch14.need}}`, so `next_token()` refills: fewer than 8 bytes are left, so the
 byte loop runs {{ch14.ab.loads}} times, `bits = {{ch14.ab.bits}}`, `count = {{ch14.ab.count}}`, `p = end`. The index is the top 11
-bits, `{{ch14.ab.idx_bin}}`, {{ch14.ab.idx}}, and the entry is `{{ch14.ab.entry}}`: token {{ch14.ab.tok}}, code length {{ch14.ab.N}}, `ll` {{ch14.ab.ll}}, `ml` {{ch14.ab.ml}},
-class {{ch14.ab.cls}}, `back` {{ch14.ab.BACK}}, drop {{ch14.ab.DROP}}, length value bit set.
+bits, `{{ch14.ab.idx_bin}}`, {{ch14.ab.idx}}, and the entry is `{{ch14.ab.entry}}`: bit 31 is set, the escape, and its drop is
+{{ch14.ab.esc_n}}, the length of the escape's code. The page's token has no code of its own.
 
-@assert ch14.ab.value_bit == 1 and ch14.ab.ml == 35
+@assert ch14.ab.escaped == 1 and ch14.ab.value_bit == 1 and ch14.ab.ml == 35
 
-**Sequence 1.** Not an escape. `raw = (bits << {{ch14.ab.N}}) >> {{ch14.ab.BACK}}`: the {{ch14.ab.raw_n}} bits `{{ch14.ab.raw_bin}}`, {{ch14.ab.raw}}. Drop {{ch14.ab.DROP}}, `count = {{ch14.ab.count2}}`.
+**Sequence 1.** An escape ([the loop](#ch-decode--offset)). Line 609 drops its {{ch14.ab.esc_n}} bits, `count = {{ch14.ab.esc_count}}`.
+The refill of line 610 finds `p == end` and adds nothing. The next 12 bits, `{{ch14.ab.esc_bits}}`, are the token, {{ch14.ab.tok}},
+below 3072, and after they are dropped `count = {{ch14.ab.esc_count2}}`. `token_entry({{ch14.ab.tok}}, 0)` builds its entry, `{{ch14.ab.entry2}}`:
+code length {{ch14.ab.N}}, since the code is gone already, `ll` {{ch14.ab.ll}}, `ml` {{ch14.ab.ml}}, class {{ch14.ab.cls}}, `back` {{ch14.ab.BACK}},
+drop {{ch14.ab.DROP}}, length value bit set. `raw = (bits << {{ch14.ab.N}}) >> {{ch14.ab.BACK}}`: the {{ch14.ab.raw_n}} bits `{{ch14.ab.raw_bin}}`, {{ch14.ab.raw}}. Drop {{ch14.ab.DROP}}, `count = {{ch14.ab.count2}}`.
 `off = {{ch14.ab.raw}}`, `nl = {{ch14.ab.ll}}`, `len = {{ch14.ab.ml}}`. The fast path is not taken, for three reasons at once: a length value
 follows, `lit` is above `lit_fast`, and `br.p` is above `in_fast`. On the slow path, `nl` is not 15. The
 checks pass: `lit == lit_end - 2`, `2 <= 2`, `2 <= 4096`. `copy_literals()` finds only {{ch14.ab.readable}} readable bytes
@@ -673,13 +677,13 @@ bytes from `d` up to `d + {{ch14.ab.store_end}}`, and copies the last {{ch14.ab.
 **The end.** `lit == lit_end` and `d == d_end`, so `d - lit` is `end_gap`: 0 literals left for 0 bytes,
 the last sequence, `break`. No second token is read. `copy_literals()` copies 0 bytes.
 
-**The end checks.** `count = {{ch14.ab.count3}}`, `p == end`, `count < 8`, and with `count = 0` there are no bits left to
-check. The function returns 0, and the page is `abab...ab`.
+**The end checks.** `count = {{ch14.ab.count3}}`, `p == end`, `count < 8`, and the {{ch14.ab.count3}} bits left are 0, the rest of the
+last byte. The function returns 0, and the page is `abab...ab`.
 
-@assert ch14.ab.count3 == 0 and ab.b.pad == 0
+@assert ch14.ab.count3 == ab.b.pad
 
-The example never takes the fast path; it has one sequence with a token, and that one has a length
-value. [Chapter 16](#ch-trace)'s page shows the fast path at work. With coded literals it compresses
+The example never takes the fast path; it has one sequence with a token, and that one is escaped
+and has a length value. [Chapter 16](#ch-trace)'s page shows the fast path at work. With coded literals it compresses
 to {{slab.coded.len}} bytes, and its decode goes like this at the start and at the end, recorded from the loop
 of `seqlz_decode()` when the book was built:
 

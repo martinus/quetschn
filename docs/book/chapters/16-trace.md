@@ -92,9 +92,10 @@ values we will meet on this page:
 
 {{ch14.tokens_coded}} of the {{const.TOKEN_SYMBOLS}} tokens have a code of their own; the others are sent as the escape's code followed by
 the token in 12 bits ([chapter 4](#ch-format--token)). Literal table 0 is the one that codes text
-best; we will see the encoder pick it.
+best, but this page has zero bytes too, and we will see the encoder pick table 3, which gives them
+{{lit.3.len.0}} bits instead of {{lit.0.len.0}}.
 
-@assert ch16.lt.set == 0
+@assert ch16.lt.set == 3 and lit[3].len[0] < lit[0].len[0]
 
 ## seqlz_compress(), and the matcher's first sequence {#ch-trace--matcher}
 
@@ -287,7 +288,7 @@ recomputes them one literal at a time:
 @output ch16-trace 27-35
 
 Table {{ch16.lt.set}} wins, at {{ch16.lt.bits}} bits, {{ch16.lt.per_lit}} bits per literal. The text's {{ch16.part.2.lits}} literals take {{ch16.lit0.text}} bits each in it,
-the records' {{ch16.part.1.lits}} take {{ch16.lit0.records}}: pointer and pid bytes are close to random, and table 0 gives every byte
+the records' {{ch16.part.1.lits}} take {{ch16.lit0.records}}: pointer and pid bytes are close to random, and table {{ch16.lt.set}} gives every byte
 value above `0x7f` 10 bits. Each stream's bits are rounded up to whole bytes: the 8 streams take {{ch16.lt.sizes}} bytes, {{ch16.lt.bytes}} together.
 
 @assert ch16.lit0.high_all10 == 1
@@ -462,7 +463,7 @@ the bits right after the code with two shifts, `(bits << {{ch16.s.1.clen}}) >> {
 12, so {{ch16.s.1.ll}} literals are copied, with two 16-byte copies, and the {{ch16.s.1.ml}} bytes at offset {{ch16.s.1.off}} with two 8-byte
 copies.
 
-@assert ch16.s[1].clen == 10 and 16 < ch16.s[1].ll <= 32 and ch16.e0.sym == 15
+@assert ch16.s[1].clen == 9 and 16 < ch16.s[1].ll <= 32 and ch16.e0.sym == 15
 
 **Sequence 2, fast path.** Token {{ch16.s.2.tok}} has no length value, `d` at {{ch16.s.2.pos}} is far from the end, the scratch
 has room, and the input has more than 8 bytes left. So the fast path runs: `next_token_fast()` refills
@@ -477,21 +478,21 @@ has two counters added:
 @output ch16-trace 41
 
 {{ch14.seqs}} sequences have a token. The {{ch14.slow}} slow ones are the {{ch16.slow_value}} sequences with a length value ({{ch16.slow_ll}} for `ll`, {{ch16.slow_ml}}
-for `ml`), and sequences {{ch16.slow_novalue}}, whose bit reader has reached the last 8 bytes of the input, so
+for `ml`), and sequence {{ch16.slow_novalue}}, whose bit reader has reached the last 8 bytes of the input, so
 that a refill without a check could read past it.
 
-@assert ch16.slow_novalue_n == 2 and ch16.slow_novalue_past_in == 1 and ch16.slow_value + ch16.slow_novalue_n == ch14.slow
+@assert ch16.slow_novalue_n == 1 and ch16.slow_novalue_past_in == 1 and ch16.slow_value + ch16.slow_novalue_n == ch14.slow
 
 **The end.** After sequence 178's match `d` is at the end of the page and `lit` at `lit_end`, all {{ch16.lits}}
 literals used: `d - lit` is `end_gap`, 0 literals left for 0 bytes of the page. That is sequence 179,
 the last, which has no token, and the loop leaves without reading one; `copy_literals()` copies 0 bytes. Then
 the checks that make a page valid only if it ends where its bits end
 ([chapter 4](#ch-format--validity)): the bit reader has read every byte, `p == end`, and `count`, the
-bits left, is {{ch16.pad}}, fewer than 8, and that bit is 0: {{ch16.bits}} bits are {{ch16.full_bytes}} bytes and {{ch16.pad_bits}} bits, and the last
-byte's lowest bit is padding. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
+bits left, is {{ch16.pad}}, fewer than 8, and those bits are 0: {{ch16.bits}} bits are {{ch16.full_bytes}} bytes and {{ch16.pad_bits}} bit, and the
+last byte's lowest {{ch16.pad}} bits are padding. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
 the page we started with.
 
-@assert ch16.pad == 1
+@assert ch16.pad == 7 and ch16.pad_bits == 1
 
 Without the scratch, the same {{ch16.coded.len}} bytes are invalid: `seqlz_decode(t, src, {{ch16.coded.len}}, dst, NULL)` returns
 `-EINVAL` as soon as it sees the top bit of the u16. That is why `seqlz-fast-lit` has a decompression

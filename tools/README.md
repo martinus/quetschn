@@ -14,6 +14,7 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`zram-phone/`](zram-phone) | zram's writes and reads in the Mi 9T's own Linux 4.14: `build.sh` makes a module of the codec for that kernel (`OPT` and `ALIGN` for other flags), with the phone's symbol CRCs (`crcs.py`, `patch_versions.py`), `run.sh` runs `zramphone` on each codec alone, in turns, logs the clocks and temperatures around every run and can fix the memory's clocks and stop Android, `summary.py` gives the mean and the range per codec |
 | [`swap-fault/`](swap-fault) | the whole page fault on a running Linux as root, e.g. a rooted phone |
 | [`phone-apps/`](phone-apps) | the app launch test on a rooted Android phone: 25 apps in turn, zram on each codec, a reboot before every run |
+| [`phone-dump/`](phone-dump) | zram dumps of a rooted phone in use: `session.sh` reboots it, runs `workload.sh` (browsers, videos, maps, the camera, documents, `monkey`) and writes the zram device; `swapmap` gives every page its process and mapping, `attribute.py` puts them into the corpus |
 | [`android-emu/`](android-emu) | a zram dump from the Android 17 emulator, with 4 KiB or 16 KiB pages: its apps in turn while `hog` holds the RAM |
 | [`swap-bursts/`](swap-bursts) | `quetschn-swap-bursts`: samples `pswpin`, groups the swap-ins into bursts, and gives `r`, the reads per write of the score |
 | [`seqlz-bound/`](seqlz-bound) | per kind of field the bits a dump's pages take, next to their entropy, and layouts of the offset classes priced on real sequences |

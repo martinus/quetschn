@@ -213,13 +213,12 @@ follow from the lengths by the rule of deflate (RFC 1951, section 3.2.2), the **
 the order of the symbols' numbers. Here is the rule applied to the real token table of 4 KiB pages:
 
 - No symbol has a code of 1, 2 or 3 bits, so `first[4] = {{ch04.first.4}}`. The {{tok.codes_of.4}} symbols with a code of 4 bits are,
-  in the order of their number, the tokens {{ch04.syms.4.0}}, {{ch04.syms.4.1}}, {{ch04.syms.4.2}} and the escape {{ch04.syms.4.3}}. They get `{{tok.code.34}}`, `{{tok.code.49}}`,
-  `{{tok.code.2097}}` and `{{tok.code.3072}}`.
-- `first[5] = ({{ch04.first.4}} + {{tok.codes_of.4}}) * 2 = {{ch04.first.5}}`, binary `{{ch04.first_bin.5}}`. The {{tok.codes_of.5}} symbols with 5 bits, tokens {{ch04.syms.5.0}}, {{ch04.syms.5.1}}, {{ch04.syms.5.2}} and
-  {{ch04.syms.5.3}}, get `{{tok.code.576}}` to `{{tok.code.2624}}`.
+  in the order of their number, the token {{ch04.syms.4.0}} and the escape {{ch04.syms.4.1}}. They get `{{tok.code.49}}` and `{{tok.code.3072}}`.
+- `first[5] = ({{ch04.first.4}} + {{tok.codes_of.4}}) * 2 = {{ch04.first.5}}`, binary `{{ch04.first_bin.5}}`. The {{tok.codes_of.5}} symbols with 5 bits, tokens {{ch04.syms.5.0}}, {{ch04.syms.5.1}}, {{ch04.syms.5.2}},
+  {{ch04.syms.5.3}} and {{ch04.syms.5.4}}, get `{{tok.code.34}}` to `{{tok.code.2624}}`.
 - `first[6] = ({{ch04.first.5}} + {{tok.codes_of.5}}) * 2 = {{ch04.first.6}}`, binary `{{ch04.first_bin.6}}`, the code of token {{ch04.syms.6.0}}, the first of {{tok.codes_of.6}} symbols with
   6 bits.
-@assert tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0 and F("ch04.syms.4") == [34, 49, 2097, 3072] and F("ch04.syms.5") == [576, 2082, 2112, 2624]
+@assert tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0 and F("ch04.syms.4") == [49, 3072] and F("ch04.syms.5") == [34, 2082, 2097, 2112, 2624]
 
 Every table is **complete**: its codes use up all bit strings, the sum of $2^{-l}$ over all codes is
 exactly 1 ([chapter 2](#ch-compression--complete)). For the token table that is {{tok.codes_of.4}} codes of 4 bits, {{tok.codes_of.5}} of 5, {{tok.codes_of.6}} of 6, {{tok.codes_of.7}} of 7, {{tok.codes_of.8}} of 8, {{tok.codes_of.9}} of 9,
@@ -233,8 +232,8 @@ bits in a table of 2048 entries without checking the entry; the table is built i
 ## The bitstream {#ch-format--bitstream}
 
 `B` is read one bit at a time, starting with bit 7, the most significant bit, of its first byte: bit
-`i` of `B` is bit `7 - (i mod 8)` of byte `i div 8`. The byte `dc` is read as `1`, `1`, `0`, `1`, `1`,
-`1`, `0`, `0`. A decoder reads three kinds of things from it:
+`i` of `B` is bit `7 - (i mod 8)` of byte `i div 8`. The byte `13` is read as `0`, `0`, `0`, `1`, `0`,
+`0`, `1`, `1`. A decoder reads three kinds of things from it:
 
 - `read(n)`: the next `n` bits as a number, the first bit read the most significant. `read(4)` of the
   bits `0010` is 2. `read(0)` is 0.
@@ -323,21 +322,21 @@ literals, so the matcher does not look for one, see [chapter 9](#ch-matcher). Wi
 to 14 and `ml` up to 34 fit into the token alone; a 15 or a 31 means a length value follows.
 
 One code for all three numbers lets the code see how they go together. The shortest codes in the
-real 4 KiB table, {{tok.len.34}} bits each, are:
+real 4 KiB table are these, with the escape among them:
 
-| token | `ll` | `ml` | class | what it is |
-| --- | --- | --- | --- | --- |
-| {{ch04.syms.4.0}} | {{ch04.short.0.ll}} | {{ch04.short.0.ml}} | {{ch04.short.0.cls}} | 2 literals, then 6 bytes from the same offset as the match before |
-| {{ch04.syms.4.1}} | {{ch04.short.1.ll}} | {{ch04.short.1.ml}} | {{ch04.short.1.cls}} | 1 literal, 7 bytes, same offset: the sequence of an array of pointers |
-| {{ch04.syms.4.2}} | {{ch04.short.2.ll}} | {{ch04.short.2.ml}} | {{ch04.short.2.cls}} | 1 literal, 7 bytes from a new offset that is a multiple of 8 below 256 |
-| {{ch04.syms.4.3}} | | | | the escape |
-@assert F("ch04.syms.4") == [34, 49, 2097, 3072] and tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0
+| token | `ll` | `ml` | class | code | what it is |
+| --- | --- | --- | --- | --- | --- |
+| 49 | 1 | 7 | 0 | {{tok.len.49}} bits | 1 literal, 7 bytes, same offset: the sequence of an array of pointers |
+| 3072 | | | | {{tok.len.3072}} bits | the escape |
+| 34 | 2 | 6 | 0 | {{tok.len.34}} bits | 2 literals, then 6 bytes from the same offset as the match before |
+| 2097 | 1 | 7 | 4 | {{tok.len.2097}} bits | 1 literal, 7 bytes from a new offset that is a multiple of 8 below 256 |
+@assert F("ch04.syms.4") == [49, 3072] and tok.len[34] == tok.len[2097] == tok.len[49] + 1 and tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0
 
 Token 49 is the sequence of an array of 8-byte pointers, each 16 bytes further than the one before.
 Most pointers differ from the one 8 bytes back only in their lowest byte, so after the first pointer
 the sequences are 1 literal and 7 bytes copied from 8 bytes back, the same offset as before. As token
 49, such a sequence costs {{tok.len.49}} bits. Where the lowest byte carries into the next one, every
-16th pointer, the sequence is 2 literals and 6 bytes, token 34, at {{tok.len.34}} bits too. Of the
+16th pointer, the sequence is 2 literals and 6 bytes, token 34, at {{tok.len.34}} bits. Of the
 {{ch04.ptr.tokens}} tokens of [chapter 9](#ch-matcher)'s page of 512 pointers, {{ch04.ptr.t49}} are token 49
 and {{ch04.ptr.t34}} token 34.
 @assert ch04.ptr.t49 + ch04.ptr.t34 + 1 == ch04.ptr.tokens
@@ -560,21 +559,25 @@ Step by step, with the codes of the real 4 KiB tables:
 
 | bits | read as | means |
 | --- | --- | --- |
-| `{{ch04.ab.s.0.code}}` | `symbol(TOK)` = {{ch04.ab.s.0.tok}} | ${{ch04.ab.s.0.tok}} = {{ch04.ab.s.0.llf}} + 16 \cdot {{ch04.ab.s.0.mlf}} + 512 \cdot {{ch04.ab.s.0.cls}}$: `ll = {{ch04.ab.s.0.llf}}`, `mlf = {{ch04.ab.s.0.mlf}}`, class {{ch04.ab.s.0.cls}} |
+| `{{ch04.ab.s.0.esccode}}` | `symbol(TOK)` = 3072 | the escape: the token has no code of its own |
+| `{{ch04.ab.s.0.tokbits}}` | `read(12)` = {{ch04.ab.s.0.tok}} | ${{ch04.ab.s.0.tok}} = {{ch04.ab.s.0.llf}} + 16 \cdot {{ch04.ab.s.0.mlf}} + 512 \cdot {{ch04.ab.s.0.cls}}$: `ll = {{ch04.ab.s.0.llf}}`, `mlf = {{ch04.ab.s.0.mlf}}`, class {{ch04.ab.s.0.cls}} |
 | `{{ch04.ab.s.0.offbits}}` | `read({{ch04.ab.s.0.raw}})` = {{ch04.ab.s.0.offread}} | class {{ch04.ab.s.0.cls}}: `off = {{ch04.ab.s.0.off}}` |
 | | | `ll` is not 15, no `ll` value: append `a b`, the page has 2 bytes |
 | `{{ch04.ab.s.0.mlcode}}` | `symbol(ML)` = {{ch04.ab.s.0.mlsym}} | `mlf` is 31, so a length value: $b = {{ch04.ab.s.0.mlsym}} - 12 = {{ch04.ab.s.0.mlb}}$ |
 | `{{ch04.ab.s.0.mlbits}}` | `read({{ch04.ab.s.0.mlb}})` = {{ch04.ab.s.0.mlread}} | value $2^{{{ch04.ab.s.0.mlb}}} + {{ch04.ab.s.0.mlread}} = {{ch04.ab.s.0.mlval}}$, `ml = 35 + {{ch04.ab.s.0.mlval}} = {{ch04.ab.s.0.ml}}` |
 | | | copy {{ch04.ab.s.0.ml}} bytes from {{ch04.ab.s.0.off}} back: `abab...`, the page has 4096 bytes |
 | | | 0 literals left for 0 bytes of the page: the last sequence, no token |
-@assert ab.seqs == 2 and ab.escapes == 0 and ch04.ab.s[0].ll == 2 and ch04.ab.s[0].mlf == 31
+@assert ab.seqs == 2 and ab.escapes == 1 and ch04.ab.s[0].escaped == 1 and ch04.ab.s[0].ll == 2 and ch04.ab.s[0].mlf == 31
 
 After the last code, {{ab.b.pad}} bits of `B` are left, fewer than 8 and all zero. The page is valid.
 
 The match is the case where copying byte by byte matters: it starts 2 bytes back and is 4094 bytes
 long, so after its first 2 bytes it copies bytes it wrote itself. A page of 4096 bytes takes {{ab.len}} bytes.
-Until 11th October 2026 it took 9: the last sequence had a token, token 0 with the 8-bit code
-`10001010`, which said "0 literals, the end" where the decoder could see that already.
+Real pages almost never have a token like this one, 2 literals and a match of the rest of the page, so
+it has no code of its own since the tables of 13th October 2026 and costs the escape's 4 bits and 12
+more; with the tables before, it had an 11-bit code and the page took 8 bytes. Until 11th October 2026
+it took 9 for another reason: the last sequence had a token, token 0 with the 8-bit code `10001010`,
+which said "0 literals, the end" where the decoder could see that already.
 
 ::: try Decode it with the spec's decoder
 In the repository, write the {{ab.len}} bytes to a file and give it to the reference decoder. It prints
