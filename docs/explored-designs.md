@@ -138,6 +138,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [16 KiB pages](#16-kib-pages)
 - [16 KiB pages, tuned: C5 does not hold, the literals in the page would fix it, not kept](#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept)
 - [Android 17 in the emulator: the 4 KiB tables fit, the 16 KiB ones trained again, 2.6% smaller](#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)
+- [Offset classes without bits: 1% smaller, the phone reads 5% to 7% slower, not kept](#offset-classes-without-bits-1-smaller-the-phone-reads-5-to-7-slower-not-kept)
 
 **Other designs, not kept**
 
@@ -6669,6 +6670,76 @@ quetschn-seqlz-train --corpus emu-a17-16k-a-train             # a build with -DQ
 quetschn-seqlz-train --corpus emu-a17-16k-a-train --lit-sets
 quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd:3,seqlz-fast,seqlz-fast-lit --corpus emu-a17-16k-b --no-timing --out sizes
 ```
+
+## Offset classes without bits: 1% smaller, the phone reads 5% to 7% slower, not kept
+
+*Eight offset classes instead of six, three of them with no bits after the token: the offset before the
+last one (a second repeat offset, as `zstd` has), or the offsets 2, 4 and 8. Tables trained on the same
+pages for both, the new classes store 0.6% to 1.2% less than today's on every dump, the emulator's too.
+On x86-64 that costs nothing measurable. On the Mi 9T the decoder needs about 8% more instructions,
+and reads are 5% to 7% slower: today's offset is a choice of two, the last one or the bits, which
+both compilers make one conditional select, and three or more choices need either a branch, which
+misses, or masks, 6 to 8 instructions more per sequence.* Code: the branch `rep2-offsets`, commit
+`872f122` with the second repeat offset, `e6417e2` with 2, 4 and 8 instead.
+
+**Priced first.** `seqs.c` with the real ll and ml, and a script that prices a layout on them: token
+codes of at most 11 bits with the escape, length codes, raw offset bits, each dump priced with codes
+trained on the other six (the phone dumps p2 to p5 and of 4th October, the desktop dumps of 23rd and
+24th September), 20 000 pages each. Bytes per page against today, the mean of the seven:
+
+| layout | classes | bytes per page |
+| --- | ---: | ---: |
+| today | 6 | 0 |
+| ll and ml with other bits than 4 and 5, today's classes | 6 | +0.2 to +2.2 |
+| only classes with bits, the best found | 6 | -0.9 |
+| only classes with bits, the best found | 7 | -1.6 |
+| 2 and 8 without bits | 7 | -6.0 |
+| 2, 4 and 8 without bits, multiples of 8 below 256 and 2048 | 8 | -8.4 |
+| a second repeat offset, 2 and 8, multiples of 8 below 128 and 1024 | 8 | -9.7 |
+
+The last two came from a greedy search over 22 candidate classes. Today's 6 classes are within a byte
+of the best that has bits in every class but the first; the gain is all in the classes without bits.
+
+**Built.** Tables trained for both layouts on the same pages, the new phone train set, the resident
+pages and 200 000 desktop pages of 28th September. `seqlz-fast-lit`, bytes per page:
+
+| | today's classes | second repeat offset | 2, 4 and 8 |
+| --- | ---: | ---: | ---: |
+| phone, test session p3 | 980.6 | 971.6, -0.9% | 972.7, -0.8% |
+| phone, test session p5 | 934.5 | 925.1, -1.0% | 926.7, -0.8% |
+| phone, 4th October | 873.5 | 863.9, -1.1% | 865.6, -0.9% |
+| desktop, 23rd September | 969.2 | 957.3, -1.2% | 957.9, -1.2% |
+| desktop, 24th September | 1209.8 | 1200.6, -0.8% | 1203.1, -0.6% |
+| Android 17 emulator | 1024.3 | 1013.6, -1.0% | 1014.2, -1.0% |
+
+**The speed.** The first build was 13% to 15% slower in the kernel VM: gcc 16.2.1 made branches of the
+selects, also of selects written as masks, and they missed. Written as arithmetic, with the class from a
+table of 2048 bytes in the encoder and the offsets without bits in an array of 8 in the decoder, the
+second repeat offset in the VM, `MODE=swap`, 3 boots, against today's classes: desktop dump writes
+0.8% faster, reads up to 0.9% slower; phone sample writes 0.8% faster, reads 1.2% slower. On the
+Mi 9T's own kernel, module with NDK r21e's clang 9, `BUS=1`, 3 rounds, 20 000 pages of p3:
+
+| µs | write | warm read | cold read |
+| --- | ---: | ---: | ---: |
+| A55, today's classes | 33.70 | 12.94 | 32.26 |
+| A55, second repeat offset | 34.51, +2.4% | 13.81, +6.7% | 33.34, noisy |
+| A76, today's classes | 12.71 | 4.48 | 8.15 |
+| A76, second repeat offset | 13.02, +2.4% | 4.74, +5.8% | 8.94, noisy |
+
+The offset as one formula for every class, its bits ORed with a value from the array, read as fast.
+`simpleperf` on the hot loop, the same 5000 pages decoded 20 times with each: 7.8% more instructions on
+both cores, 5 more branch misses per page. 6 instructions more per sequence: `n` needs an `and` now that
+its field has 4 bits and not 6, the update of the second offset takes 4, and both offsets go to the
+stack for the array. 2, 4 and 8 instead of the second offset, taken from the token's entry: with a
+condition clang branched, 2% more instructions and the A76 20% slower; with masks 8% more instructions,
+the A55 3.4% and the A76 6.5% more cycles in the hot loop. That one was not timed in the phone's
+kernel.
+
+**Why not kept.** On x86-64 the classes are free, on the phones, which are what zram runs on, they cost
+8 to 24 bytes per µs of time per page written, near where `zstd` takes over. The tables trained again
+with today's classes are the cheap part of this: 0.3% to 1.9% smaller than today's tables at the same
+speed. Not measured: a branch over the classes without bits on a core that predicts it better, and
+whether the 16 KiB tables change any of it.
 
 ## Word model: WKdm-style 64-bit words
 
