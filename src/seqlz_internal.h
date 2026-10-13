@@ -90,10 +90,9 @@ struct seqlz_tables {
 	bool all_symbols; /* see seqlz_all_symbols() */
 };
 
-static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
-	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
-	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U &&
-	       SEQLZ_OFF_SHIFT(5) <= 3U),
+static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(6) <= 31U &&
+	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 127U &&
+	       SEQLZ_OFF_SHIFT(3) <= 3U),
 	      "token_entry's fields are too narrow");
 static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 	      "an escaped token has SEQLZ_ESCAPE_BITS bits");
@@ -107,7 +106,7 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
  *   bits 12..13: 3 for classes 4 and 5, whose offset is sent divided by 8
  *   bits 14..18: n + the offset's bits, how far the bitstream moves on
  *   bits 19..22: ll, at most 15
- *   bits 23..28: ml, at most 35
+ *   bits 23..29: ml, at most 67
  *   bit  30:     a length value follows, for ll or ml
  *   bit  31:     the escape; then only bits 14..18 are set, to n
  * Taking the token apart in the decoder cost many instructions per sequence,
@@ -126,7 +125,7 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 #define TOK_SHIFT(e) (((e) >> TOK_SHIFT_AT) & 3U)
 #define TOK_DROP(e) (((e) >> TOK_DROP_AT) & 31U)
 #define TOK_LL(e) (((e) >> TOK_LL_AT) & 15U)
-#define TOK_ML(e) (((e) >> TOK_ML_AT) & 63U)
+#define TOK_ML(e) (((e) >> TOK_ML_AT) & 127U)
 
 static inline u32 token_entry(unsigned int s, unsigned int n)
 {

@@ -453,8 +453,12 @@ static __always_inline void copy_match_fast(u8 *d, unsigned int off,
 		if (len > 16U) {
 			copy8(d + 16, m + 16);
 			copy8(d + 24, m + 24);
-			if (len > 32U)
-				copy8(d + 32, m + 32);
+			if (len > 32U) {
+				unsigned int k;
+
+				for (k = 32U; k < len; k += 8U)
+					copy8(d + k, m + k);
+			}
 		}
 	} else {
 		/*
@@ -521,10 +525,10 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 
 /*
  * The room the fast path of seqlz_decode() needs. In the page: it writes at
- * most 54 bytes, 14 literals and 40 bytes of match. In the literals: one copy
+ * most 86 bytes, 14 literals and 72 bytes of match. In the literals: one copy
  * of 16 bytes. In the input: the 8 bytes of a refill.
  */
-#define FAST_PAGE_ROOM 64U
+#define FAST_PAGE_ROOM 96U
 #define FAST_LIT_ROOM 16U
 #define FAST_IN_ROOM 8U
 
@@ -629,8 +633,8 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		len = TOK_ML(tok);
 		/*
 		 * The fast path: no length value follows, and there is room,
-		 * see d_fast. Then nl is at most 14 and len at most 34, and the
-		 * copies are 16 literal bytes and 16 to 40 bytes of match,
+		 * see d_fast. Then nl is at most 14 and len at most 66, and the
+		 * copies are 16 literal bytes and 16 to 72 bytes of match,
 		 * without loops. The page's last match never takes it: after
 		 * it fewer than 8 bits are left, and the fast path needs 8 bytes
 		 * of input, so it never misses the end below.

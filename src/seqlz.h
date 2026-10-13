@@ -93,12 +93,12 @@
  * in seqlz_internal.h.
  */
 #define SEQLZ_LL_BITS 4U
-#define SEQLZ_ML_BITS 5U
+#define SEQLZ_ML_BITS 6U
 /*
  * The offset classes at the top. Two more would save almost no memory, by a
  * model of the offsets ("Offset classes from a histogram").
  */
-#define SEQLZ_OFF_CLASSES 6U
+#define SEQLZ_OFF_CLASSES 7U
 #define SEQLZ_TOKEN_SYMBOLS \
 	(SEQLZ_OFF_CLASSES << (SEQLZ_LL_BITS + SEQLZ_ML_BITS))
 /*
@@ -109,8 +109,8 @@
  * the frequent ones ("seqlz, third decoder round").
  */
 #define SEQLZ_ESCAPE SEQLZ_TOKEN_SYMBOLS
-/* the fewest bits that hold every token, 3072 < 4096 */
-#define SEQLZ_ESCAPE_BITS 12U
+/* the fewest bits that hold every token, 7168 < 8192 */
+#define SEQLZ_ESCAPE_BITS 13U
 /*
  * The longest code the escape may have. The encoder counts on 31 bits for a
  * token and its offset, the escape included, to know that zram's two pages are
@@ -173,37 +173,38 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
 }
 
 /*
- * How many bits of the offset follow the token, per class: 0, 4, 8, the page's
- * bits, 5, the page's bits - 3. One nibble per class in one constant,
- * 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB, so that it is a shift and a
- * mask without a branch: computing class 3's from the page's bits made gcc
- * branch on the class.
+ * How many bits of the offset follow the token, per class: 0, 4, 7, the page's
+ * bits - 3, 4, 8, the page's bits. One nibble per class in one constant, so
+ * that it is a shift and a mask without a branch.
  */
-#define SEQLZ_RAW_NIBBLES                                               \
-	(0U | 4U << 4 | 8U << 8 | QUETSCHN_PAGE_BITS << 12 | 5U << 16 | \
-	 (QUETSCHN_PAGE_BITS - 3U) << 20)
+#define SEQLZ_RAW_NIBBLES                                     \
+	(0U | 4U << 4 | 7U << 8 |                             \
+	 ((unsigned int)QUETSCHN_PAGE_BITS - 3U) << 12 | 4U << 16 | \
+	 8U << 20 | (unsigned int)QUETSCHN_PAGE_BITS << 24)
 #define SEQLZ_RAW_BITS(cls) ((SEQLZ_RAW_NIBBLES >> (4U * (cls))) & 15U)
-/* classes 4 and 5 send the offset divided by 8, a shift by 3 */
-#define SEQLZ_OFF_SHIFT(cls) (((cls) >> 2) * 3U)
+/* classes 1 to 3 send the offset divided by 8, a shift by 3 */
+#define SEQLZ_OFF_SHIFT(cls) ((0x3330U >> (4U * (cls))) & 3U)
 
 /*
  * The class of an offset, and how many of its bits follow the token. last is
- * the offset of the sequence before. Without a branch, because the encoder
- * calls it for every match and the classes come in no order a branch predictor
- * could learn.
+ * the offset of the sequence before. Classes: 0 last, 1 a multiple of 8 from 16
+ * to 127, 2 a multiple of 8 from 128 to 1023, 3 a multiple of 8 from 1024 on,
+ * 4 below 16, 5 below 256, 6 the rest. The first that fits wins.
  */
 static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last,
 					   unsigned int *raw_bits)
 {
-	unsigned int is_new = (off == last) - 1U,
-		     aligned = (off >= 16U) & ((off & 7U) == 0);
-	/*
-	 * 1 to 3 by size; a multiple of 8 from 16 on moves class 2 or 3
-	 * to 4 or 5; the same offset as before is class 0
-	 */
-	unsigned int cls = (1U + (off >= 16U) + (off >= 256U) + 2U * aligned) &
-			   is_new;
+	unsigned int aligned = (off & 7U) == 0,
+		     cls = 4U + (off >= 16U) + (off >= 256U);
 
+	/*
+	 * Arithmetic, not selects: gcc turned selects into branches, and
+	 * the classes come in no order.
+	 */
+	cls -= (cls - 1U) * (aligned & (off - 16U < 112U));
+	cls -= (cls - 2U) * (aligned & (off - 128U < 896U));
+	cls -= (cls - 3U) * (aligned & (off >= 1024U));
+	cls *= off != last;
 	*raw_bits = SEQLZ_RAW_BITS(cls);
 	return cls;
 }

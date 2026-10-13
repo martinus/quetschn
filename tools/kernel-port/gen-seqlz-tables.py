@@ -25,9 +25,9 @@ import sys
 TOKEN_BITS = 11     # the longest code of a token
 VALUE_BITS = 8      # the longest code of a length value
 LIT_BITS = 10       # the longest code of a literal
-ESCAPE_BITS = 12    # the bits of a token after the escape
+ESCAPE_BITS = 13    # the bits of a token after the escape
 LIT_SETS = 8
-TOKENS = 3072
+TOKENS = 7168
 
 
 def code_lengths(counts, max_bits):
