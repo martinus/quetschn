@@ -80,13 +80,12 @@ At p99 `seqlz-fast-lit` reads cold pages in 4.51 and 4.61 µs, faster than `lzo-
 and than `lz4` (4.72 and 4.71). It writes in 11.2 and 11.3 µs, where `lz4` needs 9.3 and 9.5 and
 `zstd` 23.5 and 23.7. Its work memory is 8 KiB per CPU, one `kmalloc()` for the matcher's table of
 8192 bytes and a buffer of 4112 bytes the decoder decodes literals into, which are never in use at the
-same time; 16 KiB once zram gives compression and decompression contexts of their own. `lz4` takes the
-16 416 bytes of work space the limit is about from `vmalloc()`, which are 5 pages, 20 KiB, and a small
-struct. Two things are not work memory:
-the buffer the compressed page is written into is zram's, two pages per CPU for every codec, and the
-tables for encoder and decoder, 43 280 bytes, are built from the fixed code lengths and shared by all
-CPUs: once when the kernel starts in the kernel's copy (`tools/kernel-port/`), once per zram device in
-the experiments of `tools/zram-vm/` and in the harness.
+same time; 16 KiB once zram gives compression and decompression contexts of their own. `lz4` takes its
+16 416 bytes of work space from `vmalloc()`, which are 5 pages, 20 KiB, and a small struct. Two things
+are not work memory: the buffer the compressed page is written into is zram's, two pages per CPU for
+every codec, and the tables for encoder and decoder, 43 280 bytes, are built from the fixed code
+lengths and shared by all CPUs: once when the kernel starts in the kernel's copy
+(`tools/kernel-port/`), once per zram device in the experiments of `tools/zram-vm/` and in the harness.
 
 </details>
 
@@ -202,8 +201,9 @@ data. Each of these costs time that zram's writes and reads cannot spend
 >   slower, and because `seqlz` stores pages smaller every app stayed in memory, where `lz4` lost some
 >   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
 > * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 784 bytes of
->   work memory per CPU, twice `lz4`'s, which breaks the project's limit of `lz4`'s work memory. A way
->   around it is built and measured, but not kept, see [explored-designs.md](explored-designs.md). Their
+>   work memory per CPU, twice `lz4`'s, a cost in
+>   [the score](plan.md#11-the-score-memory-against-time-not-bars). A way around it is built and
+>   measured, but not kept, see [explored-designs.md](explored-designs.md). Their
 >   tables are trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured on a
 >   second one ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)); there is
 >   no phone with 16 KiB pages yet, and the format for 16 KiB pages is not fixed

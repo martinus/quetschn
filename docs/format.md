@@ -43,7 +43,7 @@ The format for 16 KiB pages is not fixed yet. Its tables, the literal tables inc
 trained on a zram dump of the Android 17 emulator with 16 KiB pages
 ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-fast-lit`
-needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
+asks for 32 784 bytes of work memory per CPU, twice `lz4`'s
 ([seqlz.md](seqlz.md#what-is-not-known-yet)). So it is not in the first series for the kernel:
 `tools/kernel-port/` builds seqlz for 4 KiB pages only.
 <!-- end -->

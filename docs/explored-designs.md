@@ -47,6 +47,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 
 - [The designs by the score](#the-designs-by-the-score)
 - [The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)
+- [Work memory per CPU in the score: zstd 3 drops off the hull below 27 and 7.9 MiB in zram per CPU](#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu)
 - [zstd at every level, in a swap-in: no level stores less in less time than seqlz-fast-lit](#zstd-at-every-level-in-a-swap-in-no-level-stores-less-in-less-time-than-seqlz-fast-lit)
 - [lz4 in hardware, a what-if: seqlz-fast-lit stays on the hull, up to 73 and 72 bytes per µs instead of 155 and 211](#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)
 - [The whole page fault: the kernel's part is the same for every codec, the gap to `lz4` about halves](#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)
@@ -351,6 +352,42 @@ in the score, and `r` on a phone.
 KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz,seqlz-lit tools/zram-vm/run.sh <linux tree> <corpus> >swap.log
 ./build/quetschn-score swap.log
 ```
+
+## Work memory per CPU in the score: zstd 3 drops off the hull below 27 and 7.9 MiB in zram per CPU
+
+*C5 was a hard limit, at most `lz4`'s 16 416 bytes of work memory per CPU, and never priced (#203).
+In the score it is bytes per CPU × CPUs / pages in zram, added to the bytes per page. That moves one
+step of the hull: `zstd` 3 holds 176 160 bytes per CPU more than `seqlz-fast-lit`, and below 27 and 7.9
+MiB in zram per CPU, first and second desktop dump, that is more than the 25 and 87 bytes per page it
+saves. The steps between `lz4`, `lzo-rle`, `seqlz-fast` and `seqlz-fast-lit` move by 5% at most with 8
+CPUs, by 19% with 32 CPUs and 64 MiB.* Code:
+`quetschn-score --per-cpu <codec>:<bytes> --device <cpus>:<MiB>`, `bench/score.cpp`; the bytes per
+CPU from `bench/kernel_codecs/alloc.c`, which counts what `kmalloc()` and `vmalloc()` hand out.
+
+The bytes per CPU are what the bench's glue allocates for zram's backends at `986c24e0fe44` with zram's
+split contexts, 4 KiB pages, both contexts: `lzo-rle` 16 384, `lz4` 20 512, `zstd` 3 192 544 (186 112
+asked, the two workspaces from `vzalloc()`), `seqlz-fast` 8192, `seqlz-fast-lit` 16 384. The bytes per
+page and the times are the swap columns of
+[The score with the swap times](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279),
+not measured again, `r = 0.34`. The hull in bytes per µs, first dump / second dump:
+
+| step | without | 8 CPUs, 64 MiB | 8 CPUs, 256 MiB | 8 CPUs, 1 GiB | 8 CPUs, 4 GiB | 32 CPUs, 64 MiB | 32 CPUs, 1 GiB |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `lz4` to `lzo-rle` | - / 420 | - / 432 | - / 423 | - / 421 | - / 421 | - / 465 | - / 423 |
+| `lzo-rle` to `seqlz-fast` | 346 / 402 | 352 / 410 | 348 / 404 | 346 / 403 | 346 / 403 | 369 / 434 | 348 / 404 |
+| `seqlz-fast` to `seqlz-fast-lit` | 155 / 213 | 148 / 209 | 154 / 212 | 155 / 213 | 155 / 213 | 127 / 195 | 154 / 212 |
+| `seqlz-fast-lit` to `zstd` 3 | 3.1 / 10.3 | off / 0.1 | 0.5 / 7.8 | 2.5 / 9.7 | 3.0 / 10.2 | off / off | 0.5 / 7.8 |
+
+On the first dump `lzo-rle` is faster than `lz4` and stores less, so `lz4` is not on the hull there.
+"off" means `zstd` 3 is not on the hull: with 8 CPUs and 64 MiB it holds 86 bytes per page more than
+`seqlz-fast-lit` for its work memory, more than the 25 it saves on the first dump, and on the second
+it is 1 byte per page smaller for 8.4 µs more. zram's own 3 pages per CPU, the same for every codec,
+are left out, they move no exchange rate.
+
+So far no design was dropped for C5 alone, and the score agrees with what C5 decided: nothing on the
+hull changes order, only `zstd` 3 leaves it on a machine with little in zram. The fill level is the
+open part. How much a phone keeps in zram, and for how long, is not measured. With 1 GiB or more per 8
+CPUs only the step to `zstd` 3 moves by more than 1%, from 3.1 to 2.5 and from 10.3 to 9.7 bytes per µs.
 
 ## zstd at every level, in a swap-in: no level stores less in less time than seqlz-fast-lit
 

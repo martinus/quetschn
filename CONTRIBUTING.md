@@ -13,10 +13,9 @@ work.
 
 A design is judged by how much closer it gets to the goal, `lz4`'s speed at `zstd`'s size, by the score
 of [the plan, §1.1](docs/plan.md#11-the-score-memory-against-time-not-bars): memory per stored page
-against the mean time per page written. Two limits are hard:
-
-- **C5:** the work memory per CPU is at most `lz4`'s 16 416 bytes.
-- **C6:** the decoder is safe and bounded in time for any input.
+against the mean time per page written. The memory includes the work memory per CPU, spread over the
+pages in zram of a named machine, e.g. 8 CPUs and 1 GiB. One limit is hard, **C6**: the decoder is safe
+and bounded in time for any input.
 
 The p99 of reads and writes against `lz4` (C2 and C3) are guards, not gates. A design is not dropped
 because its p99 misses the bar, and none is kept just because it meets it. A p99 that gets clearly
