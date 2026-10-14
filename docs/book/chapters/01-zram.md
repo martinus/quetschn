@@ -1,49 +1,36 @@
 # What zram asks of a codec {#ch-zram}
 
 A codec for zram compresses one page of memory at a time and gets it back when a program needs it.
-That sounds like any compressor, but zram changes what "good" means. A program waits for every page
-it gets back, so reading has to be fast on a page that is in no CPU cache. zram does not pay for the
-bytes a page takes, it pays for slots of fixed sizes, so a few bytes saved often save nothing. The
-codec runs in the kernel, once per CPU, so its own buffers are memory taken from every CPU for good,
-and its decoder reads whatever is in RAM, also a page that was damaged.
-
-What follows is zram seen from the codec's side: what swap is, the path a page takes into zram and
-back, the allocator that stores it, the few functions zram calls in a codec, and the rules kernel
-code lives by; then how the project scores a codec, which codecs zram has, and where seqlz stands
-among them. None of it is seqlz's code yet, and the rest of the book refers back to it.
+zram changes what "good" means for such a codec. A program waits for every page it gets back, and
+that page is in no CPU cache. zram does not pay for bytes but for slots of fixed sizes, so a few bytes
+saved often save nothing. The codec's buffers exist once per CPU and are taken from every CPU for
+good. And its decoder reads whatever is in RAM, also a page that was damaged. This chapter is zram
+seen from the codec's side, and how the project scores a codec; the rest of the book refers back to
+it.
 
 ## Pages, swap, and a swap device in RAM {#ch-zram--swap}
 
-A program sees its memory as one long range of addresses. The CPU and the kernel cut it into
-**pages**, blocks of 4096 bytes on x86-64 and on most phones, and map each page of the program to a
-page of RAM, or to none. A page is the smallest unit the kernel moves around: it gives memory to a
-program a page at a time, and takes it away a page at a time.
+The kernel manages memory in **pages**, 4096 bytes on x86-64 and on most phones. When RAM runs
+short, it **reclaims** pages that were not used for a while. A page of a file can be dropped, the
+file still has it. A page of a program's heap or stack has to be written somewhere first, to
+**swap**, traditionally a disk partition. When the program touches the page again, the CPU raises a
+**page fault**, and the kernel reads the page back from swap into a fresh page of RAM: a swap-in.
 
-When RAM runs short, the kernel **reclaims** pages: it looks for pages that were not used for a
-while and frees them. An unchanged page of a file can simply be dropped, the file still has it. A page of a
-program's heap or stack has nothing behind it, so before it can be freed its contents have to go
-somewhere. That somewhere is **swap**, a block device, traditionally a partition on a disk. Writing a
-page there is a swap-out. When the program touches the page again, the CPU finds no mapping, raises
-a **page fault**, and the kernel reads the page back from swap into a fresh page of RAM, maps it, and
-lets the program go on: a swap-in.
+**zram** is a block device whose storage is RAM: every page written to it is compressed and kept in
+memory. As swap, that trades CPU time for memory, a few microseconds per page instead of a disk
+access. Most Android phones and several Linux distributions, e.g. Fedora, swap to zram. The project's
+numbers come from two such machines, a desktop with a Ryzen 9 7950X and a Xiaomi Mi 9T phone, a fast
+x86-64 core and a phone's small arm64 core.
 
-**zram** is a block device whose storage is RAM. Every page written to it is compressed and kept in
-memory; reading it decompresses the page again. As swap, that trades CPU time for memory: a page
-compressed to a quarter of its size frees three quarters of a page, and getting it back costs a few
-microseconds instead of a disk access. Most Android phones and several Linux distributions, e.g. Fedora,
-swap to zram. The project's numbers come from two such machines, a desktop and a phone
-(a Xiaomi Mi 9T), and the rest of the book uses them as the two ends: a fast x86-64 core and a phone's
-small arm64 core.
-
-Every page is compressed on its own, 4096 bytes without the pages around it, so that any one page can
-be read back alone. That is the first fact that shapes seqlz: a compressor has only 4096 bytes to find
-repeats in and to learn from. A format that starts each input with a table of its own codes, as
-`zstd` does, spends a good part of a page on the table (see [chapter 2](#ch-compression)).
+Every page is compressed on its own, so that any one page can be read back alone. That is the first
+fact that shapes seqlz: a compressor has only 4096 bytes to find repeats in and to learn from, and a
+format that starts each input with a table of its own codes, as `zstd` does, spends a good part of a
+page on the table ([chapter 2](#ch-compression--formats)).
 
 ## The path of a page {#ch-zram--path}
 
-The figure shows the two paths with the names of zram's functions in mainline Linux, as of the kernel
-the project checked against (`986c24e0fe44`, September 2026).
+The names are zram's functions in mainline Linux at `986c24e0fe44`, September 2026, the kernel the
+project checked against.
 
 <figure class="diagram">
 <div class="scroll">
@@ -114,61 +101,50 @@ the project checked against (`986c24e0fe44`, September 2026).
 <figcaption>A page's way into zram and back: writing is often done in the background, reading always with a program waiting.</figcaption>
 </figure>
 
-**Swap-out.** `zram_write_page()` first checks whether the page holds one value only, the same 8
-bytes from start to end, e.g. a page of zeros. `page_same_filled()` compares the page as 512 words of
-8 bytes; such a page is not compressed at all, zram keeps the 8 bytes in its table of slots and
-nothing in the allocator. For every other page zram takes this CPU's **stream**, a struct with a
-mutex, a buffer of 2 pages, and the codec's own work memory, and calls `zcomp_compress()`, which
-calls the codec. The codec writes the compressed page into the buffer and returns its length. If the
-length is 3625 bytes or more, zram stores the page as it is, 4096 bytes, see the next section.
-Otherwise it asks the allocator, zsmalloc, for a slot of that size and copies the compressed bytes
-there.
+**Swap-out.** `zram_write_page()` first checks with `page_same_filled()` whether the page is one
+8-byte value repeated, e.g. all zeros; such a page is kept as that value, without a codec. For every
+other page zram takes this CPU's **stream**, a struct with a mutex, a buffer of 2 pages and the
+codec's work memory, and calls the codec through `zcomp_compress()`. A result of 3625 bytes or more is
+thrown away and the page stored as it is; anything shorter goes into a slot from the allocator,
+zsmalloc.
 
-**Swap-in.** The program touches the page, the CPU faults, and the kernel's fault handler asks the
-swap device for the page. zram looks up the slot: a same-filled page is filled with its value, a page
-stored raw is copied, and only the rest reaches the codec. zram maps the slot, takes the stream again
-and calls `zcomp_decompress()` with the compressed bytes and the page to write. When the codec
-returns, the page is mapped into the program and the program goes on.
+**Swap-in.** zram looks up the slot. A same-filled page is filled with its value, a raw page copied,
+and only the rest reaches `zcomp_decompress()`, with the compressed bytes and the page to write.
 
-**Who waits for which.** A swap-out happens when the kernel reclaims memory. Most of it is done by
-`kswapd`, a kernel thread per memory node that runs in the background when free memory drops below a
-watermark. When memory runs out faster than `kswapd` frees it, a task that wants memory reclaims
-itself, **direct reclaim**, and then that task waits for the compression too. A swap-in is always
-done by the task that touched the page, inside its page fault: the program is stopped until the page
-is back. So reading is on the critical path, and a write is on it sometimes.
+**Who waits.** Most swap-outs are done by `kswapd`, a kernel thread that reclaims in the background.
+When memory runs out faster than it frees, a task that wants memory reclaims itself, **direct
+reclaim**, and waits for the compression too. A swap-in is always done inside the page fault of the
+task that touched the page, which is stopped until the page is back. So reading is always on the
+critical path, writing sometimes.
 
-**Cold.** A page that was swapped out was by definition not used for a while, and nobody read its
-compressed bytes since they were written. They are in no CPU cache when the fault comes, they have
-to come from RAM, about 100 ns per access on a desktop and more on a phone. The page the codec writes
-into is cold too. A read in this state is a **cold read**, and it is the one that counts: a benchmark
-that decodes the same page in a loop measures the decoder with everything in the cache, which no
-swap-in ever sees. The project measures cold reads, with the compressed bytes flushed from the cache
-first, and in the end the whole page fault in a virtual machine and on the phone
+**Cold.** A swapped-out page was not used for a while, so its compressed bytes are in no CPU cache
+when the fault comes, nor is the page the codec writes into. Each access goes to RAM, about 100 ns on
+a desktop and more on a phone. A benchmark that decodes the same page in a loop measures something no
+swap-in sees, so the project measures **cold reads**, with the compressed bytes flushed from the
+cache first, and in the end the whole page fault in a virtual machine and on the phone
 ([`docs/plan.md` §3.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#32-decompression-is-a-tail-latency-problem-not-a-throughput-problem)).
 
 ::: measured How much of a swap-in is the codec
-In a virtual machine on a Ryzen 9 7950X, with pages the project's desktop swapped into zram, a cold
-swap-in with `lz4` takes 3.51 µs, of which 1.43 µs are `zcomp_decompress()`; with `seqlz-fast-lit` it
-takes 4.13 µs, of which 2.04 µs are the codec. The kernel's part, the fault, the swap entry, zram's
-slot, is about 1.9 µs for every codec. So a codec 40% slower than `lz4` makes a swap-in about 20%
-slower
+In a virtual machine on the Ryzen 9 7950X, with pages the desktop swapped into zram, a cold swap-in
+with `lz4` takes 3.51 µs, of which 1.43 µs are `zcomp_decompress()`; with `seqlz-fast-lit` 4.13 µs, of
+which 2.04 µs are the codec. The kernel's part, the fault, the swap entry and zram's slot, is about
+1.9 to 2.0 µs for every codec, so a codec 43% slower than `lz4` makes a swap-in 18% slower
 ([explored-designs.md, "The whole page fault"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)).
 :::
 
 ## zsmalloc: bytes saved count only across a size class {#ch-zram--size-classes}
 
-zram stores the compressed pages with **zsmalloc**, an allocator built for many small objects of
-varied sizes. It does not hand out any number of bytes. It has **size classes**: nominal slot sizes in steps
-of 16 bytes on 4 KiB pages (`ZS_SIZE_CLASS_DELTA`, the page size divided by 256), and a slot also
-holds an 8-byte handle (`ZS_HANDLE_SIZE`). An object of $n$ bytes goes into the smallest class that
-holds $n + 8$. Each class packs its slots into a "zspage" of 1 to 8 physical pages, chosen to waste as
-little of the last page as possible, and classes that come out with the same packing are merged into
-the larger one. The project ported this setup to C++ (`bench/zsmalloc_cost.cpp`) and checked it
-against the kernel: after merging, the 255 nominal classes are 119 different ones
+**zsmalloc** does not hand out any number of bytes. It has **size classes**, nominal slots in steps
+of 16 bytes on 4 KiB pages (`ZS_SIZE_CLASS_DELTA`), and an object of $n$ bytes goes into the smallest
+class that holds $n + 8$, for the handle (`ZS_HANDLE_SIZE`). Each class packs its slots into a
+"zspage" of 1 to 8 physical pages, chosen to waste as little as possible, and classes with the same
+packing are merged into the larger one. The project's C++ port of that setup,
+`bench/zsmalloc_cost.cpp`, reproduces the kernel's classes: after merging, 255 nominal classes are
+119 different ones
 ([`docs/plan.md` §3.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#31-zram-does-not-pay-for-bytes-it-pays-for-zsmalloc-size-classes)).
 
-What a page costs is a step function of its compressed length. Around 1 KiB, after the merging, the
-classes are 32 bytes apart:
+So what a page costs is a step function of its compressed length. Around 1 KiB the classes are 32
+bytes apart:
 
 | compressed length | slot | memory per page, with the zspage's waste |
 | --- | --- | --- |
@@ -176,13 +152,11 @@ classes are 32 bytes apart:
 | 985 to 1016 bytes | 1024 | 1024.0 |
 | 1017 to 1048 bytes | 1056 | 1057.0 |
 
-A page of 1017 bytes and one of 1048 bytes cost the same; saving 31 bytes on that page saves nothing,
-and saving the one byte from 1017 to 1016 saves 33. The steps grow with the size: 17 bytes on
-average below 1 KiB, 28 between 1 and 2 KiB, 68 between 2 and 3 KiB, and 93 from 3 KiB on, up to 144.
-And at 3625 bytes there is a cliff. zsmalloc's largest classes hold one object per zspage, no better
-than a whole page. zram asks zsmalloc where they start, `zs_huge_class_size()`, keeps the answer in
-`huge_class_size`, and stores every page that compresses to that size, 3625 bytes, or more as it is,
-4096 bytes.
+Saving 31 bytes on a page of 1048 bytes saves nothing; saving the one byte from 1017 to 1016 saves
+33. The steps grow with the size: 17 bytes on average below 1 KiB, 28 between 1 and 2 KiB, 68 between
+2 and 3 KiB, and 93 from 3 KiB on, up to 144. At 3625 bytes there is a cliff: zsmalloc's largest
+classes hold one object per zspage, no better than a whole page, so zram stores every page that
+compresses to `huge_class_size`, 3625 bytes, or more as 4096 bytes.
 
 <figure class="diagram">
 <div class="scroll">
@@ -222,29 +196,26 @@ than a whole page. zram asks zsmalloc where they start, `zs_huge_class_size()`, 
 
 Three things follow, and the book comes back to each:
 
-- **Saving less than one class step on a page usually saves nothing.** A format can afford a few
-  bytes of header per page, a flag per page, a field that makes the decoder faster. The rule
-  that seqlz codes its literals only if that saves $\frac{1}{16}$ of them and {{ch01.LIT_CODED_MIN}} bytes more comes from this
-  ([chapter 11](#ch-literals-enc)).
+- **A few bytes per page are cheap.** A format can afford a byte of header, a flag per page, a field
+  that makes the decoder faster. Coding the literals pays only if it saves $\frac{1}{16}$ of them and
+  {{ch01.LIT_CODED_MIN}} bytes more ([chapter 11](#ch-literals-enc)).
 - **The cliff is the largest step.** A page moved from 3625 to 3600 bytes saves 455 bytes, 18 times
-  the 25 bytes of compression it took. And zram never decompresses a page stored raw, so the decoder
-  only ever sees pages below 3625 bytes.
-- **The measure of size is not the mean ratio.** The project counts the **stored size**: the sum of
-  what zsmalloc spends on the pages, "Σ zsmalloc cost", plus how many pages went over the cliff. On a
-  new zram device that model equals zram's own `mem_used_total` to the byte
+  the 25 bytes of compression it took. And the decoder only ever sees pages below 3625 bytes.
+- **The measure of size is not the mean ratio.** The project counts the **stored size**, the sum of
+  what zsmalloc spends on the pages, "Σ zsmalloc cost". On a new zram device that model equals zram's
+  own `mem_used_total` to the byte
   ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)).
 
-The project's metrics leave out pages that hold one value
-([`docs/plan.md` §5.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#52-metrics)). zram
-stores them without any codec, so they cost every codec the same, and counting them would make all
-codecs look better without telling them apart. A few measurements quoted later, the swap times in
-the kernel VM among them, include them; where that matters, the text says so.
+The project's metrics leave out same-filled pages
+([`docs/plan.md` §5.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#52-metrics)): they
+cost every codec the same and would make all codecs look better without telling them apart. A few
+measurements quoted later, the swap times in the kernel VM among them, include them; where that
+matters, the text says so.
 
 ## What zram calls: a backend's five functions {#ch-zram--zcomp}
 
-Since 2024 zram has its own small interface for codecs, a **backend**, in `drivers/block/zram/zcomp.h`
-(commit `917a59e81c34`). A backend is one struct of function pointers. This is the kernel's, not
-part of `src/`:
+Since 2024 zram has its own interface for codecs, a **backend**, in `drivers/block/zram/zcomp.h`
+(commit `917a59e81c34`). This is the kernel's struct, not part of `src/`:
 
 ```c
 struct zcomp_ops {
@@ -263,65 +234,52 @@ struct zcomp_ops {
 };
 ```
 
-- `setup_params()` runs once per zram device, when the device is set up with its algorithm. `struct
-  zcomp_params` has the compression **level** and an optional **dictionary**, a block of bytes the
-  user can load into the device, and a pointer `drv_data` for the backend's own data that all CPUs
-  share. seqlz has two levels: 1 stores the literals of a page as they are (`seqlz-fast`), 2 codes
-  them (`seqlz-fast-lit`, the default). It has no use for a dictionary: its tables are fixed and part
-  of the format, and tables per device measured as not worth it, so the kernel backend refuses one
-  with `-EOPNOTSUPP` ([chapter 15](#ch-zram-glue)).
-- `create_ctx()` runs once per CPU. `struct zcomp_ctx` is a single `void *context`: whatever the
-  codec needs as work memory, allocated here, never while a page is being compressed.
-- `compress()` gets a `struct zcomp_req` with `src`, the page, `src_len`, always `PAGE_SIZE`,
-  `dst`, the stream's buffer, and `dst_len`, its size, `2 * PAGE_SIZE`. It sets `dst_len` to the
-  length it wrote and returns 0, or an error.
-- `decompress()` gets the compressed bytes and their length, which zram stored, and the page to write,
-  `dst_len = PAGE_SIZE`. The compressed page carries no length of its own and no checksum; the
-  length zram passes in is all the decoder knows about where its input ends.
+- `setup_params()` runs once per zram device. `struct zcomp_params` has the compression **level**,
+  an optional **dictionary** and `drv_data` for the backend's data that all CPUs share. seqlz has two
+  levels: 1 stores the literals of a page as they are (`seqlz-fast`), 2 codes them
+  (`seqlz-fast-lit`, the default). Its tables are fixed and part of the format, so the kernel
+  backend refuses a dictionary with `-EOPNOTSUPP` ([chapter 15](#ch-zram-glue)).
+- `create_ctx()` runs once per CPU and allocates the codec's work memory, `void *context`, never
+  while a page is compressed.
+- `compress()` gets the page in `src`, always `PAGE_SIZE` bytes, and the stream's buffer of
+  `2 * PAGE_SIZE` in `dst`, and sets `dst_len` to the length it wrote.
+- `decompress()` gets the compressed bytes and the length zram stored. The compressed page carries
+  no length of its own and no checksum; that length is all the decoder knows about where its input
+  ends.
 
-Each CPU's stream has a mutex, and zram holds it for the whole call, so one context is never used by
-two calls at once. A series of Sergey Senozhatsky from 5th October 2026, not merged yet, splits the
-stream into one for writing and one for reading, so that a reader does not wait for a writer that was
-preempted while holding the mutex; a backend then has `create_cctx()` for compression and an optional
-`create_dctx()` for decompression. The project's kernel backend is written for both forms
+zram holds the stream's mutex for the whole call, so one context is never used by two calls at once.
+A series of Sergey Senozhatsky of 5th October 2026, not merged yet, splits the stream into one for
+writing and one for reading, with `create_cctx()` and an optional `create_dctx()`. The project's
+kernel backend is written for both forms
 ([`docs/plan.md` §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
 
-The benchmarks of this repository call seqlz the same way, through a copy of this interface in C.
-`src/zram_seqlz.c` is that glue, and its decompress function shows the whole contract in a few lines:
+The benchmarks call seqlz through a copy of this interface in C, `src/zram_seqlz.c`
+([chapter 15](#ch-zram-glue)). Its decompress function is the whole contract:
 
 @listing src/zram_seqlz.c 124-135
 
-It takes the compressed bytes `src` and their length `src_len` from the caller. First,
-`quetschn_prefetch_page()` asks the CPU to start loading the cache lines (the 64-byte units the CPU
-loads memory in, [chapter 3](#ch-cpu--cache)) of the compressed bytes and
-of the output page at once, before the decoder needs them; it stands for what the project's
-experiments let zram do before every decompression. Then the function refuses an output smaller than
-a page, and calls `seqlz_decode()` with the tables in `p->drv_data`, which `setup_params()` built
-once, and the context `s->context`, the scratch buffer this CPU decodes the literals into.
-`seqlz_decode()` returns 0 for a valid page and a negative error code otherwise. The glue turns any
-failure into `-1`, and on success sets `*dst_len` to the page's size, which is how the interface
-reports how many bytes were written. [Chapter 15](#ch-zram-glue) goes through the file.
+`quetschn_prefetch_page()` asks the CPU to start loading the compressed bytes and the output page
+before the decoder needs them ([chapter 3](#ch-cpu--prefetch)); it stands for what the project's
+experiments let zram do before every decompression. `p->drv_data` are the tables built once per
+device, `s->context` this CPU's buffer for the decoded literals.
 
 ## Work memory is per CPU, and counted as allocated {#ch-zram--work-memory}
 
 ::: kernel Per-CPU data, kmalloc() and vmalloc()
-The kernel keeps some data once per CPU, "per-CPU data", so that code running on one CPU can use its
-copy without a lock against the others. zram's streams are such data: a machine with 8 CPUs has 8
-streams, each with its own buffer and its own codec context, all allocated when the device is set up
-and kept as long as it exists, whether that CPU ever swaps or not.
+Data kept once per CPU, **per-CPU data**, lets code on one CPU use its copy without a lock. zram's
+streams are such data: a machine with 8 CPUs has 8 streams, each with its own buffer and codec
+context, allocated when the device is set up and kept as long as it exists, whether that CPU ever
+swaps or not.
 
-The kernel has two main allocators. `kmalloc()` hands out physically contiguous memory from caches of
-fixed sizes, powers of 2 up to `KMALLOC_MAX_CACHE_SIZE`, which is 2 pages, 8 KiB, with 4 KiB pages: a
-request of {{const.SCRATCH}} bytes gets an object of {{ch01.dctx_kmalloc}}. A larger request gets whole pages straight from the page
-allocator, again a power of 2 of them: 16 384 bytes are 4 pages, 61 440 bytes get 16 pages, 65 536.
-`vmalloc()` maps whole pages into a contiguous range of addresses, so it rounds up to whole pages: a
-request of 16 416 bytes takes 5 pages, 20 480 bytes. `kvmalloc()` tries the first and falls back to the
-second.
+`kmalloc()` hands out physically contiguous memory from caches of powers of 2, up to
+`KMALLOC_MAX_CACHE_SIZE`, 8 KiB with 4 KiB pages: a request of {{const.SCRATCH}} bytes gets
+{{ch01.dctx_kmalloc}} bytes. A larger request gets a power of 2 of whole pages: 61 440 bytes get 16 pages,
+65 536 bytes. `vmalloc()` maps whole pages into a contiguous range of addresses: 16 416 bytes take 5
+pages, 20 480 bytes. `kvmalloc()` tries the first and falls back to the second.
 :::
 
-zram already allocates 3 pages per CPU for every codec: the buffer of 2 pages that compression
-writes into, and a page `local_copy` for reading an object that zsmalloc split over two physical
-pages. The codec's context comes on top. For the existing codecs it is:
+zram allocates 3 pages per CPU for every codec, the buffer of 2 pages and a page `local_copy` for
+an object that zsmalloc split over two pages. The codec's context comes on top:
 
 | codec | work memory asked for, per CPU | what the allocator hands out |
 | --- | --- | --- |
@@ -330,118 +288,96 @@ pages. The codec's context comes on top. For the existing codecs it is:
 | `842` | 61 440 bytes, `kmalloc()` | 65 536 bytes, 16 pages |
 | `zstd` | far more, `zstd_cctx_workspace_bound()`, `vzalloc()` | |
 
-The project's limit, called **C5**, is `lz4`'s: at most 16 416 bytes per CPU. The reason is a phone:
-on the project's test phone, with 8 cores, every 4 KiB of work memory per CPU is 32 KiB of RAM that
-is never free, on the device where RAM is shortest
+The project's limit, **C5**, is `lz4`'s: at most 16 416 bytes per CPU. On the test phone, with 8
+cores, every 4 KiB of work memory per CPU is 32 KiB of RAM that is never free, on the device where
+RAM is shortest
 ([`docs/plan.md` §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
-seqlz needs a table of {{size.state}} bytes for the matcher while it compresses and a buffer of
-{{const.SCRATCH}} bytes for the decoded literals while it decompresses. zram holds the stream's mutex for either, and neither
-keeps anything from one page to the next, so the kernel backend puts both into one union of
-{{ch01.union}} bytes, which `kmalloc()` hands out as exactly {{ch01.union_kib}} KiB. With the split streams they
-are two allocations, {{ch01.cctx_kib}} KiB each after rounding, {{ch01.split_kib}} KiB per CPU, still below `lz4`'s
-20 KiB. The tables seqlz decodes with, {{size.tables|grp}} bytes, are not per CPU: they are built once
-when the kernel starts and shared by all CPUs.
+seqlz needs {{size.state}} bytes for the matcher's table while it compresses and {{const.SCRATCH}}
+bytes for the decoded literals while it decompresses. zram holds the stream's mutex for either, and
+neither keeps anything from one page to the next, so the kernel backend puts both into one union of {{ch01.union}} bytes, which `kmalloc()` hands out as
+exactly {{ch01.union_kib}} KiB. With the split streams they are two allocations,
+{{ch01.cctx_kib}} KiB each after rounding, {{ch01.split_kib}} KiB per CPU, still below `lz4`'s 20
+KiB. The tables, {{size.tables|grp}} bytes, are not per CPU: they are built once when the kernel
+starts.
 @assert ch01.union == 1024 * ch01.union_kib and ch01.cctx_kib == ch01.dctx_kib and ch01.split_kib < 20
 [Chapter 6](#ch-header) and [chapter 15](#ch-zram-glue) have the details, and why 16 KiB pages break
 the limit.
 
 ## The decoder must survive any input {#ch-zram--safety}
 
-zram stores no checksum. What the decoder gets is whatever is in the slot when the page is read, and
-that is not always what the compressor wrote: a bit can flip in RAM, a bug elsewhere in the kernel can
-write over memory zsmalloc owns, and with zram's writeback the page went to a disk and came back. The
-decoder runs in the kernel, so a page that makes it read past its input or write past the output page
-does not crash one program, it corrupts the kernel's memory or reads someone else's.
+zram stores no checksum. A bit can flip in RAM, a bug elsewhere in the kernel can write over memory
+zsmalloc owns, and with zram's writeback a page goes to a disk and comes back. A decoder that then
+reads past its input or writes past the page corrupts the kernel's memory.
 
-So the project's second hard limit, **C6**, is that the decompressor is safe for any input and bounded
-in time: whatever bytes it gets, it reads only its input and its tables, writes only the output page
-and its scratch, and returns within a fixed amount of work, with an error for a page that is not
-valid. zram then prints a warning and fails the read; one page is lost, the kernel is not.
+So the project's second hard limit, **C6**: the decompressor is safe for any input and bounded in
+time. Whatever bytes it gets, it reads only its input and its tables, writes only the output page and
+its scratch, and returns after a fixed amount of work at most, with an error for an invalid page. zram
+then fails the read; one page is lost, the kernel is not.
 
 The reason C6 is a hard limit is history. The last new codec proposed for zram, zBeWalgo in 2018,
-reached version 7 of its patch series and was never merged. One of the objections on the mailing list
-was exactly this, in Eric Biggers's words: *"You cannot just ignore fuzz-safety in the decompressor
-either"*
+reached version 7 of its patch series and was never merged. One objection on the mailing list, in
+Eric Biggers's words: *"You cannot just ignore fuzz-safety in the decompressor either"*
 ([`docs/plan.md` §2.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#22-the-failure-zbewalgo-benjamin-warnke-2018-reached-v7-never-merged)).
-seqlz's decoder checks every length and offset against the room left in the page and in the literals
-before it uses them, stops after at most `PAGE / 4 + 1` sequences, and requires that a page ends exactly
-where its bits end. Fuzzers, programs that feed a function random and damaged inputs and report
-every crash and every read out of bounds ([chapter 15](#ch-zram-glue--fuzzing)), fed it billions of
-pages. Of the pages the project built to be slow, the slowest decodes in 1.33 times the p99 time of
-real pages, measured on the Mi 9T's small core, a Cortex-A55, where `lz4`'s slowest takes 1.57 times
-its own. Counted in instructions, the costliest page a search for slow pages found decodes in 1.59
-times seqlz's p99, and the same search found a page with 2.58 times `lz4`'s p99 for `lz4`
+seqlz's decoder checks every length and offset against the room left before it uses them, stops
+after at most `PAGE / 4 + 1` sequences, and requires that a page ends exactly where its bits end
+([chapter 14](#ch-decode)). Fuzzers, programs that feed a function random and damaged inputs and
+report every crash and every access out of bounds ([chapter 15](#ch-zram-glue--fuzzing)), fed it
+billions of pages. On the Mi 9T's small core, a Cortex-A55, the slowest page the project built to
+be slow decodes in 1.33 times the p99 time of real pages; for `lz4` the same is 1.57
 ([explored-designs.md, "The worst case"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
-[Chapter 14](#ch-decode) shows each check where it is.
 
 ## What kernel code cannot do {#ch-zram--kernel-rules}
 
-A codec in the kernel is C, but not the C of a normal program:
-
-- **No C library.** There is no `malloc()`, no `printf()`, no `<string.h>` from libc; the kernel has
-  its own `memcpy()` and `memset()`, and its own names for fixed-size types, `u8` to `u64`. seqlz
-  allocates nothing at all: zram passes in the work memory.
-- **No floating point and no vector registers.** When the kernel is entered, it does not save the
-  program's floating point and SIMD registers, so kernel code must not touch them, and the kernel is
-  compiled so that the compiler does not use them on its own (`-mno-sse` and friends on x86-64,
-  `-mgeneral-regs-only` on arm64). A piece of code can borrow them with `kernel_fpu_begin()` or
-  `kernel_neon_begin()`, but that saves and restores state, costs time and is not allowed in every
-  context. Every compressor in the kernel is scalar code on the integer registers, and so is seqlz.
-  A faster SIMD decoder is not an option, however much it would gain.
-- **A small stack.** A kernel thread has a stack of 16 KiB on x86-64 and arm64, and a function's
-  frame should stay small. The build warns about a frame above `CONFIG_FRAME_WARN`, 2048 bytes on
-  64-bit and 1280 on most 32-bit builds in the kernel of September 2026 (1024 in older ones). The
-  project keeps every frame of the kernel copy below 1024 bytes; the deepest are 640 bytes, in
-  `code_literals()` and `decode_literals()` built with gcc for x86-64
-  ([chapter 15](#ch-zram-glue--check)). No recursion, no arrays sized at run time.
-- **No sleeping in compress and decompress.** zram has called the codec with preemption disabled,
-  older kernels such as the phone's 4.14 still do, and a fix proposed in August 2026 would bring it
-  back for backends like seqlz. So the codec must not wait for anything: no allocation, no lock, no
-  page fault
+- **No C library.** The kernel has its own `memcpy()` and `memset()` and its own type names, `u8` to
+  `u64`. seqlz allocates nothing: zram passes in the work memory.
+- **No floating point and no vector registers.** The kernel does not save a program's floating point
+  and SIMD registers when it is entered, so it is compiled with `-mno-sse` on x86-64 and
+  `-mgeneral-regs-only` on arm64. `kernel_fpu_begin()` borrows them, at a cost and not in every
+  context. Every compressor in the kernel is scalar code, and so is seqlz.
+- **A small stack.** A kernel thread has 16 KiB of stack on x86-64 and arm64. The build warns about a
+  frame above `CONFIG_FRAME_WARN`, 2048 bytes on 64-bit and 1280 on most 32-bit builds in the kernel
+  of September 2026, 1024 in older ones. Every frame of seqlz's kernel copy stays below 1024; the
+  deepest, `code_literals()` and `decode_literals()`, are 640 bytes with gcc for x86-64
+  ([chapter 15](#ch-zram-glue--check)).
+- **No sleeping in compress and decompress.** zram called the codec with preemption disabled, older
+  kernels such as the phone's 4.14 still do, and a fix proposed in August 2026 would bring that back
+  for backends like seqlz. So no allocation, no lock, no page fault in the codec
   ([`docs/plan.md` §3.2](https://github.com/martinus/quetschn/blob/main/docs/plan.md#32-decompression-is-a-tail-latency-problem-not-a-throughput-problem)).
-  All of that happens in `create_ctx()`.
-- **Every architecture.** The same source runs on little-endian x86-64 and arm64 and on big-endian
-  s390, and on 32-bit arm. seqlz reads multi-byte values with the kernel's `get_unaligned_le64()` and
-  friends, never by casting a pointer, and CI checks that x86-64, 32-bit x86 and s390x write the same compressed bytes for the same
-pages.
+- **Every architecture.** The same source runs on little-endian x86-64 and arm64, on big-endian s390
+  and on 32-bit arm, and CI checks that x86-64, 32-bit x86 and s390x write the same compressed bytes
+  for the same pages ([chapter 5](#ch-compat--endian)).
 - **No inline assembly, nothing that depends on the CPU model.** A maintainer of `lib/` reads one C
-  source for all machines. A gap in what the kernel offers is fixed in the kernel, with a patch of its
-  own; [chapter 5](#ch-compat) shows the one seqlz needs.
+  source for all machines. A gap in the kernel is fixed in the kernel, with a patch of its own;
+  [chapter 5](#ch-compat--prefetch) shows the one seqlz needs.
 
-`src/` follows all of this, and `src/seqlz_compat.h` supplies the kernel's names outside the kernel,
-so that the benchmarks, the tests and the fuzzers build the same code
-([chapter 5](#ch-compat)).
+`src/seqlz_compat.h` supplies the kernel's names outside the kernel, so that the benchmarks, the tests
+and the fuzzers build the same code ([chapter 5](#ch-compat)).
 
 ## The score: bytes against time {#ch-zram--score}
 
-A codec is good for zram if it stores pages small and handles them fast, and no codec is best on both.
-The project's first plan had bars: so much smaller than `lz4`, a p99 time no worse than `lz4`'s. Bars
-turned out to be cliffs for design choices: a change that saved 4% of memory failed because its p99
-was 1 µs over the bar, without asking what 1 µs is worth. So designs are judged by a **score**
+No codec stores pages smallest and handles them fastest. The project's first plan had bars, e.g. a
+p99 time no worse than `lz4`'s, and bars turned out to be cliffs: a design that saved 4% of memory
+failed because its p99 was 1 µs over the bar, without asking what 1 µs is worth. So designs are
+judged by a **score**
 ([`docs/plan.md` §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)):
 
-- **bytes**: the memory zsmalloc spends per stored page, the stored size of the section above.
+- **bytes**: the stored size per page, what zsmalloc spends.
 - **time**: per page written to zram, $\text{write} + r \times \text{read}$, each the **mean** over all pages, in µs.
 - **score**: $\text{bytes} + \lambda \times \text{time}$, lower is better.
 
-**Why the mean.** The mean is the total time spent on the pages. When a program that was idle comes
-back, it faults in many pages one after the other, and it waits for the sum. The 99th percentile, p99,
-the time 99% of the pages stay below, stays a guard: a p99 that gets clearly worse means some pages
-are pathological, and they are looked for. It is not a target.
+**The mean**, because it is the total time spent on the pages: a program that comes back after a
+while faults in many pages one after the other and waits for the sum. The 99th percentile, p99, stays
+a guard: a p99 that gets clearly worse means some pages are pathological, and they are looked for.
 
-**Why $r = 0.34$.** Every page written is read back at most once, often never: it is freed, or the
-program exits. $r$ is how many reads come per write. On the project's desktop with zram as its only
-swap, the kernel's counters `pswpin` and `pswpout` in `/proc/vmstat` were 3 146 179 pages swapped in
-against 9 210 320 swapped out in 27.5 days: 0.34. So the time of a write counts fully and the time of
-a read a third. That is one machine; a phone swaps differently, and its $r$ is not measured yet.
+**$r = 0.34$** is how many reads come per write. On the project's desktop with zram as its only swap,
+`pswpin` and `pswpout` in `/proc/vmstat` counted 3 146 179 pages swapped in against 9 210 320 swapped
+out in 27.5 days. A page written is read back at most once, often never, because it is freed first.
 
-**lambda** is an exchange rate, in bytes per µs: how many bytes of stored size one µs per page is
-worth to you. It is not fixed. On a phone short of RAM a byte is worth more than on a server with
-memory to spare. So the project does not pick one. It plots each codec at (time, bytes) and draws the
-lower left convex hull: the codecs that have the lowest score for some lambda. Between two neighbours
-on the hull, the slope is the exchange rate at which the faster one starts to win. A design is worth
-keeping if it is on the hull at an exchange rate that matters. `quetschn-score` computes the hull from
-the benchmark logs.
+**lambda** is an exchange rate: how many bytes of stored size one µs per page is worth to you. On a
+phone short of RAM a byte is worth more than on a server with memory to spare, so the project does not
+pick one. It plots each codec at (time, bytes) and draws the lower left convex hull, the codecs that
+have the lowest score for some lambda; the slope between two neighbours on the hull is the exchange
+rate at which the faster one starts to win. `quetschn-score` computes it from the benchmark logs.
 
 <figure class="diagram">
 <div class="scroll">
@@ -479,7 +415,7 @@ the benchmark logs.
     <text x="293" y="117" text-anchor="end">lzo-rle, 6.35 µs, 1520 B</text>
     <text x="360" y="170">seqlz-fast-lit, 7.74 µs, 1183 B</text>
     <text x="690" y="146" text-anchor="end">zstd 3, 15.79 µs, 1105 B</text>
-    <text x="334" y="118" class="acc">243 B/µs</text>
+    <text x="334" y="118" class="acc">242 B/µs</text>
     <text x="440" y="148" class="acc">9.7 B/µs</text>
   </g>
 </svg>
@@ -487,41 +423,35 @@ the benchmark logs.
 <figcaption>The four codecs of the table below, means over the pages; the dashed line is the hull, and the slopes are the exchange rates between its neighbours.</figcaption>
 </figure>
 
-Read the figure from the right; its numbers are the ones of the table in the next section, measured
-on 5th October 2026. Going from `zstd` 3 to `seqlz-fast-lit` saves 8.05 µs per page written
-and costs 78 bytes per page, 9.7 bytes per µs: whoever values a µs at less than 9.7 bytes should run
-`zstd`. Going from `seqlz-fast-lit` to `lzo-rle` saves 1.39 µs and costs 337 bytes, 243 bytes per µs:
-whoever values a µs at more than that should run `lzo-rle`. In between, `seqlz-fast-lit` has the
-lowest score. `lz4` is not on the hull: `lzo-rle` is faster and smaller in these runs.
+Read the figure from the right, with the numbers of the table in the next section, measured on 5th
+October 2026. Going from `zstd`
+3 to `seqlz-fast-lit` saves 8.05 µs per page written and costs 78 bytes, 9.7 bytes per µs: whoever
+values a µs at less should run `zstd`. Going from `seqlz-fast-lit` to `lzo-rle` saves 1.39 µs and
+costs 337 bytes, 242 bytes per µs: whoever values a µs at more should run `lzo-rle`. In between,
+`seqlz-fast-lit` has the lowest score. `lz4` is not on the hull, `lzo-rle` is faster and smaller in
+these runs.
 
-With the times of a real swap-out and swap-in in the virtual machine, which the project measured
-later and which are the numbers its plan quotes, `seqlz-fast-lit` has the lowest score for any lambda
-from 6.8 to 190 bytes per µs; the hull is `lz4`, `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and
-`zstd` 3
+With the times of a real swap-out and swap-in in the virtual machine, measured later with the tables
+of 7th October, `seqlz-fast-lit` has the lowest score for any lambda from 6.7 to 183 bytes per µs, the
+means over the desktop dumps. The hull is then `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and `zstd`
+3, with `lz4` next to `lzo-rle` within the noise
 ([explored-designs.md, "The score with the swap times"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
-Whoever runs `lz4` or `lzo-rle` today instead of `zstd` says, by that choice, that a µs is worth more
-than about 7 bytes to them.
+Whoever runs `lz4` or `lzo-rle` instead of `zstd` says, by that choice, that a µs is worth more than
+about 7 bytes to them.
 
 ## The codecs zram has, and where seqlz sits {#ch-zram--codecs}
 
-Mainline zram has seven backends: `lzo-rle`, the default, `lzo`, `lz4`, `lz4hc`, `zstd`, `deflate`
-and `842`. Three matter for the comparison. `lz4` is the fast one, the common choice on Android.
-`lzo-rle` is zram's default, an `lzo` with a shortcut for runs of zeros, merged in 2019. `zstd` stores
-pages smallest and takes about twice the time. `lz4hc` writes `lz4`'s format with a slower, more
-thorough search. `deflate` and `842` are not in the comparisons of this book.
+Mainline zram has seven backends: `lzo-rle`, the default, `lzo`, `lz4`, `lz4hc`, `zstd`, `deflate` and
+`842`. Three matter here. `lz4` is the fast one, the common choice on Android. `lzo-rle` is `lzo` with a
+shortcut for runs of zeros, merged in 2019. `zstd` stores pages smallest and takes about twice the
+time. [Chapter 2](#ch-compression--formats) shows how `lz4`, `zstd` and seqlz write a page down.
 
-All of them, and seqlz, work the same way at the core: they cut a page into literals and matches,
-"copy so many bytes from so far back", and they differ in how hard they search and how they write the
-result down, in whole bytes like `lz4` and `lzo`, or in bits with codes like `zstd` and seqlz.
-[Chapter 2](#ch-compression) explains both halves from zero.
-
-This is where seqlz sits, measured in the real kernel in a virtual machine
-(`tools/zram-vm/run.sh`), on one CPU of a Ryzen 9 7950X fixed at 4.5 GHz, on 40 000 pages the
-project's desktop swapped into zram in September 2026. A program in the VM writes
-each page to zram with `pwrite()` and reads it back with `pread()`; each time is the whole system call,
-zram and zsmalloc included, the median of 3 runs, and for a cold read the compressed page is flushed from
-the CPU caches first. Means over the pages, measured on 5th October 2026
-with the tables seqlz had before 7th October
+Measured in the real kernel in a virtual machine (`tools/zram-vm/run.sh`), on one CPU of the Ryzen 9
+7950X fixed at 4.5 GHz, on 40 000 pages the desktop swapped into zram in September 2026. A program in
+the VM writes each page with `pwrite()` and reads it back with `pread()`, so each time is the whole
+system call, zram and zsmalloc included, the median of 3 runs; for a cold read the compressed page is
+flushed from the CPU caches first. Means over the pages, 5th October 2026, with the tables seqlz had
+before 7th October
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost)):
 
 | codec | stored bytes per page | write, µs | cold read, µs | time per page written, µs |
@@ -531,33 +461,32 @@ with the tables seqlz had before 7th October
 | **`seqlz-fast-lit`** | **1183** | **6.79** | **2.79** | **7.74** |
 | `zstd` 3 | 1105 | 13.95 | 5.41 | 15.79 |
 
-The time per page written is the write plus 0.34 times the cold read, e.g. for `lz4`
-$5.52 + 0.34 \times 2.54 = 6.38$ µs. In these runs of 5th October 2026, `seqlz-fast-lit` stores
-pages 22% smaller than `lzo-rle`, 26% smaller than `lz4`, and within 6% of
-`zstd` 3, for 23% more time than `lz4` to write a page.
+In these runs of 5th October 2026, `seqlz-fast-lit` stores pages 22% smaller than `lzo-rle` and 26%
+smaller than `lz4`, 7% larger than `zstd` 3, for 23% more time than `lz4` to write a page.
 
 ::: warn The read times in this table flatter the decoder
-The project's read benchmark in the VM reads every page several times in a row in each run, warm and
-cold, and that trains the CPU's branch predictor on the page: the predictor guesses the outcome of
-each `if` from its past ([chapter 3](#ch-cpu--branches)). In a real swap-in, which decodes a page once, `seqlz-fast-lit` mispredicts about 110 branches
-per page more, and its reads are 0.62 µs slower than `lz4`'s instead of the 0.25 µs
-above
+The read benchmark reads every page several times in a row, warm and cold, and that trains the CPU's
+branch predictor on the page ([chapter 3](#ch-cpu--branches)). In a real swap-in, which decodes a page
+once, `seqlz-fast-lit` mispredicts about 110 branches per page more, and its reads are 0.62 µs slower
+than `lz4`'s instead of the 0.25 µs above
 ([explored-designs.md, "The decoder in a fault, found"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
-The hull of the previous section uses the swap times. On the phone, in its own Linux 4.14 kernel,
+The hull of the swap times above has this in it. On the phone, in its own Linux 4.14 kernel,
 `seqlz-fast-lit` stores pages 28% smaller than `lz4` and swaps them in 11% to 13% slower warm and 17%
-to 25% slower cold.
+to 25% slower cold
+([`docs/plan.md`](https://github.com/martinus/quetschn/blob/main/docs/plan.md), 9th October 2026).
 :::
 
 ## The goal, and the limits it lives within {#ch-zram--goal}
 
-The goal is a codec merged into mainline Linux as a zram backend because it is measurably better than
-what is there. Better than everything on every axis is not possible: no small scalar codec without
-allocation beats `zstd`'s entropy coder ([chapter 2](#ch-compression--entropy)) on size. So the target is the fast corner: as close as possible
-to `lz4`'s speed and to `zstd`'s size, without more memory than `lz4`, and without recompression. It
+The goal is a codec merged into mainline Linux as a zram backend because it is measurably better
+than what is there. No small scalar codec without allocation beats `zstd`'s entropy coder on size
+([chapter 2](#ch-compression--entropy)), so the target is the fast corner: as close as possible to
+`lz4`'s speed and to `zstd`'s size, without more memory than `lz4`, and without recompression. It
 might be unreachable; a design is judged by how much closer it gets
 ([`docs/plan.md` §1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#1-goal-and-success-criteria)).
 
-The plan writes the merge argument as six criteria. Their status on 9th October 2026:
+The plan writes the merge argument as six criteria. Their status on 9th October 2026, means over the
+dumps:
 
 | | criterion | status, as in [`docs/plan.md` §1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#1-goal-and-success-criteria) |
 | --- | --- | --- |
@@ -568,22 +497,16 @@ The plan writes the merge argument as six criteria. Their status on 9th October 
 | C5 | work memory per CPU at most `lz4`'s 16 416 bytes | met with 4 KiB pages |
 | C6 | the decoder safe for any input and bounded in time | met |
 
-C5 and C6 are hard limits: memory per CPU is taken from every CPU whether it swaps or not, and an
-unsafe decoder is not a trade-off. C2 and C3 are guards, not gates. A design is never dropped because
-its p99 misses the bar, and never kept because it meets it; the score decides. Since C2 did not hold,
-the argument for a merge is memory at a small cost in time, not a faster read.
+C5 and C6 are hard limits. C2 and C3 are guards, not gates: a design is never dropped because its p99
+misses the bar, and never kept because it meets it; the score decides. Since C2 does not hold, the
+argument for a merge is memory at a small cost in time, not a faster read.
 
-**No recompression.** zram can compress idle pages a second time, with a slower algorithm, after they
-were written. The project measured that, with an optimal parser for seqlz's format (one that searches
-for the cheapest sequences of a page, not the first match) and with `zstd` 3, 16 times as fast as
-that, and did not pursue it, see [chapter 17](#ch-decisions--not-kept).
-So every design in this book compresses a page once, when it is written, and that one pass is all the
-time it gets.
+**No recompression.** zram can compress idle pages a second time with a slower algorithm. The project
+measured that with `zstd` 3 and with an optimal parser for seqlz's format, and did not pursue it
+([chapter 17](#ch-decisions--not-kept)). Every design in this book compresses a page once.
 
-Two numbers in this chapter rest on one machine each: $r = 0.34$ is the desktop's, and a phone's $r$
-is not measured; and how large the bursts of swap-ins are, which decides how much a slower read hurts
-a user, is not measured either. With 16 KiB pages, which Android is moving to and which the project
-has only from the Android 17 emulator, not from a phone, seqlz needs more work
-memory than `lz4` once the streams are split, and whether C5 limits the compression context alone or
-the sum of both is still open.
+$r = 0.34$ is one desktop's. A phone's $r$ is not measured, and neither is how large the bursts of
+swap-ins are, which decides how much a slower read hurts a user. With 16 KiB pages, which Android is moving to and which the project
+has only from the Android 17 emulator, seqlz needs more work memory than `lz4` once the streams are
+split, and whether C5 limits the compression context alone or the sum of both is still open.
 @assert k16.size.state + k16.const.SCRATCH > 16416 and k16.size.state <= 16416
