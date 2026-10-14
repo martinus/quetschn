@@ -3,53 +3,42 @@
 seqlz is a compressor for single memory pages, written for zram, the compressed swap device of Linux.
 On the pages a desktop swapped into zram, `seqlz-fast-lit` stores a page in 22% fewer bytes than
 `lzo-rle`, zram's default, and takes 23% more time than `lz4` to write a page and 10% more to read
-one. `zstd` stores pages 6% smaller still, for twice the time to write and about twice the time to
+one. `zstd` stores pages 7% smaller still, for twice the time to write and about twice the time to
 read. Measured in the real kernel in a virtual machine on a Ryzen 9 7950X fixed at 4.5 GHz, on 5th
 October 2026 with the tables seqlz had before 7th October; the setup is in
 [`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost).
 
-All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code lengths in
-four `.inc` files, two for each page size.
+All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code
+lengths in four `.inc` files, two for each page size.
 @assert ch00.inc_files == 4
-This book goes through every one of those lines. It shows the code in pieces, as it is in the
-repository, and after each piece says what it does, how it does it at the level of C and the CPU,
-and why it is written this way and not another. The "why" is the part that is usually missing: most
-lines of `src/` are the result of a measurement, and the repository records them in
+This book goes through every one of those lines, in pieces as they are in the repository, and after
+each piece says what it does that is not plain from the C, and why it is written this way. The "why"
+is mostly a measurement: the repository logs every design it tried, also the ones that lost, in
 [`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md),
-a log of every design that was tried, including the ones that lost. The book links to it wherever a
-line has a number behind it.
+and the book links to it wherever a line has a number behind it.
 
 ## Who this is for {#preface--who}
 
-You know C, or at least a language close to it, and you are comfortable with pointers, bit operations
-and structs. You have never written kernel code, and you have never written a compressor. Both are
-explained from zero where the code first needs them:
-
-- what zram does with a page, why every page is compressed on its own, and why the memory a codec uses
-  counts per CPU;
-- how LZ compression turns a page into literals and matches, and how a Huffman code turns numbers
-  into bits;
-- why a table lookup that misses the cache, a mispredicted `if` and a chain of dependent instructions
-  decide the speed of a decoder, and why the small in-order cores of phones make all three worse.
-
-If you know some of this already, skip the chapter; nothing in Part II depends on reading Part I
-word for word.
+You know C and C++ well: pointers, the integer rules, undefined behaviour, what a compiler inlines.
+The book does not explain the language. You have never written kernel code or a compressor, and Part
+I explains what the code needs of both: what zram does with a page and why memory per CPU counts, how
+LZ matches and Huffman codes work, and why cache misses, mispredicted branches and chains of
+dependent instructions decide the speed of a decoder, more so on the small in-order cores of phones.
+Skip what you know; Part II links back where it needs a term.
 
 ## How the book is organised {#preface--parts}
 
-**Part I, before the code**, has four chapters of background: [zram](#ch-zram),
-[compression](#ch-compression), [the CPU](#ch-cpu), and [the format on one page](#ch-format). The last
-one is the map for everything after it: the bytes of a compressed page, with one page taken apart bit
-by bit.
+**Part I, before the code**: [zram](#ch-zram), [compression](#ch-compression), [the CPU](#ch-cpu),
+and [the format on one page](#ch-format), which takes two compressed pages apart bit by bit and is the
+map for everything after it.
 
-**Part II, the code**, goes through `src/` file by file, in the order a reader needs it. The headers
-come first, because every `.c` file builds on their constants and structs. Then the code that builds
-the Huffman tables, then the compressor, then the decompressor, then the glue that makes seqlz a zram
-backend.
+**Part II, the code**, goes through `src/` file by file: the headers first, because every `.c` file
+builds on their constants and structs, then the code that builds the Huffman tables, the compressor,
+the decompressor, and the glue that makes seqlz a zram backend.
 
-**Part III** follows [one page through every function](#ch-trace), compressing and decompressing it
-with the real numbers each step produces, and then collects [the design decisions](#ch-decisions)
-with what they were measured against. [The glossary](#glossary) is at the end.
+**Part III** follows [one page through every function](#ch-trace) with the numbers each step
+produces, and collects [the design decisions](#ch-decisions) with what they were measured against.
+[The glossary](#glossary) is at the end.
 
 ## The files, and where each is explained {#preface--files}
 
@@ -67,7 +56,7 @@ with what they were measured against. [The glossary](#glossary) is at the end.
 @assert len(ch00.lines) == 14
 @assert ch00.lines.seqlz_default_tables_4k_inc == ch00.lines.seqlz_default_tables_16k_inc and ch00.lines.seqlz_lit_sets_4k_inc == ch00.lines.seqlz_lit_sets_16k_inc
 
-How the pieces call each other, for the compressor on the left and the decompressor on the right:
+How the pieces call each other, the compressor on the left and the decompressor on the right:
 
 <pre class="mermaid">
 flowchart TB
@@ -86,38 +75,33 @@ flowchart TB
 
 ## Conventions {#preface--conventions}
 
-**Listings are the real files.** Every listing names its file and its line numbers, and the build
-script takes the lines from the repository at the commit named on the title page. If you open the
-file at that commit, the line numbers match. That commit is the last one that changed `src/`. A few
-chapters name `a2d57dd` of 10th October 2026, an older commit, for a count or a layout taken there.
-The kernel's coding style indents with tabs of 8
-columns and keeps lines within 80 columns, and the listings show it that way.
+**Listings are the real files.** Every listing names its file and its line numbers, taken from the
+repository at the commit named on the title page, the last one that changed `src/`. A few chapters
+name `a2d57dd` of 10th October 2026, an older commit, for a count or a layout taken there. The code is
+in the kernel's style: tabs of 8 columns, lines within 80 columns.
 
-**4 KiB pages unless said otherwise.** seqlz is written for pages of 4 KiB and of 16 KiB; the
-constant `QUETSCHN_PAGE_BITS` is 12 or 14. Linux on x86-64 and on most phones has 4 KiB pages, and
-the kernel's copy of seqlz is built for those only. Numbers in the text are for 4 KiB pages; where 16
-KiB pages change something, the text says so.
+**4 KiB pages unless said otherwise.** seqlz is written for pages of 4 KiB and of 16 KiB,
+`QUETSCHN_PAGE_BITS` 12 or 14. Linux on x86-64 and on most phones has 4 KiB pages, and the kernel's
+copy of seqlz is built for those only. Where 16 KiB pages change something, the text says so.
 
-**Boxes.** Background that a reader may know already is in boxes, so that it is easy to skip:
-**Kernel background**, **CPU background**. **Why** boxes hold a design decision and what it was
-measured against. **Measured** boxes hold a measurement with its setup, **Careful** boxes a point that
-is easy to get wrong, and **Try it** boxes something you can run yourself.
+**Boxes.** **Kernel background** and **CPU background** boxes are easy to skip if you know the
+subject. **Why** boxes hold a design decision and what it was measured against, **Measured** boxes a
+measurement with its setup, **Careful** boxes a point that is easy to get wrong, and **Try it** boxes
+something you can run.
 
-**Numbers have a source.** A number in this book is either computed from the code (and then you can
-compute it again) or measured, and then the text says on what and links to where the repository
-recorded it. Measurements are from the time they were made; the tables and the code changed since,
-so a number from September 2026 is not always the number you would get today.
+**Numbers have a source.** A number is either computed from the code when the book is built, or
+measured, and then the text says on what and links to where the repository recorded it. Measurements
+are from the day they were made; the code and the tables changed since, so a number from September
+2026 is not always what you would get today.
 
 **Dumps, points and issues.** Most measurements run on zram dumps, copies of the pages that a desktop
-or a phone had swapped into zram, and a number is the mean over the dumps it was measured on.
-Memory is often given in **points**: a point is 1% of a page,
-41 bytes on 4 KiB pages. "0.3% smaller" is a share of the stored size instead, the bytes zram spends
-on the pages ([chapter 1](#ch-zram--size-classes)). A number like #153 is an issue in the project's
-GitHub repository, e.g. [#153](https://github.com/martinus/quetschn/issues/153), and the text links
-each one where it names it.
+or a phone had in zram, and a number is the mean over the dumps it was measured on. A **point** is 1%
+of a page, 41 bytes on 4 KiB pages. "0.3% smaller" is a share of the stored size, the bytes zram
+spends on the pages ([chapter 1](#ch-zram--size-classes)). A number like
+[#153](https://github.com/martinus/quetschn/issues/153) is an issue of the project on GitHub.
 
-**`src/` is not exactly what the kernel gets.** The kernel's copy of seqlz is generated from `src/`
-by a script, `tools/kernel-port/port.py`, which replaces the compatibility header with the kernel's own
-headers, drops what only the benchmarks and tests use, and adds the kernel's interface around it.
-[Chapter 15](#ch-zram-glue) shows what changes and why. Everything in `src/` is written so that this
-copy is a mechanical step: kernel C, no libc, no floating point, no inline assembly.
+**`src/` is not exactly what the kernel gets.** A script, `tools/kernel-port/port.py`, generates the
+kernel's copy from `src/`: it replaces the compatibility header with the kernel's own headers, drops
+what only the benchmarks and tests use, and adds the kernel's interface around it
+([chapter 15](#ch-zram-glue)). The codec's files are kernel C already, without libc, floating point
+or inline assembly, so that copy is a mechanical step.
