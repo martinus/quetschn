@@ -1,107 +1,122 @@
 # quetschn: agent instructions
 
-A compression codec for Linux zram memory pages. The codec is `seqlz-fast-lit` (one format, two
-compressors: `seqlz-fast` raw literals, `seqlz-fast-lit` coded literals). Target: upstream Linux.
-Project name is `quetschn` (binaries, `QUETSCHN_*` options); codec name stays `seqlz`, do not propose a
-rename.
+Read by agents only. Keep edits terse: rules and facts, no rationale prose, no human-facing style.
 
-## Goal and how designs are judged
+Compression codec for Linux zram pages. Codec `seqlz-fast-lit`: one format, two compressors
+(`seqlz-fast` raw literals, `seqlz-fast-lit` coded literals). Target: upstream Linux. Project name
+`quetschn` (binaries, `QUETSCHN_*` options); codec name stays `seqlz`, never propose a rename.
 
-Get as close as possible to `lz4`'s speed and to `zstd`'s compression (`zstd` at level 3, zram's default level for it),
-without more memory than `lz4` and without recompression. It might be unreachable, so a design is
-judged by how much closer it gets, not by whether it arrives.
+## Goal and design rules
 
-- The score, `docs/plan.md` §1.1: zsmalloc memory per stored page against the mean time per page
-  written, `write + 0.34 * read`. Lower left is better. `quetschn-score` computes the hull.
-- Hard limits: C5, per-CPU work memory ≤ `lz4`'s 16416 bytes; C6, decoder safe and bounded for any
-  input.
-- Guards, not gates: C2/C3 (p99 reads/writes against `lz4`). Never drop a design because its p99
-  misses the bar, never keep one because it meets it. A p99 that gets clearly worse means: find the
-  pages that cause it.
-- No recompression in any design (`docs/plan.md` §1.1, explored-designs "Recompression, measured, not
-  pursued").
-- Codec code is pure C. No inline assembly, even for large gains (an arm64 asm matcher, -9% cycles on
-  the A55, was rejected; it is commit `0288b1e`). Empty `__asm__("")` barriers: ask
-  first.
-- The format is not frozen: nobody uses seqlz yet, so format and table changes are fine. Each one
-  updates `docs/format.md` (rules, SHA-256 table, worked example, Status section) and both reference
-  decoders.
+Goal: near `lz4` speed and `zstd` level 3 (zram's default level for it) ratio, memory ≤ `lz4`, no
+recompression. Judge a design by how much closer it gets, not by whether it arrives.
+
+- Score (`docs/plan.md` §1.1): zsmalloc memory per stored page vs mean time per page written,
+  `write + 0.34 * read`. Lower left wins. `quetschn-score` computes the hull.
+- Hard limits: C5 per-CPU work memory ≤ 16416 bytes (`lz4`); C6 decoder safe and bounded for any input.
+- C2/C3 (p99 read/write vs `lz4`) are guards, not gates: never drop or keep a design on p99. p99
+  clearly worse: find the pages that cause it.
+- No recompression (`docs/plan.md` §1.1; explored-designs "Recompression, measured, not pursued").
+- Codec is pure C. No inline assembly, even for large gains (arm64 asm matcher, -9% cycles on A55,
+  rejected, commit `0288b1e`). Empty `__asm__("")` barriers: ask first.
+- Format not frozen: format/table changes allowed. Each one updates `docs/format.md` (rules, SHA-256
+  table, worked example, Status) and both reference decoders.
 
 ## Layout
 
 ```text
-src/                 the codec, freestanding C11 (kernel rules): seqlz_compress.c with page_lz.h (matcher),
-                     seqlz_decompress.c, seqlz_codes.c (the tables' codes), seqlz_internal.h, seqlz.h,
-                     seqlz_default_tables*.{c,inc} + seqlz_lit_sets*.{c,inc} (trained tables = part of the
-                     format), zram_seqlz.c (zram call shape, for the harness), seqlz_compat.h (the
-                     kernel's names, u8, get_unaligned_le64(), ..., outside the kernel too)
-bench/               C++20 harness, zsmalloc cost model, table training (seqlz_train*.cpp, the counts the
-                     tables are built from in seqlz_counts_*.txt),
-                     kernel_codecs/ (zram's lz4/lzo/zstd glue, built from a kernel tree)
-test/                doctest, one binary quetschn_test; test/seqlz_endian.c is CI's same-bytes check
-fuzz/                libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs); .clusterfuzzlite/ builds
-                     them for ClusterFuzzLite
-tools/               see tools/README.md; seqlz-ref/ = reference decoders written from docs/format.md
-                     alone (never copy from src/ into them), zram-vm/ = kernel VM, zram-phone/ = zram
-                     in the Mi 9T's kernel, swap-fault/, phone-apps/, android-emu/ (emulator corpus, 4
-                     and 16 KiB pages), collect/, samecode/ (the kernel copy's machine code, old
-                     against new), seqlz-compress/, seqlz-worst/, seqlz-bound/, swap-bursts/
-docs/                plan.md, format.md (spec), seqlz.md (overview: result, choices), measuring.md (all commands),
-                     explored-designs.md (log of every measured design), plots/*.svg; book/ = "seqlz, line by line",
-                     every line of src/ explained, built by docs/book/build.py (see its README)
-cmake/               kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)
-.claude/skills/      issues/: "do the issues", the order of working the owner's issues to merged PRs
+src/            codec, freestanding C11, kernel rules: seqlz_compress.c + page_lz.h (matcher),
+                seqlz_decompress.c, seqlz_codes.c (table codes), seqlz_internal.h, seqlz.h,
+                seqlz_default_tables*.{c,inc} + seqlz_lit_sets*.{c,inc} (trained tables = format),
+                zram_seqlz.c (zram call shape, harness), seqlz_compat.h (kernel names: u8,
+                get_unaligned_le64(), ... outside the kernel)
+bench/          C++20 harness, zsmalloc cost model, table training (seqlz_train*.cpp; counts in
+                seqlz_counts_*.txt); kernel_codecs/ = zram lz4/lzo/zstd glue built from a kernel tree
+test/           doctest, binary quetschn_test; seqlz_endian.c = CI same-bytes check
+fuzz/           libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs); .clusterfuzzlite/ builds them
+tools/          see tools/README.md. seqlz-ref/ = reference decoders from docs/format.md only (never
+                copy from src/), kernel-port/, zram-vm/ = kernel VM, zram-phone/ = zram in Mi 9T
+                kernel, android-emu/ (emulator corpus, 4/16 KiB pages), samecode/ (kernel copy's
+                machine code, old vs new), swap-fault/, phone-apps/, collect/, seqlz-compress/,
+                seqlz-worst/, seqlz-bound/, swap-bursts/
+docs/           plan.md, format.md (spec), seqlz.md (overview), measuring.md (all commands),
+                explored-designs.md (every measured design), plots/*.svg; book/ = "seqlz, line by
+                line", every line of src/ explained, built by docs/book/build.py (its README)
+cmake/          kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)
+.claude/skills/ issues/: "do the issues", order for working the owner's issues to merged PRs
 ```
 
-Code removed on 7 Oct 2026 (old `explore/*` designs, `spike/`) is in git before `57fb8fb`:
-`git show 57fb8fb^:explore/bytelz.c`. `docs/explored-designs.md` still names those old paths on
-purpose.
+Code removed 7 Oct 2026 (`explore/*`, `spike/`): in git before `57fb8fb`
+(`git show 57fb8fb^:explore/bytelz.c`). `docs/explored-designs.md` names those paths on purpose.
 
 ## The kernel copy
 
-What a maintainer of `lib/`, zram or arm64 reads is the copy that `tools/kernel-port/port.py` writes
-into a kernel tree, not `src/`. New code meets these rules; where existing code does not, there is an
-issue (#151 to #157, from the review of 10th October 2026).
+Reviewers read the copy `tools/kernel-port/port.py` writes into a kernel tree, not `src/`. New code
+follows these rules; open gaps in existing code: issues #151 to #157 (review of 10 Oct 2026).
 
-- Generated, never edited: fix `src/` or `tools/kernel-port/`. To read it, `git archive` the kernel
+- Generated, never edited: fix `src/` or `tools/kernel-port/`. To read it: `git archive` the kernel
   tree's `drivers/block/zram lib/Kconfig lib/Makefile MAINTAINERS
-  Documentation/admin-guide/blockdev/zram.rst` into a directory and run `port.py <dir>`.
-- The kernel's helpers, not our own: `get_unaligned_le16()`, `sizeof_field()`, `prefetch()`,
-  `L1_CACHE_BYTES`, `BIT()`. No inline assembly, also not for one architecture: a gap in the kernel
-  is fixed in the kernel, with a patch of its own, which `tools/kernel-port/` carries and `port.py`
-  applies, as `x86-prefetcht0.patch`. `src/seqlz_compat.h` is the kernel's headers outside the kernel,
-  and may do what the kernel does with such a patch.
-- Nothing in `lib/` depends on the CPU model; `port.py` fails on `read_cpuid` or `MIDR_` there. #152
-  measured one decode loop for all cores instead.
-- `static` unless zram calls it. Names a reviewer can grep for, not `count` or `refill`. Every number
-  has a name, or a comment that says where it comes from.
-- Comments say what the code does and, in a line, why. Numbers of a measurement, a phone, a compiler
-  or our dumps go into docs/explored-designs.md and the commit message, not into `src/` (#156).
-  Whoever changes code checks the comments and the kernel-doc above it against it: the review found 5
-  that said something the code does not do, and 6 that named a file that no longer exists.
-- Every path the kernel takes runs in KUnit, and every path of the decoder is reached by a fuzz target.
-- Memory is what `kmalloc()` or `vmalloc()` hands out, not what is asked for: 8192 and 4112 bytes in
-  two allocations come as 16 KiB, as a union as 8 KiB (#154).
-- `tools/kernel-port/check.sh`: W=1 without a warning on x86-64, arm64, arm and s390, no new
-  checkpatch `--strict` finding. Stack frames stay below 1024 bytes, the 32-bit `FRAME_WARN` of older
-  kernels (1280 now, 2048 on 64-bit); `check.sh` prints the three deepest and fails at 1024. The
-  deepest are `code_literals()` and `decode_literals()`, 640 (gcc 16.2.1, x86-64 defconfig, `W=1`),
-  1000 and 952 with KASAN and UBSan as `stress.sh` sets them.
-- Nothing in the copy names this repository, our machines, phones or dumps. `port.py` fails on names
-  (`FORBIDDEN`), not on wording like "on pages of a phone". It fails too on a rewrite in `REWRITES` that
-  matches no comment any more: change or remove it with the comment it was for.
+  Documentation/admin-guide/blockdev/zram.rst` into a dir, run `port.py <dir>`.
+- Kernel helpers, not own ones: `get_unaligned_le16()`, `sizeof_field()`, `prefetch()`,
+  `L1_CACHE_BYTES`, `BIT()`. No inline assembly, not even per architecture: fix a kernel gap with its
+  own kernel patch, carried in `tools/kernel-port/` and applied by `port.py` (`x86-prefetcht0.patch`).
+  `src/seqlz_compat.h` = kernel headers outside the kernel; may do what such a patch does.
+- Nothing in `lib/` depends on the CPU model; `port.py` fails on `read_cpuid` or `MIDR_` there (#152:
+  one decode loop for all cores).
+- `static` unless zram calls it. Grep-able names (not `count`, `refill`). Every number named or
+  commented with its origin.
+- Comments: what the code does, plus one line of why. Measurement numbers (phone, compiler, dumps) go
+  to docs/explored-designs.md and the commit message, not `src/` (#156). When changing code, check
+  the comments and kernel-doc above it (the 10 Oct review found 5 wrong comments, 6 dead file names).
+- Every kernel path runs in KUnit; every decoder path is reached by a fuzz target.
+- Memory = what `kmalloc()`/`vmalloc()` hands out, not what is asked: 8192 + 4112 bytes in two
+  allocations = 16 KiB, as one union = 8 KiB (#154).
+- `tools/kernel-port/check.sh`: W=1 warning-free on x86-64, arm64, arm, s390; no new checkpatch
+  `--strict` finding; stack frames < 1024 bytes (older kernels' 32-bit `FRAME_WARN`; now 1280, 2048 on
+  64-bit). It prints the three deepest and fails at 1024. Deepest: `code_literals()` and
+  `decode_literals()`, 640 (gcc 16.2.1, x86-64 defconfig, `W=1`), 1000 and 952 with KASAN+UBSan as
+  `stress.sh` sets them.
+- The copy never names this repo, our machines, phones or dumps. `port.py` fails on names
+  (`FORBIDDEN`), not on wording like "on pages of a phone"; also on a `REWRITES` entry that matches no
+  comment any more (change or remove it with its comment).
+
+## Kernel patches (Phase 7)
+
+Source: kernel Maintainers Summit, Oct 2026. Never quote, cite or link its report.
+
+- Changelogs and cover letter: Martin writes them. You supply code, tests, numbers, bullet points.
+  Changelog = problem, change, measured result; short (padded text reads as tool output).
+- Tool use: state it in the cover letter only (tools, which step, Martin reviewed and tested all).
+  Before sending, check `Documentation/process/coding-assistants.rst` in the base tree for
+  `Assisted-by:` (summit agreed to drop the requirement; the file decides). Martin picks the wording.
+  The "no Claude attribution" rule covers this repo and GitHub, not the cover letter.
+- Before each version: "The kernel copy" rules hold; `tools/kernel-port/kunit.sh` passes on the exact
+  base; build with newest gcc and clang. Humans review why/where/taste, so the cover letter answers
+  "why a new codec" and "why this place in the tree" up front.
+- Before each version: cleanup pass over the kernel files. Comments match code; no dead code, unused
+  option or unneeded function; less code wins. Backend API follows the other zram backends.
+  Martin must be able to explain every line.
+- Error paths: when code changes, update KUnit error-path tests too (`seqlz_test_damaged`).
+- Resend policy: never one version per bot (Sashiko) finding or per mail. Wait for human design
+  comments, answer all in one version. Wrong bot finding: Martin explains why. Bot finding in code the
+  series does not touch: separate fix if real, else ignore.
+- Replies to reviewers: Martin, in person, soon, plain words; never pasted tool output. Fix small
+  nits (include order, names) without discussion; maintainers use them to test for a human.
+- Format: `git format-patch --base=<commit>` on the tree `MAINTAINERS` names for zram at send time;
+  name that tree in the cover letter. After "applied", check linux-next, do not ask.
+- After merge, decoder bug = security bug: kernel security process, no disclosure to anyone (employer
+  included) before the fix is public, fix upstream fast, `Fixes:` + `Cc: stable@vger.kernel.org`.
 
 ## Build, test, format
 
-On this machine the kernel tree is `/home/martinus/gra/linux/finehill`. Build in a fresh directory
-(e.g. the session scratchpad): the `build*/` dirs in a worktree may be configured for other paths or
-point at another worktree's `_deps`. To skip the network, reuse doctest:
-`-DFETCHCONTENT_SOURCE_DIR_DOCTEST=<some build>/_deps/doctest-src`.
+- Kernel tree: `/home/martinus/gra/linux/finehill`.
+- Build in a fresh dir (scratchpad); worktree `build*/` dirs may point at other paths/`_deps`.
+- Offline doctest: `-DFETCHCONTENT_SOURCE_DIR_DOCTEST=<some build>/_deps/doctest-src`.
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
 cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 131 cases, ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14 and no kernel tree (zram glue is 4 KiB only), 110 cases
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only), 110 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
@@ -109,86 +124,80 @@ gcc -O2 -Isrc -o le test/seqlz_endian.c src/seqlz_{codes,compress,decompress,def
 python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decoder, checks table hashes
 ```
 
-- CI (`.github/workflows/ci.yml`): format, gcc debug+sanitize, clang release, gcc arm64, gcc 16 KiB
-  release+sanitize (no kernel tree), fuzz 60 s per target (4 KiB, 16 KiB, MSan), `same-bytes` (seqlz_endian.c on x86-64, `-m32` and s390x under qemu, outputs diffed), `docs`
-  (`tools/seqlz-ref/check.sh`, `tools/check-links.py`), `book` (`docs/book/build.py --check`, `lint.py`; the job
-  `pages` publishes the page from `main` to https://martin.ankerl.com/quetschn/), `kernel-port` (`tools/kernel-port/check.sh` for x86-64, arm64, arm, s390; `kunit.sh` in UML on x86-64); `ci-ok` is the one required check (branch
-  protection names only it, so other jobs can be renamed, but add each new job to `ci-ok`'s `needs` and
-  its `test` lines). The test job greps doctest's assertion line, so a binary that runs zero tests fails.
-  `.github/workflows/cflite.yml` is ClusterFuzzLite: daily, an hour each with ASan, UBSan and MSan, and
-  10 minutes with ASan on PRs that touch `src/` or `fuzz/`; not in `ci-ok`.
-- `src/` is in the kernel's style, `src/.clang-format`: tabs, 80 columns, `u8 *p`. clang-format does not
-  reflow comments there; wrap them by hand to 80 columns in the kernel's block form. The `.inc` tables
-  are not in the format check: `tools/kernel-port/gen-seqlz-tables.py` writes them from
-  `bench/seqlz_counts_*.txt` (its command is in each file's head), and `tools/seqlz-ref/check.sh` fails
-  when they differ from its output; never clang-format or edit them by hand.
-  Everything else keeps the project's `.clang-format`.
-- Run locally before pushing a docs or table change: `tools/seqlz-ref/check.sh` (hashes in
-  docs/format.md vs `src/` tables, 22 pages decoded by the spec decoder, ~1.5 s) and
-  `tools/check-links.py`.
-- Tool usage: read `usage()` in the source, or run with `--help`. Exception: `quetschn-swap-bursts`
-  ignores `--help` and starts sampling `/proc/vmstat`; never run it to see usage.
-- Do not build, test or fuzz while a benchmark is timing (`pgrep -af 'quetschn|qemu|run.sh'` first).
+- CI `.github/workflows/ci.yml` jobs: format; gcc debug+sanitize; clang release; gcc arm64; gcc 16 KiB
+  release+sanitize (no kernel tree); fuzz 60 s/target (4 KiB, 16 KiB, MSan); `same-bytes`
+  (seqlz_endian.c on x86-64, `-m32`, s390x/qemu, outputs diffed); `docs` (`tools/seqlz-ref/check.sh`,
+  `tools/check-links.py`); `book` (`docs/book/build.py --check`, `lint.py`; job `pages` publishes it
+  from `main` to https://martin.ankerl.com/quetschn/); `kernel-port` (`tools/kernel-port/check.sh`
+  x86-64/arm64/arm/s390, `kunit.sh` UML x86-64).
+- `ci-ok` = only required check. Jobs may be renamed; add each new job to `ci-ok`'s `needs` and its
+  `test` lines. Test job greps doctest's assertion line: zero tests run = fail.
+- `.github/workflows/cflite.yml` (ClusterFuzzLite): daily 1 h each ASan/UBSan/MSan; 10 min ASan on PRs
+  touching `src/` or `fuzz/`. Not in `ci-ok`.
+- `src/` style = `src/.clang-format` (kernel: tabs, 80 cols, `u8 *p`). Comments not reflowed: wrap by
+  hand to 80 cols, kernel block form. Rest of repo: root `.clang-format`.
+- `.inc` tables: not format-checked, never clang-format or hand-edit. Written by
+  `tools/kernel-port/gen-seqlz-tables.py` from `bench/seqlz_counts_*.txt` (command in each file's
+  head); `tools/seqlz-ref/check.sh` fails if they differ from its output.
+- Before pushing a docs or table change: `tools/seqlz-ref/check.sh` (~1.5 s: format.md hashes vs
+  `src/` tables, 22 pages through spec decoder) and `tools/check-links.py`.
+- Tool usage: `usage()` in source or `--help`. Exception: `quetschn-swap-bursts` ignores `--help` and
+  starts sampling `/proc/vmstat`; never run it for usage.
+- No build/test/fuzz while a benchmark runs: `pgrep -af 'quetschn|qemu|run.sh'` first.
 
 ## Measuring
 
-Commands: `docs/measuring.md`. Rules that matter:
+Commands: `docs/measuring.md`.
 
 - Quick bench first: `tools/quick-bench.sh <build> <corpus> <out> lz4,<candidates>` (~90 s, exact
-  sizes, latency of 20 000 pages in 5 processes). Full `quetschn-bench-interleaved` or the kernel VM
-  only to confirm a number that goes into a doc.
-- Clock: the benchmark header must show min == max frequency and `boost: 0`. If not, ask Martin, do not
-  change it.
-- Compare codecs within one run/boot; trust cold-latency differences only when quick-bench's min/max
-  range excludes 0. A single VM boot can be off by 18%.
-- The kernel VM and the phone's own kernel are the judges between codecs; userspace is for trying out.
-- The development machine (64 GB) does not swap; live swap sampling there is useless.
-- Corpus files (`corpus/`, `*.pages`) hold keys and passwords: never commit, publish or paste their
-  contents; delete copies on phones after use.
-- Every measured design gets an entry in `docs/explored-designs.md` in the same PR as the code: what,
-  numbers, code location, kept or not and why. Add it to the Index section at the top too. Read the
-  file before proposing a design; most obvious ideas are in it.
+  sizes, latency of 20 000 pages in 5 processes). Full `quetschn-bench-interleaved` or kernel VM only
+  to confirm a number for a doc.
+- Benchmark header must show min == max frequency and `boost: 0`. Else ask Martin; never change it.
+- Compare codecs within one run/boot. Cold-latency difference real only if quick-bench min/max range
+  excludes 0. One VM boot can be off by 18%.
+- Judges between codecs: kernel VM and the phone's kernel. Userspace = trying out.
+- Dev machine (64 GB) never swaps: no live swap sampling there.
+- Corpus (`corpus/`, `*.pages`) holds keys/passwords: never commit, publish or paste contents; delete
+  copies on phones after use.
+- Every measured design: entry in `docs/explored-designs.md` in the same PR as the code (what, numbers,
+  code location, kept or not and why) + Index at top. Read the file before proposing a design.
 
 ## Editing docs: invariants that break silently
 
-- Code comments, scripts and SVG comments cite `docs/plan.md` by section (§1.1, §3.1, §3.3, §3.5, §4,
-  §5.1, §5.2, §5.3, Phase 1, Phase 4). Never renumber plan sections.
-- Anchors are used across files (e.g. `plan.md#11-the-score-memory-against-time-not-bars`,
-  `format.md#status`, `format.md#example`, many `explored-designs.md#...` heading slugs). Renaming a
-  heading breaks links. After editing Markdown, run `tools/check-links.py` (CI runs it too).
-- `tools/seqlz-ref/seqlz_ref.py` parses `docs/format.md` rows of the form ``| `TOK_4k` | `<sha256>` |``.
-  Keep that table format exactly. Retrained tables need new hashes there, or `check.sh` fails in CI, and
-  new `bench/seqlz_counts_*.txt` (`quetschn-seqlz-train --counts`), or the test `seqlz_train` fails.
-- `docs/format.md` is also the kernel's `Documentation/staging/seqlz.rst`, written by
-  `tools/kernel-port/format_rst.py`. HTML comments mark what only this repository has and what only the
-  kernel's copy has; the converter fails on Markdown it does not know (block quotes, links into the
-  repository outside such a mark, a `|` or a word ending in `_` outside backticks).
-- Numbers in docs go stale when tables or the matcher change. Before quoting a code length or a byte
-  count, verify against `src/`: `seqlz_ref.load_tables(12)` (run from `tools/seqlz-ref/`) gives the
-  codes; `tools/seqlz-compress/compress.c` built with `-Isrc` compresses a page file. Say which tables a
-  measurement used (e.g. "tables of 7 October").
-- Codec comparison charts: time per page on x, memory as % of page on y, both from 0.
-- The book `docs/book/` lists `src/` by line numbers. A change of `src/` that moves lines fails CI's
-  `book` job ("not covered"), or quietly shifts a listing by a few lines. In the same PR: `python3
-  docs/book/remap.py origin/main` prints how the listings and the line numbers in the prose move,
-  `--write` applies it; then read the prose next to every listing it marks CHANGED, and run
-  `docs/book/build.py --check` (needs `npm install` in `docs/book` once). Values the code computes
-  are `{{key}}` from `docs/book/facts/*.c`, `@program`/`@output` or `@assert` (docs/book/README.md), so a
-  change of the format or the tables fails the build where the prose needs a look.
+- Code comments, scripts, SVG comments cite `docs/plan.md` sections (§1.1, §3.1, §3.3, §3.5, §4, §5.1,
+  §5.2, §5.3, Phase 1, Phase 4). Never renumber.
+- Anchors used across files (`plan.md#11-the-score-memory-against-time-not-bars`, `format.md#status`,
+  `format.md#example`, many `explored-designs.md#...`). Never rename headings without fixing links.
+  After Markdown edits: `tools/check-links.py`.
+- `tools/seqlz-ref/seqlz_ref.py` parses `docs/format.md` rows ``| `TOK_4k` | `<sha256>` |``:
+  keep exact. Retrained tables need new hashes there (else `check.sh` fails) and new
+  `bench/seqlz_counts_*.txt` (`quetschn-seqlz-train --counts`, else test `seqlz_train` fails).
+- `docs/format.md` = also the kernel's `Documentation/staging/seqlz.rst` via
+  `tools/kernel-port/format_rst.py`. HTML comments mark repo-only and kernel-only parts. Converter
+  fails on unknown Markdown: block quotes, repo links outside such a mark, `|` or a word ending in `_`
+  outside backticks.
+- Doc numbers go stale when tables/matcher change. Verify before quoting: `seqlz_ref.load_tables(12)`
+  (from `tools/seqlz-ref/`) gives codes; `tools/seqlz-compress/compress.c` (`-Isrc`) compresses a page
+  file. Name the tables used ("tables of 7 October").
+- Codec charts: x = time per page, y = memory as % of page, both from 0.
+- `docs/book/` lists `src/` by line numbers. A `src/` change that moves lines fails CI `book` ("not
+  covered") or silently shifts a listing. Same PR: `python3 docs/book/remap.py origin/main` (shows
+  moves; `--write` applies), reread the prose next to each listing marked CHANGED, then
+  `docs/book/build.py --check` (`npm install` in `docs/book` once). Computed values are `{{key}}` from
+  `docs/book/facts/*.c`, `@program`/`@output` or `@assert` (docs/book/README.md): format/table
+  changes fail the build where prose needs a look.
 
 ## Writing and git
 
-- All public text (commits, PR titles/bodies, GitHub comments, code comments, docs) in Martin's voice:
-  read `~/gra/martin-voice.md` fresh each time. No em dashes, `e.g.`, numbers with an axis and hardware,
-  the loss stated, the caveat last.
-- Never add a Claude attribution, footer, `Co-Authored-By` or session link anywhere in the repo or on
-  GitHub.
-- Commits: `area: what changed` (areas seen: `seqlz:`, `docs:`, `tools:`, `test:`), body why / how /
-  measured; always `git commit -s` (DCO).
-- `gh` works on this machine. Martin merges PRs himself while you work: run
-  `gh pr view <n> --json state` right before pushing to a PR branch or editing a PR; if it is merged,
-  start a new branch from `origin/main`.
-- Repository and worktrees go through `gra` (see the global instructions). Removing a finished,
-  merged, clean worktree with `gra -y done <name>` is allowed, never the session's own.
-- Hardware: Xiaomi Mi 9T (rooted, A76 + A55, kernel 4.14) is the test phone. A Pixel 9a may only get
-  a static binary over `adb` in `/data/local/tmp`, never root/flash/unlock, and is cleaned up after.
+- Public text (commits, PR title/body, GitHub comments, code comments, docs): Martin's voice, read
+  `~/gra/martin-voice.md` fresh each time. No em dashes, `e.g.`, numbers with axis and hardware, state
+  the loss, caveat last.
+- Never add Claude attribution, footer, `Co-Authored-By` or session link in the repo or on GitHub.
+- Commits: `area: what changed` (`seqlz:`, `docs:`, `tools:`, `test:`); body why/how/measured;
+  always `git commit -s`.
+- `gh` works on this machine. Martin merges PRs while you work: `gh pr view <n> --json state` right
+  before pushing to or editing a PR; if merged, new branch from `origin/main`.
+- Repo and worktrees via `gra` (global instructions). `gra -y done <name>` allowed for finished,
+  merged, clean worktrees, never the session's own.
+- Hardware: Xiaomi Mi 9T (rooted, A76 + A55, kernel 4.14) = test phone. Pixel 9a: static binary over
+  `adb` in `/data/local/tmp` only, never root/flash/unlock, clean up after.
