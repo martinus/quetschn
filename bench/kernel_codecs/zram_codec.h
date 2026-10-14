@@ -100,12 +100,18 @@ static inline void quetschn_prefetch_page(const void* src, unsigned int src_len,
 }
 
 /*
- * Stands in for kzalloc/vzalloc/kvzalloc: zeroed, 64 byte aligned, NULL on failure. The size is added
+ * quetschn_zalloc() stands in for kzalloc/kvzalloc, quetschn_vzalloc() for vzalloc: zeroed, 64 byte
+ * aligned, NULL on failure. What the kernel's allocator hands out for the size, not the size, is added
  * to *counter, and subtracted again by quetschn_free(), so the harness can report how much memory a
- * codec holds per device and per CPU. Implemented in alloc.c with libc.
+ * codec holds per device and per CPU. kvzalloc() is counted as kmalloc(), which it tries first; it
+ * takes vmalloc() only when that fails. Implemented in alloc.c with libc.
  */
 void* quetschn_zalloc(__SIZE_TYPE__ size, __SIZE_TYPE__* counter);
+void* quetschn_vzalloc(__SIZE_TYPE__ size, __SIZE_TYPE__* counter);
 void quetschn_free(void* p, __SIZE_TYPE__* counter);
+/* what kmalloc() and vmalloc() hand out for size bytes, the page size of QUETSCHN_PAGE_BITS */
+__SIZE_TYPE__ quetschn_kmalloc_size(__SIZE_TYPE__ size);
+__SIZE_TYPE__ quetschn_vmalloc_size(__SIZE_TYPE__ size);
 
 #ifdef __cplusplus
 }

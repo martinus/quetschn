@@ -21,7 +21,8 @@ namespace {
 void usage() {
     std::fprintf(stderr,
                  "usage: quetschn-score [--reads-per-write <r>] [--recompress-weight <b>] [--lambda <bytes per us>]\n"
-                 "                      [--what-if <codec>:<factor>] ... <run.log>[:<prefix>] ...\n"
+                 "                      [--what-if <codec>:<factor>] ... [--per-cpu <codec>:<bytes>] ...\n"
+                 "                      [--device <cpus>:<MiB>] ... <run.log>[:<prefix>] ...\n"
                  "\n"
                  "Each log is the output of tools/zram-vm/run.sh, with BOOTS=n the mean over the boots, or of\n"
                  "quetschn-bench-* with timing, all from the same corpus; <prefix> goes in front of its codec\n"
@@ -34,7 +35,31 @@ void usage() {
                  "between them; with --lambda also that score for each codec.\n"
                  "--what-if adds a codec with the bytes of <codec> (its name with the prefix) and its own time times\n"
                  "<factor>, e.g. lz4 in hardware. In a log of MODE=swap the time of a same-filled page is the kernel's\n"
-                 "part and stays; elsewhere the whole time is scaled.\n");
+                 "part and stays; elsewhere the whole time is scaled.\n"
+                 "Memory per CPU: a bench log has it (\"memory per CPU\"), a log of run.sh does not, --per-cpu gives\n"
+                 "it for a codec (its name with the prefix). With it for every codec, the codecs are listed again\n"
+                 "for each --device, a machine with <cpus> CPUs and <MiB> of pages in zram, with memory per CPU\n"
+                 "* cpus / pages added to the bytes per page. Default devices: 8 and 32 CPUs, 64 and 1024 MiB each.\n");
+}
+
+// the codecs that win for some lambda, with the exchange rates between neighbours
+void print_hull(std::vector<quetschn::codec_cost> const& codecs, quetschn::score_weights const& w) {
+    auto const hull = quetschn::best_for_some_lambda(codecs, w);
+    for (std::size_t k = 0; k < hull.size(); ++k) {
+        auto const& c = codecs[hull[k]];
+        std::printf("%-32s %10.1f", c.name.c_str(), c.bytes_per_page);
+        if (k + 1 < hull.size()) {
+            auto const& n = codecs[hull[k + 1]];
+            auto const rate =
+                (c.bytes_per_page - n.bytes_per_page) / (quetschn::us_per_page(n, w) - quetschn::us_per_page(c, w));
+            std::printf("  -> %s: %.1f bytes for %.2f us more, %.1f bytes per us",
+                        n.name.c_str(),
+                        c.bytes_per_page - n.bytes_per_page,
+                        quetschn::us_per_page(n, w) - quetschn::us_per_page(c, w),
+                        rate);
+        }
+        std::printf("\n");
+    }
 }
 
 bool parse(std::string_view s, double& out) {
@@ -49,6 +74,17 @@ int main(int argc, char** argv) {
     auto lambda = -1.0;
     auto codecs = std::vector<quetschn::codec_cost>();
     auto what_ifs = std::vector<std::pair<std::string, double>>();
+    auto per_cpu = std::vector<std::pair<std::string, double>>();
+    auto devices = std::vector<quetschn::zram_device>();
+    // "<name>:<number>", the number >= 0
+    auto const named = [](std::string_view spec, char const* option) {
+        auto const colon = spec.rfind(':');
+        auto x = 0.0;
+        if (colon == std::string_view::npos || colon == 0 || !parse(spec.substr(colon + 1), x) || x < 0.0) {
+            throw std::invalid_argument(std::string(option) + " needs <name>:<number>, the number >= 0");
+        }
+        return std::pair(std::string(spec.substr(0, colon)), x);
+    };
     try {
         for (int i = 1; i < argc; ++i) {
             auto const arg = std::string_view(argv[i]);
@@ -64,14 +100,19 @@ int main(int argc, char** argv) {
                 value(w.recompress_weight);
             } else if (arg == "--lambda") {
                 value(lambda);
-            } else if (arg == "--what-if") {
-                auto const spec = std::string_view(i + 1 < argc ? argv[i + 1] : "");
-                auto const colon = spec.rfind(':');
-                auto factor = 0.0;
-                if (colon == std::string_view::npos || colon == 0 || !parse(spec.substr(colon + 1), factor) || factor < 0.0) {
-                    throw std::invalid_argument("--what-if needs <codec>:<factor>, factor >= 0");
+            } else if (arg == "--what-if" || arg == "--per-cpu" || arg == "--device") {
+                auto const spec = named(i + 1 < argc ? argv[i + 1] : "", argv[i]);
+                if (arg == "--what-if") {
+                    what_ifs.push_back(spec);
+                } else if (arg == "--per-cpu") {
+                    per_cpu.push_back(spec);
+                } else {
+                    auto cpus = 0.0;
+                    if (!parse(spec.first, cpus) || cpus < 1.0 || spec.second <= 0.0) {
+                        throw std::invalid_argument("--device needs <cpus>:<MiB>, both > 0");
+                    }
+                    devices.push_back({cpus, spec.second});
                 }
-                what_ifs.emplace_back(std::string(spec.substr(0, colon)), factor);
                 ++i;
             } else if (arg.starts_with("-")) {
                 usage();
@@ -101,6 +142,19 @@ int main(int argc, char** argv) {
         usage();
         return 2;
     }
+    for (auto const& [name, bytes] : per_cpu) {
+        auto found = false;
+        for (auto& c : codecs) {
+            if (c.name == name) {
+                c.per_cpu_bytes = bytes;
+                found = true;
+            }
+        }
+        if (!found) {
+            std::fprintf(stderr, "error: --per-cpu: no codec %s in the logs\n", name.c_str());
+            return 2;
+        }
+    }
     for (auto const& [name, factor] : what_ifs) {
         auto const n = codecs.size();
         for (std::size_t k = 0; k < n; ++k) {
@@ -117,7 +171,7 @@ int main(int argc, char** argv) {
     std::printf("time per page written = write + %.2f * cold read + %.2f * recompression, means, us\n\n",
                 w.reads_per_write,
                 w.recompress_weight);
-    std::printf("%-32s %10s %9s %9s %11s %9s", "codec", "bytes/page", "write", "read", "recompress", "us/page");
+    std::printf("%-32s %10s %9s %9s %11s %9s %9s", "codec", "bytes/page", "write", "read", "recompress", "us/page", "per CPU");
     if (lambda >= 0.0) {
         std::printf(" %13s", "score");
     }
@@ -130,28 +184,39 @@ int main(int argc, char** argv) {
                     c.read_ns / 1000.0,
                     c.recompress_ns / 1000.0,
                     quetschn::us_per_page(c, w));
+        if (c.per_cpu_bytes >= 0.0) {
+            std::printf(" %9.0f", c.per_cpu_bytes);
+        } else {
+            std::printf(" %9s", "-");
+        }
         if (lambda >= 0.0) {
             std::printf(" %13.1f", c.bytes_per_page + lambda * quetschn::us_per_page(c, w));
         }
         std::printf("\n");
     }
 
-    auto const hull = quetschn::best_for_some_lambda(codecs, w);
-    std::printf("\nbest for some lambda, from the fastest to the smallest; lambda in bytes per us\n");
-    for (std::size_t k = 0; k < hull.size(); ++k) {
-        auto const& c = codecs[hull[k]];
-        std::printf("%-32s", c.name.c_str());
-        if (k + 1 < hull.size()) {
-            auto const& n = codecs[hull[k + 1]];
-            auto const rate =
-                (c.bytes_per_page - n.bytes_per_page) / (quetschn::us_per_page(n, w) - quetschn::us_per_page(c, w));
-            std::printf("  -> %s: %.1f bytes for %.2f us more, %.1f bytes per us",
-                        n.name.c_str(),
-                        c.bytes_per_page - n.bytes_per_page,
-                        quetschn::us_per_page(n, w) - quetschn::us_per_page(c, w),
-                        rate);
+    std::printf("\nbest for some lambda, without memory per CPU, from the fastest to the smallest; bytes per page,\n"
+                "lambda in bytes per us\n");
+    print_hull(codecs, w);
+
+    auto missing = std::string();
+    for (auto const& c : codecs) {
+        if (c.per_cpu_bytes < 0.0) {
+            missing += " " + c.name;
         }
-        std::printf("\n");
+    }
+    if (!missing.empty()) {
+        std::printf("\nno memory per CPU for%s: --per-cpu <codec>:<bytes> gives it\n", missing.c_str());
+        return 0;
+    }
+    if (devices.empty()) {
+        devices = {{8, 64}, {8, 1024}, {32, 64}, {32, 1024}};
+    }
+    for (auto const& d : devices) {
+        std::printf("\nbest for some lambda, %.0f CPUs and %.0f MiB of pages in zram, bytes per page with memory per CPU\n",
+                    d.cpus,
+                    d.stored_mib);
+        print_hull(quetschn::on_device(codecs, d), w);
     }
     return 0;
 }
