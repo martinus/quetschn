@@ -78,7 +78,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The tables trained on phone sessions: up to 1.7% smaller on them, an old phone dump 1.8% larger](#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)
 - [Offset 2 in 1 bit, multiples of 8 below 2048 in 8: 0.3% to 0.8% smaller at the same speed, kept](#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)
 - [Offsets 2 and 8 in class 1, offset 4 as class 4's 0: 0.1% to 0.2% smaller, reads 2% to 5% slower, not kept](#offsets-2-and-8-in-class-1-offset-4-as-class-4s-0-01-to-02-smaller-reads-2-to-5-slower-not-kept)
-- [The matcher lazy by one position: 1.0% to 1.4% smaller, writes 7% to 15% slower, a point on the hull](#the-matcher-lazy-by-one-position-10-to-14-smaller-writes-7-to-15-slower-a-point-on-the-hull)
+- [The matcher lazy by one position: 0.9% to 1.4% smaller, writes 7% to 15% slower, a point on the hull](#the-matcher-lazy-by-one-position-09-to-14-smaller-writes-7-to-15-slower-a-point-on-the-hull)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5522,7 +5522,7 @@ The Mi 9T's own kernel, modules with NDK r21e's clang 9, `BUS=1`, 20 000 pages o
 slower, and swap-outs 2.3% to 2.8% slower, more than the encoder's few instructions more explain, not
 looked into. 0.1% to 0.2% less memory for 2% to 5% slower reads on the phone is not on the hull.
 
-## The matcher lazy by one position: 1.0% to 1.4% smaller, writes 7% to 15% slower, a point on the hull
+## The matcher lazy by one position: 0.9% to 1.4% smaller, writes 7% to 15% slower, a point on the hull
 
 *`page_lz.h` takes the first match it finds. Lazy by one position, it also tries the next position,
 at the repeated offset and at the table's entry, and a longer match there wins, with one more
@@ -5536,12 +5536,12 @@ not built then for its time.
 
 | dump | 14th October | lazy below 20 bytes | lazy always |
 | --- | ---: | ---: | ---: |
-| phone, test session p3 | 975.9 | | 965.5, -1.07% |
-| phone, test session p5 | 929.8 | | 918.6, -1.20% |
-| phone, 4th October | 868.8 | | 857.9, -1.25% |
+| phone, test session p3 | 975.9 | 966.9, -0.92% | 965.5, -1.07% |
+| phone, test session p5 | 929.8 | 920.1, -1.04% | 918.6, -1.20% |
+| phone, 4th October | 868.8 | 859.3, -1.09% | 857.9, -1.25% |
 | desktop, 23rd September | 961.7 | 950.2, -1.20% | 948.9, -1.33% |
 | desktop, 24th September | 1204.9 | 1189.2, -1.30% | 1187.9, -1.41% |
-| Android 17 emulator | 1017.3 | | 1006.4, -1.07% |
+| Android 17 emulator | 1017.3 | 1007.8, -0.93% | 1006.4, -1.07% |
 
 On the first 20 000 pages of p3: 894.9, below 20 bytes 884.7 (-1.14%), always 883.1 (-1.32%); below 12
 bytes 886.0, below 36 bytes 884.0.
