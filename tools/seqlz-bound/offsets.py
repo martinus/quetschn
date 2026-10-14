@@ -72,18 +72,24 @@ def train(hist, esc_bits, limit=11):
 
 def price(layout, dumps):
     """bytes per page of tokens and raw offset bits of each dump"""
+    return price_escapes(layout, dumps)[0]
+
+
+def price_escapes(layout, dumps):
+    """bytes and escapes per page of each dump, its token codes trained on the other dumps"""
     symbols = 512 * (len(layout) + 1)
     hists, raws = [], []
     for lm, off, rep, _ in dumps:
         cls, raw = classify(layout, off, rep)
         hists.append(np.bincount(lm + 512 * cls, minlength=symbols).astype(float))
         raws.append(raw.sum())
-    out = []
+    out, esc = [], []
     for i, d in enumerate(dumps):
         others = sum(h / h.sum() for j, h in enumerate(hists) if j != i)
         bits = train(others * 1e6, max(12, math.ceil(math.log2(symbols))))
         out.append(((hists[i] * bits).sum() + raws[i]) / 8 / d[3])
-    return out
+        esc.append((hists[i] * (bits > 11)).sum() / d[3])
+    return out, esc
 
 
 def below(a, b=None):
