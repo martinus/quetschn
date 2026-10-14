@@ -162,12 +162,18 @@ tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-fast-lit
 `quetschn-bench-*` or of `tools/zram-vm/run.sh`, in either mode; with `MODE=swap` its times are the
 swap-out with one call per page and the swap-in with the compressed data flushed, the ones the plan
 uses. `--what-if lz4:0.5` adds `lz4` with its own time halved, and with `MODE=swap` the kernel's part
-unchanged, for the question of hardware `lz4` (plan R12). `r`, the reads per write, comes from
+unchanged, for the question of hardware `lz4` (plan R12). The work memory per CPU is in the bytes per
+page for each `--device <cpus>:<MiB>`, by default 8 and 32 CPUs with 64 MiB and 1 GiB in zram. A bench
+log has it in its "memory per CPU" line, what `kmalloc()` and `vmalloc()` hand out; a log of `run.sh`
+does not, `--per-cpu` gives it, with the codec's name in the log. `r`, the reads per write, comes from
 `quetschn-swap-bursts` on a running machine:
 
 ```sh
 ./build/quetschn-score --reads-per-write 0.34 run.txt
 ./build/quetschn-score --what-if lz4:0.5 swap.log
+./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-fast,seqlz-fast-lit --corpus corpus/test | grep -E '^codec|memory per CPU'
+./build/quetschn-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
+    --per-cpu seqlz:8192 --per-cpu seqlz-lit:16384 --device 8:256 swap.log
 ./build/quetschn-swap-bursts --seconds 3600
 ```
 

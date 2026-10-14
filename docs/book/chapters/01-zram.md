@@ -286,17 +286,18 @@ an object that zsmalloc split over two pages. The codec's context comes on top:
 | `lzo`, `lzo-rle` | 16 384 bytes, `kzalloc()` | 16 384 bytes |
 | `lz4` | 16 416 bytes, `vmalloc()` | 20 480 bytes, 5 pages |
 | `842` | 61 440 bytes, `kmalloc()` | 65 536 bytes, 16 pages |
-| `zstd` | far more, `zstd_cctx_workspace_bound()`, `vzalloc()` | |
+| `zstd` 3 | 186 112 bytes, `vzalloc()`, for compression and decompression | 192 544 bytes, 47 pages and a struct |
 
-The project's limit, **C5**, is `lz4`'s: at most 16 416 bytes per CPU. On the test phone, with 8
-cores, every 4 KiB of work memory per CPU is 32 KiB of RAM that is never free, on the device where
-RAM is shortest
+The plan calls this memory **C5**, and it is a cost: on the test phone, with 8 cores, every 4 KiB of
+work memory per CPU is 32 KiB of RAM that is never free, on the device where RAM is shortest. The score
+counts it, spread over the pages in zram: with 1 GiB in zram those 32 KiB are 0.1 bytes per page, with
+64 MiB 2 bytes
 ([`docs/plan.md` §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
 seqlz needs {{size.state}} bytes for the matcher's table while it compresses and {{const.SCRATCH}}
 bytes for the decoded literals while it decompresses. zram holds the stream's mutex for either, and
 neither keeps anything from one page to the next, so the kernel backend puts both into one union of {{ch01.union}} bytes, which `kmalloc()` hands out as
 exactly {{ch01.union_kib}} KiB. With the split streams they are two allocations,
-{{ch01.cctx_kib}} KiB each after rounding, {{ch01.split_kib}} KiB per CPU, still below `lz4`'s 20
+{{ch01.cctx_kib}} KiB each after rounding, {{ch01.split_kib}} KiB per CPU, below `lz4`'s 20
 KiB. The tables, {{size.tables|grp}} bytes, are not per CPU: they are built once when the kernel
 starts.
 @assert ch01.union == 1024 * ch01.union_kib and ch01.cctx_kib == ch01.dctx_kib and ch01.split_kib < 20
@@ -481,7 +482,7 @@ to 25% slower cold
 The goal is a codec merged into mainline Linux as a zram backend because it is measurably better
 than what is there. No small scalar codec without allocation beats `zstd`'s entropy coder on size
 ([chapter 2](#ch-compression--entropy)), so the target is the fast corner: as close as possible to
-`lz4`'s speed and to `zstd`'s size, without more memory than `lz4`, and without recompression. It
+`lz4`'s speed and to `zstd`'s size. It
 might be unreachable; a design is judged by how much closer it gets
 ([`docs/plan.md` §1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#1-goal-and-success-criteria)).
 
@@ -491,15 +492,17 @@ dumps:
 | | criterion | status, as in [`docs/plan.md` §1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#1-goal-and-success-criteria) |
 | --- | --- | --- |
 | C1 | at least 8% less Σ zsmalloc cost than the better of `lzo-rle` and `lz4` | met: 22% less than `lzo-rle` on the desktop, 28% less than `lz4` on the phone |
-| C2 | a lower p99 cold read time than `lz4`, on x86-64 and on an arm64 little core | not met |
-| C3 | a p99 write time within 1.2 times `lz4`'s | at the bar: 1.20 times |
+| C2 | the p99 cold read time against `lz4`, on x86-64 and on an arm64 little core | slower |
+| C3 | the p99 write time against `lz4` | 1.20 times |
 | C4 | beats `lz4` with a trained dictionary too | met: 20.4% less |
-| C5 | work memory per CPU at most `lz4`'s 16 416 bytes | met with 4 KiB pages |
+| C5 | work memory per CPU | 8 KiB with 4 KiB pages, 16 KiB with the contexts split |
 | C6 | the decoder safe for any input and bounded in time | met |
 
-C5 and C6 are hard limits. C2 and C3 are guards, not gates: a design is never dropped because its p99
-misses the bar, and never kept because it meets it; the score decides. Since C2 does not hold, the
-argument for a merge is memory at a small cost in time, not a faster read.
+C6 is the only hard limit: an unsafe decoder is not a trade-off. C5 is a cost, counted in the score's
+bytes for a named machine, e.g. 8 CPUs and 1 GiB in zram. C1 and C4 are reported. C2 and C3 are
+guards, not gates: a design is never dropped because its p99 misses the bar, and never kept because it
+meets it; the score decides. Since C2 does not hold, the argument for a merge is memory at a small
+cost in time, not a faster read.
 
 **No recompression.** zram can compress idle pages a second time with a slower algorithm. The project
 measured that with `zstd` 3 and with an optimal parser for seqlz's format, and did not pursue it
@@ -508,5 +511,5 @@ measured that with `zstd` 3 and with an optimal parser for seqlz's format, and d
 $r = 0.34$ is one desktop's. A phone's $r$ is not measured, and neither is how large the bursts of
 swap-ins are, which decides how much a slower read hurts a user. With 16 KiB pages, which Android is moving to and which the project
 has only from the Android 17 emulator, seqlz needs more work memory than `lz4` once the streams are
-split, and whether C5 limits the compression context alone or the sum of both is still open.
+split, which the score counts as a cost.
 @assert k16.size.state + k16.const.SCRATCH > 16416 and k16.size.state <= 16416

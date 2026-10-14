@@ -122,7 +122,7 @@ static int zstd_create(struct quetschn_params* p, struct quetschn_stream* s) {
     if (p->dict_size == 0) {
         prm = zstd_get_params(p->level, p->page_size);
         sz = zstd_cctx_workspace_bound(&prm.cParams);
-        zctx->cctx_mem = quetschn_zalloc(sz, &s->allocated);
+        zctx->cctx_mem = quetschn_vzalloc(sz, &s->allocated);
         if (!zctx->cctx_mem) {
             goto error;
         }
@@ -131,7 +131,7 @@ static int zstd_create(struct quetschn_params* p, struct quetschn_stream* s) {
             goto error;
         }
         sz = zstd_dctx_workspace_bound();
-        zctx->dctx_mem = quetschn_zalloc(sz, &s->allocated);
+        zctx->dctx_mem = quetschn_vzalloc(sz, &s->allocated);
         if (!zctx->dctx_mem) {
             goto error;
         }

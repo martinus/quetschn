@@ -24,6 +24,17 @@ struct codec_cost {
     // swap-out and swap-in of a same-filled page, which zram stores without the codec; 0 elsewhere
     double write_kernel_ns = 0.0;
     double read_kernel_ns = 0.0;
+    // what the codec holds per CPU, both contexts, as kmalloc() and vmalloc() hand it out; bench: "memory
+    // per CPU"; VM: not in the log, -1 until --per-cpu gives it
+    double per_cpu_bytes = -1.0;
+    double page_size = 4096.0; // VM: 4096; bench: the corpus's
+};
+
+// A machine whose per-CPU memory the score counts: cpus CPUs, each holding a codec's contexts, and
+// stored_mib MiB of pages in zram, the pages that bytes_per_page is per.
+struct zram_device {
+    double cpus = 0.0;
+    double stored_mib = 0.0;
 };
 
 // The RESULT lines of one run, in the order of the devices; other lines are skipped. prefix goes in
@@ -38,8 +49,8 @@ struct codec_cost {
 [[nodiscard]] std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefix);
 
 // The codecs of the output of quetschn-bench-* with timing, same-filled pages excluded, in the order
-// they appear. Throws std::runtime_error when a codec lacks its cost or the mean of compress or of
-// decompress cold.
+// they appear, with their memory per CPU and the corpus's page size where the log has them. Throws
+// std::runtime_error when a codec lacks its cost or the mean of compress or of decompress cold.
 [[nodiscard]] std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& prefix);
 
 // docs/plan.md §1.1. All times per page written to zram.
@@ -54,6 +65,10 @@ struct score_weights {
 // c with its bytes, and its own time times factor: what c would be if it were that much faster, e.g.
 // lz4 in hardware (docs/plan.md R12). The kernel's part of the times stays. Named "<name> x<factor>".
 [[nodiscard]] codec_cost what_if(codec_cost const& c, double factor);
+
+// codecs with their memory per CPU on d in bytes_per_page: per_cpu_bytes * cpus / stored pages, docs/plan.md
+// §1.1. Throws std::runtime_error when a codec has no per_cpu_bytes.
+[[nodiscard]] std::vector<codec_cost> on_device(std::vector<codec_cost> const& codecs, zram_device const& d);
 
 // The codecs that have the lowest bytes_per_page + lambda * us_per_page for some lambda >= 0, as
 // indices into codecs: the lower left convex hull of the points (us, bytes), from the fastest to the

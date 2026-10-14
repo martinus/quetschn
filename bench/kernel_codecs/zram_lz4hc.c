@@ -50,7 +50,7 @@ static int lz4hc_create(struct quetschn_params* p, struct quetschn_stream* s) {
     }
     s->context = zctx;
     if (p->dict_size == 0) {
-        zctx->mem = quetschn_zalloc(LZ4HC_MEM_COMPRESS, &s->allocated);
+        zctx->mem = quetschn_vzalloc(LZ4HC_MEM_COMPRESS, &s->allocated);
         if (!zctx->mem) {
             goto error;
         }

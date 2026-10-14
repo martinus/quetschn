@@ -39,21 +39,28 @@ better than what is there already.
 
 Better than every alternative on every axis is not possible, so it is not the target. `zstd` stores
 pages smallest and will keep doing so: no small, scalar codec without allocation beats an entropy
-coder with a trained dictionary on ratio. The target is the fast corner of the Pareto front, as these
-criteria:
+coder with a trained dictionary on ratio. The target is the fast corner of the Pareto front. Designs are
+chosen by the score of §1.1, and these criteria are what the cover letter reports, each of one kind:
 
-| | bar | why this bar | status |
-| --- | --- | --- | --- |
-| C1 | ≥ 8% less Σ zsmalloc cost (§3.1) than the better of `lzo-rle` and `lz4`, on the held-out test corpus (§5.3), same-filled pages excluded, 95% bootstrap confidence interval excluding 0 | `lzo-rle` is zram's default, `lz4` the common choice on Android. A gain of 1% does not pay for a new backend | met: 24% and 21% less than `lzo-rle` on two desktop dumps, 28% less than `lz4` on the phone |
-| C2 | lower p99 decompression latency than `lz4`, cold cache, on x86-64 **and** on an arm64 little core, 95% bootstrap confidence interval excluding 0, latency statistic of §5.2 | decompression runs in the page fault (§3.2), and on a phone often on a little core | not met, see R10 |
-| C3 | p99 compression latency within 1.2× of `lz4`, same statistic as C2 | zram compresses more often than it decompresses | at the bar: 1.21 and 1.19 times `lz4` |
-| C4 | beats `lz4` **with a trained dictionary**, not only bare `lz4` | zram supports dictionaries, and Honor made `lz4` with a dictionary more than 50% faster in March 2026 (`f0f6f7871430`) | met: 20.4% less than `lz4` with a dictionary |
-| C5 | per-CPU workspace ≤ `lz4`'s 16 416 B | `lz4` needs 16 416 B per CPU, `lzo` 16 384 B, `842` 61 440 B (§3.3) | met with 4 KiB pages: 8 KiB per CPU from `kmalloc()`, 16 KiB with the contexts split, against `lz4`'s 20 KiB from `vmalloc()`. With 16 KiB pages 32 KiB, as much as `lz4`, and 48 KiB with the split (§3.3) |
-| C6 | the decompressor is fuzz-safe and bounded in time for any input | this is what stopped the last new codec (§2.2) | met: 3.2 billion fuzz inputs, the worst case measured |
+- **hard limit**: never traded against anything.
+- **guard**: drops no design and keeps none. A number that gets clearly worse is a reason to find the
+  pages that cause it.
+- **reported**: a number for the cover letter, not a design gate.
+- **cost**: counted in the score of §1.1.
+
+| | what | kind | why | status |
+| --- | --- | --- | --- | --- |
+| C1 | ≥ 8% less Σ zsmalloc cost (§3.1) than the better of `lzo-rle` and `lz4`, on the held-out test corpus (§5.3), same-filled pages excluded, 95% bootstrap confidence interval excluding 0 | reported | the merge argument: `lzo-rle` is zram's default, `lz4` the common choice on Android. A gain of 1% does not pay for a new backend | met: 24% and 21% less than `lzo-rle` on two desktop dumps, 28% less than `lz4` on the phone |
+| C2 | p99 decompression latency against `lz4`, cold cache, on x86-64 **and** on an arm64 little core, latency statistic of §5.2 | guard, reported | decompression runs in the page fault (§3.2), and on a phone often on a little core | slower than `lz4`, see R10 |
+| C3 | p99 compression latency against `lz4`, same statistic as C2 | guard, reported | zram compresses more often than it decompresses | 1.21 and 1.19 times `lz4` |
+| C4 | Σ zsmalloc cost against `lz4` **with a trained dictionary**, not only bare `lz4` | reported | zram supports dictionaries, and Honor made `lz4` with a dictionary more than 50% faster in March 2026 (`f0f6f7871430`) | 20.4% less than `lz4` with a dictionary |
+| C5 | work memory per CPU, as `kmalloc()` and `vmalloc()` hand it out | cost | it is taken from every CPU whether zram holds anything or not, so it is memory like the pages (§1.1, §3.3) | 4 KiB pages: 8 KiB with one context, 16 KiB with the contexts split, `lz4` 20 KiB, `zstd` 3 188 KiB. 16 KiB pages: 32 KiB and 48 KiB, `lz4` 32 KiB (§3.3) |
+| C6 | the decompressor is fuzz-safe and bounded in time for any input | hard limit | an unsafe decoder is not a trade-off, and it is what stopped the last new codec (§2.2) | met: 3.2 billion fuzz inputs, the worst case measured |
 
 C1 and C2 together were meant to be the merge argument: *strictly better than the current default and
 the current fast option, on memory and on tail latency, with less per-CPU memory.* C2 did not hold, so
-the argument is now memory at a small cost in time (R10).
+the argument is now memory at a small cost in time (R10). C5 was a hard limit until 14th October 2026,
+at most `lz4`'s 16 416 B, a number that was never priced (#203); it is in the score now.
 
 **Merged is not the same as on phones.** This plan ends when the backend is in mainline. Android
 kernels are built from `gki_defconfig`, and turning a new backend on there is a separate decision of
@@ -64,13 +71,16 @@ the Android kernel team, made after the mainline merge. Phase 7 has to plan for 
 
 ### 1.1 The score: memory against time, not bars
 
-C1 to C3 are bars for the merge argument, and they stay the numbers to report there. As a target for
-design choices they are cliffs: a design that saves 4% of memory fails because its p99 is 1 µs above
+C1 to C3 were bars for the merge argument, and they stay the numbers to report there. As a target for
+design choices they were cliffs: a design that saves 4% of memory fails because its p99 is 1 µs above
 `lz4`'s, without asking what 1 µs is worth or how often the page is read (#37). So designs are chosen
 by a score instead:
 
 - **bytes**: zsmalloc memory per stored page, `mem_used_total / pages` in the VM of Phase 5, after
-  recompression where the device recompresses.
+  recompression where the device recompresses, plus the codec's work memory per CPU spread over the
+  stored pages: the bytes per CPU as `kmalloc()` and `vmalloc()` hand them out, times the CPUs, divided
+  by the pages in zram. That part depends on the machine, so a result names it, e.g. 8 CPUs and 1 GiB
+  in zram.
 - **time**: per page written to zram, `write + r * read + b * recompression`, each the **mean** over the
   pages, in µs. The mean, because it is the total time spent on the pages, and a burst of n swap-ins,
   e.g. after switching back to an app, waits for n decompressions. p99 per page stays a guard against
@@ -105,6 +115,28 @@ with `zstd` it pays only where the CPU time of an idle machine counts for less, 
 of a recompressed page 2.3 µs slower. `seqlz-opt` is removed
 ([explored-designs.md, "Recompression, measured, not pursued"](explored-designs.md#recompression-measured-not-pursued)).
 
+**Work memory per CPU moves only the step to `zstd` 3, and only when zram holds little.** Per page it
+is bytes per CPU × CPUs / pages in zram, with the bytes that the kernel's allocators hand out for the
+backends of zram's split contexts, 4 KiB pages, measured by `quetschn-bench-*`:
+
+| codec | bytes per CPU | 8 CPUs, 64 MiB | 8 CPUs, 1 GiB | 32 CPUs, 64 MiB | 32 CPUs, 1 GiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `lzo-rle` | 16 384 | 8.0 | 0.5 | 32.0 | 2.0 |
+| `lz4` | 20 512 | 10.0 | 0.6 | 40.1 | 2.5 |
+| `zstd` 3 | 192 544 | 94.0 | 5.9 | 376.1 | 23.5 |
+| `seqlz-fast` | 8 192 | 4.0 | 0.3 | 16.0 | 1.0 |
+| `seqlz-fast-lit` | 16 384 | 8.0 | 0.5 | 32.0 | 2.0 |
+
+`zstd` 3 holds 176 160 bytes per CPU more than `seqlz-fast-lit` and stores 25 and 87 bytes per page
+less on the two desktop dumps, with the swap times above. So it drops off the hull below 27 and 7.9 MiB
+in zram per CPU, 218 and 63 MiB with 8 CPUs, 874 and 253 MiB with 32. With 8 CPUs and 1 GiB the step
+from `seqlz-fast-lit` to `zstd` 3 costs 2.5 and 9.7 bytes per µs instead of 3.1 and 10.3. The other
+steps of the hull move by 5% at most with 8 CPUs, and the most at 32 CPUs and 64 MiB, where
+`seqlz-fast` to `seqlz-fast-lit` is 127 and 195 bytes per µs instead of 155 and 213
+([explored-designs.md](explored-designs.md#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu)).
+zram's own 3 pages per CPU are the same for every codec and left out. How full zram is on a phone is
+not measured.
+
 **Levels 3 and 4 (#139) were measured and are not kept.** The same format with a matcher that searches
 a hash chain and prices each match by the tables: level 3 stores 2.7% to 4.3% less than
 `seqlz-fast-lit` on four dumps, as much as `zstd` 3 on two of them, for about twice the write time. In
@@ -129,8 +161,17 @@ samples `pswpin` every 10 ms and groups the swap-ins into bursts. 9 minutes on t
 saw 1 swap-in: with 56 GB free it does not swap. It needs a machine under memory pressure, a phone
 best.
 
-C5 and C6 stay hard limits. Per-CPU memory is taken from every CPU whether it swaps or not, and an
-unsafe decoder is not a trade-off. C1 to C4 are reported for the merge argument.
+Every limit next to the score is one of the kinds of §1:
+
+| limit | kind | why |
+| --- | --- | --- |
+| C1, C4 | reported | the merge argument, not a design gate |
+| C2, C3 | guard, reported | the mean is in the score, p99 per page catches pathological pages; the cover letter reports the ratio to `lz4`, without a bar |
+| C5, work memory per CPU | cost | in the bytes, for a named machine |
+| C6, a safe and bounded decoder | hard limit | an unsafe decoder is not a trade-off |
+| recompression | cost | the weight `b` prices it like any other design. It was measured and is not on the hull, see above; there is no rule against it of its own |
+| `r = 0.34` | a weight of the score | 27.5 days of one desktop, a phone not measured; every result states it |
+| the global tables, 43 280 B once per kernel (§3.3) | reported | the code and tables of `lz4` and `zstd` are not counted either; counting them would need every codec's size in the kernel |
 
 ---
 
@@ -317,21 +358,24 @@ more.
 ### 3.3 Per-CPU workspace is real memory on a phone
 
 `zcomp_strm_init()` already allocates 3 pages per CPU, `local_copy` of 4 KiB and `buffer` of 8 KiB.
-On top of that:
+On top of that, the backend's work memory, with 4 KiB pages, as `quetschn-bench-*` counts it:
 
-| backend | compress workspace per CPU |
-| --- | --- |
-| `lzo` / `lzo-rle` | `LZO1X_1_MEM_COMPRESS` = 8192 × 2 = **16 384 B** |
-| `lz4` | `LZ4_MEM_COMPRESS` = ((1<<11)+4) × 8 = **16 416 B** |
-| `842` | `SW842_MEM_COMPRESS` = 0xf000 = **61 440 B** |
-| `zstd` | `zstd_cctx_workspace_bound()`, `kvzalloc`'d, far larger |
-| **quetschn** | **≤ 16 416 B, less is a bonus** |
+| backend | asked per CPU | handed out per CPU |
+| --- | ---: | ---: |
+| `lzo` / `lzo-rle` | `LZO1X_1_MEM_COMPRESS` = 8192 × 2 = 16 384 B, `kzalloc()` | **16 384 B** |
+| `lz4` | `LZ4_MEM_COMPRESS` = ((1<<11)+4) × 8 = 16 416 B, `vmalloc()`, and a struct of 24 B | **20 512 B** |
+| `842` | `SW842_MEM_COMPRESS` = 0xf000 = 61 440 B, `kmalloc()` | **65 536 B** |
+| `zstd` 3 | `zstd_cctx_workspace_bound()` and `zstd_dctx_workspace_bound()`, `vzalloc()`, and a struct, 186 112 B | **192 544 B** |
+| `seqlz-fast-lit` | 8192 B with one context, 12 304 B with the contexts split, `kvzalloc()` | **8192 B**, **16 384 B** split |
 
-On a phone with 16 cores, every 4 KiB below `lz4` saves 64 KiB, resident for good. That is small, but
-it is a free line in the cover letter. The target was 4 KiB at first. It is `lz4`'s 16 KiB since 23rd
-September 2026: 8 points less memory on the compressed pages are worth far more than a few KiB per
-CPU, and a budget of 4 KiB costs speed or ratio in the matcher (`seqlz-fast` has a hash table of 8 KiB,
-see [explored-designs.md](explored-designs.md)).
+This memory is a cost in the score of §1.1, not a limit. Until 14th October 2026 it was C5, at most
+`lz4`'s 16 416 B, and 4 KiB before 23rd September 2026. Neither number was priced (#203). Per page it is
+small while zram holds a lot: with 8 CPUs and 1 GiB in zram, 16 KiB more per CPU are 0.5 bytes per
+page, 1/80 of a point of 41 bytes. With 32 CPUs and 64 MiB in zram the same 16 KiB are 32 bytes per
+page. More memory did not buy much so far: the matcher with 8192 slots instead of 4096 saved 0.5 to
+1.7 bytes per page and wrote 1.6 µs slower on the A55, because the table is cleared for each page
+([explored-designs.md](explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)).
+That time is in the score already, as the time of a larger table is for any design.
 
 The split into read and write streams of October 2026 (§3.2) keeps the 3 pages: `buffer`, 2 pages,
 goes with the write stream, `local_copy`, 1 page, with the read stream. A backend gets two contexts
@@ -367,10 +411,8 @@ even with `ZRAM=m`, because the bool `ZRAM_BACKEND_SEQLZ` selects it, as `ZRAM_B
 kernel's backend (`tools/kernel-port/backend_seqlz.c`) have the two contexts since #102, the
 backend for a tree with the series; at level 1 it has no decompression context.
 `lz4`'s 16 416 B are for compression only, and after
-patch 5 of the series `lz4` has no decompression context at all. So C5 has a question now that it did
-not have with one context: is the limit for the compression context, for each context, or for the
-sum? With 16 KiB pages the compression context alone, 16 KiB allocated, is below `lz4`'s 32 KiB, the
-sum of the split contexts, 48 KiB, is not. This is not decided yet, and next action 4 in §9 depends on it.
+patch 5 of the series `lz4` has no decompression context at all. In the score both contexts count, both
+are held per CPU. With 16 KiB pages that is 48 KiB, 16 KiB more than `lz4`'s 32 KiB.
 
 ### 3.4 The integration surface is small
 
@@ -777,7 +819,7 @@ passed. The p99 part did not, and the score of §1.1 replaced it as the target.
 This phase exists because of §2.2: everything Biggers asked for, before the first patch.
 
 - [x] The codec, `src/seqlz_*.c`, `src/seqlz.h` and `src/seqlz_internal.h`: C11, freestanding, no libc, no allocation, a
-  scratch buffer of at most `lz4`'s 16 416 B passed in by the caller. The page size is a parameter.
+  scratch buffer passed in by the caller. The page size is a parameter.
 - [x] The tests with 4 KiB and with 16 KiB pages (§3.5), both in CI. Not the tests of the kernel codecs:
   zram's calls into them are built for 4 KiB pages.
 - [x] **[The format](format.md)**: a byte-exact specification, and two deliberately slow reference
@@ -978,9 +1020,9 @@ As of 9th October 2026:
   page fault.
 - **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages, its own pages, in its own kernel as zram and
   as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on the pages
-  of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` needs twice `lz4`'s work memory
-  per CPU, above C5. The first series is for 4 KiB pages only (Phase 7), so 16 KiB pages are for the
-  second one.
+  of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` asks for twice `lz4`'s work memory
+  per CPU, a cost in the score (§1.1). The first series is for 4 KiB pages only (Phase 7), so 16 KiB
+  pages are for the second one.
 - **Phase 7: the question to the maintainers is sent** (R3, R11), on 9th October 2026 to linux-mm,
   linux-block and linux-kernel, [the thread](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/). Not answered yet.
 - **Levels 3 and 4** (#139): a deeper matcher for the same format, 2.7% to 4.3% less for about twice
@@ -1008,8 +1050,8 @@ Next, in this order:
    4 KiB tables fit, within 0.6% of tables trained on its pages; the 16 KiB tables are trained on its
    16 KiB pages, 2.6% smaller on a second dump
    ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
-4. The work memory with 16 KiB pages: within C5, or a reason why not. Which context C5 limits, once
-   zram splits them, is open (§3.3). Not for the first series, which is for 4 KiB pages only (Phase
-   7).
+4. The work memory with 16 KiB pages, 48 KiB per CPU with the contexts split, 16 KiB more than
+   `lz4`: a cost in the score of §1.1 now, priced with the 16 KiB times of a phone once there is one.
+   Not for the first series, which is for 4 KiB pages only (Phase 7).
 5. Phase 5 again if the maintainers want another form than a zram backend, e.g. an acomp algorithm:
    `lib/seqlz/` stays, the glue changes, and `stress.sh` runs again.

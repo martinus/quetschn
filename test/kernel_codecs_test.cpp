@@ -387,8 +387,9 @@ TEST_CASE("kernel codecs: lzo-rle writes the lzo-rle stream, lzo does not") {
 }
 
 TEST_CASE("kernel codecs: memory per CPU and per device") {
-    // docs/plan.md §3.3: LZ4_MEM_COMPRESS = 16416, LZO1X_MEM_COMPRESS = 16384, zstd "far larger". On top,
-    // lz4 and zstd allocate a small context struct of pointers per stream.
+    // docs/plan.md §3.3, what the kernel's allocators hand out: LZO1X_MEM_COMPRESS = 16384 from kzalloc(),
+    // LZ4_MEM_COMPRESS = 16416 from vmalloc(), 5 pages, zstd's workspaces far larger. On top, lz4 and zstd
+    // allocate a small context struct of pointers per stream.
     auto per_cpu = [](quetschn_codec const& codec, page dict = {}) {
         auto d = device(codec, QUETSCHN_LEVEL_DEFAULT, std::move(dict));
         (void)d.compress(text_page()); // zstd allocates part of it lazily
@@ -396,20 +397,23 @@ TEST_CASE("kernel codecs: memory per CPU and per device") {
     };
     CHECK(per_cpu(quetschn_codec_lzo) == 16384);
     CHECK(per_cpu(quetschn_codec_lzo_rle) == 16384);
-    CHECK(per_cpu(quetschn_codec_lz4) >= 16416);
-    CHECK(per_cpu(quetschn_codec_lz4) < 16416 + 64);
+    CHECK(per_cpu(quetschn_codec_lz4) > 20480);
+    CHECK(per_cpu(quetschn_codec_lz4) <= 20480 + 64);
     CHECK(per_cpu(quetschn_codec_zstd) > 4 * 16416);
+    // vzalloc()'d workspaces are whole pages
+    CHECK(per_cpu(quetschn_codec_zstd) % 4096 < 64);
 
     // With a dictionary lz4 holds a compression and a decompression stream per CPU instead of the
     // workspace, and the prepared dictionary once per device.
     auto const dict = record_dict();
     CHECK(per_cpu(quetschn_codec_lz4, dict) >= 16416);
-    CHECK(device(quetschn_codec_lz4, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated == 16416);
+    CHECK(device(quetschn_codec_lz4, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated == 32768);
     CHECK(device(quetschn_codec_lz4).params().allocated == 0);
-    // zstd with a dictionary still has a cctx and a dctx per CPU, allocated by zstd itself, and about as
-    // large as the workspaces without one (186 112 bytes both at level 3 on the development machine)
+    // zstd with a dictionary still has a cctx and a dctx per CPU, allocated by zstd itself through
+    // kvzalloc(), which kmalloc() rounds up to a power of 2 of pages: more than the vzalloc()'d workspaces
+    // without one, at most twice as much
     CHECK(per_cpu(quetschn_codec_zstd, dict) > per_cpu(quetschn_codec_zstd) * 9 / 10);
-    CHECK(per_cpu(quetschn_codec_zstd, dict) < per_cpu(quetschn_codec_zstd) * 11 / 10);
+    CHECK(per_cpu(quetschn_codec_zstd, dict) < per_cpu(quetschn_codec_zstd) * 2);
     CHECK(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated > 0);
 }
 
@@ -418,11 +422,13 @@ TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-fast-lit d
     // compression context and the decompression context have now
     auto fast = device(quetschn_codec_seqlz_fast);
     auto lit = device(quetschn_codec_seqlz_fast_lit);
-    CHECK(fast.contexts().compression_bytes() == sizeof(seqlz_state));
+    CHECK(fast.contexts().compression_bytes() == quetschn_kmalloc_size(sizeof(seqlz_state)));
     CHECK(fast.contexts().decompression_bytes() == 0);
     CHECK(quetschn_codec_seqlz_fast.create_dctx == nullptr);
-    CHECK(lit.contexts().compression_bytes() == sizeof(seqlz_state));
-    CHECK(lit.contexts().decompression_bytes() == SEQLZ_SCRATCH);
+    CHECK(lit.contexts().compression_bytes() == quetschn_kmalloc_size(sizeof(seqlz_state)));
+    CHECK(lit.contexts().decompression_bytes() == quetschn_kmalloc_size(SEQLZ_SCRATCH));
+    // docs/plan.md §3.3: 8 KiB each, the scratch's 16 bytes past a page take the next cache
+    CHECK(lit.contexts().compression_bytes() + lit.contexts().decompression_bytes() == 16384);
 
     // seqlz-fast decodes with no context at all, as zram's series gives a codec without create_dctx
     for (auto const& src : test_pages()) {
@@ -437,18 +443,19 @@ TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-fast-lit d
     }
 }
 
-TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts") {
+TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts what the kernel hands out") {
     auto counter = std::size_t{0};
     auto* small = quetschn_zalloc(100, &counter);
     auto* page_block = quetschn_zalloc(4096, &counter);
-    auto* large = quetschn_zalloc(70000, &counter);
+    auto* large = quetschn_vzalloc(70000, &counter);
     REQUIRE(small != nullptr);
     REQUIRE(page_block != nullptr);
     REQUIRE(large != nullptr);
     CHECK(reinterpret_cast<std::uintptr_t>(small) % 64 == 0);
     CHECK(reinterpret_cast<std::uintptr_t>(page_block) % 4096 == 0);
     CHECK(reinterpret_cast<std::uintptr_t>(large) % 4096 == 0);
-    CHECK(counter == 100 + 4096 + 70000);
+    // kmalloc-128, a page, and vmalloc's 18 pages
+    CHECK(counter == 128 + 4096 + 18 * 4096);
     // zeroed, and all of it writable (ASan)
     auto const* bytes = static_cast<unsigned char const*>(large);
     CHECK(std::all_of(bytes, bytes + 70000, [](unsigned char b) {
@@ -460,6 +467,21 @@ TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts") {
     quetschn_free(page_block, &counter);
     quetschn_free(nullptr, &counter);
     CHECK(counter == 0);
+
+    // kmalloc()'s caches up to 2 pages, then a power of 2 of pages; vmalloc() whole pages
+    CHECK(quetschn_kmalloc_size(1) == 8);
+    CHECK(quetschn_kmalloc_size(64) == 64);
+    CHECK(quetschn_kmalloc_size(65) == 96);
+    CHECK(quetschn_kmalloc_size(97) == 128);
+    CHECK(quetschn_kmalloc_size(129) == 192);
+    CHECK(quetschn_kmalloc_size(193) == 256);
+    CHECK(quetschn_kmalloc_size(4112) == 8192);
+    CHECK(quetschn_kmalloc_size(8192) == 8192);
+    CHECK(quetschn_kmalloc_size(8193) == 16384);
+    CHECK(quetschn_kmalloc_size(61440) == 65536);
+    CHECK(quetschn_kmalloc_size(70000) == 131072);
+    CHECK(quetschn_vmalloc_size(16416) == 20480);
+    CHECK(quetschn_vmalloc_size(4096) == 4096);
 }
 
 TEST_CASE("kernel codecs: every allocation is released again") {

@@ -128,8 +128,9 @@ Line 17 allocates the tables. `seqlz_tables_size()` returns `sizeof(struct seqlz
 tables of length values, laid out in [chapter 7](#ch-internal). The glue cannot write `sizeof`
 itself, because it never sees the struct's definition; that is what the function is for.
 `quetschn_zalloc()` stands in for the kernel's `kvzalloc()` ([below](#ch-zram-glue--backend)): it returns zeroed memory, aligned to a
-page for blocks of a page or more, and it adds the size to `p->allocated`. So the harness reports
-{{size.tables|grp}} bytes per device for seqlz. Line 18 turns a failed allocation into `-1`, the harness's error.
+page for blocks of a page or more, and it adds what `kmalloc()` would hand out for the size to
+`p->allocated`. So the harness reports {{ch15.mem.tables_gets|grp}} bytes per device for seqlz, a power of 2 of pages
+for the {{size.tables|grp}} bytes. Line 18 turns a failed allocation into `-1`, the harness's error.
 
 Lines 20 to 27 build the tables. `seqlz_tables_init()` ([chapter 8](#ch-codes)) turns the code
 lengths compiled into `seqlz_default_own` into canonical codes and decode tables, and returns
@@ -275,8 +276,9 @@ and because the last, partial round of `decode_literals()` writes up to 8 decode
 of the literals that no one reads.
 
 So `seqlz-fast-lit` has two contexts per CPU: {{size.state}} bytes for compression and {{const.SCRATCH}} for decompression,
-{{ch15.state_plus_scratch|grp}} bytes together. That is exactly what it had with one context before the split, so the split
-costs seqlz no memory in the harness.
+{{ch15.state_plus_scratch|grp}} bytes together, and the harness counts {{ch15.mem.split_gets|grp}}, what `kmalloc()` hands out for the two. The
+one context of the harness before the split was a struct of both, which `kmalloc()` hands out as
+{{ch15.mem.struct_gets|grp}} bytes too, so the split costs seqlz no memory in the harness.
 
 @listing src/zram_seqlz.c 108-122
 
@@ -637,8 +639,7 @@ With the split, the backend has two functions, and the union is not compiled:
 Here the two contexts are separate allocations, {{size.state}} and {{const.SCRATCH}} bytes, both from `kmalloc-8k`: 16 KiB
 per CPU at level 2, 8 KiB at level 1, which has no decompression context at all. `seqlz_destroy()`
 serves both, and `kvfree(NULL)` does nothing, so a level-1 decompression context needs no special
-case. Which of the two contexts the plan's memory limit, C5, applies to after the split is an open
-question of the plan.
+case. The plan's score counts both, as work memory per CPU.
 
 The page functions:
 

@@ -199,6 +199,7 @@ std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefi
 std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& prefix) {
     auto out = std::vector<codec_cost>();
     auto complete = std::vector<int>();
+    auto page_size = 4096.0;
     auto line = std::string();
     auto const last_number = [](std::string const& rest) {
         auto words = std::istringstream(rest);
@@ -209,6 +210,12 @@ std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& 
         return v;
     };
     while (std::getline(in, line)) {
+        if (line.rfind("corpus ", 0) == 0) {
+            // "corpus     zram0, 20000 pages of 4096 bytes"
+            auto const v = value_after(line, "of");
+            page_size = v > 0.0 ? v : page_size;
+            continue;
+        }
         if (line.rfind("codec ", 0) == 0) {
             // "codec      zstd, level -1" or "codec      seqlz, no level (...)"
             auto words = std::istringstream(line.substr(6));
@@ -224,6 +231,7 @@ std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& 
             }
             out.push_back({});
             out.back().name = prefix + name;
+            out.back().page_size = page_size;
             complete.push_back(0);
             continue;
         }
@@ -240,6 +248,10 @@ std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& 
             auto const from = line.rfind(' ', at - 1);
             c.bytes_per_page = std::stod(line.substr(from + 1, at - from - 1));
             complete.back() |= 1;
+        } else if (line.rfind("memory per CPU ", 0) == 0) {
+            // "memory per CPU         16384 bytes: compression 8192, decompression 8192"
+            auto words = std::istringstream(line.substr(15));
+            words >> c.per_cpu_bytes;
         } else if (line.rfind("compress ", 0) == 0) {
             c.write_ns = last_number(line.substr(9));
             complete.back() |= c.write_ns >= 0.0 ? 2 : 0;
@@ -265,6 +277,18 @@ codec_cost what_if(codec_cost const& c, double factor) {
     r.read_ns = c.read_kernel_ns + factor * (c.read_ns - c.read_kernel_ns);
     r.recompress_ns = factor * c.recompress_ns;
     return r;
+}
+
+std::vector<codec_cost> on_device(std::vector<codec_cost> const& codecs, zram_device const& d) {
+    auto out = codecs;
+    for (auto& c : out) {
+        if (c.per_cpu_bytes < 0.0) {
+            throw std::runtime_error(c.name + ": no memory per CPU");
+        }
+        auto const pages = d.stored_mib * 1024.0 * 1024.0 / c.page_size;
+        c.bytes_per_page += c.per_cpu_bytes * d.cpus / pages;
+    }
+    return out;
 }
 
 double us_per_page(codec_cost const& c, score_weights const& w) {

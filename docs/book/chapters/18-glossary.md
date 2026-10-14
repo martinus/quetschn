@@ -263,9 +263,9 @@ same thing; the book uses each in the one sense given here, throughout.
 ## Measurements {#glossary--measurements}
 
 - **C1 to C6**: the six criteria of `docs/plan.md` for a merge: C1 memory (at least 8% less than the
-  better of `lzo-rle` and `lz4`), C2 p99 cold reads against `lz4`, C3 p99 writes within 1.2 times
-  `lz4`'s, C4 better than `lz4` with a dictionary, C5 work memory per CPU at most `lz4`'s 16 416 bytes,
-  C6 a decoder safe and bounded for any input. C5 and C6 are hard limits, C2 and C3 guards.
+  better of `lzo-rle` and `lz4`), C2 p99 cold reads against `lz4`, C3 p99 writes against `lz4`, C4
+  better than `lz4` with a dictionary, C5 work memory per CPU, C6 a decoder safe and bounded for any
+  input. C6 is the only hard limit, C5 a cost in the score, C2 and C3 guards, C1 and C4 reported.
   [Chapter 1](#ch-zram--goal)
 - **cold, warm**: a cold read finds the compressed data in no CPU cache, as for a page swapped out a
   while ago; a warm read finds it there. [Chapter 3](#ch-cpu)
