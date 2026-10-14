@@ -301,8 +301,8 @@ exactly {{ch01.union_kib}} KiB. With the split streams they are two allocations,
 KiB. The tables, {{size.tables|grp}} bytes, are not per CPU: they are built once when the kernel
 starts.
 @assert ch01.union == 1024 * ch01.union_kib and ch01.cctx_kib == ch01.dctx_kib and ch01.split_kib < 20
-[Chapter 6](#ch-header) and [chapter 15](#ch-zram-glue) have the details, and why 16 KiB pages break
-the limit.
+[Chapter 6](#ch-header) and [chapter 15](#ch-zram-glue) have the details, and why 16 KiB pages need
+twice `lz4`'s work memory.
 
 ## The decoder must survive any input {#ch-zram--safety}
 
@@ -477,7 +477,7 @@ to 25% slower cold
 ([`docs/plan.md`](https://github.com/martinus/quetschn/blob/main/docs/plan.md), 9th October 2026).
 :::
 
-## The goal, and the limits it lives within {#ch-zram--goal}
+## The goal, its costs and its one limit {#ch-zram--goal}
 
 The goal is a codec merged into mainline Linux as a zram backend because it is measurably better
 than what is there. No small scalar codec without allocation beats `zstd`'s entropy coder on size
