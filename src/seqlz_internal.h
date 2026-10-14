@@ -83,7 +83,7 @@ static_assert(SEQLZ_LIT_STREAMS == 8U,
 	      "the literal coder is written out for 8 streams");
 
 /* offsets from here on are all class 7 */
-#define SEQLZ_OFF_TABLE 2048U
+#define SEQLZ_OFF_TABLE SEQLZ_PAGE
 
 struct seqlz_tables {
 	struct token_table token;
@@ -151,7 +151,7 @@ static inline u32 token_entry(unsigned int s, unsigned int n)
 	unsigned int drop = n + raw_bits, ll = s & SEQLZ_LL_CAP,
 		     ml = (s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP;
 	/* the offsets 2, 4 and 8 of classes 1 to 3 are 1 << cls */
-	unsigned int z = cls - 1U < 3U, f = z ? cls : SEQLZ_OFF_SHIFT(cls);
+	unsigned int z = SEQLZ_OFF_FIXED(cls), f = SEQLZ_OFF_SHIFT(cls);
 
 	if (s == SEQLZ_ESCAPE)
 		return 1U << TOK_ESCAPE_AT | n << TOK_DROP_AT;

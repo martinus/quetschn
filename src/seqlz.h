@@ -173,42 +173,50 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
 }
 
 /*
- * How many bits of the offset follow the token, per class: 0, 0, 0, 0, 5, 8, 8,
- * the page's bits. One nibble per class in one constant, so that it is a shift
- * and a mask without a branch.
+ * The offset classes, one nibble per class in each constant, class 0 the
+ * offset before. A class with bits sends that many bits of the offset shifted
+ * right by f; a fixed class sends none and is the offset 1 << f. Changing the
+ * classes is changing these three constants and the tables.
+ *   class:      0     1  2  3  4       5       6    7
+ *   offset:     last  2  4  8  x8<256  x8<2048 <256 the rest
  */
 #define SEQLZ_RAW_NIBBLES                                            \
 	(0U | 0U << 4 | 0U << 8 | 0U << 12 | 5U << 16 | 8U << 20 | \
 	 8U << 24 | (unsigned int)QUETSCHN_PAGE_BITS << 28)
+#define SEQLZ_F_NIBBLES 0x00333210U
+#define SEQLZ_FIXED_CLASSES 0x0eU /* one bit per class */
 #define SEQLZ_RAW_BITS(cls) ((SEQLZ_RAW_NIBBLES >> (4U * (cls))) & 15U)
-/* classes 4 and 5 send the offset divided by 8, a shift by 3 */
-#define SEQLZ_OFF_SHIFT(cls) ((0x330000U >> (4U * (cls))) & 3U)
-/* the offsets of classes 1 to 3, which send no bits */
-#define SEQLZ_OFF_FIXED(cls) ((0x8420U >> (4U * (cls))) & 15U)
+#define SEQLZ_OFF_SHIFT(cls) ((SEQLZ_F_NIBBLES >> (4U * (cls))) & 3U)
+#define SEQLZ_OFF_FIXED(cls) ((SEQLZ_FIXED_CLASSES >> (cls)) & 1U)
 
 /*
  * The class of an offset, and how many of its bits follow the token. last is
- * the offset of the sequence before. Classes: 0 last, 1 the offset 2, 2 the
- * offset 4, 3 the offset 8, 4 a multiple of 8 from 16 to 255, 5 a multiple of 8
- * from 256 to 2047, 6 below 256, 7 the rest. The first that fits wins.
+ * the offset of the sequence before. The class with the fewest bits that holds
+ * the offset, the first of them on a tie. The compressor takes the class from
+ * a table built with this, see seqlz_tables_init().
  */
 static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last,
 					   unsigned int *raw_bits)
 {
-	unsigned int aligned = (off & 7U) == 0, cls = 6U + (off >= 256U);
+	unsigned int cls, best = 0, best_bits = ~0U;
 
-	/*
-	 * Arithmetic, not selects: gcc turned the selects, also as masks,
-	 * into branches, and the classes come in no order.
-	 */
-	cls -= 2U * (aligned & (off - 16U < 240U));
-	cls -= (cls - 5U) * (aligned & (off - 256U < 1792U));
-	cls -= (cls - 3U) * (off == 8U);
-	cls -= (cls - 2U) * (off == 4U);
-	cls -= (cls - 1U) * (off == 2U);
-	cls *= off != last;
-	*raw_bits = SEQLZ_RAW_BITS(cls);
-	return cls;
+	if (off == last) {
+		*raw_bits = 0;
+		return 0;
+	}
+	for (cls = 1; cls < SEQLZ_OFF_CLASSES; cls++) {
+		unsigned int b = SEQLZ_RAW_BITS(cls), f = SEQLZ_OFF_SHIFT(cls);
+		bool fits = SEQLZ_OFF_FIXED(cls) ?
+				    off == 1U << f :
+				    !(off & ((1U << f) - 1U)) && off >> f < 1U << b;
+
+		if (fits && b < best_bits) {
+			best = cls;
+			best_bits = b;
+		}
+	}
+	*raw_bits = best_bits;
+	return best;
 }
 
 /* a sequence as the matcher finds it, see seqlz_find() */

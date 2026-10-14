@@ -198,7 +198,7 @@ static __always_inline void encode_emit(void *ctx, const u8 *in,
 	 * The class from the table, then the repeat offset over it, as
 	 * arithmetic: as selects gcc made them branches.
 	 */
-	cls = t->off_class[min(off, SEQLZ_OFF_TABLE - 1U)];
+	cls = t->off_class[off];
 	cls *= off != e->last;
 	raw_bits = SEQLZ_RAW_BITS(cls);
 	code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
