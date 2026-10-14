@@ -69,8 +69,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
-    ("docs/format.md is the specification. docs/explored-designs.md has the measurements behind each "
-     "choice, by the headings quoted below.", f"{SPEC} specifies the format."),
+    ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
     (" The same bytes as seqlz_encode() for the sequences of seqlz_find().", ""),
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()

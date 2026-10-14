@@ -449,7 +449,7 @@ unloaded.
 The lengths are in two small `.c` files that each include one of two generated `.inc` files, by page
 size.
 
-@listing src/seqlz_default_tables.c 1-19
+@listing src/seqlz_default_tables.c 1-18
 
 `seqlz_default_tables.c` defines `seqlz_default_own`, the lengths of the token table and the two
 tables of length values, by including `seqlz_default_tables_4k.inc` or, for 16 KiB pages,
