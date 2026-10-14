@@ -184,8 +184,7 @@ def main():
                 ax.spines[s].set_visible(False)
             if i == 0:
                 ax.set_title(panel, loc="left", fontweight="bold")
-            if i == len(rows) - 1:
-                ax.set_xlabel("µs per page, mean")
+            ax.set_xlabel("µs per page, mean")
             place_labels(ax, fig, marks)
         axes[i][0].set_ylabel(f"{title}\nmemory, % of the page", fontsize=10)
     fig.suptitle(

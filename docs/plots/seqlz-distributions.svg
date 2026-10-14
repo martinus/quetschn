@@ -4152,6 +4152,23 @@ z
     <use xlink:href="#NotoSans-Regular-2e" transform="translate(5708.498627 0)"/>
    </g>
   </g>
+  <g id="label_axes_1_x">
+   <!-- offset class -->
+   <g transform="translate(155.714494 326.604) scale(0.1 -0.1)">
+    <use xlink:href="#NotoSans-Regular-6f"/>
+    <use xlink:href="#NotoSans-Regular-66" transform="translate(60.499985 0)"/>
+    <use xlink:href="#NotoSans-Regular-66" transform="translate(94.899979 0)"/>
+    <use xlink:href="#NotoSans-Regular-73" transform="translate(129.299973 0)"/>
+    <use xlink:href="#NotoSans-Regular-65" transform="translate(177.199966 0)"/>
+    <use xlink:href="#NotoSans-Regular-74" transform="translate(233.59996 0)"/>
+    <use xlink:href="#NotoSans-Regular-20" transform="translate(269.699951 0)"/>
+    <use xlink:href="#NotoSans-Regular-63" transform="translate(295.699936 0)"/>
+    <use xlink:href="#NotoSans-Regular-6c" transform="translate(343.699921 0)"/>
+    <use xlink:href="#NotoSans-Regular-61" transform="translate(369.499908 0)"/>
+    <use xlink:href="#NotoSans-Regular-73" transform="translate(425.599899 0)"/>
+    <use xlink:href="#NotoSans-Regular-73" transform="translate(473.499893 0)"/>
+   </g>
+  </g>
  </g>
  <defs>
   <clipPath id="pca7301ca10">

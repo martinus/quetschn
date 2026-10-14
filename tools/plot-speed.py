@@ -125,6 +125,7 @@ def main():
 
     for ax in axes:
         ax.set_yticks([ys[n] for n in CODECS], [LABEL.get(n, n) for n in CODECS])
+        ax.set_ylabel("codec")
         ax.set_ylim(-0.6, len(CODECS) - 0.4)
         ax.grid(axis="x", color="#e5e5e5")
         ax.set_axisbelow(True)
