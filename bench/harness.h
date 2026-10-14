@@ -63,8 +63,8 @@ public:
     [[nodiscard]] quetschn_stream* decompression() {
         return m_codec.create_dctx != nullptr ? &m_dctx : &m_cctx;
     }
-    // what the codec holds per CPU for compression and for decompression; 0 for decompression when it
-    // uses the compression context
+    // what the codec holds per CPU for compression and for decompression, as the kernel's allocators hand
+    // it out; 0 for decompression when it uses the compression context
     [[nodiscard]] std::size_t compression_bytes() const {
         return m_cctx.allocated;
     }

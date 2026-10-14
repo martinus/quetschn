@@ -8,15 +8,20 @@ Compression codec for Linux zram pages. Codec `seqlz-fast-lit`: one format, two 
 
 ## Goal and design rules
 
-Goal: near `lz4` speed and `zstd` level 3 (zram's default level for it) ratio, memory ≤ `lz4`, no
-recompression. Judge a design by how much closer it gets, not by whether it arrives.
+Goal: near `lz4` speed and `zstd` level 3 (zram's default level for it) ratio. Judge a design by how
+much closer it gets, not by whether it arrives.
 
-- Score (`docs/plan.md` §1.1): zsmalloc memory per stored page vs mean time per page written,
-  `write + 0.34 * read`. Lower left wins. `quetschn-score` computes the hull.
-- Hard limits: C5 per-CPU work memory ≤ 16416 bytes (`lz4`); C6 decoder safe and bounded for any input.
+- Score (`docs/plan.md` §1.1): memory per stored page vs mean time per page written,
+  `write + 0.34 * read + b * recompression`. Memory = zsmalloc bytes + work memory per CPU (what
+  `kmalloc()`/`vmalloc()` hand out) × CPUs / pages in zram, for a named machine (default 8 and 32 CPUs,
+  64 MiB and 1 GiB). Lower left wins. `quetschn-score` computes the hull.
+- Kinds of limit (`docs/plan.md` §1, §1.1): hard limit = C6 only, decoder safe and bounded for any
+  input. Cost in the score = C5 work memory per CPU (no limit since #203; 16 416 bytes is `lz4`'s, a
+  cover-letter number), recompression (`b`). Guard + reported = C2/C3. Reported = C1, C4, global tables.
 - C2/C3 (p99 read/write vs `lz4`) are guards, not gates: never drop or keep a design on p99. p99
   clearly worse: find the pages that cause it.
-- No recompression (`docs/plan.md` §1.1; explored-designs "Recompression, measured, not pursued").
+- Recompression: no rule, priced by `b`; measured, not on the hull (explored-designs "Recompression,
+  measured, not pursued"). New recompression design: show the hull with `b` stated.
 - Codec is pure C. No inline assembly, even for large gains (arm64 asm matcher, -9% cycles on A55,
   rejected, commit `0288b1e`). Empty `__asm__("")` barriers: ask first.
 - Format not frozen: format/table changes allowed. Each one updates `docs/format.md` (rules, SHA-256
@@ -115,8 +120,8 @@ Source: kernel Maintainers Summit, Oct 2026. Never quote, cite or link its repor
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
-cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 131 cases, ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only), 110 cases
+cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 133 cases, ctest 2/2 with kernel tree
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only), 112 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only

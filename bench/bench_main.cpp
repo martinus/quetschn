@@ -440,7 +440,8 @@ int main(int argc, char** argv) {
                             model.fresh_pool_bytes(lens));
             }
             std::printf("stored uncompressed    %zu pages (comp_len >= %zu)\n", s.huge, model.huge_class_size());
-            std::printf("memory per CPU         %zu bytes: compression %zu, decompression %zu%s\n",
+            std::printf("memory per CPU         %zu bytes as kmalloc() and vmalloc() hand them out: compression %zu, "
+                        "decompression %zu%s\n",
                         r.stream_bytes,
                         r.cctx_bytes,
                         r.dctx_bytes,

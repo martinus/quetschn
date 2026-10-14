@@ -12,12 +12,14 @@
 
 using quetschn::best_for_some_lambda;
 using quetschn::codec_cost;
+using quetschn::on_device;
 using quetschn::read_bench_results;
 using quetschn::read_vm_boots;
 using quetschn::read_vm_results;
 using quetschn::score_weights;
 using quetschn::us_per_page;
 using quetschn::what_if;
+using quetschn::zram_device;
 
 namespace {
 
@@ -201,6 +203,56 @@ TEST_CASE("score: the codecs of a quetschn-bench run, with a level where there i
     auto no_timing = std::istringstream("codec      lz4, no level\n"
                                         "zsmalloc cost          2114284 bytes, 26.1% of uncompressed, 1067.8 bytes/page\n");
     CHECK_THROWS_AS((void)read_bench_results(no_timing, ""), std::runtime_error);
+}
+
+TEST_CASE("score: memory per CPU from a bench log, and added per stored page on a device") {
+    auto in = std::istringstream("corpus     zram0, 1974 pages of 16384 bytes\n"
+                                 "\n"
+                                 "codec      zstd, level 3\n"
+                                 "zsmalloc cost          2114284 bytes, 26.1% of uncompressed, 1067.8 bytes/page\n"
+                                 "memory per CPU         192544 bytes: compression 192544, decompression 0 (no "
+                                 "decompression context of its own)\n"
+                                 "compress                   11025     14000     20000     22000     25000     11700\n"
+                                 "decompress cold             3300      4400      5500      6600      7700      3450\n"
+                                 "\n"
+                                 "codec      seqlz-fast-lit, no level (zram ignores it for this codec)\n"
+                                 "zsmalloc cost          1873182 bytes, 23.1% of uncompressed, 946.1 bytes/page\n"
+                                 "memory per CPU         16384 bytes: compression 8192, decompression 8192\n"
+                                 "compress                   17820     19000     21000     22000     23000     18000\n"
+                                 "decompress cold             5500      6500      7500      8500      9500      5600\n");
+    auto const c = read_bench_results(in, "");
+    REQUIRE(c.size() == 2);
+    CHECK(c[0].per_cpu_bytes == 192544.0);
+    CHECK(c[1].per_cpu_bytes == 16384.0);
+    CHECK(c[0].page_size == 16384.0);
+    // 8 CPUs, 64 MiB of 16 KiB pages: 4096 pages, so each byte per CPU is 8 / 4096 of a byte per page
+    auto const d = on_device(c, zram_device{8, 64});
+    CHECK(d[0].bytes_per_page == doctest::Approx(1067.8 + 192544.0 * 8 / 4096));
+    CHECK(d[1].bytes_per_page == doctest::Approx(946.1 + 16384.0 * 8 / 4096));
+    CHECK(d[0].write_ns == c[0].write_ns);
+
+    // a log of run.sh has no memory per CPU: the score does not make it 0
+    auto vm = std::istringstream(vm_log);
+    auto const v = read_vm_results(vm, "");
+    CHECK(v[0].per_cpu_bytes < 0.0);
+    CHECK(v[0].page_size == 4096.0);
+    CHECK_THROWS_AS((void)on_device(v, zram_device{8, 64}), std::runtime_error);
+}
+
+TEST_CASE("score: memory per CPU moves the hull on a device with few pages in zram") {
+    // a is faster and larger, b smaller and slower and holds far more per CPU
+    auto a = point("a", 4, 1000);
+    a.per_cpu_bytes = 16384;
+    auto b = point("b", 12, 960);
+    b.per_cpu_bytes = 192544;
+    auto const c = std::vector<codec_cost>{a, b};
+    CHECK(names(c, best_for_some_lambda(c, score_weights{})) == std::vector<std::string>{"a", "b"});
+    // 8 CPUs, 1 GiB in zram: b holds 5.4 bytes per page more, still 34.6 bytes smaller
+    auto const large = on_device(c, zram_device{8, 1024});
+    CHECK(names(large, best_for_some_lambda(large, score_weights{})) == std::vector<std::string>{"a", "b"});
+    // 8 CPUs, 64 MiB: 86 bytes per page more, larger than a and slower
+    auto const small = on_device(c, zram_device{8, 64});
+    CHECK(names(small, best_for_some_lambda(small, score_weights{})) == std::vector<std::string>{"a"});
 }
 
 TEST_CASE("score: the codecs that win for some lambda are the lower left convex hull") {

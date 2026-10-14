@@ -240,6 +240,7 @@ int main(void) {
     fact_num("ch15.mem.cctx_gets", allocated(sizeof(struct seqlz_state)));
     fact_num("ch15.mem.dctx_gets", allocated(SEQLZ_SCRATCH));
     fact_num("ch15.mem.split_gets", allocated(sizeof(struct seqlz_state)) + allocated(SEQLZ_SCRATCH));
+    fact_num("ch15.mem.tables_gets", allocated(sizeof(struct seqlz_tables)));
     fact_num("ch15.tables_kb", (sizeof(struct seqlz_tables) + 500) / 1000);
     snprintf(buf, sizeof buf, "0x%xU", SEQLZ_RAW_NIBBLES);
     fact_str("ch15.raw_nibbles", buf);

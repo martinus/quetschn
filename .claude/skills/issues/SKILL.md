@@ -83,12 +83,14 @@ Two or three options, each with its real cost, one marked recommended. A design 
 after the code is written is a question you answered yourself.
 
 **Ask one level up when the request fights the goal** (CLAUDE.md, **Goal and how designs are
-judged**): C5, C6, no recompression, pure C. If a goal has to bend, that is the question.
+judged**): C6, pure C, the score's terms (work memory per CPU, recompression's `b`). If a goal has
+to bend, that is the question.
 
 Stop and ask for:
 
 - a change of the format or of the trained tables
-- anything that moves C5 (work memory per CPU) or C6 (the decoder for any input)
+- anything that moves the work memory per CPU (C5, a cost in the score) or C6 (the decoder for any
+  input)
 - inline assembly or an empty `__asm__("")` barrier
 - a change to what the kernel sees as interface: `include/linux/seqlz.h`, the backend's parameters,
   Kconfig symbols, exported symbols

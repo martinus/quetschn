@@ -23,7 +23,8 @@ reached at once, so a design is judged by how much closer it gets. At first that
 of memory failed because its p99 was 1 µs above `lz4`'s, without asking what 1 µs is worth. Since then
 designs are chosen by a score ([plan.md §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)):
 
-- **bytes**: zsmalloc memory per stored page, measured in the kernel VM;
+- **bytes**: zsmalloc memory per stored page, measured in the kernel VM, plus the work memory per CPU
+  times the CPUs, divided by the pages in zram of a named machine;
 - **time per page written**: the mean time to write a page, plus 0.34 times the mean time to read one;
 - **score**: bytes plus lambda times time, where lambda, the exchange rate, is how many bytes one µs per
   page is worth to you.
@@ -35,10 +36,10 @@ pathological pages, not a target. lambda is not fixed: `quetschn-score` prints t
 lowest score for some lambda, the lower left convex hull of (time, bytes), and the exchange rate between
 neighbours on it. A design is worth keeping if it is on the hull at a lambda that matters.
 
-Two limits stay hard and are not traded against anything. **C5**: the work memory per CPU is at most
-`lz4`'s 16 416 bytes, because it is taken from every CPU whether it swaps or not. **C6**: the decoder is
-safe and bounded in time for any input, because that is what stopped the last new codec for zram,
-zBeWalgo, in 2018.
+One limit stays hard and is not traded against anything. **C6**: the decoder is safe and bounded in
+time for any input, because that is what stopped the last new codec for zram, zBeWalgo, in 2018. The
+work memory per CPU, **C5**, was a hard limit too, at most `lz4`'s 16 416 bytes, until October 2026. It
+is in the bytes now: it is taken from every CPU whether it swaps or not, so it is memory like the pages.
 
 The result, from the table of [`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost): the
 kernel VM, 40 000 pages a desktop swapped into zram, writes and cold reads through zram's read
@@ -534,8 +535,8 @@ pages 27.9% instead of 27.0% ([zram: prefetch the compressed data](https://githu
 The table has {{ch17.hash_slots}} slots of 2 bytes, 8 KiB. 2048 slots:
 @assert ch17.hash_slots * 2 == 8192
 939.6 instead of 936.9 bytes per page on the
-phone, no faster. 8192 slots: 937.1 bytes, 1.6 µs slower per write on the A55, and 16 KiB per CPU, right
-at C5 ([Six choices, item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)). "A page has 4096 positions, and a table of 4096 entries already keeps nearly every candidate that
+phone, no faster. 8192 slots: 937.1 bytes, 1.6 µs slower per write on the A55, and 16 KiB per CPU, as
+much as `lz4` asks for ([Six choices, item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)). "A page has 4096 positions, and a table of 4096 entries already keeps nearly every candidate that
 helps" ([seqlz-fast on the phone](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-on-the-phone-time-goes-per-sequence-and-code-layout-moves-reads-by-130-ns)).
 
 ### The repeat offset at every position
@@ -727,11 +728,14 @@ A55, still below the slowest compression.
 
 ### C5, counted as the allocator counts
 
-The limit is `lz4`'s work memory, 16 416 bytes per CPU. It was 4 KiB at first, and moved to `lz4`'s
-16 KiB on 23rd September 2026: 8 points less memory on the compressed pages are worth far more than a few
-KiB per CPU, and a budget of 4 KiB costs the matcher speed or ratio
-([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)). On the Mi 9T, with its 8
-cores, every 4 KiB below `lz4` is 32 KiB, resident for good.
+The work memory per CPU was a limit: 4 KiB at first, `lz4`'s 16 416 bytes from 23rd September 2026,
+because 8 points less memory on the compressed pages are worth far more than a few KiB per CPU. Neither
+number was priced. Since October 2026 it is a cost in the score: bytes per CPU times the CPUs, divided
+by the pages in zram. On the Mi 9T, with its 8 cores, every 4 KiB per CPU is 32 KiB, resident for good,
+and with 1 GiB in zram that is 0.1 bytes per page. It moves the hull only where zram holds little:
+`zstd` 3 holds 176 160 bytes per CPU more than `seqlz-fast-lit` and drops off the hull below about 27
+MiB in zram per CPU on one desktop dump
+([plan.md §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)).
 
 What counts is what `kmalloc()` and `vmalloc()` hand out, not what is asked for. `lz4` asks `vmalloc()`
 for 16 416 bytes and gets 5 pages, 20 480 bytes. seqlz needs the {{size.state}} bytes of the hash table to compress
@@ -757,14 +761,13 @@ bits as the page, and 16 KiB pages have their own tables, trained on the Android
 ([Android 17 in the emulator](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 But the work memory doubles with the page: the union asks for {{k16.ch15.mem.union|grp}} bytes and gets {{k16.ch15.mem.union_gets|grp}}, the split
 contexts ask for {{k16.ch15.state_plus_scratch|grp}} and get {{k16.ch15.mem.split_gets|grp}}. `lz4` gets 32 768 with 16 KiB pages. Each split context alone stays at or below
-`lz4`'s 32 KiB, their sum of 48 KiB does not, and whether C5 limits each context or the sum is not
-decided
+`lz4`'s 32 KiB, their sum of 48 KiB does not, and the score counts the sum
 @assert k16.ch15.mem.cctx_gets <= 32768 and k16.ch15.mem.dctx_gets <= 32768 and k16.ch15.mem.split_gets == 48 * 1024
 ([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)).
 
 Decoding the coded literals into the end of the output page instead of a scratch removes the scratch.
 It was built, measured and reverted: on 4 KiB pages it made cold reads 0.09 to 0.18 µs slower in the
-kernel, for memory C5 does not need there
+kernel, for memory that 4 KiB pages do not need
 ([16 KiB pages, tuned](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept)).
 Another way is not built: zram's own buffer of two pages per stream is unused while reading and half
 unused while writing ([Not evaluated yet](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#not-evaluated-yet)). Until that is decided, and until
@@ -775,7 +778,7 @@ copy is built for 4 KiB pages only ([format.md](https://github.com/martinus/quet
 
 Most of `explored-designs.md` is designs that lost. They are worth knowing, because each is an obvious
 idea, and each has a number now. The common reasons: the gain is below what the time is worth on the
-hull, the format would get a second way of doing something, or the work memory would break C5.
+hull, or the format would get a second way of doing something.
 
 ### Levels 3 and 4: a deeper search for the same format
 
