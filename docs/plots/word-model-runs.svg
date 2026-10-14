@@ -3861,6 +3861,25 @@ z
     <use xlink:href="#NotoSans-Regular-2e" transform="translate(9146.297806 0)"/>
    </g>
   </g>
+  <g id="label_axes_1_yhead">
+   <!-- codec or model -->
+   <g transform="translate(76.179375 69.392) scale(0.1 -0.1)">
+    <use xlink:href="#NotoSans-Regular-63"/>
+    <use xlink:href="#NotoSans-Regular-6f" transform="translate(47.999985 0)"/>
+    <use xlink:href="#NotoSans-Regular-64" transform="translate(108.499969 0)"/>
+    <use xlink:href="#NotoSans-Regular-65" transform="translate(169.999954 0)"/>
+    <use xlink:href="#NotoSans-Regular-63" transform="translate(226.399948 0)"/>
+    <use xlink:href="#NotoSans-Regular-20" transform="translate(274.399933 0)"/>
+    <use xlink:href="#NotoSans-Regular-6f" transform="translate(300.399918 0)"/>
+    <use xlink:href="#NotoSans-Regular-72" transform="translate(360.899902 0)"/>
+    <use xlink:href="#NotoSans-Regular-20" transform="translate(402.19989 0)"/>
+    <use xlink:href="#NotoSans-Regular-6d" transform="translate(428.199875 0)"/>
+    <use xlink:href="#NotoSans-Regular-6f" transform="translate(521.69986 0)"/>
+    <use xlink:href="#NotoSans-Regular-64" transform="translate(582.199844 0)"/>
+    <use xlink:href="#NotoSans-Regular-65" transform="translate(643.699829 0)"/>
+    <use xlink:href="#NotoSans-Regular-6c" transform="translate(700.099823 0)"/>
+   </g>
+  </g>
  </g>
  <defs>
   <clipPath id="p7ebd57ec5a">
