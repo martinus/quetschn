@@ -2,6 +2,12 @@
 cmake_minimum_required(VERSION 3.25)
 project(quetschn LANGUAGES C CXX)
 
+# Without a build type CMake does not optimize, and the trainer and the benchmarks run several times
+# slower than the numbers in the docs. Release unless a build type is given.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Debug, Release, RelWithDebInfo or MinSizeRel" FORCE)
+endif()
+
 # The page size of seqlz: 12 for 4 KiB, 14 for 16 KiB. The tests of the kernel codecs need 4 KiB, the
 # others run with both.
 set(QUETSCHN_PAGE_BITS 12 CACHE STRING "log2 of the page size of seqlz")
