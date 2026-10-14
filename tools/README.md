@@ -29,5 +29,6 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`plot-zstd-levels.py`](plot-zstd-levels.py) | `seqlz-fast-lit` against `zstd` at each level, from `zram-vm/run.sh` logs with `MODE=swap` and `zstd:<level>` codecs |
 | [`plot-devices.py`](plot-devices.py) | memory against time on several CPUs, one row per CPU |
 | [`plot-speed.py`](plot-speed.py) | the first chart of [docs/seqlz.md](../docs/seqlz.md#the-result-lz4s-time-zstds-size-almost): cycles in a hot loop, and write, cold read and memory in the kernel VM |
+| [`retrain-tables.py`](retrain-tables.py) | seqlz's tables trained again: the counts, their literal tables in the committed order, the `.inc` files of `src/` and the tables' SHA-256 in `docs/format.md`, in one step |
 
 The plot scripts need `matplotlib` and the Noto Sans font.

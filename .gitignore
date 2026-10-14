@@ -3,3 +3,6 @@ corpus/
 *.pages
 
 build*/
+
+# the book's npm packages, also when node_modules is a symlink to another worktree's
+docs/book/node_modules
