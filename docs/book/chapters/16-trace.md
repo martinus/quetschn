@@ -167,7 +167,7 @@ first byte, at offset {{ch16.s.1.off}}, which points into the header's zeros. {{
 256, so class {{ch16.s.1.cls}} with {{ch16.s.1.raw}} offset bits, `{{ch16.s.1.ob_bin}}`. `ll = {{ch16.s.1.ll}}` is above the token's cap of 15, so the
 token holds 15 and a length value of 12 follows, symbol 12 in the `ll` table, {{ll.len.12}} bits. The token is
 $15 + 16 \times 2 + 512 \times 2 = {{ch16.s.1.tok}}$, with a code of {{ch16.s.1.clen}} bits. Sequence 2 is one literal and {{ch16.s.2.ml}} bytes at
-offset {{ch16.s.2.off}}, the record before: 32 is a multiple of 8 from 16 on, so class {{ch16.s.2.cls}}, and the offset goes as
+offset {{ch16.s.2.off}}, the record before: 32 is a multiple of 8 below 256, so class {{ch16.s.2.cls}}, and the offset goes as
 $32 / 8 = {{ch16.s.2.ob}}$ in {{ch16.s.2.raw}} bits, `{{ch16.s.2.ob_bin}}`.
 
 @assert ch16.s[1].ll == 27 and ch16.s[1].ml == 6 and ch16.s[2].ll == 1 and ch16.s[2].off == 32
@@ -204,7 +204,7 @@ Some rows worth reading closely:
   because offset 1 is not a candidate: the repeat offset is now {{ch16.s.177.off}}, from sequence 177, and the 4
   bytes {{ch16.s.177.off}} back are a record's pointer, not zeros. The hash table's candidate is position {{ch16.s.177.cand}},
   stored as "2 bytes before the end" of sequence 177's match, and its 5 bytes are zeros like those at
-  {{ch16.s.178.pos}}. Offset 2 is class {{ch16.s.178.cls}}, {{ch16.s.178.raw}} bits. The length value is ${{ch16.s.178.ml}} - 4 - 31 = {{ch16.v178.value}}$. That is above 15,
+  {{ch16.s.178.pos}}. Offset 2 is class {{ch16.s.178.cls}}, sent as $2 / 2 = {{ch16.s.178.ob}}$ in {{ch16.s.178.raw}} bit. The length value is ${{ch16.s.178.ml}} - 4 - 31 = {{ch16.v178.value}}$. That is above 15,
   so it goes as its highest bit's position: {{ch16.v178.value}} is {{ch16.v178.len}} bits long, its top bit is bit {{ch16.v178.top}}, so the
   symbol is $12 + {{ch16.v178.top}} = {{ch16.v178.sym}}$, with a {{ch16.v178.code_len}}-bit code in the `ml` table, followed by the {{ch16.v178.top}} bits below the
   top one, ${{ch16.v178.value}} - {{ch16.v178.top_val}} = {{ch16.v178.extra}}$. {{ch16.s.178.vbits}} bits for the length, {{ch16.s.178.bits}} for the whole sequence, for {{ch16.s.178.ml}} bytes of
@@ -222,7 +222,7 @@ The whole page, summed by the program:
 
 {{ch16.matches}} matches cover {{ch16.matched}} bytes, the {{ch16.lits}} literals the other {{ch16.lits}}. {{ch16.class.4}} of the {{ch16.matches}} matches are class 4, a
 multiple of 8 below 256: the records' period of 32 shows up as offsets {{ch16.c4_offs}}. {{ch16.class.5}}
-more are class 5, multiples of 8 from 256 on, mostly {{ch16.c5_mode}}, {{ch16.c5_mode_records}} records back; {{ch16.c5_ptr}} of them are the 7 high
+more are class 5, multiples of 8 from 256 to 2040, mostly {{ch16.c5_mode}}, {{ch16.c5_mode_records}} records back; {{ch16.c5_ptr}} of them are the 7 high
 bytes of a pointer. Only {{ch16.class.3}} matches needed the 12 offset bits of class 3. Of the {{ch16.bits}} bits, {{ch16.tok_bits}} are
 token codes, {{ch16.off_bits}} offset bits and {{ch16.v_bits}} length values. By part of the page:
 
@@ -388,12 +388,13 @@ a port of the kernel's class computation; summed over a new device's pages it ma
 2. Classes are 16 bytes apart (`4096 >> 8`) from 32 bytes on, so the class index is
    $\lceil ({{ch16.zs.size}} - 32) / 16 \rceil = \lceil {{ch16.zs.frac}} \rceil = {{ch16.zs.idx}}$, and the class size $32 + {{ch16.zs.idx}} \times 16 = {{ch16.zs.nominal}}$ bytes.
 3. A class keeps its objects in a "zspage" of 1 to 8 pages, the number with the least waste at the end.
-   For {{ch16.zs.class}} that is {{ch16.zs.pages}} page with {{ch16.zs.objs}} objects, since $4096 / {{ch16.zs.class}} = {{ch16.zs.div}}$. Classes with the same pages and
-   objects per zspage are merged into the larger: class {{ch16.zs.merged}} also has 1 page and 5 objects, so it is
-   merged into {{ch16.zs.class}}, and no larger class shares {{ch16.zs.class}}'s.
+   For {{ch16.zs.nominal}} that is {{ch16.zs.pages}} page with {{ch16.zs.objs}} objects. Classes with the same pages and objects per
+   zspage are merged into the larger: class {{ch16.zs.class}} also has 1 page and 5 objects, since
+   $4096 / {{ch16.zs.class}} = {{ch16.zs.div}}$, so class {{ch16.zs.merged}} is merged into {{ch16.zs.class}}, and no larger class shares {{ch16.zs.class}}'s. The page
+   is stored in class {{ch16.zs.class}}.
 4. So each object costs $4096 / {{ch16.zs.objs}} = {{ch16.zs.cost}}$ bytes of memory.
 
-@assert F("ch16.zs.class") == ch16.zs.nominal and ch16.zs.pages == 1 and ch16.zs.merged == F("ch16.zs.class") - 16
+@assert F("ch16.zs.class") == ch16.zs.nominal + 16 and ch16.zs.pages == 1 and ch16.zs.merged == ch16.zs.nominal and ch16.zs.objs == 5
 
 The same page with raw literals, `seqlz-fast`'s {{ch16.raw.len}} bytes, lands in class {{ch16.zs.raw_class}} (`{{ch16.zs.raw_size}}` rounded up), {{ch16.zs.raw_pages}}
 pages holding {{ch16.zs.raw_objs}} objects, ${{ch16.zs.raw_pages_bytes|grp}} / {{ch16.zs.raw_objs}} = {{ch16.zs.raw_cost}}$ bytes per page. Coding the literals saved {{ch16.coded.saved}} bytes of
@@ -403,7 +404,7 @@ class, {{ch16.zs.lower}}, because class {{ch16.zs.merged}} is part of {{ch16.zs.
 
 ## seqlz_decode(): the literals first {#ch-trace--decode}
 
-Some time later the page is read. zram calls the backend's decompress with the 795 bytes, and the
+Some time later the page is read. zram calls the backend's decompress with the {{ch16.coded.len}} bytes, and the
 backend calls `seqlz_decode(t, src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of {{const.SCRATCH}} bytes
 ([chapter 14](#ch-decode)).
 
@@ -478,21 +479,21 @@ has two counters added:
 @output ch16-trace 41
 
 {{ch14.seqs}} sequences have a token. The {{ch14.slow}} slow ones are the {{ch16.slow_value}} sequences with a length value ({{ch16.slow_ll}} for `ll`, {{ch16.slow_ml}}
-for `ml`), and sequence {{ch16.slow_novalue}}, whose bit reader has reached the last 8 bytes of the input, so
-that a refill without a check could read past it.
+for `ml`), and sequences {{ch16.slow_novalue}}, whose bit reader has reached the last 8 bytes of the input,
+so that a refill without a check could read past it.
 
-@assert ch16.slow_novalue_n == 1 and ch16.slow_novalue_past_in == 1 and ch16.slow_value + ch16.slow_novalue_n == ch14.slow
+@assert ch16.slow_novalue_n == 2 and ch16.slow_novalue_past_in == 1 and ch16.slow_value + ch16.slow_novalue_n == ch14.slow
 
 **The end.** After sequence 178's match `d` is at the end of the page and `lit` at `lit_end`, all {{ch16.lits}}
 literals used: `d - lit` is `end_gap`, 0 literals left for 0 bytes of the page. That is sequence 179,
 the last, which has no token, and the loop leaves without reading one; `copy_literals()` copies 0 bytes. Then
 the checks that make a page valid only if it ends where its bits end
 ([chapter 4](#ch-format--validity)): the bit reader has read every byte, `p == end`, and `count`, the
-bits left, is {{ch16.pad}}, fewer than 8, and those bits are 0: {{ch16.bits}} bits are {{ch16.full_bytes}} bytes and {{ch16.pad_bits}} bit, and the
+bits left, is {{ch16.pad}}, fewer than 8, and those bits are 0: {{ch16.bits}} bits are {{ch16.full_bytes}} bytes and {{ch16.pad_bits}} bits, and the
 last byte's lowest {{ch16.pad}} bits are padding. `seqlz_decode()` returns 0, and the 4096 bytes in `dst` are
 the page we started with.
 
-@assert ch16.pad == 7 and ch16.pad_bits == 1
+@assert ch16.pad == 3 and ch16.pad_bits == 5
 
 Without the scratch, the same {{ch16.coded.len}} bytes are invalid: `seqlz_decode(t, src, {{ch16.coded.len}}, dst, NULL)` returns
 `-EINVAL` as soon as it sees the top bit of the u16. That is why `seqlz-fast-lit` has a decompression

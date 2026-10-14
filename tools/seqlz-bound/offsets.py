@@ -72,18 +72,24 @@ def train(hist, esc_bits, limit=11):
 
 def price(layout, dumps):
     """bytes per page of tokens and raw offset bits of each dump"""
+    return price_escapes(layout, dumps)[0]
+
+
+def price_escapes(layout, dumps):
+    """bytes and escapes per page of each dump, its token codes trained on the other dumps"""
     symbols = 512 * (len(layout) + 1)
     hists, raws = [], []
     for lm, off, rep, _ in dumps:
         cls, raw = classify(layout, off, rep)
         hists.append(np.bincount(lm + 512 * cls, minlength=symbols).astype(float))
         raws.append(raw.sum())
-    out = []
+    out, esc = [], []
     for i, d in enumerate(dumps):
         others = sum(h / h.sum() for j, h in enumerate(hists) if j != i)
         bits = train(others * 1e6, max(12, math.ceil(math.log2(symbols))))
         out.append(((hists[i] * bits).sum() + raws[i]) / 8 / d[3])
-    return out
+        esc.append((hists[i] * (bits > 11)).sum() / d[3])
+    return out, esc
 
 
 def below(a, b=None):
@@ -107,6 +113,13 @@ def either(a, b):
 
 
 TODAY = [
+    (eq(2), 1),
+    (x8(8, 256), 5),
+    (x8(256, 2048), 8),
+    (below(256), 8),
+    (below(4096), 12),
+]
+BEFORE = [
     (x8(16, 256), 5),
     (x8(256, 4096), 9),
     (below(16), 4),
@@ -122,27 +135,34 @@ SEVEN = [
     (below(4096), 12),
 ]
 LAYOUTS = {
-    "today: 1-15, 16-255, 256-4095, multiples of 8 16-255, 256-4095": TODAY,
-    "offsets 2 and 8 as classes, 8 classes": [(eq(2), 0), (eq(8), 0)] + TODAY,
-    "2 and 8 in one class with 1 raw bit, 7 classes": [(either(2, 8), 1)] + TODAY,
+    "today: 2, 1-255, 1-4095, multiples of 8 8-255, 256-2047": TODAY,
+    "before 14th October: 1-15, 16-255, 256-4095, multiples of 8 16-255, 256-4095": BEFORE,
+    "offsets 2 and 8 as classes, 8 classes": [(eq(2), 0), (eq(8), 0)] + BEFORE,
+    "2 and 8 in one class with 1 raw bit, 7 classes": [(either(2, 8), 1)] + BEFORE,
     "2 and 8 as classes, the rest of 1 to 15 in 8 bits, 7 classes": SEVEN,
     "... and multiples of 8 from 256 to 2047 in 8 bits, 8 classes": SEVEN[:3]
     + [(x8(256, 2048), 8)]
     + SEVEN[3:],
-    "multiples of 4 as classes of their own, 8 classes": TODAY[:2]
+    "multiples of 4 as classes of their own, 8 classes": BEFORE[:2]
     + [(x4(16, 256), 5), (x4(256, 4096), 9)]
-    + TODAY[2:],
+    + BEFORE[2:],
 }
 
-dumps = [load(p) for p in sys.argv[1:]]
-base = None
-for name, layout in LAYOUTS.items():
-    r = price(layout, dumps)
-    base = base or r
-    print(
-        f"{name:66} "
-        + " ".join(f"{x:7.1f}" for x in r)
-        + "   "
-        + " ".join(f"{x - b:+5.1f}" for x, b in zip(r, base)),
-        flush=True,
-    )
+
+def main():
+    dumps = [load(p) for p in sys.argv[1:]]
+    base = None
+    for name, layout in LAYOUTS.items():
+        r = price(layout, dumps)
+        base = base or r
+        print(
+            f"{name:80} "
+            + " ".join(f"{x:7.1f}" for x in r)
+            + "   "
+            + " ".join(f"{x - b:+5.1f}" for x, b in zip(r, base)),
+            flush=True,
+        )
+
+
+if __name__ == "__main__":
+    main()

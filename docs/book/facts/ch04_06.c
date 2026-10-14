@@ -381,7 +381,7 @@ static void pointer_facts(void) {
 
 /* the offset classes of a few offsets, as seqlz_off_class() picks them */
 static void offset_facts(void) {
-    static const unsigned int ex[][2] = {{24, 24}, {24, 16}, {8, 1}, {100, 1}, {256, 1}, {300, 1}};
+    static const unsigned int ex[][2] = {{24, 24}, {24, 16}, {2, 1}, {8, 1}, {100, 1}, {256, 1}, {300, 1}, {2048, 1}};
     unsigned int k, raw, cls;
     char P[64];
 
@@ -460,6 +460,8 @@ static void header_facts(void) {
     fact_str(K(P, "RAW_BITS"), buf);
     fact_num(K(P, "RAW_BITS3"), SEQLZ_RAW_BITS(3));
     fact_num(K(P, "RAW_BITS5"), SEQLZ_RAW_BITS(5));
+    fact_num(K(P, "CLASS5_BITS"), SEQLZ_CLASS5_BITS);
+    fact_num(K(P, "class5_end"), 8U << SEQLZ_CLASS5_BITS);
     fact_num(K(P, "SCRATCH"), SEQLZ_SCRATCH);
     fact_num(K(P, "HASH_BITS"), SEQLZ_HASH_BITS);
     fact_num(K(P, "HASH_ENTRIES"), 1U << SEQLZ_HASH_BITS);
@@ -476,9 +478,9 @@ static void header_facts(void) {
 
 static void ch06_facts(void) {
     static const unsigned int lens[] = {5, 16, 31, 100, 4059};
-    static const unsigned int offs[] = {1, 8, 15, 16, 24, 255, 256, 264, 1000, 4095};
+    static const unsigned int offs[] = {1, 2, 8, 15, 24, 255, 256, 264, 2040, 2048, 4095};
     static const unsigned int toks[][3] = {{2, 7, 4}, {1, 7, 0}, {2, 4094, 1}, {20, 100, 3}, {0, 4, 0}};
-    unsigned int k, extra, raw, sym, cls;
+    unsigned int k, extra, raw, sym, cls, aligned;
     char P[64];
 
     header_facts();
@@ -534,10 +536,14 @@ static void ch06_facts(void) {
 
         cls = seqlz_off_class(o, 0, &raw);
         snprintf(P, sizeof P, "ch06.off.%u", o);
-        fact_num(K(P, "ge16"), o >= 16U);
-        fact_num(K(P, "ge256"), o >= 256U);
-        fact_num(K(P, "aligned"), (o >= 16U) & ((o & 7U) == 0));
-        fact_num(K(P, "sum"), 1U + (o >= 16U) + (o >= 256U) + 2U * ((o >= 16U) & ((o & 7U) == 0)));
+        /* the terms of seqlz_off_class() for a new offset, which must add up to its class */
+        aligned = ((o & 7U) == 0) & (o < 8U << SEQLZ_CLASS5_BITS);
+        fact_num(K(P, "lt256"), o < 256U);
+        fact_num(K(P, "eq2"), o == 2U);
+        fact_num(K(P, "aligned"), aligned);
+        if (3U - (o < 256U) - (o == 2U) + 2U * aligned != cls)
+            exit(1);
+        fact_num(K(P, "sum"), cls);
         fact_num(K(P, "cls"), cls);
         fact_num(K(P, "raw"), raw);
         fact_num(K(P, "sent"), o >> SEQLZ_OFF_SHIFT(cls));

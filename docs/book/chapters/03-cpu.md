@@ -153,28 +153,28 @@ bits of the index, and its entries are every $2^l$-th entry of the table. Token 
 {{ch03.t49.lsb.at.2}}, and so on, one in every one of the {{ch03.t49.lsb.lines}} lines, and token
 4's {{ch03.t4.entries}} entries are in {{ch03.t4.lsb.lines}} lines, {{ch03.t4.lsb.line.0}},
 {{ch03.t4.lsb.line.1}}, {{ch03.t4.lsb.line.2}} and so on, {{ch03.t4.lsb.step}} lines apart:
-@assert (ch03.t49.line_first, ch03.t49.line_last, ch03.t4.line_first, ch03.t49.lsb.lines, ch03.t4.lsb.line[0], ch03.t4.lsb.step) == (0, 7, 61, 128, 5, 16)
+@assert (ch03.t49.line_first, ch03.t49.line_last, ch03.t4.line_first, ch03.t49.lsb.lines, ch03.t4.lsb.line[0], ch03.t4.lsb.step, ch03.t4.lsb.lines) == (0, 7, 62, 128, 3, 16, 8)
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 230" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 8 to 15 and token 4 one line, 70; read least significant bit first, token 49 has an entry in every line and token 4 in 8 lines" font-size="12">
+<svg viewBox="0 0 720 230" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 0 to 7 and token 4 one line, 62; read least significant bit first, token 49 has an entry in every line and token 4 in 8 lines" font-size="12">
   <text x="186" y="28" text-anchor="middle" font-weight="bold">most significant bit first</text>
-  <rect x="50" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <g class="acc"><rect x="186" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="203" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="220" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="237" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="254" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="271" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="288" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="305" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="50" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="67" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="84" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="101" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="118" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="135" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="152" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="169" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <rect x="186" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="203" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="220" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="237" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="254" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="271" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="288" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="305" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="50" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="67" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="84" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
@@ -221,7 +221,7 @@ bits of the index, and its entries are every $2^l$-th entry of the table. Token 
   <rect x="237" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="254" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="271" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <g class="mark"><rect x="288" y="85" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
   <rect x="305" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="50" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="67" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
@@ -229,7 +229,7 @@ bits of the index, and its entries are every $2^l$-th entry of the table. Token 
   <rect x="101" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="118" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="135" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <g class="mark"><rect x="152" y="100" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
+  <rect x="152" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="169" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="186" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
   <rect x="203" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
@@ -509,7 +509,7 @@ in the kernel VM and on the phone.
 The other way to avoid a misprediction is code without a branch: compute the outcome with
 arithmetic. `seqlz_off_class()` picks the offset class of a match for the encoder. The classes come
 in no order a predictor could learn, so it has no `if`: each comparison in C is an `int`, 0 or 1, and
-the code adds and masks them into the class. [Chapter 6](#ch-header--offsets) works it out for a few
+the code adds and subtracts them into the class and masks it. [Chapter 6](#ch-header--offsets) works it out for a few
 offsets.
 
 Code without branches is not always faster. It runs every instruction of both outcomes, and a branch

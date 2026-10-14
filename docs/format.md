@@ -33,32 +33,14 @@ It is one format, and the decoder decodes both.
 ## Status
 
 > [!IMPORTANT]
-> The format for 4 KiB pages is the one of 13th October 2026, and nobody uses it yet. Until seqlz has
-> users it may still change, the tables included, and such a change updates this file: its rules, the
-> hashes of the tables, the example and this section. Once seqlz is in a kernel, zram's pages still live
-> only as long as the kernel that wrote them, so a change needs no new name in zram, see
+> This is the format of 14th October 2026 for 4 KiB pages, and nobody uses it yet. Until seqlz has users
+> it may still change, the tables included, and such a change updates this file: its rules, the hashes
+> of the tables and the example. Once seqlz is in a kernel, zram's pages still live only as long as the
+> kernel that wrote them, so a change needs no new name in zram, see
 > [No version in the page](#no-version-in-the-page).
 
-The tables of 6th October were trained again before anyone used them, on swapped pages too
-([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
-On 8th October a page became valid only if it ends where its bits end, see
-[The bitstream of the sequences](#the-bitstream-of-the-sequences) and [Coded literals](#coded-literals);
-the pages the compressor writes did not change. On 11th October the last sequence lost its token: a
-decoder knows it from the literals left, see [Decoding](#decoding). Pages got about 1.2 bytes smaller
-([explored-designs.md](explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
-The same day the token and length tables of both page sizes were trained again, without the last
-sequences, and the length values lost their last symbol, which no page needs, see
-[Length values](#length-values); the literal tables stayed
-([explored-designs.md](explored-designs.md#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)).
-On 13th October all tables for 4 KiB pages were trained again, on zram dumps of a phone under memory
-pressure next to the desktop's pages, and the example became 9 bytes: its token has no code of its own
-any more
-([explored-designs.md](explored-designs.md#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)).
-
-The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
-since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
-on a second one, where they make `seqlz-fast-lit` 2.6% smaller than the tables before, which were
-trained on desktop pages
+The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own,
+trained on a zram dump of the Android 17 emulator with 16 KiB pages
 ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-fast-lit`
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
@@ -222,12 +204,12 @@ byte. `quetschn-seqlz-train --from-counts <file>` does the same in C++, see `ben
 the test `seqlz_train` checks that it gives the same tables, for both page sizes. The kernel gets the
 generator as `scripts/gen-seqlz-tables.py` and the 4 KiB counts.
 
-The 4 KiB tables are counted on 524 912 pages: the resident pages of a desktop, 60 132 pages of its zram
-dump of 28th September 2026, and the first zram dump of a Xiaomi Mi 9T, five times, so that the phone
-does not lose what the desktop's pages gain. The 16 KiB tables are counted on 26 933 pages of a zram dump of the
+The 4 KiB tables are counted on 1 091 983 pages: three sessions of a Xiaomi Mi 9T under memory
+pressure, the resident pages of a desktop and 200 000 pages of its zram dump of 28th September 2026. The
+16 KiB tables are counted on 26 933 pages of a zram dump of the
 Android 17 emulator with 16 KiB pages. Those pages are not published, because memory dumps hold keys
 and passwords. The counts can't give those back: they are sums over all pages, each literal table's over
-845 pages or more for 4 KiB (the phone's counted five times) and 453 or more for 16 KiB, and they don't say which symbol came after which
+10 590 pages or more for 4 KiB and 453 or more for 16 KiB, and they don't say which symbol came after which
 or on which page. `quetschn-seqlz-train --corpus <pages> --counts <file>` counts other pages the same
 way.
 <!-- end -->
@@ -237,11 +219,11 @@ so that a decoder can check that it has the right ones:
 
 | table | SHA-256 |
 | --- | --- |
-| `TOK_4k` | `b174f3b432f9d6bec98baaf902eb98a402b8570274bc0a27b4aec4f4a2e3a29f` |
+| `TOK_4k` | `c5f97d70cd50ed0e3517c69231437fd534f5e772bb9ed70dc3769a3337b2d6e0` |
 | `LL_4k` | `ce0b70bdefdad678f22ef1139cf8284c48b61f720adb007b0a28b0ad3777bf16` |
 | `ML_4k` | `c39358b16a14c2462e092ee13b345e9b5002e59c5efc9521f0967063a7873289` |
 | `LIT_4k` | `43f552dca80dcdffd6dc21231555f1c938580650a1b90b94b8c515120ad9ad9e` |
-| `TOK_16k` | `ef1e31daaca9a6571769c69fce641376aab2d0c86e11614c409e61e2c23a0d8d` |
+| `TOK_16k` | `e33e3a2353fbc5c9296abb79034a3d118ce34344e059099e1c85afda996b7219` |
 | `LL_16k` | `5e9e225ea55c28a9b0f358101521c670e89cbd32cec5e7f02fe608648dabb8b2` |
 | `ML_16k` | `fe6a87649f4b95830e663270eefe4289561269420cba951931f95c5fe38ccfce` |
 | `LIT_16k` | `cc37c3ba7e7ffdb91ff873d7c9a19f04301efe79c4b2fd7202c137212a769db4` |
@@ -325,19 +307,20 @@ if t == 3072:
 
 The offset's class says how it is stored: each class reads its **offset bits** and turns them into
 the offset. *Why:* small offsets are frequent, and so are multiples of 8, at which 8-byte values like
-pointers repeat, so they get classes with fewer bits.
+pointers repeat, so they get classes with fewer bits. Offset 2, at which 16-bit values repeat, is
+the most frequent of all and gets a class of its own.
 
 | class | offset bits | offset | offsets it can send |
 | --- | --- | --- | --- |
 | 0 | none | the last offset again | the offset of the sequence before |
-| 1 | 4 | `read(4)` | 1 to 15 |
+| 1 | 1 | `read(1) * 2` | 2 |
 | 2 | 8 | `read(8)` | 1 to 255 |
 | 3 | `P`: 12 or 14 | `read(P)` | 1 to `PAGE - 1` |
 | 4 | 5 | `read(5) * 8` | 8 to 248, multiples of 8 |
-| 5 | `P - 3`: 9 or 11 | `read(P - 3) * 8` | 8 to `PAGE - 8`, multiples of 8 |
+| 5 | 8 | `read(8) * 8` | 8 to 2040, multiples of 8 |
 
-Classes 4 and 5 store the offset divided by 8, which saves 3 bits. The last offset starts as 1 for
-each page. For a sequence with a match, an offset of 0, or one larger than the bytes written so far,
+Class 1 stores the offset divided by 2, classes 4 and 5 divided by 8. The last offset starts as 1
+for each page. For a sequence with a match, an offset of 0, or one larger than the bytes written so far,
 makes the page invalid.
 
 ## Decoding
@@ -374,7 +357,7 @@ There is no count of the sequences, and the last sequence has no token. Every ma
 bytes, so once the literals left are as many as the bytes the page still needs, no match can follow:
 the literals left are the last sequence. A page whose last match reaches the end of the page ends with
 no literals left, a page of literals only has `n = PAGE` and no bits in `B`. *Why:* a decoder knows
-`n` and `PAGE`, so a token for the last sequence only says what the decoder knows already, and it took
+`n` and `PAGE`, so a token for the last sequence would only say what the decoder knows already, in
 about 1.2 bytes per page. Every sequence before the last writes at least 4 bytes, so a decoder stops
 after at most `PAGE / 4 + 1` sequences, also on pages that are not valid.
 
@@ -394,21 +377,21 @@ Else the page is invalid. A decoder may read past the end of a stream, as long a
 
 ## Example
 
-The 9 bytes `02 00 61 62 13 f2 2f ff 6c` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
+The 9 bytes `02 00 61 62 23 f2 ff fb 60` are a 4 KiB page of `ab` 2048 times, with the 4 KiB tables:
 
 - `02 00`: `h = 2`, raw literals, `n = 2`; then the literals `61 62`, `a` and `b`.
-- `B` is `13 f2 2f ff 6c`, 40 bits, read most significant bit first:
+- `B` is `23 f2 ff fb 60`, 40 bits, read most significant bit first:
 
 | bits | read as | means |
 | --- | --- | --- |
-| `0001` | `symbol(TOK)` = 3072 | the escape: the token has no code of its own |
+| `0010` | `symbol(TOK)` = 3072 | the escape: the token has no code of its own |
 | `001111110010` | `read(12)` = 1010 | `ll = 2`, `mlf = 31`, class 1 |
-| `0010` | `read(4)` = 2 | `off = 2` |
+| `1` | `read(1)` = 1 | `off = 1 * 2 = 2` |
 | | | `a b` appended |
 | `1111111` | `symbol(ML)` = 23, `b = 11` | |
 | `11111011011` | `read(11)` = 2011 | `ml = 35 + 2^11 + 2011 = 4094`, `ab` repeated |
 | | | 0 literals left for 0 bytes of the page: the last sequence, the end |
-| `00` | | the rest of the last byte |
+| `00000` | | the rest of the last byte |
 
 ## What the compressor writes
 
@@ -416,8 +399,7 @@ Not part of the format: any page that decodes is fine, and one page can be writt
 with lz4 or zstd. For reference, `seqlz_compress()` writes:
 
 - the matches of a greedy matcher (`page_lz.h`); each offset with class 0 when it is the last
-  one, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of classes 1 to 3 that holds
-  it;
+  one, else the class with the fewest offset bits that holds it;
 - the escape only for a token without a code;
 - coded literals only when `51 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
   them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the

@@ -107,7 +107,7 @@ static void traced(struct drv* D, unsigned int ll, unsigned int ml, unsigned int
     code = token_code(t, tok, &tlen);
     offv = (off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0));
     printf("%s{\"seq\":%u,\"op\":\"seq\",\"ll\":%u,\"ml\":%u,\"off\":%u,\"cls\":%u,\"tok\":%u,"
-           "\"esc\":%u,\"tlen\":%u,\"raw\":%u}",
+           "\"esc\":%u,\"tlen\":%u,\"raw\":%u,\"shift\":%u}",
            D->ops++ ? "," : "",
            D->n,
            ll,
@@ -117,7 +117,8 @@ static void traced(struct drv* D, unsigned int ll, unsigned int ml, unsigned int
            tok,
            esc,
            tlen,
-           raw_bits);
+           raw_bits,
+           SEQLZ_OFF_SHIFT(cls));
     if (esc) {
         pt[np++] = (struct part){"escape", tlen - SEQLZ_ESCAPE_BITS, code >> SEQLZ_ESCAPE_BITS};
         pt[np++] = (struct part){"token", SEQLZ_ESCAPE_BITS, tok};

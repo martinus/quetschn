@@ -197,6 +197,7 @@ column, with the entry that has the numbers.
 | 4 bits of `ll`, 5 of `ml` in the token | 4 and 4 | a length value after 8.5% of the matches instead of 18.7%, 9180 instead of 9400 decode cycles | a larger token alphabet | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | one repeat offset | three, as `zstd` | 17% fewer decode cycles, 89 instead of 124 mispredictions per page | 26.6% instead of 26.4% | [third decoder round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow) |
 | two classes for multiples of 8 | plain offsets only | 13 bytes per page in the kernel | 0.20 µs per page written | [by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8) |
+| offset 2 in 1 bit, class 5 below 2048 in 8 bits | offsets below 16 in 4 bits, class 5 in 9 | 0.6% smaller on 4 KiB pages, 1.4% on 16 KiB | none measured | [offset 2 in 1 bit](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept) |
 | token codes of at most 11 bits | 12 bits | cold p99 4350 instead of 5070 ns, measured with entries of 2 bytes | {{ch17.tok_own}} of {{const.TOKEN_SYMBOLS}} tokens have a code, the rest is escaped | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | the bitstream read most significant bit first | least significant first | a page touches 42.5 instead of 55 of the token table's {{ch17.tok_lines}} cache lines | none, the same bytes | [bit order](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept) |
 | only complete prefix codes | a check for invalid codes | 6% of the decoder's instructions | | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
@@ -224,12 +225,13 @@ A fifth bit for the literal length was not tried: it would double the alphabet a
 most 11 bits have room for 2048 codes
 ([The fast path's condition](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)).
 
-### Offset classes, and why multiples of 8 have two of their own
+### Offset classes: offset 2 in 1 bit, and two for multiples of 8
 
-The offset class says how the offset is stored: class 0 is the repeat offset in 0 bits, classes 1 to 3
-are offsets below 16, below 256 and below the page size in 4, 8 and 12 plain bits, and classes 4 and 5
-are multiples of 8 sent divided by 8, in 5 and 9 bits. The last two are the newest, and the reason is
-what memory pages hold: arrays of 8-byte values. Of the offsets from 16 to 255 that are not the repeat
+The offset class says how the offset is stored: class 0 is the repeat offset in 0 bits, class 1 is
+offset 2 sent divided by 2 in 1 bit, classes 2 and 3 are offsets below 256 and below the page size in 8
+and 12 plain bits, and classes 4 and 5 are multiples of 8 below 256 and below 2048, sent divided by 8
+in 5 and 8 bits. Classes 4 and 5 came first, then in 5 and 9 bits, and the reason is what memory pages
+hold: arrays of 8-byte values. Of the offsets from 16 to 255 that are not the repeat
 offset, 64% are multiples of 8; from 256 on, 52%. The low 3 bits of an offset carry 2.1 bits of
 information, not 3. In the kernel the two classes saved 13 bytes per page, for 0.20 µs more per page
 written: 65 bytes per µs, against 10 for the step from `seqlz-fast-lit` to `zstd` 3 in
@@ -238,16 +240,30 @@ the same boots, with the tables of then
 decoder still does one table lookup per sequence, and one more shift. The price is in the format: the
 token alphabet grew from 2048 to 3072, so the escape needs 12 bits.
 
-Other layouts were searched and not taken. A search over 29 539 layouts of classes found at most 0.15
-bits per sequence, about 0.1 points
+On 14th October 2026 two classes changed. Class 1 had been the offsets below 16 in 4 bits; it became
+offset 2 alone, in 1 bit. Arrays of 16-bit values repeat at a distance of 2, and of the offsets that
+are not the repeat offset, about 8% are 2 on phone and desktop pages, more than any other single
+offset. Class 5 went from every multiple of 8 from 256 on, in 9 bits, to those below 2048, in 8. A
+search over layouts of 6 to 8 classes, priced on seven dumps, found these 6. With the token tables
+trained again, `seqlz-fast-lit` stores 0.6% less on the 4 KiB dumps, on average, and 1.4% less on the
+16 KiB ones, at the same speed on the Mi 9T and in the kernel VM
+([Offset 2 in 1 bit](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
+
+Other layouts were searched and not taken. An earlier search over 29 539 layouts of classes found at
+most 0.15 bits per sequence, about 0.1 points
 ([Offset classes from a histogram](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)).
-Offsets 2 and 8 as classes of their own, since they are 70% to 85% of class 1, made pages 0.8%
-smaller and the warm read 1.4% slower on both phone cores, and were not built for a format change of
-that size
+The search of 14th October found more with offsets that need no bits at all, e.g. 2 and 8: 8 classes
+with them save 3.3 bytes per page more than today's 6. But then the decoder chooses from three for
+each offset, its bits, a fixed one or the repeat offset, and that one more select made the A55's
+writes 1.0% and its warm reads 1.7% slower, the A76's warm reads 2.2%
+([Offset 2 in 1 bit](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
+The same idea had been measured before, when class 1 still held the offsets below 16: offsets 2 and 8
+as classes of their own, since they were 70% to 85% of that class 1, made pages 0.8% smaller and the
+warm read 1.4% slower on both phone cores, and were not built for a format change of that size
 ([How tight the bits are](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#how-tight-the-bits-are-ans-would-give-03-at-most-the-offsets-have-2-16-literal-tables-01-to-2)).
-Class 1 for offsets 1 to 7 only, so that a short offset is known before its bits are read, was larger,
-27.1% instead of 27.0%, and took 7625 instead of 6883 decode cycles per page; the cold p50 was faster,
-1410 against 1470 ns, the cold p99 slower, 3280 against 3040 ns
+A class 1 for offsets 1 to 7, instead of 1 to 15, so that a short offset is known before its bits
+are read, was larger, 27.1% instead of 27.0%, and took 7625 instead of 6883 decode cycles per page;
+the cold p50 was faster, 1410 against 1470 ns, the cold p99 slower, 3280 against 3040 ns
 ([zram: prefetch the compressed data](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 
 ### One repeat offset, not three

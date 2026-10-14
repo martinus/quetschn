@@ -169,24 +169,26 @@ TEST_CASE("seqlz: the token holds ll and ml - 4 up to their caps and the offset 
     auto bits = 0U;
     CHECK(seqlz_off_class(9, 9, &bits) == 0);
     CHECK(bits == 0);
-    CHECK(seqlz_off_class(1, 9, &bits) == 1);
-    CHECK(bits == 4);
-    CHECK(seqlz_off_class(15, 9, &bits) == 1);
-    CHECK(seqlz_off_class(17, 9, &bits) == 2);
+    // offset 2 in 1 raw bit, the offset divided by 2
+    CHECK(seqlz_off_class(2, 9, &bits) == 1);
+    CHECK(bits == 1);
+    CHECK(seqlz_off_class(1, 9, &bits) == 2);
     CHECK(bits == 8);
+    CHECK(seqlz_off_class(3, 9, &bits) == 2);
     CHECK(seqlz_off_class(255, 9, &bits) == 2);
     CHECK(seqlz_off_class(257, 9, &bits) == 3);
     CHECK(bits == page_bits);
     CHECK(seqlz_off_class(4095, 9, &bits) == 3);
-    // the multiples of 8 from 16 on
-    CHECK(seqlz_off_class(8, 9, &bits) == 1);
-    CHECK(bits == 4);
-    CHECK(seqlz_off_class(16, 9, &bits) == 4);
+    // the multiples of 8 below 2048, divided by 8
+    CHECK(seqlz_off_class(8, 9, &bits) == 4);
     CHECK(bits == 5);
     CHECK(seqlz_off_class(248, 9, &bits) == 4);
     CHECK(seqlz_off_class(256, 9, &bits) == 5);
-    CHECK(bits == page_bits - 3);
-    CHECK(seqlz_off_class(4088, 9, &bits) == 5);
+    CHECK(bits == 8);
+    CHECK(seqlz_off_class(2040, 9, &bits) == 5);
+    CHECK(seqlz_off_class(2048, 9, &bits) == 3);
+    CHECK(seqlz_off_class(4088, 9, &bits) == 3);
+    CHECK(seqlz_off_class(2, 2, &bits) == 0);
     CHECK(seqlz_off_class(4088, 4088, &bits) == 0);
 }
 
@@ -743,10 +745,10 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
         auto const l = static_cast<unsigned>(seq[i].literals);
         auto const m = last ? 0U : static_cast<unsigned>(seq[i].match);
         auto const o = static_cast<unsigned>(seq[i].offset);
-        // class 0: the last offset, 1: below 16 in 4 raw bits, 2: below 256 in 8, 3: in the page bits; 4 and
-        // 5 the multiples of 8 from 16, divided by 8, in 5 and the page bits - 3
-        auto const aligned = o >= 16 && o % 8 == 0;
-        auto const cls = last || o == last_offset ? 0U : o < 16 ? 1U : o < 256 ? (aligned ? 4U : 2U) : (aligned ? 5U : 3U);
+        // class 0: the last offset, 1: offset 2 divided by 2 in 1 raw bit, 2: below 256 in 8, 3: in the
+        // page bits; 4 and 5 the multiples of 8 below 256 and 2048, divided by 8, in 5 and 8
+        auto const aligned = o < 2048 && o % 8 == 0;
+        auto const cls = last || o == last_offset ? 0U : o == 2 ? 1U : o < 256 ? (aligned ? 4U : 2U) : (aligned ? 5U : 3U);
         auto const mlf = last ? 0U : std::min(m - 4U, SEQLZ_ML_CAP);
         auto const tok = std::min(l, SEQLZ_LL_CAP) + (mlf << SEQLZ_LL_BITS) + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
         if (lengths.token[tok] != 0) {
@@ -756,7 +758,7 @@ std::vector<unsigned char> reference_encode(seqlz_lengths const& lengths,
             put(token[SEQLZ_ESCAPE], lengths.token[SEQLZ_ESCAPE]);
             put(tok, SEQLZ_ESCAPE_BITS);
         }
-        put(cls >= 4 ? o / 8 : o, std::array<unsigned, 6>{0, 4, 8, page_bits, 5, page_bits - 3}[cls]);
+        put(o / std::array<unsigned, 6>{1, 2, 1, 1, 8, 8}[cls], std::array<unsigned, 6>{0, 1, 8, page_bits, 5, 8}[cls]);
         if (l >= SEQLZ_LL_CAP) {
             value(ll, lengths.ll, l - SEQLZ_LL_CAP);
         }

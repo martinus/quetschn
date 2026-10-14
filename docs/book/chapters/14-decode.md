@@ -380,8 +380,8 @@ code on top, `TOK_N(tok)` bits, then the offset bits.
 - `br.bits << TOK_N(tok)` shifts the code out, so the offset bits are on top.
 - `>> back` with `back = 64 - raw_bits` moves them down to the bottom: the offset bits as a number.
 - The cast to `unsigned int` keeps the low 32 bits, of which the offset has at most 14.
-- `<< TOK_SHIFT(tok)` multiplies by 8 for classes 4 and 5, which store the offset divided by 8; for the
-  other classes the shift is 0.
+- `<< TOK_SHIFT(tok)` multiplies by 2 for class 1 and by 8 for classes 4 and 5, which store the offset
+  divided by 2 and 8; for the other classes the shift is 0.
 
 For class 0, the repeat offset, there are no offset bits. `back` is then 0 and not 64, because
 `token_entry()` stores `(64 - raw_bits) & 63`: a shift by 64 is undefined in C. With `back = 0`, `raw` is
@@ -395,16 +395,16 @@ against `src/`. The register holds the code, the offset bits, and then made-up b
 | --- | --- | --- | --- |
 | sequence | `ll` {{ch14.tk.a.ll}}, `ml` {{ch14.tk.a.ml}}, offset {{ch14.tk.a.off}} | `ll` {{ch14.tk.b.ll}}, `ml` {{ch14.tk.b.ml}}, offset {{ch14.tk.b.off}} | `ll` {{ch14.tk.c.ll}}, `ml` {{ch14.tk.c.ml}}, the last offset |
 | code | `{{ch14.tk.a.code}}`, {{ch14.tk.a.n}} bits | `{{ch14.tk.b.code}}`, {{ch14.tk.b.n}} bits | `{{ch14.tk.c.code}}`, {{ch14.tk.c.n}} bits |
-| offset bits | `{{ch14.tk.a.ob}}`, {{ch14.tk.a.raw_bits}} bits: {{ch14.tk.a.ob_val}} | `{{ch14.tk.b.ob}}`, {{ch14.tk.b.raw_bits}} bits: {{ch14.tk.b.ob_val}} | none |
+| offset bits | `{{ch14.tk.a.ob}}`, {{ch14.tk.a.raw_bits}} bit: {{ch14.tk.a.ob_val}} | `{{ch14.tk.b.ob}}`, {{ch14.tk.b.raw_bits}} bits: {{ch14.tk.b.ob_val}} | none |
 | entry | `{{ch14.tk.a.entry}}` | `{{ch14.tk.b.entry}}` | `{{ch14.tk.c.entry}}` |
 | `TOK_N` / `TOK_BACK` / `TOK_SHIFT` / `TOK_DROP` | {{ch14.tk.a.N}} / {{ch14.tk.a.BACK}} / {{ch14.tk.a.SHIFT}} / {{ch14.tk.a.DROP}} | {{ch14.tk.b.N}} / {{ch14.tk.b.BACK}} / {{ch14.tk.b.SHIFT}} / {{ch14.tk.b.DROP}} | {{ch14.tk.c.N}} / {{ch14.tk.c.BACK}} / {{ch14.tk.c.SHIFT}} / {{ch14.tk.c.DROP}} |
 | `br.bits` | `{{ch14.tk.a.bits}}` | `{{ch14.tk.b.bits}}` | `{{ch14.tk.c.bits}}` |
 | `<< TOK_N` | `{{ch14.tk.a.shl}}` | `{{ch14.tk.b.shl}}` | `{{ch14.tk.c.shl}}` |
 | `>> back` | `{{ch14.tk.a.shr}}` | `{{ch14.tk.b.shr}}` | `{{ch14.tk.c.shr}}` |
-| `raw` | {{ch14.tk.a.raw}} | {{ch14.tk.b.ob_val}} << {{ch14.tk.b.SHIFT}} = {{ch14.tk.b.raw}} | `{{ch14.tk.c.raw32}}`, not used |
+| `raw` | {{ch14.tk.a.ob_val}} << {{ch14.tk.a.SHIFT}} = {{ch14.tk.a.raw}} | {{ch14.tk.b.ob_val}} << {{ch14.tk.b.SHIFT}} = {{ch14.tk.b.raw}} | `{{ch14.tk.c.raw32}}`, not used |
 | `off` | {{ch14.tk.a.off}} | {{ch14.tk.b.off}} | `last` |
 
-@assert ch14.tk.a.SHIFT == 0 and ch14.tk.c.BACK == 0 and ch14.tk.c.n == 4
+@assert ch14.tk.a.SHIFT == 1 and ch14.tk.a.raw_bits == 1 and ch14.tk.c.BACK == 0 and ch14.tk.c.n == 4
 
 The index into the token table is the top 11 bits of `br.bits`: {{ch14.tk.a.index}} for the first, {{ch14.tk.b.index}} for the second,
 {{ch14.tk.c.index}} for the third. A code of {{ch14.tk.c.n}} bits fills {{ch14.tk.c.fill}} entries of the table, all with the same value: token {{ch14.tk.c.s}}'s
@@ -663,7 +663,9 @@ bits, `{{ch14.ab.idx_bin}}`, {{ch14.ab.idx}}, and the entry is `{{ch14.ab.entry}
 The refill of line 610 finds `p == end` and adds nothing. The next 12 bits, `{{ch14.ab.esc_bits}}`, are the token, {{ch14.ab.tok}},
 below 3072, and after they are dropped `count = {{ch14.ab.esc_count2}}`. `token_entry({{ch14.ab.tok}}, 0)` builds its entry, `{{ch14.ab.entry2}}`:
 code length {{ch14.ab.N}}, since the code is gone already, `ll` {{ch14.ab.ll}}, `ml` {{ch14.ab.ml}}, class {{ch14.ab.cls}}, `back` {{ch14.ab.BACK}},
-drop {{ch14.ab.DROP}}, length value bit set. `raw = (bits << {{ch14.ab.N}}) >> {{ch14.ab.BACK}}`: the {{ch14.ab.raw_n}} bits `{{ch14.ab.raw_bin}}`, {{ch14.ab.raw}}. Drop {{ch14.ab.DROP}}, `count = {{ch14.ab.count2}}`.
+shift {{ch14.ab.SHIFT}}, drop {{ch14.ab.DROP}}, length value bit set. `raw = ((bits << {{ch14.ab.N}}) >> {{ch14.ab.BACK}}) << {{ch14.ab.SHIFT}}`: the {{ch14.ab.raw_n}} bit `{{ch14.ab.raw_bin}}`, {{ch14.ab.raw_sent}},
+times 2, {{ch14.ab.raw}}. Drop {{ch14.ab.DROP}}, `count = {{ch14.ab.count2}}`.
+@assert ch14.ab.raw_n == 1 and ch14.ab.SHIFT == 1 and ch14.ab.raw == 2
 `off = {{ch14.ab.raw}}`, `nl = {{ch14.ab.ll}}`, `len = {{ch14.ab.ml}}`. The fast path is not taken, for three reasons at once: a length value
 follows, `lit` is above `lit_fast`, and `br.p` is above `in_fast`. On the slow path, `nl` is not 15. The
 checks pass: `lit == lit_end - 2`, `2 <= 2`, `2 <= 4096`. `copy_literals()` finds only {{ch14.ab.readable}} readable bytes

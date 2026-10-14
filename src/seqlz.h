@@ -27,13 +27,13 @@
  *
  * The offset classes, and the bits of the offset that follow the token:
  *   0:    the offset of the sequence before, 1 at the start of a page; none
- *   1:    below 16; 4 bits
+ *   1:    2; the offset divided by 2, 1 bit
  *   2:    below 256; 8 bits
  *   3:    below the page size; 12 bits for 4 KiB pages
- *   4, 5: a multiple of 8 from 16 on, below 256 or below the page size; the
- *         offset divided by 8, so 3 bits less than class 2 or 3
+ *   4, 5: a multiple of 8, below 256 or below 2048; the offset divided by 8,
+ *         5 and 8 bits
  * Memory pages are full of 8-byte aligned data, so many offsets are multiples
- * of 8.
+ * of 8; 16-bit values make offset 2 the most frequent single offset.
  *
  * An ll of 15 or more is followed by ll - 15 as a length value, an ml - 4 of 31
  * or more by ml - 4 - 31. A length value below 16 is its own symbol. A larger
@@ -95,8 +95,8 @@
 #define SEQLZ_LL_BITS 4U
 #define SEQLZ_ML_BITS 5U
 /*
- * The offset classes at the top. Two more would save almost no memory, by a
- * model of the offsets ("Offset classes from a histogram").
+ * The offset classes at the top. Two more save little, and the ones that would
+ * save most need a slower decoder ("Offset 2 in 1 bit").
  */
 #define SEQLZ_OFF_CLASSES 6U
 #define SEQLZ_TOKEN_SYMBOLS \
@@ -172,19 +172,24 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
 	return SEQLZ_LEN_LOG_BASE + b; /* v >= 16, so b >= 4 */
 }
 
+/* the bits of class 5, multiples of 8 below 8 << SEQLZ_CLASS5_BITS */
+#define SEQLZ_CLASS5_BITS 8U
 /*
- * How many bits of the offset follow the token, per class: 0, 4, 8, the page's
- * bits, 5, the page's bits - 3. One nibble per class in one constant,
- * 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB, so that it is a shift and a
- * mask without a branch: computing class 3's from the page's bits made gcc
- * branch on the class.
+ * How many bits of the offset follow the token, per class: 0, 1, 8, the page's
+ * bits, 5, SEQLZ_CLASS5_BITS. One nibble per class in one constant, 0x85C810
+ * for 4 KiB pages, so that it is a shift and a mask without a branch:
+ * computing class 3's from the page's bits made gcc branch on the class.
  */
 #define SEQLZ_RAW_NIBBLES                                               \
-	(0U | 4U << 4 | 8U << 8 | QUETSCHN_PAGE_BITS << 12 | 5U << 16 | \
-	 (QUETSCHN_PAGE_BITS - 3U) << 20)
+	(0U | 1U << 4 | 8U << 8 | QUETSCHN_PAGE_BITS << 12 | 5U << 16 | \
+	 SEQLZ_CLASS5_BITS << 20)
 #define SEQLZ_RAW_BITS(cls) ((SEQLZ_RAW_NIBBLES >> (4U * (cls))) & 15U)
-/* classes 4 and 5 send the offset divided by 8, a shift by 3 */
-#define SEQLZ_OFF_SHIFT(cls) (((cls) >> 2) * 3U)
+/*
+ * Class 1 sends the offset divided by 2, classes 4 and 5 divided by 8: a shift
+ * by 1 and by 3, one nibble per class as above
+ */
+#define SEQLZ_SHIFT_NIBBLES (0U | 1U << 4 | 3U << 16 | 3U << 20)
+#define SEQLZ_OFF_SHIFT(cls) ((SEQLZ_SHIFT_NIBBLES >> (4U * (cls))) & 15U)
 
 /*
  * The class of an offset, and how many of its bits follow the token. last is
@@ -196,12 +201,13 @@ static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last,
 					   unsigned int *raw_bits)
 {
 	unsigned int is_new = (off == last) - 1U,
-		     aligned = (off >= 16U) & ((off & 7U) == 0);
+		     aligned = ((off & 7U) == 0) &
+			       (off < 8U << SEQLZ_CLASS5_BITS);
 	/*
-	 * 1 to 3 by size; a multiple of 8 from 16 on moves class 2 or 3
-	 * to 4 or 5; the same offset as before is class 0
+	 * 2 for offsets below 256, else 3; offset 2 moves to 1, a multiple of
+	 * 8 that class 5 holds to 4 or 5; the same offset as before is class 0
 	 */
-	unsigned int cls = (1U + (off >= 16U) + (off >= 256U) + 2U * aligned) &
+	unsigned int cls = (3U - (off < 256U) - (off == 2U) + 2U * aligned) &
 			   is_new;
 
 	*raw_bits = SEQLZ_RAW_BITS(cls);

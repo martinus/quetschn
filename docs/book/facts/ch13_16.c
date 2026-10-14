@@ -535,7 +535,7 @@ static void ch14(void) {
     fact_num("ch14.t513.raw_bits", SEQLZ_RAW_BITS(1));
     fact_str("ch14.t513.bin", binary(513, SEQLZ_ESCAPE_BITS));
 
-    ch14_token("a", 576, 8);
+    ch14_token("a", 576, 2);
     ch14_token("b", 2097, 24);
     ch14_token("c", 49, 0);
 
@@ -590,7 +590,9 @@ static void ch14(void) {
         fact_num("ch14.ab.value_bit", e >> TOK_VALUE_AT & 1U);
         raw = (unsigned int)((br.bits << TOK_N(e)) >> TOK_BACK(e)) << TOK_SHIFT(e);
         fact_num("ch14.ab.raw_n", 64 - TOK_BACK(e));
-        fact_str("ch14.ab.raw_bin", binary(raw, 64 - TOK_BACK(e)));
+        fact_str("ch14.ab.raw_bin", binary(raw >> TOK_SHIFT(e), 64 - TOK_BACK(e)));
+        fact_num("ch14.ab.raw_sent", raw >> TOK_SHIFT(e));
+        fact_num("ch14.ab.SHIFT", TOK_SHIFT(e));
         fact_num("ch14.ab.raw", raw);
         seqlz_br_drop(&br, TOK_DROP(e));
         fact_num("ch14.ab.count2", br.count);
