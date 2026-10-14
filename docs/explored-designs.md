@@ -77,6 +77,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The tables trained again without the last sequences, and one length symbol less: 0.2 bytes per page less](#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)
 - [The tables trained on phone sessions: up to 1.7% smaller on them, an old phone dump 1.8% larger](#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)
 - [Offset 2 in 1 bit, multiples of 8 below 2048 in 8: 0.3% to 0.8% smaller at the same speed, kept](#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)
+- [Offsets 2 and 8 in class 1, offset 4 as class 4's 0: 0.1% to 0.2% smaller, reads 2% to 5% slower, not kept](#offsets-2-and-8-in-class-1-offset-4-as-class-4s-0-01-to-02-smaller-reads-2-to-5-slower-not-kept)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5480,6 +5481,45 @@ warm reads. Every difference is within the one between the code before and its c
 matches per page that start 2048 bytes or more back, with 92 to 99 bytes of match per page, and the
 matcher only takes such a match when there is no closer one. The hash table holds `u16` positions
 either way.
+
+## Offsets 2 and 8 in class 1, offset 4 as class 4's 0: 0.1% to 0.2% smaller, reads 2% to 5% slower, not kept
+
+*Class 1 sends offset 2 in 1 bit whose value 0 is never used, and every class wastes its value 0.
+Two variants put them to use with one formula, `max(raw << shift, bias)`: class 1 with shift 3 and
+bias 2 sends offset 2 as 0 and 8 as 1, and in the second variant class 4's 0 is offset 4, a bias of 4.
+The bias comes from the token's entry, bit 29 in the first variant, bits 4 and 5 above `n` in the
+second. Both compilers make the `max` one select, without a branch.* Code: branches `class1-2-8`
+(commit `3ecdf3a`) and `class1-2-8-4` (`cda9bcb`), tables trained again on the corpus of the tables of
+13th October.
+
+Priced offline first, as `space.py` prices, against the classes of 14th October: offsets 2 and 8
+-1.44 bytes per page, and class 4's 0 as offset 4 -0.57 more; as offset 1, 3, 5, 6 or 7 -0.17 at most.
+Offset 8 is about 6% of the offsets that are not the repeat offset, offset 4 1.5% on the phone dumps
+and 0.2% on the desktop dumps. `seqlz-fast-lit`, bytes per page:
+
+| dump | 14th October | 2 and 8 | 2 and 8, 4 as class 4's 0 |
+| --- | ---: | ---: | ---: |
+| phone, test session p3 | 975.9 | 974.9, -0.10% | 974.1, -0.18% |
+| phone, test session p5 | 929.8 | 928.5, -0.14% | 927.7, -0.23% |
+| phone, 4th October | 868.8 | 867.8, -0.12% | 866.7, -0.24% |
+| desktop, 23rd September | 961.7 | 959.9, -0.19% | 959.7, -0.21% |
+| desktop, 24th September | 1204.9 | 1204.0, -0.07% | 1203.6, -0.11% |
+| Android 17 emulator | 1017.3 | 1016.0, -0.13% | 1015.6, -0.17% |
+
+The Mi 9T's own kernel, modules with NDK r21e's clang 9, `BUS=1`, 20 000 pages of p3, `seqlz-fast-lit`,
+µs per page, and a second copy of the code of 14th October as control:
+
+| | A55 write | A55 warm read | A55 cold read | A76 write | A76 warm read |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 14th October | 33.76 | 12.86 | 32.96 | 12.73 | 4.46 |
+| control | 33.95 | 12.77 | 32.07 | 12.62 | 4.48 |
+| 2 and 8 | 34.04 | 13.15 | 33.35 | 12.69 | 4.57 |
+| 2 and 8, 4 as class 4's 0 | 34.24 | 13.22 | 33.36 | 12.78 | 4.70 |
+
+`seqlz-fast` the same: the A55's warm reads 11.61 and 11.65 against 11.21 and 11.26. In the kernel VM,
+`MODE=swap`, 3 boots, gcc 16.2.1, both dumps, against the code of 14th October: swap-ins 0.4% to 2.0%
+slower, and swap-outs 2.3% to 2.8% slower, more than the encoder's few instructions more explain, not
+looked into. 0.1% to 0.2% less memory for 2% to 5% slower reads on the phone is not on the hull.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 
