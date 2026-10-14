@@ -283,10 +283,11 @@ of them failed is in [explored-designs.md](explored-designs.md).
 
 </details>
 
-## Numbers the book quotes
+## The sequences of 30th September
 
-The book cites these counts. They were measured with `seqlz`'s own matcher by 30th September 2026,
-with the tables of that time.
+These counts were measured with `seqlz`'s own matcher by 30th September 2026, with the tables and the
+offset classes of that time: class 1 the offsets below 16 in 4 bits, class 5 the multiples of 8 from
+256 on in 9 bits. The book has the counts with today's classes.
 
 ![What the format is built for](plots/seqlz-distributions.svg)
 
