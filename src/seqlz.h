@@ -207,7 +207,7 @@ static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last,
 	 * 8 that class 5 holds to 4 or 5; the same offset as before is class 0
 	 */
 	unsigned int cls = (3U - (off < 256U) - (off == 2U) - 3U * (off == 8U) +
-			    2U * aligned) &
+			    2U * aligned + 2U * (off == 4U)) &
 			   is_new;
 
 	*raw_bits = SEQLZ_RAW_BITS(cls);
