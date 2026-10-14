@@ -79,7 +79,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [Offset 2 in 1 bit, multiples of 8 below 2048 in 8: 0.3% to 0.8% smaller at the same speed, kept](#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)
 - [Offsets 2 and 8 in class 1, offset 4 as class 4's 0: 0.1% to 0.2% smaller, reads 2% to 5% slower, not kept](#offsets-2-and-8-in-class-1-offset-4-as-class-4s-0-01-to-02-smaller-reads-2-to-5-slower-not-kept)
 - [The matcher lazy by one position: 0.9% to 1.4% smaller, writes 7% to 15% slower, a point on the hull](#the-matcher-lazy-by-one-position-09-to-14-smaller-writes-7-to-15-slower-a-point-on-the-hull)
-- [More positions of a match into the matcher's table: 0.4% to 1.2% larger, not kept](#more-positions-of-a-match-into-the-matchers-table-04-to-12-larger-not-kept)
+- [More positions of a match into the matcher's table: up to 1.2% larger, not kept](#more-positions-of-a-match-into-the-matchers-table-up-to-12-larger-not-kept)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5600,7 +5600,7 @@ A point between `seqlz-fast-lit` and `zstd` 3, the best for some exchange rate o
 per µs: as the default it writes too slowly, as a level it would be about 30 lines in the matcher. Not
 decided.
 
-## More positions of a match into the matcher's table: 0.4% to 1.2% larger, not kept
+## More positions of a match into the matcher's table: up to 1.2% larger, not kept
 
 *After a match the matcher puts one position into its table, 2 bytes before the match's end, as `lz4`'s
 fast mode does. One more, measured on the first 20 000 pages of p3 and the two desktop samples,
