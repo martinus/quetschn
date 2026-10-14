@@ -87,6 +87,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [Offset classes from a histogram: today's are close, two more give 0.1 points at most](#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)
 - [A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built](#a-literal-table-per-half-or-quarter-of-the-literals-002-to-005-points-not-built)
 - [Literal codes of up to 11 bits: 0.03% to 0.06% smaller on the phone, not kept](#literal-codes-of-up-to-11-bits-003-to-006-smaller-on-the-phone-not-kept)
+- [A code for the escaped tokens instead of 12 plain bits: 2.1 bytes per page at most, not built](#a-code-for-the-escaped-tokens-instead-of-12-plain-bits-21-bytes-per-page-at-most-not-built)
 - [The token's table by the offset before it: 3 and 12 bytes per page, not kept](#the-tokens-table-by-the-offset-before-it-3-and-12-bytes-per-page-not-kept)
 - [Per page: its own literal table and one of 4 token tables, measured, not kept](#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)
 - [A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
@@ -4413,6 +4414,18 @@ the free bits of the coded pages. Not built on its own; it could come along with
 
 Not a bound: every literal with the shortest of its 8 codes gives 12.4% and 10.7% fewer bits, but
 those lengths do not satisfy the Kraft inequality, no code has them.
+
+## A code for the escaped tokens instead of 12 plain bits: 2.1 bytes per page at most, not built
+
+*Priced, not built.* A token without a code of its own is sent as the escape's code, 4 bits, and its
+number in 12 plain bits. In the counts of the tables of 13th October, `bench/seqlz_counts_4k.txt`, 1 091 983
+pages: 177.8 tokens per page, 11.67 of them escaped, 2371 different tokens with an entropy of 10.27
+bits. A second Huffman code over the tokens without a code would send them in 10.56 bits on average
+with codes of at most 12 bits, 10.33 with at most 14: 2.10 and 2.43 bytes per page less. Those are the
+counts the code would be trained on, so other pages gain less. It costs a second decode table, 8 KiB
+for 12 bits, built once for all CPUs, and a lookup more on the escape's path, which the A55 already
+pays about 67 ns for, 11.67 times per page. 0.2% at most is not worth a format change and a third kind
+of table.
 
 ## Literal codes of up to 11 bits: 0.03% to 0.06% smaller on the phone, not kept
 
