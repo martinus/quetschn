@@ -5561,9 +5561,23 @@ bytes per page less on the desktop sample, 6.3 on the p3 sample, so on the hull 
 | lazy below 20 bytes | 37.18, +9.7% | 12.60 | 13.60, +6.8% | 4.46 |
 | lazy always | 42.58, +26% | 12.58 | 15.51, +22% | 4.48 |
 
+Cheaper ways to the same, `quick-bench.sh` on the desktop sample, x86-64 userspace, write in ns against
+2774 for the code of 14th October, and the first 20 000 pages of p3 and both desktop samples in bytes
+per page against 894.9, 961.7 and 1204.9:
+
+| lazy step below 20 bytes | write | bytes per page |
+| --- | ---: | --- |
+| both candidates, branches | 3284 | 884.7, 950.2, 1189.2 |
+| both candidates, lengths always counted, selects instead of branches | 3701 | the same |
+| only the repeated offset | 3107 | 887.8, 954.3, 1198.0 |
+| only the table's entry | | 890.3, 956.2, 1194.6 |
+
+Counting both lengths at every match costs more than the branches it saves. The repeated offset alone
+gives about 60% of the gain for 60% of the time, the same exchange rate.
+
 A point between `seqlz-fast-lit` and `zstd` 3, the best for some exchange rate of about 2 to 12 bytes
 per µs: as the default it writes too slowly, as a level it would be about 30 lines in the matcher. Not
-decided; the time of the lazy step is its branch, which depends on the data.
+decided.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 
