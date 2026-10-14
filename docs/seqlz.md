@@ -4,11 +4,11 @@
 
 > [!NOTE]
 > **In short.** zram keeps swapped-out memory pages compressed in RAM. On the pages my desktop swapped
-> there, `seqlz-fast-lit` stores a page in **24% and 21% fewer bytes** than `lzo-rle`, zram's default,
-> and 29% and 24% fewer than `lz4`, the fastest common choice. It takes **22% and 24% more time** than
-> `lz4` to write a page and 7% and 13% more to read one. `zstd`, which compresses best, stores a page
-> in 2% and 10% fewer bytes than `seqlz-fast-lit`, but takes twice the time to write and 2.0 and 1.9
-> times the time to read. Each pair of numbers is for two sets of pages, see below.
+> there, `seqlz-fast-lit` stores a page in **24% fewer bytes** than `lzo-rle`, zram's default, and
+> 29% and 28% fewer than `lz4`, the fastest common choice. It takes **16% and 18% more time** than
+> `lz4` to write a page and 6% and 13% more to read one. `zstd`, which compresses best, stores a page
+> in 2% and 6% fewer bytes than `seqlz-fast-lit`, but takes 2.2 and 2.1 times the time to write and
+> 1.9 times the time to read. Each pair of numbers is for two sets of pages, see below.
 
 This page is the overview: the result, what is not known yet, and the choices with their numbers. The
 book [seqlz, line by line](https://martin.ankerl.com/quetschn/) explains every line of `src/`, with
@@ -23,7 +23,7 @@ How to read the numbers:
   Numbers are for `seqlz-fast-lit` unless they say otherwise.
 * **Dumps.** A dump is a copy of all pages that were in zram on my desktop at one moment. The numbers
   come from two of them: the first from 23rd September 2026, the second from 24th September. Two
-  numbers like "1035 / 1331" or "24% and 21%" are the first and the second dump.
+  numbers like "1030 / 1269" or "29% and 28%" are the first and the second dump.
 * **Stored size and work memory.** The stored size is how many bytes zram spends on one compressed
   page, rounded up to a size class of zsmalloc, zram's allocator. The work memory is what the codec
   needs for its own buffers, once per CPU. "Smaller" on this page means the stored size.
@@ -33,12 +33,10 @@ How to read the numbers:
   about every three it wrote ([plan.md](plan.md#11-the-score-memory-against-time-not-bars),
   [the book](https://martin.ankerl.com/quetschn/#ch-zram--score)). How many bytes one µs per page is
   worth to you, an exchange rate, decides which codec is the best choice.
-* **When it was measured.** [The result](#the-result-lz4s-time-zstds-size-almost) is from 5th October
-  2026, with the tables used before 7th October. The code has the tables of 14th October now, trained on
-  three sessions of a phone under memory pressure, on pages that programs had in RAM on a desktop and
-  on a third zram dump of that desktop, not on the two dumps measured here. On those two dumps they
-  store 0.8% and 0.4% less than the tables of 13th October
-  ([explored-designs.md](explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
+* **When it was measured.** [The result](#the-result-lz4s-time-zstds-size-almost) is from 14th
+  October 2026, with the code and the tables of that day. The tables are trained on three sessions of a
+  phone under memory pressure, on pages that programs had in RAM on a desktop and on a third zram dump
+  of that desktop, not on the two dumps measured here.
 
 ## The result: lz4's time, zstd's size, almost
 
@@ -49,10 +47,10 @@ core, means over the pages, first dump / second dump:
 
 | codec | stored bytes per page | write, µs | cold read, µs | time per page written, µs |
 | --- | --- | --- | --- | --- |
-| `lz4` (fastest) | 1450 / 1755 | 5.28 / 5.75 | 2.53 / 2.54 | 6.14 / 6.61 |
-| `lzo-rle` (zram's default) | 1361 / 1679 | 5.11 / 5.69 | 2.73 / 2.83 | 6.04 / 6.65 |
-| **`seqlz-fast-lit`** | **1035 / 1331** | **6.44 / 7.13** | **2.70 / 2.88** | **7.36 / 8.11** |
-| `zstd` 3 (smallest) | 1012 / 1197 | 13.49 / 14.40 | 5.29 / 5.53 | 15.29 / 16.28 |
+| `lz4` (fastest) | 1450 / 1755 | 5.28 / 5.76 | 2.65 / 2.63 | 6.18 / 6.65 |
+| `lzo-rle` (zram's default) | 1361 / 1679 | 5.11 / 5.70 | 2.87 / 2.94 | 6.08 / 6.70 |
+| **`seqlz-fast-lit`** | **1030 / 1269** | **6.13 / 6.82** | **2.80 / 2.97** | **7.08 / 7.83** |
+| `zstd` 3 (smallest) | 1012 / 1197 | 13.45 / 14.47 | 5.46 / 5.72 | 15.31 / 16.41 |
 
 Compare the bold row with `lz4` and `zstd`: its size is close to `zstd`'s, its time close to
 `lz4`'s. In the chart above, the three panels on the right have the numbers of the table, write,
@@ -63,7 +61,8 @@ the lighter one decoding.
 
 > [!NOTE]
 > **How the times are measured, and what p99 is.** The VM is [`tools/zram-vm/run.sh`](../tools/zram-vm/run.sh),
-> all codecs in one boot per dump, `seqlz-fast` too, one CPU of a Ryzen 9 7950X fixed at 4.5 GHz. A program in
+> all codecs in each boot, `seqlz-fast` too, 3 boots per dump and the means over them, one CPU of a
+> Ryzen 9 7950X fixed at 4.5 GHz. A program in
 > the VM writes each page to zram with `pwrite` and reads it back with `pread`, and times each call.
 > So a time is the whole system call, zram and zsmalloc included, not only the codec. Each page is
 > timed 3 times and its median counts. For a cold read, the compressed page is flushed from the CPU
@@ -76,9 +75,9 @@ the lighter one decoding.
 <details>
 <summary>The slowest pages, p99, and the work memory</summary>
 
-At p99 `seqlz-fast-lit` reads cold pages in 4.51 and 4.61 µs, faster than `lzo-rle` (5.26 and 5.48)
-and than `lz4` (4.72 and 4.71). It writes in 11.2 and 11.3 µs, where `lz4` needs 9.3 and 9.5 and
-`zstd` 23.5 and 23.7. Its work memory is 8 KiB per CPU, one `kmalloc()` for the matcher's table of
+At p99 `seqlz-fast-lit` reads cold pages in 4.66 and 4.74 µs, faster than `lzo-rle` (5.55 and 5.61);
+`lz4` needs 4.90 and 4.68. It writes in 10.7 and 10.9 µs, where `lz4` needs 9.2 and 9.5 and `zstd`
+23.6 and 24.2. Its work memory is 8 KiB per CPU, one `kmalloc()` for the matcher's table of
 8192 bytes and a buffer of 4112 bytes the decoder decodes literals into, which are never in use at the
 same time; 16 KiB once zram gives compression and decompression contexts of their own. `lz4` takes its
 16 416 bytes of work space from `vmalloc()`, which are 5 pages, 20 KiB, and a small struct. Two things
@@ -90,14 +89,14 @@ lengths and shared by all CPUs: once when the kernel starts in the kernel's copy
 </details>
 
 No codec is better on both counts: nothing stores pages smaller than `seqlz-fast-lit` without taking
-twice its time, and none of zram's codecs is faster without taking at least 26% more bytes. `zstd`
-saves 3 and 16 bytes per page for each µs more than `seqlz-fast-lit`. `seqlz-fast`, the same format
-with raw literals, was measured in the same boots, 1123 / 1477 bytes and 6.79 / 7.34 µs per page
-written. `seqlz-fast-lit` saves 153 and 190 bytes per page for each µs more than `seqlz-fast`, and
-`seqlz-fast` about 320 and 290 for each µs more than `lzo-rle`. So if a µs is worth less than 16 bytes
+twice its time, and none of zram's codecs is faster without taking at least 32% more bytes. `zstd`
+saves 2 and 8 bytes per page for each µs more than `seqlz-fast-lit`. `seqlz-fast`, the same format
+with raw literals, was measured in the same boots, 1118 / 1462 bytes and 6.61 / 7.08 µs per page
+written. `seqlz-fast-lit` saves 189 and 258 bytes per page for each µs more than `seqlz-fast`, and
+`seqlz-fast` about 460 and 570 for each µs more than `lzo-rle`. So if a µs is worth less than 8 bytes
 to you, `zstd`'s smaller pages pay for its extra time, at least on the second dump. From there up to
-153 bytes, `seqlz-fast-lit` is the best choice on both dumps, from 190 to about 290 bytes
-`seqlz-fast`, and above about 320 bytes `lzo-rle`. The chart below shows it, without `seqlz-fast`.
+189 bytes, `seqlz-fast-lit` is the best choice on both dumps, from 258 to about 460 bytes
+`seqlz-fast`, and above about 570 bytes `lzo-rle`. The chart below shows it, without `seqlz-fast`.
 
 ![Stored size against time for all codecs](plots/seqlz-codecs.svg)
 

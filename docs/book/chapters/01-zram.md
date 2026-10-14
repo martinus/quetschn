@@ -403,32 +403,32 @@ rate at which the faster one starts to win. `quetschn-score` computes it from th
     <text x="70" y="20">stored bytes per page</text>
   </g>
   <g class="acc" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4">
-    <path d="M301.4,99.6 L352.1,148.5 L645.7,159.8"/>
+    <path d="M303.0,99.6 L341.9,153.4 L648.4,159.8"/>
   </g>
   <g fill="currentColor">
-    <circle cx="302.5" cy="87.6" r="4.5"/>
-    <circle cx="301.4" cy="99.6" r="4.5"/>
-    <circle cx="645.7" cy="159.8" r="4.5"/>
+    <circle cx="303.9" cy="87.6" r="4.5"/>
+    <circle cx="303.0" cy="99.6" r="4.5"/>
+    <circle cx="648.4" cy="159.8" r="4.5"/>
   </g>
-  <g class="acc"><circle cx="352.1" cy="148.5" r="5.5" fill="currentColor"/></g>
+  <g class="acc"><circle cx="341.9" cy="153.4" r="5.5" fill="currentColor"/></g>
   <g font-size="11" class="halo">
-    <text x="311" y="84">lz4, 6.38 µs, 1602 B</text>
-    <text x="293" y="117" text-anchor="end">lzo-rle, 6.35 µs, 1520 B</text>
-    <text x="360" y="170">seqlz-fast-lit, 7.74 µs, 1183 B</text>
-    <text x="690" y="146" text-anchor="end">zstd 3, 15.79 µs, 1105 B</text>
-    <text x="334" y="118" class="acc">242 B/µs</text>
-    <text x="440" y="148" class="acc">9.7 B/µs</text>
+    <text x="311" y="84">lz4, 6.42 µs, 1602 B</text>
+    <text x="293" y="117" text-anchor="end">lzo-rle, 6.39 µs, 1520 B</text>
+    <text x="350" y="175">seqlz-fast-lit, 7.46 µs, 1149 B</text>
+    <text x="690" y="146" text-anchor="end">zstd 3, 15.86 µs, 1105 B</text>
+    <text x="330" y="122" class="acc">348 B/µs</text>
+    <text x="460" y="150" class="acc">5.3 B/µs</text>
   </g>
 </svg>
 </div>
 <figcaption>The four codecs of the table below, means over the pages; the dashed line is the hull, and the slopes are the exchange rates between its neighbours.</figcaption>
 </figure>
 
-Read the figure from the right, with the numbers of the table in the next section, measured on 5th
-October 2026. Going from `zstd`
-3 to `seqlz-fast-lit` saves 8.05 µs per page written and costs 78 bytes, 9.7 bytes per µs: whoever
-values a µs at less should run `zstd`. Going from `seqlz-fast-lit` to `lzo-rle` saves 1.39 µs and
-costs 337 bytes, 242 bytes per µs: whoever values a µs at more should run `lzo-rle`. In between,
+Read the figure from the right, with the numbers of the table in the next section, measured on 14th
+October 2026. Going from `zstd` 3 to `seqlz-fast-lit` saves 8.41 µs per page written and costs 44
+bytes, 5.3 bytes per µs: whoever values a µs at less should run `zstd`. Going from `seqlz-fast-lit` to
+`lzo-rle` saves 1.07 µs and costs 371 bytes, 348 bytes per µs: whoever values a µs at more should run
+`lzo-rle`. In between,
 `seqlz-fast-lit` has the lowest score. `lz4` is not on the hull, `lzo-rle` is faster and smaller in
 these runs.
 
@@ -451,19 +451,18 @@ Measured in the real kernel in a virtual machine (`tools/zram-vm/run.sh`), on on
 7950X fixed at 4.5 GHz, on 40 000 pages the desktop swapped into zram in September 2026. A program in
 the VM writes each page with `pwrite()` and reads it back with `pread()`, so each time is the whole
 system call, zram and zsmalloc included, the median of 3 runs; for a cold read the compressed page is
-flushed from the CPU caches first. Means over the pages, 5th October 2026, with the tables seqlz had
-before 7th October
+flushed from the CPU caches first. Means over the pages and over 3 boots, 14th October 2026
 ([`docs/seqlz.md`](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#the-result-lz4s-time-zstds-size-almost)):
 
 | codec | stored bytes per page | write, µs | cold read, µs | time per page written, µs |
 | --- | --- | --- | --- | --- |
-| `lz4` | 1602 | 5.52 | 2.54 | 6.38 |
-| `lzo-rle` | 1520 | 5.40 | 2.78 | 6.35 |
-| **`seqlz-fast-lit`** | **1183** | **6.79** | **2.79** | **7.74** |
-| `zstd` 3 | 1105 | 13.95 | 5.41 | 15.79 |
+| `lz4` | 1602 | 5.52 | 2.64 | 6.42 |
+| `lzo-rle` | 1520 | 5.41 | 2.91 | 6.39 |
+| **`seqlz-fast-lit`** | **1149** | **6.48** | **2.89** | **7.46** |
+| `zstd` 3 | 1105 | 13.96 | 5.59 | 15.86 |
 
-In these runs of 5th October 2026, `seqlz-fast-lit` stores pages 22% smaller than `lzo-rle` and 26%
-smaller than `lz4`, 7% larger than `zstd` 3, for 23% more time than `lz4` to write a page.
+In these runs of 14th October 2026, `seqlz-fast-lit` stores pages 24% smaller than `lzo-rle` and 28%
+smaller than `lz4`, 4% larger than `zstd` 3, for 17% more time than `lz4` to write a page.
 
 ::: warn The read times in this table flatter the decoder
 The read benchmark reads every page several times in a row, warm and cold, and that trains the CPU's

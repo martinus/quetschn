@@ -125,6 +125,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The next token before the copies: reads faster on both phone cores, kept](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)
 - [The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)
 - [The numbers again, with the format as it is now: reads 0.3 µs faster than on 29th September](#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)
+- [The numbers again on 14th October: 0.5% and 4.7% smaller than on 5th October, writes 0.3 µs faster](#the-numbers-again-on-14th-october-05-and-47-smaller-than-on-5th-october-writes-03-µs-faster)
 - [The numbers again, with the bit order and the token table's prefetch: cold reads on the A76 3 µs faster](#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster)
 
 **On the phone**
@@ -2756,6 +2757,43 @@ nothing and the A55 2 to 2.6 µs of cold reads for 4.8 bytes per page. format.md
 the tests and the bit by bit page read most significant bit first now; `seqlz_ref.py` agreed with
 `seqlz_decode()` on 1800 pages from two dumps, 1040 valid and the others with a flipped bit or cut
 short.
+
+## The numbers again on 14th October: 0.5% and 4.7% smaller than on 5th October, writes 0.3 µs faster
+
+*The kernel VM and the hot loop with the code and the tables of 14th October, for the two charts of
+docs/seqlz.md.* Kernel VM of `tools/zram-vm/run.sh`, 20 000 pages per dump, 3 boots per dump with all
+five codecs, CPU 2 at a fixed 4.5 GHz with boost off; the means over the boots, µs, first dump / second
+dump, from `quetschn-score`:
+
+| codec | bytes per page | write | cold read | µs per page written |
+| --- | --- | --- | --- | --- |
+| `lz4` | 1450.4 / 1754.5 | 5.28 / 5.76 | 2.65 / 2.63 | 6.18 / 6.65 |
+| `lzo-rle` | 1361.1 / 1678.5 | 5.11 / 5.70 | 2.87 / 2.94 | 6.08 / 6.70 |
+| `zstd` 3 | 1012.3 / 1197.5 | 13.45 / 14.47 | 5.46 / 5.72 | 15.31 / 16.41 |
+| `seqlz-fast` | 1118.4 / 1462.3 | 5.69 / 6.15 | 2.71 / 2.73 | 6.61 / 7.08 |
+| `seqlz-fast-lit` | 1029.7 / 1268.5 | 6.13 / 6.82 | 2.80 / 2.97 | 7.08 / 7.83 |
+
+On 5th October `seqlz-fast-lit` was 1034.9 / 1330.6 bytes and wrote in 6.44 / 7.13 µs. The cold reads
+do not compare with that day's: `lz4`, whose code did not change, reads in 2.65 and 2.63 µs now, 2.53
+and 2.54 then. Within one run `seqlz-fast-lit` reads cold 0.15 and 0.34 µs slower than `lz4`, 0.17
+and 0.34 then. At cold p99 it reads in 4.66 and 4.74 µs, `lz4` in 4.90 and 4.68, `lzo-rle` in 5.55 and
+5.61; it writes in 10.7 and 10.9 µs, `lz4` in 9.2 and 9.5. On the hull, `lzo-rle` to `seqlz-fast` is
+458 and 571 bytes per µs, `seqlz-fast` to `seqlz-fast-lit` 189 and 258, `seqlz-fast-lit` to `zstd` 2.1
+and 8.3.
+
+Hot loop, perf over the 2000 page sample of the first dump, the counts of 30 loops minus 10, median of
+5 processes, per page:
+
+| codec | compress cycles | decode cycles | decode instructions |
+| --- | --- | --- | --- |
+| `lz4` | 17 168 | 5000 | 11 898 |
+| `lzo-rle` | 15 849 | 6581 | 15 558 |
+| `zstd` 3 | 53 458 | 16 587 | 57 295 |
+| `seqlz-fast-lit` | 20 412 | 7137 | 26 126 |
+
+`lz4`, `lzo-rle` and `zstd` 3 are within 1.1% of 5th October; `seqlz-fast-lit` compresses in 8% fewer
+cycles and decodes in 6% fewer, with 3% more instructions. `tools/plot-codecs.py` takes the mean over
+the boots of a log of `BOOTS=n` now, and both charts say how many boots they show.
 
 ## The numbers again, with the bit order and the token table's prefetch: cold reads on the A76 3 µs faster
 
