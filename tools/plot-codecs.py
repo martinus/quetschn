@@ -66,8 +66,9 @@ def recompressed(name):
 
 def parse(path, skip=()):
     """Per codec: orig and mem of mm_stat (after recompression where there is one), the write, warm and
-    cold read times as p50 / p90 / p99 / mean in ns, and the recompression time per page."""
-    codecs = {}
+    cold read times as p50 / p90 / p99 / mean in ns, and the recompression time per page. A log of several
+    boots (run.sh's BOOTS) gives the mean of each value over the boots."""
+    boots = {}
     for line in open(path, errors="replace"):
         at = line.find("RESULT ")
         if at < 0:
@@ -75,20 +76,27 @@ def parse(path, skip=()):
         algo, rest = line[at + 7 :].split(None, 1)
         if algo in skip:
             continue
-        c = codecs.setdefault(name_of(algo), {})
+        c = boots.setdefault(name_of(algo), {})
         rest = rest.strip()
         times = {k: float(v) for k, v in re.findall(r"(p50|p90|p99|mean) (\d+)", rest)}
         if rest.startswith("mm_stat"):
             fields = rest.split()[3 if rest.startswith("mm_stat after") else 1 :]
-            c["orig"], c["mem"] = float(fields[0]), float(fields[2])
+            c.setdefault("orig", []).append(float(fields[0]))
+            c.setdefault("mem", []).append(float(fields[2]))
         elif rest.startswith("write, other page before"):
-            c["write"] = times
+            c.setdefault("write", []).append(times)
         elif rest.startswith("warm") and "prefetch 8" in rest:
-            c["warm"] = times
+            c.setdefault("warm", []).append(times)
         elif rest.startswith("flushed, other page first") and "prefetch 8" in rest:
-            c["cold"] = times
+            c.setdefault("cold", []).append(times)
         elif rest.startswith("recompress:"):
-            c["recompress"] = float(rest.split()[1])
+            c.setdefault("recompress", []).append(float(rest.split()[1]))
+    # each value the mean over the boots, the times per percentile
+    codecs = {
+        name: {k: {t: sum(x[t] for x in v) / len(v) for t in v[0]} if isinstance(v[0], dict) else sum(v) / len(v)
+               for k, v in b.items()}
+        for name, b in boots.items()
+    }
     for name, c in codecs.items():
         missing = [k for k in ("orig", "mem", "write", "warm", "cold") if k not in c]
         if missing or any("mean" not in c[k] for k in ("write", "warm", "cold")):
@@ -149,6 +157,11 @@ def main():
         if not sep:
             raise SystemExit(f"--run {run}: TITLE=LOG")
         rows.append((title, parse(path, set(filter(None, args.skip.split(","))))))
+    # run.sh's BOOTS=n writes "BOOT k of n" before each boot; parse() takes the mean over them
+    n_boots = max((int(m) for run in args.run
+                   for m in re.findall(r"BOOT \d+ of (\d+)", open(run.partition("=")[2], errors="replace").read())),
+                  default=1)
+    boots = "one boot per row" if n_boots == 1 else f"the mean of {n_boots} boots per row"
     others = iter(OTHER_COLORS * 4)
     for _, codecs in rows:
         for name in codecs:
@@ -236,7 +249,7 @@ def main():
     fig.text(
         0.01,
         0.01,
-        f"Linux kernel in a VM, zram with zsmalloc, one device per codec, one boot per row ({args.source or git_source()}). "
+        f"Linux kernel in a VM, zram with zsmalloc, one device per codec, {boots} ({args.source or git_source()}). "
         f"{cpu_model()}, one CPU at a fixed {args.clock}. Per page the median of 3 runs;\n"
         "each timed read and write comes after another page; cold: the compressed data flushed from the cache first. "
         + "The seqlz codecs"

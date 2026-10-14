@@ -18,6 +18,7 @@ Needs matplotlib and the Noto Sans font.
 
 import argparse
 import importlib.util
+import re
 from pathlib import Path
 
 import matplotlib
@@ -60,6 +61,10 @@ def main():
         f = line.split()
         if f and not f[0].startswith("#"):
             hot[plot_codecs.NAMES.get(f[0], f[0])] = tuple(float(x) for x in f[1:4])
+    # run.sh's BOOTS=n writes "BOOT k of n" before each boot; plot_codecs.parse() takes the mean over them
+    logs = [Path(run.partition("=")[2]).read_text(errors="replace") for run in args.run]
+    n = max((int(m) for t in logs for m in re.findall(r"BOOT \d+ of (\d+)", t)), default=1)
+    boots = "one boot" if n == 1 else f"the mean of {n} boots"
     runs = []
     for run in args.run:
         title, sep, path = run.partition("=")
@@ -134,7 +139,7 @@ def main():
         0.01,
         0.01,
         f"Hot loop: perf over 2000 pages of the first dump, the median of 5 processes, {plot_codecs.cpu_model()} at a fixed "
-        f"{args.clock}; darker bar compress, lighter decode.\nKernel: tools/zram-vm/run.sh, 20 000 pages per dump, one boot "
+        f"{args.clock}; darker bar compress, lighter decode.\nKernel: tools/zram-vm/run.sh, 20 000 pages per dump, {boots} "
         f"per dump with all codecs, {args.source or plot_codecs.git_source()}; cold read: compressed data flushed and another "
         "page read first, the seqlz backend prefetches the compressed data.",
         fontsize=8,
