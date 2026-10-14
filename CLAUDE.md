@@ -25,7 +25,8 @@ much closer it gets, not by whether it arrives.
 - Codec is pure C. No inline assembly, even for large gains (arm64 asm matcher, -9% cycles on A55,
   rejected, commit `0288b1e`). Empty `__asm__("")` barriers: ask first.
 - Format not frozen: format/table changes allowed. Each one updates `docs/format.md` (rules, SHA-256
-  table, worked example, Status) and both reference decoders.
+  table, worked example, Status) and both reference decoders. `docs/format.md` describes the format
+  as it is: Status = current state only, never a change log (history goes to explored-designs.md).
 
 ## Layout
 
@@ -71,7 +72,9 @@ follows these rules; open gaps in existing code: issues #151 to #157 (review of 
 - `static` unless zram calls it. Grep-able names (not `count`, `refill`). Every number named or
   commented with its origin.
 - Comments: what the code does, plus one line of why. Measurement numbers (phone, compiler, dumps) go
-  to docs/explored-designs.md and the commit message, not `src/` (#156). When changing code, check
+  to docs/explored-designs.md and the commit message, not `src/` (#156). The reason in plain words,
+  never a heading of explored-designs.md or another repo doc; the only doc `src/` names is
+  `docs/format.md` (the kernel gets it as `Documentation/staging/seqlz.rst`). When changing code, check
   the comments and kernel-doc above it (the 10 Oct review found 5 wrong comments, 6 dead file names).
 - Every kernel path runs in KUnit; every decoder path is reached by a fuzz target.
 - Memory = what `kmalloc()`/`vmalloc()` hands out, not what is asked: 8192 + 4112 bytes in two
@@ -117,6 +120,9 @@ Source: kernel Maintainers Summit, Oct 2026. Never quote, cite or link its repor
 - Kernel tree: `/home/martinus/gra/linux/finehill`.
 - Build in a fresh dir (scratchpad); worktree `build*/` dirs may point at other paths/`_deps`.
 - Offline doctest: `-DFETCHCONTENT_SOURCE_DIR_DOCTEST=<some build>/_deps/doctest-src`.
+- No `CMAKE_BUILD_TYPE` = Release (`CMakeLists.txt`). Trainer and benchmarks need it: an unoptimized
+  trainer took 8x as long. `quetschn-bench-interleaved` (quick-bench, hot loop) only builds with
+  `QUETSCHN_KERNEL_TREE`.
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
@@ -140,15 +146,26 @@ python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decod
 - `.github/workflows/cflite.yml` (ClusterFuzzLite): daily 1 h each ASan/UBSan/MSan; 10 min ASan on PRs
   touching `src/` or `fuzz/`. Not in `ci-ok`.
 - `src/` style = `src/.clang-format` (kernel: tabs, 80 cols, `u8 *p`). Comments not reflowed: wrap by
-  hand to 80 cols, kernel block form. Rest of repo: root `.clang-format`.
+  hand to 80 cols, kernel block form. Rest of repo: root `.clang-format`; the format check covers every
+  tracked `.c`, also `docs/book/facts/` and `docs/book/anim/`. Python: no formatter in CI; never
+  `ruff format` a whole existing file (it rewrites every line), keep its style.
 - `.inc` tables: not format-checked, never clang-format or hand-edit. Written by
   `tools/kernel-port/gen-seqlz-tables.py` from `bench/seqlz_counts_*.txt` (command in each file's
   head); `tools/seqlz-ref/check.sh` fails if they differ from its output.
+- Retrain tables: `tools/retrain-tables.py --page-bits 12|14 --train <Release build> --corpus <base>
+  --name <name>` (counts, lit lines in committed order, `.inc`, SHA-256 rows of format.md). 4 KiB:
+  `~/quetschn-corpus/phone-dump/train-mix`, name `train-mix-1012`, 11 min; 16 KiB:
+  `~/quetschn-corpus/emu-a17-16k-a-train`, 20 s. Then by hand: format.md example (`ab` 2048 times
+  through `tools/seqlz-compress/compress.c`), its bytes in `test/seqlz_ref_test.cpp`, the book.
 - Before pushing a docs or table change: `tools/seqlz-ref/check.sh` (~1.5 s: format.md hashes vs
   `src/` tables, 22 pages through spec decoder) and `tools/check-links.py`.
 - Tool usage: `usage()` in source or `--help`. Exception: `quetschn-swap-bursts` ignores `--help` and
   starts sampling `/proc/vmstat`; never run it for usage.
 - No build/test/fuzz while a benchmark runs: `pgrep -af 'quetschn|qemu|run.sh'` first.
+- Long parallel jobs (Python `multiprocessing`): start with `setsid nohup ... &`, stop with
+  `kill -- -<pgid>`. Killing only the parent leaves its workers running (14 Oct: 30 orphans took half
+  the CPUs for 7 h). `pgrep -f`/`pkill -f`/`kill $(pgrep -f X)` also match the own shell's command
+  line: write the pattern as `[x]yz`.
 
 ## Measuring
 
@@ -161,6 +178,13 @@ Commands: `docs/measuring.md`.
 - Compare codecs within one run/boot. Cold-latency difference real only if quick-bench min/max range
   excludes 0. One VM boot can be off by 18%.
 - Judges between codecs: kernel VM and the phone's kernel. Userspace = trying out.
+- A/B of a branch in the VM: from the branch's worktree, `VARIANTS="main=<worktree of main> same=."
+  ALGOS=lz4,seqlz,seqlz-lit,main,main-lit,same,same-lit BOOTS=3 MODE=swap tools/zram-vm/run.sh`, then
+  `tools/zram-vm/variants.py <log>`; `same` = control copy, a difference inside its spread is noise.
+- Two sizes: summed compressed bytes per page (a page stored raw = 4096) are not zsmalloc memory;
+  zsmalloc memory = mean of column `cost` of quick-bench's `<out>/sizes/<codec>.tsv`. Offline layout
+  prices (`tools/seqlz-bound/offsets.py`, `space.py`) count token and offset bits only, about 300 B
+  per page: 1 B there was about 0.1% of the compressed bytes per page.
 - Dev machine (64 GB) never swaps: no live swap sampling there.
 - Corpus (`corpus/`, `*.pages`) holds keys/passwords: never commit, publish or paste contents; delete
   copies on phones after use.
@@ -184,11 +208,13 @@ Commands: `docs/measuring.md`.
 - Doc numbers go stale when tables/matcher change. Verify before quoting: `seqlz_ref.load_tables(12)`
   (from `tools/seqlz-ref/`) gives codes; `tools/seqlz-compress/compress.c` (`-Isrc`) compresses a page
   file. Name the tables used ("tables of 7 October").
-- Codec charts: x = time per page, y = memory as % of page, both from 0.
+- Codec charts: x = time per page, y = memory as % of page, both from 0. Every chart labels every
+  axis, categorical ones too. `tools/plot-*.py` take the mean over the boots of a `BOOTS=n` log.
 - `docs/book/` lists `src/` by line numbers. A `src/` change that moves lines fails CI `book` ("not
   covered") or silently shifts a listing. Same PR: `python3 docs/book/remap.py origin/main` (shows
   moves; `--write` applies), reread the prose next to each listing marked CHANGED, then
-  `docs/book/build.py --check` (`npm install` in `docs/book` once). Computed values are `{{key}}` from
+  `docs/book/build.py --check` (`npm install` in `docs/book` once, or `ln -s` another worktree's
+  `docs/book/node_modules`; git ignores it). The book's reader knows C and C++ (`docs/book/STYLE.md`). Computed values are `{{key}}` from
   `docs/book/facts/*.c`, `@program`/`@output` or `@assert` (docs/book/README.md): format/table
   changes fail the build where prose needs a look.
 
@@ -204,5 +230,9 @@ Commands: `docs/measuring.md`.
   before pushing to or editing a PR; if merged, new branch from `origin/main`.
 - Repo and worktrees via `gra` (global instructions). `gra -y done <name>` allowed for finished,
   merged, clean worktrees, never the session's own.
+- Merge only when Martin says so; "merge when green" = `gh pr merge <n> --merge` once every check of
+  the head passes (`pages` skips on PRs).
+- Subagents editing one worktree: one at a time (shared git index). Big doc rewrites: one commit and
+  push per chapter, so a stopped run resumes from `git log`.
 - Hardware: Xiaomi Mi 9T (rooted, A76 + A55, kernel 4.14) = test phone. Pixel 9a: static binary over
   `adb` in `/data/local/tmp` only, never root/flash/unlock, clean up after.
