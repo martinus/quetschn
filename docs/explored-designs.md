@@ -5562,7 +5562,9 @@ bytes 886.0, below 36 bytes 884.0.
 The kernel VM, `MODE=swap`, 3 boots, gcc 16.2.1, against the code of 14th October and a second copy of
 it as control, which agrees within 0.9%: lazy always, swap-out 1.34 to 1.56 µs slower (18% to 21%);
 below 20 bytes 0.84 to 0.93 µs (`seqlz-fast`) and 1.11 to 1.16 µs (`seqlz-fast-lit`) slower, 12% to
-15%; swap-ins the same or up to 0.8% faster. zsmalloc memory with the lazy step below 20 bytes: 12.9
+15%; swap-ins the same or up to 0.8% faster. At p99, swap-out of `seqlz-fast-lit` 8.62 and 8.65 µs
+against 7.32 and 7.23 without the lazy step and 6.69 and 6.36 for `lz4`: 1.29 and 1.36 times `lz4`'s
+instead of 1.09 and 1.14 (C3); swap-in p99 the same. zsmalloc memory with the lazy step below 20 bytes: 12.9
 bytes per page less on the desktop sample, 6.3 on the p3 sample, so on the hull of `quetschn-score`
 `seqlz-fast-lit` to the lazy one is 11.7 and 5.6 bytes per µs; `seqlz-fast-lit` to `zstd` 3 was 2.1 and
 8.3 in the runs of 14th October. The Mi 9T's own kernel, `BUS=1`, 20 000 pages of p3, µs per page:
