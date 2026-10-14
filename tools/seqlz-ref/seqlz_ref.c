@@ -127,8 +127,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
     unsigned char lits[1U << 14];
     const unsigned int P = r->page_bits, page = 1U << P;
     /* "Offsets": the offset bits of each class, and what the number read is multiplied by */
-    const unsigned int class_bits[6] = {0, 4, 8, P, 5, P - 3U};
-    const unsigned int class_scale[6] = {0, 1, 1, 1, 8, 8};
+    const unsigned int class_bits[6] = {0, 1, 8, P, 5, 8};
+    const unsigned int class_scale[6] = {0, 2, 1, 1, 8, 8};
     struct bits b;
     unsigned int h, n, used = 0, size = 0, last = 1;
 

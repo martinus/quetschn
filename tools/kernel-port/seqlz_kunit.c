@@ -143,10 +143,10 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 			memcpy(p + k, &v, 8);
 		}
 		break;
-	case 3: /* a short pattern with noise: small offsets, long matches */
+	case 3: /* a short pattern with noise: offsets 2 or 4, long matches */
 		for (k = 0; k < PAGE_SIZE; k++)
 			p[k] = prandom_u32_state(rng) % 50 ?
-				       k % 4 :
+				       k % (2 + kind % 2 * 2) :
 				       prandom_u32_state(rng);
 		break;
 	case 4: /* copies of earlier bytes at any distance, long and short */

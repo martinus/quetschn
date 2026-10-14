@@ -213,7 +213,7 @@ std::vector<unsigned char> one_match(seqlz_ref const& r, unsigned int* padding) 
 #if QUETSCHN_PAGE_BITS == 12
 TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
     auto const r = make_ref();
-    auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0x13, 0xf2, 0x2f, 0xff, 0x6c};
+    auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0x23, 0xf2, 0xff, 0xfb, 0x60};
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);
     REQUIRE(seqlz_ref_decode(r.get(), c.data(), c.size(), out.data()) == 0);
     for (std::size_t k = 0; k < out.size(); ++k) {
@@ -221,10 +221,10 @@ TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
     }
     // without the last byte the match is cut, and the last sequence has no token: token 0 after the
     // match, as the page had before, is invalid
-    auto const shorter = std::array<unsigned char, 8>{0x02, 0x00, 0x61, 0x62, 0x13, 0xf2, 0x2f, 0xff};
+    auto const shorter = std::array<unsigned char, 8>{0x02, 0x00, 0x61, 0x62, 0x23, 0xf2, 0xff, 0xfb};
     CHECK(seqlz_ref_decode(r.get(), shorter.data(), shorter.size(), out.data()) == -1);
     // token 0 has no code: the escape and the 12 bits of 0
-    auto const with_token = std::array<unsigned char, 11>{0x02, 0x00, 0x61, 0x62, 0x13, 0xf2, 0x2f, 0xff, 0x6c, 0x40, 0x00};
+    auto const with_token = std::array<unsigned char, 11>{0x02, 0x00, 0x61, 0x62, 0x23, 0xf2, 0xff, 0xfb, 0x64, 0x00, 0x00};
     CHECK(seqlz_ref_decode(r.get(), with_token.data(), with_token.size(), out.data()) == -1);
 }
 #endif

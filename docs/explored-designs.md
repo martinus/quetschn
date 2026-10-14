@@ -75,6 +75,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The last sequence without a token: 1.2 bytes per page less, kept](#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)
 - [The tables trained again without the last sequences, and one length symbol less: 0.2 bytes per page less](#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)
 - [The tables trained on phone sessions: up to 1.7% smaller on them, an old phone dump 1.8% larger](#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)
+- [Offset 2 in 1 bit, multiples of 8 below 2048 in 8: 0.3% to 0.8% smaller at the same speed, kept](#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -82,6 +83,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The sequences' bitstream most significant bit first: the token table's codes in one range on every CPU, kept](#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)
 - [Offset classes from a histogram: today's are close, two more give 0.1 points at most](#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)
 - [A literal table per half or quarter of the literals: 0.02 to 0.05 points, not built](#a-literal-table-per-half-or-quarter-of-the-literals-002-to-005-points-not-built)
+- [Literal codes of up to 11 bits: 0.03% to 0.06% smaller on the phone, not kept](#literal-codes-of-up-to-11-bits-003-to-006-smaller-on-the-phone-not-kept)
 - [The token's table by the offset before it: 3 and 12 bytes per page, not kept](#the-tokens-table-by-the-offset-before-it-3-and-12-bytes-per-page-not-kept)
 - [Per page: its own literal table and one of 4 token tables, measured, not kept](#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)
 - [A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
@@ -4335,6 +4337,25 @@ the free bits of the coded pages. Not built on its own; it could come along with
 Not a bound: every literal with the shortest of its 8 codes gives 12.4% and 10.7% fewer bits, but
 those lengths do not satisfy the Kraft inequality, no code has them.
 
+## Literal codes of up to 11 bits: 0.03% to 0.06% smaller on the phone, not kept
+
+*Measured, not timed.* The literal tables with codes of at most 11 bits instead of 10, trained again on
+the pages of the tables of 13th October. `seqlz-fast-lit`, bytes per page, every page decoded again:
+
+| dump | 10 bits | 11 bits |
+| --- | ---: | ---: |
+| phone, test session p3 | 980.6 | 980.3, -0.03% |
+| phone, test session p5 | 934.5 | 933.9, -0.06% |
+| phone, 4th October | 873.5 | 873.2, -0.03% |
+| desktop, 23rd September | 969.2 | 967.4, -0.19% |
+| desktop, 24th September | 1209.8 | 1201.3, -0.70% |
+| Android 17 emulator | 1024.3 | 1024.7, +0.04% |
+
+Only the desktop dump with the most different literals gains something. A literal table's decode table
+doubles from 2 to 4 KiB, 32 KiB for the 8 of them, and a cold read touches up to 64 cache lines of it
+instead of 32. Not worth a format change for 0.3 to 0.6 bytes per page on the phone, so it was not
+timed.
+
 ## seqlz simplified: the same bytes, 800 lines less, compressing 4% faster
 
 `seqlz-fast` and `seqlz-fast-lit` are the codecs that are left; `seqlz`, `seqlz-hc` and
@@ -5294,6 +5315,96 @@ coded literals now, which decode slower than raw ones, not measured. The 17 byte
 for 0.09 µs more time per page written are 180 bytes per µs, a trade at the end of where
 `seqlz-fast-lit` is on the hull. Not measured: the Mi 9T itself with these tables, and real use of a
 phone rather than a scripted session.
+
+## Offset 2 in 1 bit, multiples of 8 below 2048 in 8: 0.3% to 0.8% smaller at the same speed, kept
+
+*Two of the six offset classes changed: class 1 is offset 2, sent divided by 2 in 1 bit, instead of
+the offsets below 16 in 4 bits, and class 5 the multiples of 8 below 2048 in 8 bits instead of all
+multiples of 8 from 256 on in 9. The decoder is the same code, only the class constants and the token
+tables are new. `seqlz-fast-lit` stores 0.4% to 0.8% less on every 4 KiB dump and 1.3% and 1.6% less
+on the 16 KiB ones, and it reads and writes as fast as before on the Mi 9T and in the kernel VM.*
+Code: `src/seqlz.h`, the search `tools/seqlz-bound/space.py`.
+
+**Searched.** `space.py` prices a layout as `offsets.py` does, on the 20 000 pages of each of the seven
+dumps of [Offset classes without
+bits](#offset-classes-without-bits-1-smaller-the-phone-reads-5-to-7-slower-not-kept), the token codes of
+each dump trained on the other six. A layout has classes of `b` bits that send the offset divided by
+`2^s`, `b` from 1 and `s` from 0 to 3, e.g. 5b<<3 for 5 bits of the offset divided by 8, and, for a
+decoder that can send them, offsets without bits from 1, 2, 4 and 8. For each number of classes and each
+set of offsets without bits, a greedy search swaps one class for another as long as that saves more than
+0.02 bytes per page: 48 searches, about 4 s per layout, 7 hours on 30 cores. Bytes per page of tokens
+and offset bits, the mean of the seven dumps, against the classes before, 300.33 bytes:
+
+| classes | only classes with bits | bytes | with offsets without bits | bytes |
+| ---: | --- | ---: | --- | ---: |
+| 6 | 1b<<1, 8b, 12b, 5b<<3, 8b<<3, kept | -5.15 | 2 and 8b, 12b, 5b<<3, 8b<<3 | -6.34 |
+| 7 | 1b<<1, 3b<<2, 8b, 12b, 5b<<3, 8b<<3 | -6.24 | 2, 8 and the same | -7.78 |
+| 8 | 2b<<1, 7b, 10b, 12b, 4b<<3, 7b<<3, 9b<<3 | -5.93 | 2, 8 and 6b, 9b, 12b, 5b<<3, 8b<<3 | -8.46 |
+
+The search before found -0.9 bytes for 6 classes with bits. With classes from 2 bits on this one finds
+-4.65, with a class of 1 bit for offset 2 -5.15: offset 2 is 7.8% to 8.5% of the offsets that are not
+the repeat offset on the phone and desktop dumps, the most frequent one. 8b<<3 instead of 9b<<3 is the
+other part of the gain. Each of the 148 single swaps of the kept layout costs 0.30 bytes per page or
+more. The 8 classes with bits only were searched from 2 bits on, so that number is not the best there
+is.
+
+Offsets without bits need a choice of three in the decoder. With one select, `off = back ? raw : (z ?
+1 << f : last)` and `z` and `f` from the token's entry (branch `rep2-offsets`, commit `429ce20`), the
+Mi 9T, 20 000 pages of p3, `BUS=1`, against the decoder before: A55 writes 1.0% and warm reads 1.7%
+slower, A76 warm reads 2.2% slower; in the kernel VM on x86-64 not slower. That is too much for the
+0.3% more that 8 classes would save, not kept.
+
+**Built.** The token tables trained again on the pages of the tables of 13th October; the length and
+the literal tables came out the same. Bytes per page as the compressor writes them, every page decoded
+again, same-filled pages left out:
+
+| dump | `seqlz-fast` before | after | `seqlz-fast-lit` before | after |
+| --- | ---: | ---: | ---: | ---: |
+| phone, test session p3 | 1049.3 | 1044.6, -0.45% | 980.6 | 975.9, -0.48% |
+| phone, test session p5 | 993.7 | 989.0, -0.47% | 934.5 | 929.8, -0.50% |
+| phone, 4th October | 923.8 | 919.1, -0.51% | 873.5 | 868.8, -0.54% |
+| desktop, 23rd September | 1054.1 | 1046.6, -0.71% | 969.2 | 961.7, -0.77% |
+| desktop, 24th September | 1406.5 | 1401.7, -0.34% | 1209.8 | 1204.9, -0.41% |
+| Android 17 emulator | 1082.1 | 1075.2, -0.64% | 1024.3 | 1017.3, -0.68% |
+| Android 17 emulator, 16 KiB pages | 2956.0 | 2919.9, -1.22% | 2785.9 | 2749.9, -1.29% |
+| resident pages, 16 KiB | 4071.6 | 4011.4, -1.48% | 3882.7 | 3822.4, -1.55% |
+
+zsmalloc's memory, `quick-bench.sh`, is 0.42% and 0.47% less on all of p3 and 0.68% and 0.76% on the
+desktop sample of 23rd September. On 16 KiB pages class 5 could reach 8 KiB back with 10 bits; that
+stores 0.2% more on the emulator's pages and 0.2% less on the 2052 resident pages, so both page sizes
+keep the same classes.
+
+**The speed.** The kernel VM, `MODE=swap`, 3 boots, gcc 16.2.1, against the classes before, and a copy
+of the code before as control:
+
+| | swap-out | swap-in, warm | swap-in, flushed |
+| --- | ---: | ---: | ---: |
+| desktop sample, `seqlz-fast` | -0.9% | -0.2% | 0.0% |
+| desktop sample, `seqlz-fast-lit` | -1.0% | -0.3% | -0.4% |
+| desktop sample, control | -0.2% | +0.9% | +0.9% |
+| p3 sample, `seqlz-fast` | -1.5% | +0.1% | +0.3% |
+| p3 sample, `seqlz-fast-lit` | -0.7% | -0.3% | -0.1% |
+| p3 sample, control | -0.9% | +0.3% | +0.2% |
+
+The Mi 9T's own kernel, modules with NDK r21e's clang 9, `BUS=1`, 20 000 pages of p3, µs per page:
+
+| | write | warm read | cold read |
+| --- | ---: | ---: | ---: |
+| A55, `seqlz-fast-lit` before | 34.06 | 12.97 | 32.13 |
+| A55, control | 33.94 | 12.99 | 32.17 |
+| A55, `seqlz-fast-lit` after | 34.06 | 12.90 | 32.12 |
+| A76, `seqlz-fast-lit` before | 12.83 | 4.54 | 7.97 |
+| A76, control | 12.80 | 4.53 | 7.77 |
+| A76, `seqlz-fast-lit` after | 12.78 | 4.59 | 7.57 |
+
+`seqlz-fast` the same: A55 30.47 against 30.41 and 30.59 for writes, 11.33 against 11.36 and 11.41 for
+warm reads. Every difference is within the one between the code before and its copy.
+
+**Shorter offsets instead, not built.** Class 3 in 11 bits, offsets up to 2047, saves 1 bit on about
+10 of the 15 offsets per page that go to class 3 on the phone dumps, 1.3 bytes. It loses the 4.5 to 4.9
+matches per page that start 2048 bytes or more back, with 92 to 99 bytes of match per page, and the
+matcher only takes such a match when there is no closer one. The hash table holds `u16` positions
+either way.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 

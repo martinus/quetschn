@@ -105,7 +105,8 @@ class Bits:
 def decode(page, tables, page_bits):
     tok_codes, ll_codes, ml_codes, lit_codes = tables
     size = 1 << page_bits
-    offset_bits = [0, 4, 8, page_bits, 5, page_bits - 3]
+    offset_bits = [0, 1, 8, page_bits, 5, 8]
+    offset_scale = [1, 2, 1, 1, 8, 8]
     if len(page) < 2:
         raise Invalid
     h = page[0] | page[1] << 8
@@ -151,7 +152,7 @@ def decode(page, tables, page_bits):
                 raise Invalid
         ll, mlf, c = t & 15, (t >> 4) & 31, t >> 9
         raw = bits.read(offset_bits[c])
-        off = last if c == 0 else raw << (3 if c >= 4 else 0)
+        off = last if c == 0 else raw * offset_scale[c]
         if ll == 15:
             ll = 15 + value(ll_codes)
         if ll > n - used or ll > size - len(out):

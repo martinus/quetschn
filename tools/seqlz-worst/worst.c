@@ -290,8 +290,8 @@ static const char* build(unsigned int kind, struct built* b) {
             add(b, ll, ml, off, lit_random);
         add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
         return "every token escaped";
-    case 3: /* offsets 1 to 7 by turns, ml 4: the decoder's pattern copy for each, and escaped tokens, as
-             * no token of class 1 with ml 4 has a code */
+    case 3: /* offsets 1 to 7 by turns, ml 4: the decoder's pattern copy for each, and escaped tokens for
+             * offset 2, as no token of class 1 with ml 4 has a code */
         add(b, 8, 4, 1, lit_random);
         for (off = 2; b->pos + 4 < SEQLZ_PAGE; off = off % 7 + 1)
             add(b, 0, 4, off, lit_random);

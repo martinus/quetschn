@@ -91,9 +91,8 @@ struct seqlz_tables {
 };
 
 static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
-	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
-	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U &&
-	       SEQLZ_OFF_SHIFT(5) <= 3U),
+	       (8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE &&
+	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U),
 	      "token_entry's fields are too narrow");
 static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 	      "an escaped token has SEQLZ_ESCAPE_BITS bits");
@@ -104,7 +103,8 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
  *                top.
  *   bits  6..11: 64 - the offset's bits, mod 64. The bitstream shifted right
  *                by this then is the offset. 0 for class 0, which has none.
- *   bits 12..13: 3 for classes 4 and 5, whose offset is sent divided by 8
+ *   bits 12..13: the class's SEQLZ_OFF_SHIFT(), 1 for class 1 and 3 for
+ *                classes 4 and 5, whose offset is sent divided by 2 and 8
  *   bits 14..18: n + the offset's bits, how far the bitstream moves on
  *   bits 19..22: ll, at most 15
  *   bits 23..28: ml, at most 35

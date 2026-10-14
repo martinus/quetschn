@@ -89,11 +89,11 @@ REWRITES = [
     ("@dst_cap bytes or @t lacks a code.", "@dst_cap bytes."),
     ("@t: tables with a code for every symbol, see seqlz_all_symbols()", "@t: the tables"),
     ("QUETSCHN_PAGE_BITS bits, 20 or 22;", "QUETSCHN_PAGE_BITS bits, 20;"),
-    ("How many bits of the offset follow the token, per class: 0, 4, 8, the page's bits, 5, the page's bits "
-     "- 3. One nibble per class in one constant, 0x95C840 for 4 KiB pages, 0xB5E840 for 16 KiB, so that it "
-     "is a shift and a mask without a branch: computing class 3's from the page's bits made gcc branch on "
-     "the class.",
-     "How many bits of the offset follow the token, per class: 0, 4, 8, 12, 5 and 9. One nibble per class "
+    ("How many bits of the offset follow the token, per class: 0, 1, 8, the page's bits, 5, "
+     "SEQLZ_CLASS5_BITS. One nibble per class in one constant, 0x85C810 for 4 KiB pages, so that it is a "
+     "shift and a mask without a branch: computing class 3's from the page's bits made gcc branch on the "
+     "class.",
+     "How many bits of the offset follow the token, per class: 0, 1, 8, 12, 5 and 8. One nibble per class "
      "in one constant, so that it is a shift and a mask without a branch."),
 ]
 # the entry in MAINTAINERS, its fields in the order the file's head gives, the files in alphabetic order
@@ -352,8 +352,8 @@ def port_header():
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
     # 4 KiB pages only: the values of 16 KiB pages go, not only their comments
     t = must(t, "#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
-    t, n = re.subn(r"#define SEQLZ_RAW_NIBBLES\s*\\\n[^#]*?\(QUETSCHN_PAGE_BITS - 3U\) << 20\)\n",
-                   "#define SEQLZ_RAW_NIBBLES 0x95c840U\n", t)
+    t, n = re.subn(r"#define SEQLZ_RAW_NIBBLES\s*\\\n[^#]*?SEQLZ_CLASS5_BITS << 20\)\n",
+                   "#define SEQLZ_RAW_NIBBLES 0x85c810U\n", t)
     assert n == 1, "SEQLZ_RAW_NIBBLES"
     t = common(t)
     t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
