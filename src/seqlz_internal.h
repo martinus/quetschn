@@ -122,6 +122,7 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 #define TOK_DROP_AT 14
 #define TOK_LL_AT 19
 #define TOK_ML_AT 23
+#define TOK_MIN2_AT 29
 #define TOK_VALUE_AT 30
 #define TOK_ESCAPE_AT 31
 /* the fields of an entry e, as listed above */
@@ -131,6 +132,8 @@ static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 #define TOK_DROP(e) (((e) >> TOK_DROP_AT) & 31U)
 #define TOK_LL(e) (((e) >> TOK_LL_AT) & 15U)
 #define TOK_ML(e) (((e) >> TOK_ML_AT) & 63U)
+/* class 1: offset 2 for the bit 0, 8 for the bit 1 */
+#define TOK_MIN(e) (((e) >> (TOK_MIN2_AT - 1)) & 2U)
 
 static inline u32 token_entry(unsigned int s, unsigned int n)
 {
@@ -144,7 +147,8 @@ static inline u32 token_entry(unsigned int s, unsigned int n)
 	return n | ((64U - raw_bits) & 63U) << TOK_BACK_AT |
 	       SEQLZ_OFF_SHIFT(cls) << TOK_SHIFT_AT | drop << TOK_DROP_AT |
 	       ll << TOK_LL_AT | (ml + 4U) << TOK_ML_AT |
-	       (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << TOK_VALUE_AT;
+	       (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << TOK_VALUE_AT |
+	       (u32)(cls == 1U) << TOK_MIN2_AT;
 }
 
 #endif

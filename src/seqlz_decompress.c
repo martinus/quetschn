@@ -624,6 +624,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		raw = (unsigned int)((br.bits << TOK_N(tok)) >> back)
 		      << TOK_SHIFT(tok);
 		seqlz_br_drop(&br, TOK_DROP(tok));
+		raw = raw > TOK_MIN(tok) ? raw : TOK_MIN(tok);
 		off = back ? raw : last;
 		nl = TOK_LL(tok);
 		len = TOK_ML(tok);

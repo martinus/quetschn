@@ -187,7 +187,7 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
  * Class 1 sends the offset divided by 2, classes 4 and 5 divided by 8: a shift
  * by 1 and by 3, one nibble per class as above
  */
-#define SEQLZ_SHIFT_NIBBLES (0U | 1U << 4 | 3U << 16 | 3U << 20)
+#define SEQLZ_SHIFT_NIBBLES (0U | 3U << 4 | 3U << 16 | 3U << 20)
 #define SEQLZ_OFF_SHIFT(cls) ((SEQLZ_SHIFT_NIBBLES >> (4U * (cls))) & 15U)
 
 /*
@@ -206,7 +206,8 @@ static inline unsigned int seqlz_off_class(unsigned int off, unsigned int last,
 	 * 2 for offsets below 256, else 3; offset 2 moves to 1, a multiple of
 	 * 8 that class 5 holds to 4 or 5; the same offset as before is class 0
 	 */
-	unsigned int cls = (3U - (off < 256U) - (off == 2U) + 2U * aligned) &
+	unsigned int cls = (3U - (off < 256U) - (off == 2U) - 3U * (off == 8U) +
+			    2U * aligned) &
 			   is_new;
 
 	*raw_bits = SEQLZ_RAW_BITS(cls);

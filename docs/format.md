@@ -219,7 +219,7 @@ so that a decoder can check that it has the right ones:
 
 | table | SHA-256 |
 | --- | --- |
-| `TOK_4k` | `c5f97d70cd50ed0e3517c69231437fd534f5e772bb9ed70dc3769a3337b2d6e0` |
+| `TOK_4k` | `46cd0eebbde5d0c2a120e4b837ff87dfca7c02a0b3eda9fef2fc620990b805d9` |
 | `LL_4k` | `ce0b70bdefdad678f22ef1139cf8284c48b61f720adb007b0a28b0ad3777bf16` |
 | `ML_4k` | `c39358b16a14c2462e092ee13b345e9b5002e59c5efc9521f0967063a7873289` |
 | `LIT_4k` | `43f552dca80dcdffd6dc21231555f1c938580650a1b90b94b8c515120ad9ad9e` |
