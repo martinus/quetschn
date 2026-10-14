@@ -91,9 +91,13 @@ struct seqlz_tables {
 };
 
 static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
-	       (8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE &&
-	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U),
+	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
+	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U &&
+	       SEQLZ_OFF_SHIFT(1) <= 3U && SEQLZ_OFF_SHIFT(4) <= 3U &&
+	       SEQLZ_OFF_SHIFT(5) <= 3U),
 	      "token_entry's fields are too narrow");
+static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE,
+	      "class 5's offsets are inside the page");
 static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 	      "an escaped token has SEQLZ_ESCAPE_BITS bits");
 /*

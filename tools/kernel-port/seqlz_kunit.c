@@ -146,7 +146,7 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 	case 3: /* a short pattern with noise: offsets 2 or 4, long matches */
 		for (k = 0; k < PAGE_SIZE; k++)
 			p[k] = prandom_u32_state(rng) % 50 ?
-				       k % (2 + kind % 2 * 2) :
+				       k % (kind / 7 % 2 ? 2 : 4) :
 				       prandom_u32_state(rng);
 		break;
 	case 4: /* copies of earlier bytes at any distance, long and short */

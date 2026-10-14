@@ -361,28 +361,30 @@ allocates the tables once per zram device instead.
 The rest of the file is the token table's entry. Before the description, the file proves that the
 fields it is about to describe are wide enough:
 
-@listing src/seqlz_internal.h 93-98
+@listing src/seqlz_internal.h 93-102
 
 Each condition is about one field of the entry, and refers to the layout below:
 
 - `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U`, $11 + 12 = 23$: the field for "how far the
   bitstream moves on" has 5 bits, so it holds up to 31. The most a token with its own code moves is
   an 11-bit code plus class 3's 12 offset bits. On 16 KiB pages it is $11 + 14 = 25$.
-- `(8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE`, $2048 \le 4096$: class 5's offsets, multiples of 8
-  below `8 << SEQLZ_CLASS5_BITS`, stay inside the page. That also means `SEQLZ_CLASS5_BITS` is at most
-  `QUETSCHN_PAGE_BITS - 3`, fewer bits than class 3 has, so the first line covers class 5's move too,
-  $11 + 8 = 19$. A change of `SEQLZ_CLASS5_BITS` to 10 on 4 KiB pages would fail here.
+- `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U`, $11 + 8 = 19$: the same for class 5, the class
+  with the most offset bits after class 3.
 - `SEQLZ_LL_CAP <= 15U`: `ll` goes into a field of 4 bits, and the token's largest `ll` is 15.
 - `SEQLZ_ML_CAP + 4U <= 63U`, $31 + 4 = 35$: the entry stores the match length itself, not
   `ml - 4`, so it needs 35 in a field of 6 bits.
+- `SEQLZ_OFF_SHIFT(1) <= 3U` and the same for classes 4 and 5, the classes with a shift: the shift
+  goes into a field of 2 bits. `SEQLZ_OFF_SHIFT()` reads a whole nibble
+  ([chapter 6](#ch-header--offsets)), so a shift of 4 would fail here instead of being cut to 0.
 
-The field for the shift has 2 bits and needs no condition: `SEQLZ_OFF_SHIFT()` masks with `3U`
-([chapter 6](#ch-header--offsets)), so it is never larger than 3.
+The second assert is about class 5's range: `(8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE`,
+$2048 \le 4096$. Class 5's offsets, multiples of 8 below `8 << SEQLZ_CLASS5_BITS`, stay inside the
+page. A change of `SEQLZ_CLASS5_BITS` to 10 on 4 KiB pages would fail here.
 
-The second assert is about the escape: a token sent after the escape takes `SEQLZ_ESCAPE_BITS`, 12
+The third assert is about the escape: a token sent after the escape takes `SEQLZ_ESCAPE_BITS`, 12
 plain bits, which can say 0 to 4095, so all 3072 tokens fit. A 4097th token would need 13.
 
-@listing src/seqlz_internal.h 99-115
+@listing src/seqlz_internal.h 103-119
 
 The comment is the specification of the entry. Every field is something the decoder would otherwise
 compute from the token's number for every sequence: split off `ll`, `ml` and the class with shifts
@@ -476,7 +478,7 @@ its {{tok.len.2098}}-bit code, and the escape with its {{tok.len.3072}}-bit code
 <figcaption>A token table entry: bits 0 to 18 tell the decoder how to cut the offset out of the bitstream, bits 19 to 28 are the lengths, the top bits flags.</figcaption>
 </figure>
 
-@listing src/seqlz_internal.h 116-129
+@listing src/seqlz_internal.h 120-133
 
 The first group of macros is where each field starts, the second takes a field out of an entry `e`:
 shift it down, mask it to its width. `TOK_N()` needs no shift, the field starts at bit 0. The masks
@@ -491,36 +493,36 @@ finds nothing to check there.
 
 ## token_entry(), line by line {#ch-internal--token-entry-code}
 
-@listing src/seqlz_internal.h 131-146
+@listing src/seqlz_internal.h 135-150
 
 `token_entry(s, n)` computes the entry for token `s` whose code has `n` bits. It is `static inline`
 in a header because two files call it: `build_token()` in `seqlz_codes.c` fills every entry of the
 token table with it at start, and `seqlz_decode()` calls it at run time for an escaped token, with
 `n = 0`. Line by line:
 
-- Line 133: `cls`, the offset class, is the token divided by 512, `s >> (4 + 5)`. The token is
+- Line 137: `cls`, the offset class, is the token divided by 512, `s >> (4 + 5)`. The token is
   `ll + 16 * (ml - 4) + 512 * class` with `ll` and `ml - 4` capped at 15 and 31, so the class is all
   bits from bit 9 on.
-- Line 134: `raw_bits`, how many offset bits follow the token, from `SEQLZ_RAW_BITS(cls)`: the
+- Line 138: `raw_bits`, how many offset bits follow the token, from `SEQLZ_RAW_BITS(cls)`: the
   `cls`-th nibble of `{{ch06.RAW_NIBBLES}}`, which is {{ch06.RAW_BITS}} for classes 0 to 5 ([chapter 6](#ch-header)).
-- Line 135: `drop`, the code and the offset bits together, how far the bitstream moves on after
+- Line 139: `drop`, the code and the offset bits together, how far the bitstream moves on after
   them. `ll` is the low 4 bits, `s & 15`.
-- Line 136: `ml` is bits 4 to 8, `(s >> 4) & 31`. Careful with the name: this is `ml - 4` of the
-  sequence, 0 to 31, the field as it is in the token. The 4 is added at line 142.
-- Lines 138 and 139: the escape, `s == 3072`. Its entry has bit 31 set, and `n` in the field
+- Line 140: `ml` is bits 4 to 8, `(s >> 4) & 31`. Careful with the name: this is `ml - 4` of the
+  sequence, 0 to 31, the field as it is in the token. The 4 is added at line 146.
+- Lines 142 and 143: the escape, `s == 3072`. Its entry has bit 31 set, and `n` in the field
   `DROP`, so that the decoder can drop the escape's code before it reads the 12 bits of the token.
   All other fields are 0. `cls` and `raw_bits` were computed for it anyway, `3072 >> 9 = 6` and
   nibble 6 of `{{ch06.RAW_NIBBLES}}`, which is 0, and are not used. The kernel's style declares variables at the
   top of a block, and since the function is inlined, the compiler drops what is not used.
-- Lines 140 to 143: every other token. Each field is shifted to its place and the fields are ORed
+- Lines 144 to 147: every other token. Each field is shifted to its place and the fields are ORed
   together. `<<` binds tighter than `|` in C, so `n | x << 6 | y << 12` is `n | (x << 6) | (y << 12)`
   without parentheses.
 
 Three details of these lines need more than a sentence.
 
-**`1U`, not `1`.** Line 139 writes `1U << TOK_ESCAPE_AT`. A plain `1` is a signed `int`, and
+**`1U`, not `1`.** Line 143 writes `1U << TOK_ESCAPE_AT`. A plain `1` is a signed `int`, and
 `1 << 31` gives 2<sup>31</sup>, which an `int` of 32 bits cannot hold: undefined behaviour in C11.
-`1U` is unsigned, and `1U << 31` is `0x80000000`. Line 143 casts the result of `||`, an `int` 0 or 1,
+`1U` is unsigned, and `1U << 31` is `0x80000000`. Line 147 casts the result of `||`, an `int` 0 or 1,
 to `u32` before the shift. `1 << 30` would still fit an `int`, so this one is not about undefined
 behaviour; it keeps every term of the OR unsigned, as the function's `u32` result is.
 
@@ -607,7 +609,7 @@ $2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has {{tok.len.2
 | --- | --- | --- |
 | `N` | `n` | {{ch07.tok.2098.N}} |
 | `BACK` | `(64 - 5) & 63` | {{ch07.tok.2098.BACK}} |
-| `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (0x330010 >> 16) & 3` | {{ch07.tok.2098.SHIFT}} |
+| `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (0x330010 >> 16) & 15` | {{ch07.tok.2098.SHIFT}} |
 | `DROP` | ${{tok.len.2098}} + 5$ | {{ch07.tok.2098.DROP}} |
 | `LL` | `2098 & 15` | {{ch07.tok.2098.LL}} |
 | `ML` | `((2098 >> 4) & 31) + 4` | {{ch07.tok.2098.ML}} |
