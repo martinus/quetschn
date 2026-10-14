@@ -260,14 +260,14 @@ is {{ch10.ptr.s1.ll}} literals and a match of {{ch10.ptr.s1.ml}} at offset {{ch1
 `{{ch10.ptr.s1.putbits}}`, so `acc = {{ch10.ptr.s1.acc}}` and `cnt = {{ch10.ptr.s1.cnt}}`.
 
 - Flush 1: `acc << {{ch10.ptr.f1.shift}}` is `{{ch10.ptr.f1.word}}`. Stored little endian at `p - 8`, the bytes are `{{ch10.ptr.f1.stored}}`:
-  `{{ch10.ptr.f1.e1}}` at `p - 1`, `11010110`, the first 8 bits; `{{ch10.ptr.f1.e2}}` at `p - 2`, `0101000` and a
-  0, the 7 bits left. `p` moves down by `{{ch10.ptr.f1.cnt0}} >> 3 = {{ch10.ptr.f1.moved}}`, `cnt` is {{ch10.ptr.f1.cnt1}}.
+  `{{ch10.ptr.f1.e1}}` at `p - 1`, `10101011`, the first 8 bits; `{{ch10.ptr.f1.e2}}` at `p - 2`, `000001` and two
+  0s, the 6 bits left. `p` moves down by `{{ch10.ptr.f1.cnt0}} >> 3 = {{ch10.ptr.f1.moved}}`, `cnt` is {{ch10.ptr.f1.cnt1}}.
 - The second sequence, {{ch10.ptr.s2.ll}} literal and {{ch10.ptr.s2.ml}} bytes at offset {{ch10.ptr.s2.off}} again, is token {{ch10.ptr.s2.tok}} in class {{ch10.ptr.s2.cls}}, which has the
   {{ch10.ptr.s2.tlen}}-bit code `{{ch10.ptr.s2.code}}` and no offset bits. `cnt` is {{ch10.ptr.s2.cnt}}, `acc` ends in the bits `{{ch10.ptr.s2.accbits}}`.
 - Flush 2: `acc << {{ch10.ptr.f2.shift}}` is `{{ch10.ptr.f2.word}}`. The store writes `{{ch10.ptr.f2.e2}}` at the new `p - 1` (the same
-  byte as before, now with all its bits) and `{{ch10.ptr.f2.e3}}` below it, `000` and zeros. `p` moves down by {{ch10.ptr.f2.moved}},
+  byte as before, now with all its bits) and `{{ch10.ptr.f2.e3}}` below it, `00` and zeros. `p` moves down by {{ch10.ptr.f2.moved}},
   `cnt` is {{ch10.ptr.f2.cnt1}}.
-@assert ch10.ptr.s1.code + ch10.ptr.s1.offbits == "11010110" + "0101000" and ch10.ptr.f2.e3 == "00" and ch10.ptr.s2.code == tok.code[49] and ch10.ptr.f1.cnt1 == 7 and ch10.ptr.f2.cnt1 == 3
+@assert ch10.ptr.s1.code + ch10.ptr.s1.offbits == "10101011" + "000001" and ch10.ptr.f2.e3 == "00" and ch10.ptr.s2.code == tok.code[49] and ch10.ptr.f1.cnt1 == 6 and ch10.ptr.f2.cnt1 == 2
 
 <figure class="diagram">
 <div class="scroll">
@@ -427,13 +427,13 @@ page.
 **The class and the token.** Line 197 asks `seqlz_off_class()` ([chapter 6](#ch-header)) for the offset's
 class and how many of its bits follow the token, without a branch. Line 198 builds the token with that
 class and gets its code. For the first sequence of the page of `ab`: `off` {{ch10.ab.s1.off}}, `last` 1, so the offset is
-new and below 16: class {{ch10.ab.s1.cls}}, {{ch10.ab.s1.raw}} bits. The token is $2 + 16 \times 31 + 512 \times 1 = {{ch10.ab.s1.tok}}$
+new and 2: class {{ch10.ab.s1.cls}}, {{ch10.ab.s1.raw}} bit. The token is $2 + 16 \times 31 + 512 \times 1 = {{ch10.ab.s1.tok}}$
 (the match length field is capped at 31), with the {{ch10.ab.s1.tlen}}-bit code `{{ch10.ab.s1.code}}`.
-@assert ch10.ab.s1.ll == 2 and ch10.ab.s1.cls == 1 and ch10.ab.s1.tok == 2 + 16 * 31 + 512
+@assert ch10.ab.s1.ll == 2 and ch10.ab.s1.cls == 1 and ch10.ab.s1.raw == 1 and ch10.ab.s1.tok == 2 + 16 * 31 + 512
 
 **Token and offset in one put.** Lines 203 to 206 shift the code left by the number of offset bits and
-OR the offset's bits in. The offset is shifted right by `SEQLZ_OFF_SHIFT(cls)`, 3 for classes 4 and 5,
-which send the offset divided by 8, else 0. Then it is ANDed with `0U - (cls != 0)`:
+OR the offset's bits in. The offset is shifted right by `SEQLZ_OFF_SHIFT(cls)`, 1 for class 1 and 3 for
+classes 4 and 5, which send the offset divided by 2 and 8, else 0. Then it is ANDed with `0U - (cls != 0)`:
 
 | `cls` | `cls != 0` | `0U - (cls != 0)` | effect |
 | --- | --- | --- | --- |
@@ -445,7 +445,8 @@ the low bits of the token's code. Classes 1 to 5 need no mask: `seqlz_off_class(
 bits hold the offset, e.g. an offset of 24 with a repeat offset of 8 is class 4, and `24 >> 3 = 3` fits
 its 5 bits. The comment on lines 200 and 201 says this. Masking only class 0, instead of masking every
 offset to `raw_bits` bits, came with the change that loaded the matcher's values one position ahead
-(commit `996248b`); the repository gives no number for this part on its own. For the page of `ab`: `{{ch10.ab.s1.codehex}} << {{ch10.ab.s1.raw}} | {{ch10.ab.s1.off}} = {{ch10.ab.s1.put}}`, {{ch10.ab.s1.putn}} bits.
+(commit `996248b`); the repository gives no number for this part on its own. For the page of `ab`: `{{ch10.ab.s1.codehex}} << {{ch10.ab.s1.raw}} | ({{ch10.ab.s1.off}} >> 1) = {{ch10.ab.s1.put}}`, {{ch10.ab.s1.putn}} bits.
+@assert ch10.ab.s1.off >> 1 == int(ch10.ab.s1.offbits, 2)
 
 Putting token and offset together saves a shift and an OR per sequence against two puts. In the second
 round of work on the compressor, "token and offset in one put" took 21 786 to 21 233 cycles per page on
@@ -635,7 +636,7 @@ since {{ab.b.bytes}} is less than 8, it copies byte by byte from `end - 1` down:
 bitstream or lie beyond the {{ab.len}} bytes returned.
 @assert ab.b.bytes == ch10.ab.f1.moved + 1 and ab.b.pad == 8 - ch10.ab.f1.cnt1
 
-The {{ab.b.bits}} bits, in the order the decoder reads them: `{{ch10.ab.s1.esccode}}` (the escape) `{{ch10.ab.s1.tokbits}}` (token {{ch10.ab.s1.tok}}) `{{ch10.ab.s1.offbits}}` (offset {{ch10.ab.s1.off}}) `{{ch10.ab.s1.mlv.code}}`
+The {{ab.b.bits}} bits, in the order the decoder reads them: `{{ch10.ab.s1.esccode}}` (the escape) `{{ch10.ab.s1.tokbits}}` (token {{ch10.ab.s1.tok}}) `{{ch10.ab.s1.offbits}}` (offset {{ch10.ab.s1.off}}, sent as 1) `{{ch10.ab.s1.mlv.code}}`
 (symbol {{ch10.ab.s1.mlv.sym}} of the `ml` table) `{{ch10.ab.s1.mlv.xbits}}` ({{ch10.ab.s1.mlv.x}}).
 @assert ch10.ab.s1.putbits + ch10.ab.s1.mlv.code + ch10.ab.s1.mlv.xbits == ab.b.bin
 

@@ -214,8 +214,8 @@ BookAnim.define('accum', function (ctx) {
       var tok = q.esc ? 'Token ' + q.tok + ' has no code of its own: the escape\'s code ' + bin(o.parts[0][2], o.parts[0][1]) +
         ', then ' + q.tok + ' in 12 bits. ' : 'Token ' + q.tok + ' has the ' + q.tlen + '-bit code ' + bin(o.parts[0][2], o.parts[0][1]) + '. ';
       var off = q.cls === 0 ? 'The offset is the one before, class 0, no bits. '
-        : 'The offset' + (q.cls >= 4 ? ', divided by 8 in class ' + q.cls + ', is ' + o.parts[o.parts.length - 1][2] : ' in class ' + q.cls + ' is ' + q.off) +
-          ' in ' + q.raw + ' bits. ';
+        : 'The offset' + (q.cls >= 4 || q.cls === 1 ? ', divided by ' + (q.cls === 1 ? 2 : 8) + ' in class ' + q.cls + ', is ' + o.parts[o.parts.length - 1][2] : ' in class ' + q.cls + ' is ' + q.off) +
+          ' in ' + plural(q.raw, 'bit') + '. ';
       return head + tok + off + 'One enc_put(): acc shifts left by ' + o.n + ', the bits go in at the bottom, cnt ' + o.cnt0 + ' → ' + o.cnt1 + '.';
     }
     if (s.kind === 'put') {

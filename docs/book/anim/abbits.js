@@ -19,6 +19,8 @@ BookAnim.define('abbits', function (ctx) {
   ]);
   var used = el + tl + D.rawBits + ml + D.extra, left = NBITS - used;
   function bitsOf(f) { return BITS.substr(FIELDS[f + E][0], FIELDS[f + E][1]); }
+  // the offset from its bits: class 1 sends it divided by 2, classes 4 and 5 divided by 8
+  var offIs = D.shift ? D.sent + ' × ' + (1 << D.shift) + ' = ' + D.off : String(D.off);
   var means = D.tok + ' = ' + D.ll + ' + 16 × ' + D.mlf + ' + 512 × ' + D.cls + ': ll = ' + D.ll + ' literals, mlf = ' + D.mlf + ', offset class ' + D.cls + '.';
   // per step: bytes marked, fields read, page bytes written, the sentence
   var STEPS = [
@@ -32,7 +34,7 @@ BookAnim.define('abbits', function (ctx) {
   ] : [
     { bytes: [], fields: 1, page: 0, say: 'The first token: its code ' + bitsOf(0) + ', ' + tl + ' bits, is the token ' + means }
   ]).concat([
-    { bytes: [], fields: 2 + E, page: 0, say: 'Class ' + D.cls + ' sends ' + D.rawBits + ' plain bits, ' + bitsOf(1) + ': the offset is ' + D.off + '.' },
+    { bytes: [], fields: 2 + E, page: 0, say: 'Class ' + D.cls + ' sends ' + D.rawBits + ' plain bit' + (D.rawBits === 1 ? '' : 's') + ', ' + bitsOf(1) + ', which is ' + D.sent + ': the offset is ' + offIs + '.' },
     { bytes: [], fields: 2 + E, page: D.ll, say: 'll = ' + D.ll + ' is below 15, so no length value for it: the ' + D.ll + ' literals go to the page. The page has ' + D.ll + ' bytes, "ab".' },
     { bytes: [], fields: 3 + E, page: D.ll, say: 'mlf = ' + D.mlf + ' is the largest the token holds, so a length value follows: its code ' + bitsOf(2) + ' is symbol ' + D.mlSym + ' of the ML table, which means ' + D.mlSym + ' − 12 = ' + D.extra + ' extra bits.' },
     { bytes: [], fields: 4 + E, page: D.ll, say: 'The ' + D.extra + ' extra bits ' + bitsOf(3) + ' are ' + D.extraVal + '. The value is 2' + sup(D.extra) + ' + ' + D.extraVal + ' = ' + D.value + ', and ml = 35 + ' + D.value + ' = ' + D.ml + '.' },

@@ -70,12 +70,15 @@ int main(void) {
             putchar('0' + ((tok >> k) & 1));
         printf("\",");
     }
-    printf("\"ll\":%u,\"mlf\":%u,\"cls\":%u,\"rawBits\":%u,\"off\":%u,",
+    /* sent: the offset bits as a number; the class multiplies it by 2 or 8 again, or not */
+    printf("\"ll\":%u,\"mlf\":%u,\"cls\":%u,\"rawBits\":%u,\"sent\":%u,\"shift\":%u,\"off\":%u,",
            seq[0].literals,
            SEQLZ_ML_CAP,
            cls,
            raw,
-           seq[0].offset >> SEQLZ_OFF_SHIFT(cls));
+           seq[0].offset >> SEQLZ_OFF_SHIFT(cls),
+           SEQLZ_OFF_SHIFT(cls),
+           seq[0].offset);
     printf("\"mlSym\":%u,\"mlCode\":\"%s\",\"extra\":%u,\"extraVal\":%u,\"value\":%u,\"ml\":%u}\n",
            sym,
            code_of(seqlz_default_own.ml, SEQLZ_LEN_SYMBOLS, sym),

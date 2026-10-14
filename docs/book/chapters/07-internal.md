@@ -361,29 +361,32 @@ allocates the tables once per zram device instead.
 The rest of the file is the token table's entry. Before the description, the file proves that the
 fields it is about to describe are wide enough:
 
-@listing src/seqlz_internal.h 93-99
+@listing src/seqlz_internal.h 93-98
 
 Each condition is about one field of the entry, and refers to the layout below:
 
 - `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U`, $11 + 12 = 23$: the field for "how far the
   bitstream moves on" has 5 bits, so it holds up to 31. The most a token with its own code moves is
   an 11-bit code plus class 3's 12 offset bits. On 16 KiB pages it is $11 + 14 = 25$.
-- `SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U`, $11 + 9 = 20$: the same for class 5. Class 5 has 3
-  bits fewer than class 3 by definition, so today this follows from the first line; it would catch a
-  change of `SEQLZ_RAW_NIBBLES` that gave class 5 more bits.
+- `(8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE`, $2048 \le 4096$: class 5's offsets, multiples of 8
+  below `8 << SEQLZ_CLASS5_BITS`, stay inside the page. That also means `SEQLZ_CLASS5_BITS` is at most
+  `QUETSCHN_PAGE_BITS - 3`, fewer bits than class 3 has, so the first line covers class 5's move too,
+  $11 + 8 = 19$. A change of `SEQLZ_CLASS5_BITS` to 10 on 4 KiB pages would fail here.
 - `SEQLZ_LL_CAP <= 15U`: `ll` goes into a field of 4 bits, and the token's largest `ll` is 15.
 - `SEQLZ_ML_CAP + 4U <= 63U`, $31 + 4 = 35$: the entry stores the match length itself, not
   `ml - 4`, so it needs 35 in a field of 6 bits.
-- `SEQLZ_OFF_SHIFT(5) <= 3U`: the shift of classes 4 and 5 is 3, in a field of 2 bits.
+
+The field for the shift has 2 bits and needs no condition: `SEQLZ_OFF_SHIFT()` masks with `3U`
+([chapter 6](#ch-header--offsets)), so it is never larger than 3.
 
 The second assert is about the escape: a token sent after the escape takes `SEQLZ_ESCAPE_BITS`, 12
 plain bits, which can say 0 to 4095, so all 3072 tokens fit. A 4097th token would need 13.
 
-@listing src/seqlz_internal.h 100-115
+@listing src/seqlz_internal.h 99-115
 
 The comment is the specification of the entry. Every field is something the decoder would otherwise
 compute from the token's number for every sequence: split off `ll`, `ml` and the class with shifts
-and masks, look up the class's number of offset bits, decide whether the offset is divided by 8,
+and masks, look up the class's number of offset bits, decide whether the offset is divided by 2 or 8,
 add 4 to `ml`, compare `ll` and `ml` with their caps. The last sentence says what that cost.
 
 On an in-order core such as the phone's Cortex-A55 an instruction saved is time saved, almost one
@@ -499,7 +502,7 @@ token table with it at start, and `seqlz_decode()` calls it at run time for an e
   `ll + 16 * (ml - 4) + 512 * class` with `ll` and `ml - 4` capped at 15 and 31, so the class is all
   bits from bit 9 on.
 - Line 134: `raw_bits`, how many offset bits follow the token, from `SEQLZ_RAW_BITS(cls)`: the
-  `cls`-th nibble of `0x95C840`, which is 0, 4, 8, 12, 5, 9 for classes 0 to 5 ([chapter 6](#ch-header)).
+  `cls`-th nibble of `{{ch06.RAW_NIBBLES}}`, which is {{ch06.RAW_BITS}} for classes 0 to 5 ([chapter 6](#ch-header)).
 - Line 135: `drop`, the code and the offset bits together, how far the bitstream moves on after
   them. `ll` is the low 4 bits, `s & 15`.
 - Line 136: `ml` is bits 4 to 8, `(s >> 4) & 31`. Careful with the name: this is `ml - 4` of the
@@ -507,7 +510,7 @@ token table with it at start, and `seqlz_decode()` calls it at run time for an e
 - Lines 138 and 139: the escape, `s == 3072`. Its entry has bit 31 set, and `n` in the field
   `DROP`, so that the decoder can drop the escape's code before it reads the 12 bits of the token.
   All other fields are 0. `cls` and `raw_bits` were computed for it anyway, `3072 >> 9 = 6` and
-  nibble 6 of `0x95C840`, which is 0, and are not used. The kernel's style declares variables at the
+  nibble 6 of `{{ch06.RAW_NIBBLES}}`, which is 0, and are not used. The kernel's style declares variables at the
   top of a block, and since the function is inlined, the compiler drops what is not used.
 - Lines 140 to 143: every other token. Each field is shifted to its place and the fields are ORed
   together. `<<` binds tighter than `|` in C, so `n | x << 6 | y << 12` is `n | (x << 6) | (y << 12)`
@@ -532,8 +535,8 @@ copy. It also gives the decoder its two tests in the terms it thinks in: a lengt
 decoder has shifted the code out on top of its 64-bit register, the offset's `raw_bits` bits are the
 top bits, and shifting right by `64 - raw_bits` leaves exactly them. For class 3 that is
 $64 - 12 = 52$. Class 0 has no offset bits, and $64 - 0 = 64$: a shift of a `u64` by 64 is undefined
-in C, and 64 does not fit into 6 bits either. `& 63U` turns 64 into 0, and leaves 52, 55, 56, 59 and
-60 as they are. So class 0's `BACK` is 0, and the decoder uses exactly that as its test for class 0,
+in C, and 64 does not fit into 6 bits either. `& 63U` turns 64 into 0, and leaves 52, 56, 59 and
+63 as they are. So class 0's `BACK` is 0, and the decoder uses exactly that as its test for class 0,
 `off = back ? raw : last`: with `back` 0 it ignores whatever `raw` became and takes the repeat
 offset. Every other class has a `BACK` of at least 50 (class 3 on 16 KiB pages), never 0. One field is a shift and a flag at once,
 and the decoder needs no compare of the class.
@@ -569,8 +572,8 @@ Build it from the repository's root with
 
 ### Token 49: one literal, a match of 7, the repeat offset
 
-Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It is the token with the
-shortest code, {{tok.len.49}} bits, `{{tok.code.49}}`, as short as the escape's, and [chapter 9](#ch-matcher--back) shows where it comes from: in
+Token 49 is $1 + 16 \cdot 3 + 512 \cdot 0$: `ll` 1, `ml - 4` 3, class 0. It has one of the three
+shortest codes, {{tok.len.49}} bits, `{{tok.code.49}}`, with token 2097 and the escape, and [chapter 9](#ch-matcher--back) shows where it comes from: in
 an array of pointers, each pointing 16 bytes further than the one before, every 8-byte pointer is one
 literal, its low byte, which changes, and a match of its 7 other bytes, 8 bytes back, the same offset as
 the sequence before.
@@ -585,7 +588,7 @@ the sequence before.
 | `ML` | `((49 >> 4) & 31) + 4` | {{ch07.tok.49.ML}} |
 | value bit | `1 == 15 || 3 == 31` | {{ch07.tok.49.value}} |
 
-@assert tok.codes_of[4] == 2 and tok.len[49] == tok.len[3072] == 4
+@assert tok.codes_of[4] == 3 and tok.len[49] == tok.len[2097] == tok.len[3072] == 4
 
 The entry is `{{ch07.tok.49.N}} | {{ch07.tok.49.DROP}} << 14 | 1 << 19 | 7 << 23 = {{ch07.tok.49.entry}}`, in binary
 `{{ch07.tok.49.bin}}`. A {{tok.len.49}}-bit code is the top {{tok.len.49}} bits of {{ch07.tok.49.entries}} of the 2048
@@ -604,7 +607,7 @@ $2 + 16 \cdot 3 + 512 \cdot 4 = 2098$, and its code in the table has {{tok.len.2
 | --- | --- | --- |
 | `N` | `n` | {{ch07.tok.2098.N}} |
 | `BACK` | `(64 - 5) & 63` | {{ch07.tok.2098.BACK}} |
-| `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (4 >> 2) * 3` | {{ch07.tok.2098.SHIFT}} |
+| `SHIFT` | `SEQLZ_OFF_SHIFT(4) = (0x330010 >> 16) & 3` | {{ch07.tok.2098.SHIFT}} |
 | `DROP` | ${{tok.len.2098}} + 5$ | {{ch07.tok.2098.DROP}} |
 | `LL` | `2098 & 15` | {{ch07.tok.2098.LL}} |
 | `ML` | `((2098 >> 4) & 31) + 4` | {{ch07.tok.2098.ML}} |

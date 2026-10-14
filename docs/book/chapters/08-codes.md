@@ -249,11 +249,12 @@ last index    (({{ch07.tok.49.c}} + 1) << (11 - {{tok.len.49}})) - 1  = {{ch07.t
 
 @assert tok.len[49] == 4 and ch07.tok[49].c == 0
 
-The two codes of 4 bits are token 49 and the escape, `{{tok.code.49}}` and `{{tok.code.3072}}`. They take the
-entries 0 to {{ch08.tok.len4.last}} in that order, the first KiB of the table, an eighth of it, in {{ch08.tok.len4.lines}} cache lines.
+The three codes of 4 bits are tokens 49 and 2097 and the escape, `{{tok.code.49}}`, `{{tok.code.2097}}` and `{{tok.code.3072}}`. They
+take the entries 0 to {{ch08.tok.len4.last}} in that order, the first {{ch08.tok.len4.bytes}} bytes of the table, three sixteenths of it, in
+{{ch08.tok.len4.lines}} cache lines.
 Token 2098, with its {{tok.len.2098}}-bit code `{{tok.code.2098}}`, `c = {{ch07.tok.2098.c}}`, has the {{ch07.tok.2098.entries}} entries {{ch07.tok.2098.first}} to {{ch07.tok.2098.last}}.
 
-@assert tok.codes_of[4] == 2 and tok.len[49] == tok.len[3072] == 4 and ch08.tok.len4.bytes == 1024
+@assert tok.codes_of[4] == 3 and tok.len[49] == tok.len[2097] == tok.len[3072] == 4 and ch08.tok.len4.bytes == 1536
 
 The codes are ranges because the bitstream is read most significant bit first, since 6th October
 2026; read the other way, a code's entries were spread over every cache line of the table.
@@ -542,7 +543,7 @@ Of the 3072 tokens, {{ch08.tok.coded}} have a code of their own. With the escape
 
 | code length | codes | share of the table's 2048 entries |
 | --- | --- | --- |
-| 4 | 3 tokens and the escape | ${{tok.codes_of.4}} \times 128 = {{ch08.tok.fill.4}}$ |
+| 4 | 2 tokens and the escape | ${{tok.codes_of.4}} \times 128 = {{ch08.tok.fill.4}}$ |
 | 5 | {{tok.codes_of.5}} | ${{tok.codes_of.5}} \times 64 = {{ch08.tok.fill.5}}$ |
 | 6 | {{tok.codes_of.6}} | ${{tok.codes_of.6}} \times 32 = {{ch08.tok.fill.6}}$ |
 | 7 | {{tok.codes_of.7}} | ${{tok.codes_of.7}} \times 16 = {{ch08.tok.fill.7}}$ |
@@ -559,18 +560,19 @@ of:
 | token | `ll` | `ml` | class | code |
 | --- | --- | --- | --- | --- |
 | 49 | 1 | 7 | 0, the repeat offset | `{{tok.code.49}}` |
-| 34 | 2 | 6 | 0 | `{{tok.code.34}}` |
 | 2097 | 1 | 7 | 4, a multiple of 8 below 256 | `{{tok.code.2097}}` |
+| 34 | 2 | 6 | 0 | `{{tok.code.34}}` |
 | 2082 | 2 | 6 | 4 | `{{tok.code.2082}}` |
 | 2112 | 0 | 8 | 4 | `{{tok.code.2112}}` |
-| 2624 | 0 | 8 | 5, a multiple of 8 from 256 | `{{tok.code.2624}}` |
+| 2624 | 0 | 8 | 5, a multiple of 8 from 256 to 2040 | `{{tok.code.2624}}` |
 
-@assert tok.codes_of[4] == 2 and tok.codes_of[5] == 5 and tok.len[3072] == tok.len[49] == 4 and tok.len[34] == tok.len[2082] == tok.len[2097] == tok.len[2112] == tok.len[2624] == 5
+@assert tok.codes_of[4] == 3 and tok.codes_of[5] == 3 and tok.len[3072] == tok.len[49] == tok.len[2097] == 4 and tok.len[34] == tok.len[2082] == tok.len[2112] == 5 and tok.len[2624] == tok.len[576] == 6
 
 In each of these 6 tokens, `ll + ml` is 8. That fits one sequence per 8-byte value, a pointer or a
 field of 8 bytes, whose low 1 or 2 bytes differ from a value 8 or more bytes before, or none do. The
 format's offset classes for multiples of 8 are there for the same reason
-([chapter 4](#ch-format--offsets)).
+([chapter 4](#ch-format--offsets)). Next to token 2624 among the codes of {{tok.len.576}} bits is token 576, no literals
+and 8 bytes from offset 2, class 1: a run of one 16-bit value, the reason class 1 is offset 2.
 
 The escape has a {{tok.len.3072}}-bit code, as short as the most frequent token's. Each of the {{ch08.tok.escaped}} tokens without a
 code is rare, but together they are frequent: on desktop pages, 14 to 38 of about 200 sequences per

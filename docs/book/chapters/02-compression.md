@@ -202,11 +202,11 @@ pages for about twice the time to write, and did not keep it, nor the deeper lev
 
 Now to the second idea. Every sequence has to say its `ll`, its `ml` and its offset. The simple way is a
 fixed number of bits for each, as `lz4` does in whole bytes: 2 bytes for every offset, though a 4 KiB
-page has offsets of at most 12 bits, and offsets below 16 are common.
+page has offsets of at most 12 bits, and small offsets are common.
 
 How many bits does a number need, if not a fixed amount? It depends on how often each value occurs. A
 small example with real numbers: seqlz sorts every offset into one of 6 **offset classes**, e.g. class 0
-for the repeat offset, class 1 for offsets below 16, class 4 for multiples of 8 below 256. These are how
+for the repeat offset, class 1 for offset 2, class 4 for multiples of 8 below 256. These are how
 often each class occurred on the {{ch02.train_pages|grp}} pages seqlz's tables were trained on, summed from the token
 counts in
 @assert ch02.OFF_CLASSES == 6
@@ -215,11 +215,11 @@ counts in
 | class | offset | share of the sequences |
 | --- | --- | --- |
 | 0 | the repeat offset | {{ch02.cls.0.share}}% |
-| 1 | below 16 | {{ch02.cls.1.share}}% |
+| 1 | exactly 2 | {{ch02.cls.1.share}}% |
 | 2 | below 256 | {{ch02.cls.2.share}}% |
 | 3 | below 4096 | {{ch02.cls.3.share}}% |
-| 4 | multiple of 8, 16 to 248 | {{ch02.cls.4.share}}% |
-| 5 | multiple of 8, from 256 | {{ch02.cls.5.share}}% |
+| 4 | multiple of 8, 8 to 248 | {{ch02.cls.4.share}}% |
+| 5 | multiple of 8, 256 to 2040 | {{ch02.cls.5.share}}% |
 
 6 values in a fixed width take 3 bits, and 2 of the 8 patterns are never used. Information theory says
 what they need at least: a value that occurs with probability $p$ carries $-\log_2 p$ bits of
@@ -227,7 +227,8 @@ information, and the average of that over all values, the **entropy**, is the le
 value any code can reach on average. Here it is {{ch02.cls.entropy}} bits. (These are shares of all sequences in the
 training counts, which count the pages of a phone's zram dump five times; on a desktop's zram pages, 18% to 25% of
 the matches use the repeat offset, see [chapter 9](#ch-matcher--plan).) Class 0, at {{ch02.cls.0.share}}%, carries
-{{ch02.cls.0.info}} bits; class 3, at {{ch02.cls.3.share}}%, carries {{ch02.cls.3.info}}. A good code gives class 0 fewer than 3 bits and class 3 more.
+{{ch02.cls.0.info}} bits; class 1, at {{ch02.cls.1.share}}%, carries {{ch02.cls.1.info}}. A good code gives class 0 fewer than 3 bits and class 1 more.
+@assert ch02.cls[0].info < "3" < ch02.cls[1].info
 
 ## Prefix codes {#ch-compression--prefix-codes}
 
@@ -500,20 +501,20 @@ chapter 4 for the bits:
 | `{{ch02.cat.0.code}}` `{{ch02.cat.0.esc}}` | the escape, then token {{ch02.cat.0.tok}} in {{ch02.ESCAPE_BITS}} bits: `ll` {{ch02.cat.0.ll}}, `ml` {{ch02.cat.0.ml}}, class {{ch02.cat.0.cls}} |
 | `{{ch02.cat.0.raw}}` | offset {{ch02.cat.0.off}} in the {{ch02.cat.0.rawbits}} bits of class {{ch02.cat.0.cls}} |
 | `{{ch02.cat.1.code}}` | token {{ch02.cat.1.tok}}: `ll` {{ch02.cat.1.ll}}, `ml` {{ch02.cat.1.ml}}, class {{ch02.cat.1.cls}}, the repeat offset {{ch02.cat.1.off}} |
-| `{{ch02.cat.2.code}}` `{{ch02.cat.2.esc}}` | the escape, then token {{ch02.cat.2.tok}}: `ll` {{ch02.cat.2.ll}}, `ml - 4` {{ch02.cat.2.tml}}, class {{ch02.cat.2.cls}} |
+| `{{ch02.cat.2.code}}` | token {{ch02.cat.2.tok}}: `ll` {{ch02.cat.2.ll}}, `ml - 4` {{ch02.cat.2.tml}}, class {{ch02.cat.2.cls}} |
 | `{{ch02.cat.2.raw}}` | offset {{ch02.cat.2.off}} |
 | `{{ch02.cat.2.vcode}}` `{{ch02.cat.2.vextra}}` | the length value {{ch02.cat.2.value}}: `ml` = {{ch02.ml_base}} + {{ch02.cat.2.value}} = {{ch02.cat.2.ml}} |
 | | 0 literals left, 0 bytes of the page left: the last sequence, no bits |
 | `{{ch02.cat.fill}}` | fill to the end of the last byte |
-@assert [ch02.cat[k].escaped for k in "012"] == [1, 0, 1] and ch02.cat[1].cls == 0 and ch02.cat[2].tml == 31
+@assert [ch02.cat[k].escaped for k in "012"] == [1, 0, 0] and ch02.cat[1].cls == 0 and ch02.cat[2].tml == 31
 @assert ch02.cat[0].code + ch02.cat[0].esc + ch02.cat[0].raw + ch02.cat[1].code + ch02.cat[2].code + ch02.cat[2].esc + ch02.cat[2].raw + ch02.cat[2].vcode + ch02.cat[2].vextra == cat.b.bin and cat.b.pad == len(ch02.cat.fill)
 
 That is {{cat.b.bits}} bits and {{cat.b.pad}} bits of fill, the bytes `{{cat.b.hex}}`, as `seqlz_compress()`
-writes them. Two of the tokens are escaped: a sequence of 12 literals and a match of 4 at a short offset
+writes them. One of the tokens is escaped: a sequence of 12 literals and a match of 4 at a short offset
 is rare on real pages and has no code of its own. The same four sequences in `lz4`'s format take {{ch02.lz4.bytes}}
 bytes besides the literals, leaving aside `lz4`'s rules for the end of a block: a token byte each, 2 bytes
 for each of the three offsets, and {{ch02.lz4.ml_bytes}} bytes to say {{ch02.cat.2.ml}}, {{ch02.lz4.ml_255}} of them 255.
-@assert cat.escapes == 2
+@assert cat.escapes == 1
 
 ::: measured Where the bytes come from
 Which of the two ideas gives `zstd` its ratio was estimated on the zram pages of a desktop, with the

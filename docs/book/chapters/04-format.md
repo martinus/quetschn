@@ -213,12 +213,12 @@ follow from the lengths by the rule of deflate (RFC 1951, section 3.2.2), the **
 the order of the symbols' numbers. Here is the rule applied to the real token table of 4 KiB pages:
 
 - No symbol has a code of 1, 2 or 3 bits, so `first[4] = {{ch04.first.4}}`. The {{tok.codes_of.4}} symbols with a code of 4 bits are,
-  in the order of their number, the token {{ch04.syms.4.0}} and the escape {{ch04.syms.4.1}}. They get `{{tok.code.49}}` and `{{tok.code.3072}}`.
-- `first[5] = ({{ch04.first.4}} + {{tok.codes_of.4}}) * 2 = {{ch04.first.5}}`, binary `{{ch04.first_bin.5}}`. The {{tok.codes_of.5}} symbols with 5 bits, tokens {{ch04.syms.5.0}}, {{ch04.syms.5.1}}, {{ch04.syms.5.2}},
-  {{ch04.syms.5.3}} and {{ch04.syms.5.4}}, get `{{tok.code.34}}` to `{{tok.code.2624}}`.
+  in the order of their number, the tokens {{ch04.syms.4.0}} and {{ch04.syms.4.1}} and the escape {{ch04.syms.4.2}}. They get `{{tok.code.49}}`, `{{tok.code.2097}}` and `{{tok.code.3072}}`.
+- `first[5] = ({{ch04.first.4}} + {{tok.codes_of.4}}) * 2 = {{ch04.first.5}}`, binary `{{ch04.first_bin.5}}`. The {{tok.codes_of.5}} symbols with 5 bits, tokens {{ch04.syms.5.0}}, {{ch04.syms.5.1}}
+  and {{ch04.syms.5.2}}, get `{{tok.code.34}}` to `{{tok.code.2112}}`.
 - `first[6] = ({{ch04.first.5}} + {{tok.codes_of.5}}) * 2 = {{ch04.first.6}}`, binary `{{ch04.first_bin.6}}`, the code of token {{ch04.syms.6.0}}, the first of {{tok.codes_of.6}} symbols with
   6 bits.
-@assert tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0 and F("ch04.syms.4") == [49, 3072] and F("ch04.syms.5") == [34, 2082, 2097, 2112, 2624]
+@assert tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0 and F("ch04.syms.4") == [49, 2097, 3072] and F("ch04.syms.5") == [34, 2082, 2112]
 
 Every table is **complete**: its codes use up all bit strings, the sum of $2^{-l}$ over all codes is
 exactly 1 ([chapter 2](#ch-compression--complete)). For the token table that is {{tok.codes_of.4}} codes of 4 bits, {{tok.codes_of.5}} of 5, {{tok.codes_of.6}} of 6, {{tok.codes_of.7}} of 7, {{tok.codes_of.8}} of 8, {{tok.codes_of.9}} of 9,
@@ -232,7 +232,7 @@ bits in a table of 2048 entries without checking the entry; the table is built i
 ## The bitstream {#ch-format--bitstream}
 
 `B` is read one bit at a time, starting with bit 7, the most significant bit, of its first byte: bit
-`i` of `B` is bit `7 - (i mod 8)` of byte `i div 8`. The byte `13` is read as `0`, `0`, `0`, `1`, `0`,
+`i` of `B` is bit `7 - (i mod 8)` of byte `i div 8`. The byte `23` is read as `0`, `0`, `1`, `0`, `0`,
 `0`, `1`, `1`. A decoder reads three kinds of things from it:
 
 - `read(n)`: the next `n` bits as a number, the first bit read the most significant. `read(4)` of the
@@ -327,10 +327,10 @@ real 4 KiB table are these, with the escape among them:
 | token | `ll` | `ml` | class | code | what it is |
 | --- | --- | --- | --- | --- | --- |
 | 49 | 1 | 7 | 0 | {{tok.len.49}} bits | 1 literal, 7 bytes, same offset: the sequence of an array of pointers |
+| 2097 | 1 | 7 | 4 | {{tok.len.2097}} bits | 1 literal, 7 bytes from a new offset that is a multiple of 8 below 256 |
 | 3072 | | | | {{tok.len.3072}} bits | the escape |
 | 34 | 2 | 6 | 0 | {{tok.len.34}} bits | 2 literals, then 6 bytes from the same offset as the match before |
-| 2097 | 1 | 7 | 4 | {{tok.len.2097}} bits | 1 literal, 7 bytes from a new offset that is a multiple of 8 below 256 |
-@assert F("ch04.syms.4") == [49, 3072] and tok.len[34] == tok.len[2097] == tok.len[49] + 1 and tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0
+@assert F("ch04.syms.4") == [49, 2097, 3072] and tok.len[34] == tok.len[49] + 1 and tok.codes_of[1] + tok.codes_of[2] + tok.codes_of[3] == 0
 
 Token 49 is the sequence of an array of 8-byte pointers, each 16 bytes further than the one before.
 Most pointers differ from the one 8 bytes back only in their lowest byte, so after the first pointer
@@ -363,37 +363,47 @@ says how they become the offset:
 | class | offset bits, 4 KiB | offset bits, 16 KiB | offset | offsets it can send |
 | --- | --- | --- | --- | --- |
 | 0 | {{ch04.raw.0}} | {{k16.ch04.raw.0}} | the offset of the match before | the same again |
-| 1 | {{ch04.raw.1}} | {{k16.ch04.raw.1}} | `read(4)` | 1 to 15 |
+| 1 | {{ch04.raw.1}} | {{k16.ch04.raw.1}} | `read(1) * 2` | 2 |
 | 2 | {{ch04.raw.2}} | {{k16.ch04.raw.2}} | `read(8)` | 1 to 255 |
 | 3 | {{ch04.raw.3}} | {{k16.ch04.raw.3}} | `read(P)` | 1 to `PAGE - 1` |
 | 4 | {{ch04.raw.4}} | {{k16.ch04.raw.4}} | `read(5) * 8` | 8 to 248, multiples of 8 |
-| 5 | {{ch04.raw.5}} | {{k16.ch04.raw.5}} | `read(P - 3) * 8` | 8 to `PAGE - 8`, multiples of 8 |
+| 5 | {{ch04.raw.5}} | {{k16.ch04.raw.5}} | `read(8) * 8` | 8 to 2040, multiples of 8 |
+@assert ch04.raw[1] == k16.ch04.raw[1] == 1 and ch04.raw[5] == k16.ch04.raw[5] == 8
 
 Class 0 is the **repeat offset**: the offset of the sequence before, in 0 bits. At the start of
-each page it is 1, so class 0 also works for the first match, e.g. a run of a byte. Classes 4 and 5
-store the offset divided by 8, 3 bits less than classes 2 and 3. Memory holds many 8-byte values,
-pointers and 8-byte fields, so repeats at a distance that is a multiple of 8 are common.
+each page it is 1, so class 0 also works for the first match, e.g. a run of a byte. Class 1 is one
+offset only, 2, sent divided by 2 in 1 bit. Memory holds many 16-bit values, and an array of them
+repeats at a distance of 2: of the offsets that are not the repeat offset, about 8% are 2 on phone and
+desktop pages, more than any other single offset
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
+Classes 4 and 5 store the offset divided by 8. Memory holds many 8-byte values, pointers and 8-byte
+fields, so repeats at a distance that is a multiple of 8 are common. Class 4 sends them below 256 in 3
+bits less than class 2, class 5 those below 2048 in 8 bits, 4 less than class 3 on 4 KiB pages and 6
+less on 16 KiB pages. A multiple of 8 from 2048 on goes to class 3.
 
 The offset bits are plain binary, not a code. An offset is the distance back from the end of the
 output: offset 16 copies from the byte 16 places before the next byte to be written. It must be at
-least 1 and at most the number of bytes written so far; class 1 with the bits `0000` gives offset 0,
+least 1 and at most the number of bytes written so far; class 1 with the bit `0` gives offset 0,
 and that page is invalid.
 
-The format does not care which class a compressor uses, as long as the offset comes out. Class 2 can
-send offset 5 too, and class 4 can send 8 (`read(5) = 1`). `seqlz_compress()` uses class 0 when the
-offset is the one before, else class 4 or 5 for a multiple of 8 from 16 on, else the smallest of
-classes 1 to 3 that holds it. That choice is made in `seqlz_off_class()`, without a branch, see
-[chapter 6](#ch-header--offsets). Some examples, computed with it:
+The format does not care which class a compressor uses, as long as the offset comes out. Class 3 can
+send offset 5 too, and class 2 can send 2 and 8. `seqlz_compress()` uses class 0 when the offset is
+the one before, else the class with the fewest offset bits that holds it: class 1 for 2, class 4 or 5
+for a multiple of 8 below 2048, else class 2 or 3 by size. That choice is made in
+`seqlz_off_class()`, without a branch, see [chapter 6](#ch-header--offsets). Some examples, computed
+with it:
 
 | offset | offset before | class | offset bits |
 | --- | --- | --- | --- |
 | 24 | 24 | {{ch04.oc.24_24.cls}} | none |
 | 24 | 16 | {{ch04.oc.24_16.cls}} | {{ch04.oc.24_16.raw}} bits, `read({{ch04.oc.24_16.raw}}) = {{ch04.oc.24_16.read}}` |
-| 8 | 1 | {{ch04.oc.8_1.cls}} | {{ch04.oc.8_1.raw}} bits: 8 is a multiple of 8, but below 16 |
+| 2 | 1 | {{ch04.oc.2_1.cls}} | {{ch04.oc.2_1.raw}} bit, `read({{ch04.oc.2_1.raw}}) = {{ch04.oc.2_1.read}}` |
+| 8 | 1 | {{ch04.oc.8_1.cls}} | {{ch04.oc.8_1.raw}} bits, `read({{ch04.oc.8_1.raw}}) = {{ch04.oc.8_1.read}}` |
 | 100 | 1 | {{ch04.oc.100_1.cls}} | {{ch04.oc.100_1.raw}} bits |
 | 256 | 1 | {{ch04.oc.256_1.cls}} | {{ch04.oc.256_1.raw}} bits, `read({{ch04.oc.256_1.raw}}) = {{ch04.oc.256_1.read}}` |
 | 300 | 1 | {{ch04.oc.300_1.cls}} | {{ch04.oc.300_1.raw}} bits |
-@assert ch04.oc["24_24"].raw == 0
+| 2048 | 1 | {{ch04.oc.2048_1.cls}} | {{ch04.oc.2048_1.raw}} bits: a multiple of 8, but too far for class 5 |
+@assert ch04.oc["24_24"].raw == 0 and ch04.oc["2_1"].raw == 1 and ch04.oc["2048_1"].cls == 3
 
 ::: why Why offsets are plain bits, and why the class is in the token
 Offsets were once a Huffman-coded symbol for their number of bits, followed by the bits. Moving the
@@ -405,6 +415,11 @@ token to the next, not two
 The classes 4 and 5 for multiples of 8 came later and saved 13 bytes
 per page in the kernel, for about 0.2 µs more per page written
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
+On 14th October 2026 class 1 became offset 2 in 1 bit, instead of the offsets below 16 in 4 bits, and
+class 5 the multiples of 8 below 2048 in 8 bits, instead of all of them in 9. With the token tables
+trained again, `seqlz-fast-lit` stores 0.6% less on the 4 KiB dumps, on average, and 1.4% less on the
+16 KiB ones, at the same speed on the Mi 9T and in the kernel VM
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
 :::
 
 ## Length values {#ch-format--length-values}
@@ -634,7 +649,7 @@ cannot save 51 bytes.
 | `{{ch04.second.s.2.mlbits}}` | `read({{ch04.second.s.2.mlb}})` = {{ch04.second.s.2.mlread}} | `ml = 35 + 2^{{ch04.second.s.2.mlb}} + {{ch04.second.s.2.mlread}} = {{ch04.second.s.2.ml}}`: `z` {{ch04.second.s.2.ml}} more times; 4096 bytes |
 | | | 0 literals left for 0 bytes of the page: the last sequence |
 | `{{ch04.second.padbits}}` | | {{second.b.pad}} bits left, in the last byte, all 0: valid |
-@assert second.seqs == 4 and second.escapes == 0 and ch04.second.s[0].cls == 0 and ch04.second.s[1].cls == 4 and ch04.second.s[2].cls == 1 and ch04.second.s[0].mlf < 31 and ch04.second.s[1].mlf < 31 and ch04.second.s[2].mlf == 31 and ch04.second.s[2].llf < 15
+@assert second.seqs == 4 and second.escapes == 0 and ch04.second.s[0].cls == 0 and ch04.second.s[1].cls == 4 and ch04.second.s[2].cls == 2 and ch04.second.s[0].mlf < 31 and ch04.second.s[1].mlf < 31 and ch04.second.s[2].mlf == 31 and ch04.second.s[2].llf < 15
 
 A few things to see here:
 
@@ -644,12 +659,12 @@ A few things to see here:
 - **Token 12 has an {{tok.len.12}}-bit code.** 12 literals and a match of exactly 4 bytes at the repeat offset is
   rare on real pages, so its code is long. A token without any code would have taken {{ch04.esc_bits}} bits.
 @assert tok.len[12] == ch06.TOKEN_BITS
-- **Token 2098 is "2 literals, a match of 7 at offset 16".** 16 is a multiple of 8 from 16 on, so the
+- **Token 2098 is "2 literals, a match of 7 at offset 16".** 16 is a multiple of 8 below 256, so the
   class is 4 and the offset is sent as 2 in 5 bits. The sequence takes ${{tok.len.2098}} + 5 = {{ch04.second.s.1.bits}}$ bits plus its 2
   literals. In lz4's format the same sequence is a token byte and 2 bytes of offset, 24 bits plus
   the literals.
 - **The third match changes the class but not the bits' meaning.** Offset 1 is not the repeat offset
-  any more, `last` is 16 now, so it goes as class 1 with 4 bits.
+  any more, `last` is 16 now, so it goes as class 2 with {{ch04.second.s.2.raw}} bits.
 - **The padding.** {{second.b.bits}} bits are used, {{second.b.pad}} are left in the last byte, and they are 0. With an eighth bit
   left, or one of them 1, the page would be invalid.
 

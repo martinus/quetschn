@@ -144,12 +144,12 @@
       if (t.indexOf('tok = token_entry(idx, 0)') === 0) return 'token_entry() builds the entry the table would have for this token, with a code of 0 bits: the escape and the 12 bits are dropped already.';
       if (t.indexOf('back = TOK_BACK(tok)') === 0) {
         return 'The entry, taken apart: a code of ' + e.n + ' bits, ll ' + e.ll + ', ml ' + e.ml + ', ' +
-          (rawBits ? rawBits + ' offset bits' + (e.shift ? ', times 8' : '') : 'offset class 0, no offset bits') +
+          (rawBits ? rawBits + ' offset bit' + (rawBits === 1 ? '' : 's') + (e.shift ? ', times ' + (1 << e.shift) : '') : 'offset class 0, no offset bits') +
           (e.value ? ', and a length value follows' : '') + '. back = ' + e.back + '.';
       }
       if (t.indexOf('raw = ') === 0) {
         var b = bitsOf(s), raw = rawBits ? Number(((b << BigInt(e.n)) & ((1n << 64n) - 1n)) >> BigInt(e.back)) << e.shift : 0;
-        return rawBits ? 'Shifts the ' + e.n + '-bit code out on top, then the ' + rawBits + ' offset bits down' + (e.shift ? ' and times 8' : '') + ': raw = ' + raw + '. No branch on the class.'
+        return rawBits ? 'Shifts the ' + e.n + '-bit code out on top, then the ' + rawBits + ' offset bit' + (rawBits === 1 ? '' : 's') + ' down' + (e.shift ? ' and times ' + (1 << e.shift) : '') + ': raw = ' + raw + '. No branch on the class.'
           : 'Class 0 has no offset bits: the shift by back = 0 gives 0, and nothing branches.';
       }
       if (t.indexOf('seqlz_br_drop(&br, TOK_DROP(tok))') === 0) return 'Drops the ' + e.drop + ' bits of code and offset: count ' + cnt + ' → ' + n[F.count] + '.';
@@ -226,7 +226,7 @@
       var f = el('div', 'v vtok');
       f.appendChild(el('span', 'vk', 'its entry'));
       f.appendChild(el('span', 'vv', e.escape ? 'escape, code ' + e.n + ' bits' :
-        'code ' + e.n + ' bits, ll ' + e.ll + ', ml ' + e.ml + ', ' + (e.back ? (64 - e.back) + ' offset bits' + (e.shift ? ' × 8' : '') : 'class 0') + (e.value ? ', length value' : '')));
+        'code ' + e.n + ' bits, ll ' + e.ll + ', ml ' + e.ml + ', ' + (e.back ? (64 - e.back) + ' offset bit' + (e.back === 63 ? '' : 's') + (e.shift ? ' × ' + (1 << e.shift) : '') : 'class 0') + (e.value ? ', length value' : '')));
       varsBox.appendChild(f);
     }
 

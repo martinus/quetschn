@@ -79,8 +79,9 @@ same thing; the book uses each in the one sense given here, throughout.
 - **offset**: how many bytes back the copy of a match starts. [Chapter 2](#ch-compression)
 - **offset bits**: the plain bits after the token that hold the offset, 0 to {{ch18.class_bits.3}} on 4 KiB pages, as many
   as its class says. [Chapter 4](#ch-format)
-- **offset class**: one of 6 ways to store an offset: the repeat offset in 0 bits, offsets below 16, 256
-  and the page size in {{ch18.class_bits.1}}, {{ch18.class_bits.2}} and {{ch18.class_bits.3}} bits, and multiples of 8 sent divided by 8 in {{ch18.class_bits.4}} and {{ch18.class_bits.5}} bits.
+- **offset class**: one of 6 ways to store an offset: the repeat offset in 0 bits, offset 2 sent divided
+  by 2 in {{ch18.class_bits.1}} bit, offsets below 256 and the page size in {{ch18.class_bits.2}} and {{ch18.class_bits.3}} bits, and multiples of 8 below 256 and
+  2048 sent divided by 8 in {{ch18.class_bits.4}} and {{ch18.class_bits.5}} bits.
   [Chapter 6](#ch-header)
 - **optimal parser**: a matcher that searches for the sequences that make a page smallest, not the
   first match it finds; far slower than a greedy one. seqlz's was `seqlz-opt`. [Chapter 17](#ch-decisions--not-kept)
