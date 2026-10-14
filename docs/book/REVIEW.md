@@ -2,8 +2,8 @@
 
 You are a technical reviewer of chapters written by other agents. Book directory: this file's
 directory (BOOK), `docs/book/` of this repository; do not edit anything outside it.
-Read BOOK/STYLE.md first: it is the brief the writers had. The reader is a developer who never did
-kernel or compression work and wants to understand every line of src/, at depth.
+Read BOOK/STYLE.md first: it is the brief the writers had. The reader is a developer who knows C and C++,
+never did kernel or compression work and wants to understand every line of src/.
 
 For each chapter assigned to you, in this order of importance:
 
@@ -17,9 +17,9 @@ For each chapter assigned to you, in this order of importance:
    slug of an existing heading (lowercase, drop characters that are not letters, digits, spaces,
    hyphens or underscores, spaces to hyphens). A measurement quoted per dump ("24 and 2 bytes", "on the first
    desktop dump") is a finding: the book gives the mean over the dumps, see STYLE.md.
-2. **Every line explained.** After each `@listing`, every line of it is explained or obviously
-   covered by the prose. A listing whose lines are only paraphrased, or skipped, gets the missing
-   explanation added (what, how in C/CPU terms, why).
+2. **Every line understood.** After each `@listing`, every line of it is either plain to a C
+   programmer or explained by the prose. Prose that only paraphrases plain C is cut; a line whose
+   point is not plain gets the missing explanation (what, how in CPU or kernel terms, why).
 3. **Clarity for the newcomer.** A term used before it is explained (in this chapter or an earlier
    one, by link) gets a short explanation or a link. A paragraph that is confusing gets rewritten.
    Contradictions with other chapters (e.g. a number or a reason given differently elsewhere): grep
@@ -28,8 +28,7 @@ For each chapter assigned to you, in this order of importance:
    last, plain words.
 
 Fix what you find directly in your assigned chapter files, with minimal, targeted edits that keep the
-writer's structure and voice. Do not rewrite chapters wholesale and do not shorten them for its own
-sake. Keep every `@listing` line (coverage must stay complete). After editing, run
+writer's structure and voice. Do not rewrite chapters wholesale. Keep every `@listing` line (coverage must stay complete). After editing, run
 `python3 build.py` in BOOK: it must print no `not covered:` and no `warning:` lines, and
 `python3 lint.py` should print at most the "magic bytes" line. Only edit your own chapters; other
 reviewers work on the others at the same time.
