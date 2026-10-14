@@ -1,6 +1,6 @@
 # How to write a chapter of "seqlz, line by line"
 
-The book explains every line of `src/` of this repository (written at commit a2d57dd) to a developer who has never written kernel code and never written a compressor. It
+The book explains every line of `src/` of this repository to a developer who knows C and C++ well, but has never written kernel code and never written a compressor. It
 is a single HTML page, built by `build.py` from `chapters/*.md`. Think O'Reilly book: the original code
 in sections, each section explained, so that after reading the reader understands every line, the
 structure and architecture, and why each choice was taken.
@@ -9,14 +9,18 @@ structure and architecture, and why each choice was taken.
 
 For every listing, the prose after it covers:
 
-1. **What** each line does, in plain words. Every line. A line of a comment is explained too when it
-   carries a fact (a reason, a measurement, a reference); do not just repeat the comment, add to it.
-2. **How** it works at the level of C and the machine: integer promotion, unsigned wrap-around,
-   shifts and masks, `static inline` and `__always_inline`, why a cast is there, what a
-   `static_assert` proves, undefined behaviour that a line avoids, aliasing, unaligned loads,
-   endianness. Bit tricks always get a **worked example with real numbers**, e.g. "for `off = 24`,
-   `(off >= 16) & ((off & 7) == 0)` is `1 & 1 = 1`, so ...". Compute such numbers, do not guess them:
-   use `python3`, or compile a few lines against `src/` with `gcc -O2 -Isrc` (in your scratch dir).
+1. **What** the code does that a C programmer does not see at a glance. Do not paraphrase lines that
+   read plainly (a loop, an `if`, a `memcpy()`, a `static inline` helper, a cast); say what a group of
+   lines achieves, then spend the words on the lines that need them. A comment is explained only when
+   there is more to it than it says.
+2. **How** it works where that is not standard C knowledge: kernel idioms, the bit layout of a value,
+   why a branch-free form, what the CPU does with it. Do not explain the language: integer promotion,
+   unsigned wrap-around, shifts and masks, `static inline`, casts, `static_assert` and undefined
+   behaviour are known to the reader; mention them only where the code depends on a rule in a way
+   that is easy to miss, in one sentence. A bit trick that is not obvious gets a **worked example
+   with real numbers**, e.g. "for `off = 24`, `(off & 7) == 0` is 1, so ...". Compute such numbers, do
+   not guess them: use `python3`, or compile a few lines against `src/` with `gcc -O2 -Isrc` (in your
+   scratch dir).
 3. **Why** it is written this way and not the obvious other way: the design reason, and where the
    repository measured it. Reasons come from the code's comments, `docs/seqlz.md`, `docs/format.md`,
    `docs/plan.md`, `docs/explored-designs.md` and `git log`. Never invent a measurement. When you quote
@@ -28,7 +32,8 @@ For every listing, the prose after it covers:
    the link leads to.
 4. **Where it connects**: which other function uses this, which chapter explains that.
 
-The reader knows C and general programming. The reader does not know: what zram, zsmalloc, a page,
+The reader knows C and C++: the language, its integer rules and undefined behaviour, the standard
+library, what a compiler inlines and how a struct is laid out. The reader does not know: what zram, zsmalloc, a page,
 `kmalloc()`, per-CPU data, KUnit, `EXPORT_SYMBOL` or `__init` are; what LZ77, Huffman, canonical codes,
 prefix codes, entropy are; what a cache line, a branch misprediction, an in-order core, a dependency
 chain, SWAR, a prefetch are. Explain each the first time your chapter needs it, briefly, in a `:::
@@ -36,7 +41,9 @@ kernel` or `::: cpu` box when it is more than two sentences. Part I explains the
 chapters may link back to them instead of repeating, e.g. `[canonical codes](#ch-compression--canonical-codes)`,
 but a one-sentence reminder is fine.
 
-Length: as long as the code needs. A chapter of 150 lines of code is typically 3000 to 6000 words.
+Length: as short as the code allows. A chapter of 150 lines of code is typically 1500 to 3000 words.
+Say a thing once: no summary of what a listing showed, no repeat of what another chapter explains
+(link it).
 
 ## Listings
 
@@ -117,9 +124,8 @@ before and after:
   GitHub's slug of the heading: lowercase, every character that is not a letter, digit, space,
   hyphen or underscore removed, spaces to hyphens (`µ` and `é` stay). Copy the heading exactly from the
   file and derive the slug; e.g. "The matcher without its step: writes 1% to 3% faster, kept" becomes
-  `the-matcher-without-its-step-writes-1-to-3-faster-kept`. The comments in `src/` quote headings of
-  explored-designs.md in double quotes; those quotes are often only the start of the heading, so look
-  up the full heading with `grep -n '^#' docs/explored-designs.md`.
+  `the-matcher-without-its-step-writes-1-to-3-faster-kept`. Look up the full heading with
+  `grep -n '^#' docs/explored-designs.md`.
 - No "In this chapter we will ..." opener and no "In this chapter we learned ..." closer. Start with
   the substance: one or two paragraphs that say what the code does and how it fits, then the code.
 - End a chapter with the limitation or open point, if there is one, or simply with the last

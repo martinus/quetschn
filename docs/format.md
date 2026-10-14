@@ -188,9 +188,9 @@ are too large for a token. The literal tables code the literals themselves.
 Every table is built from counts that are in the kernel, `lib/seqlz/seqlz_counts.txt`, by
 `scripts/gen-seqlz-tables.py`, which writes `lib/seqlz/seqlz_tables.c`. The counts say how often each
 token, `ll` and `ml` symbol occurred on the training pages, and for each literal table, how often each
-byte occurred as a literal on the pages that table codes best. The pages are 524 912 memory pages of
-desktops and a phone. They are not published, because memory pages hold keys and passwords. The counts
-can't give those back: they are sums over all pages, each literal table's over 845 pages or more, and
+byte occurred as a literal on the pages that table codes best. The pages are 1 091 983 memory pages of
+a desktop and a phone. They are not published, because memory pages hold keys and passwords. The counts
+can't give those back: they are sums over all pages, each literal table's over 10 590 pages or more, and
 they don't say which symbol came after which or on which page.
 -->
 <!-- not in the kernel's copy -->

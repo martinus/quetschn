@@ -5,10 +5,9 @@
  * they are in seqlz_default_tables_4k.inc, which
  * tools/kernel-port/gen-seqlz-tables.py makes from the counts in
  * bench/seqlz_counts_4k.txt, counted with
- *   quetschn-seqlz-train --corpus train-rz-phone5 --counts
- * on pages that are not in the dumps the benchmarks measure. Which pages, and
- * why: docs/format.md, "Where the tables come from", and
- * docs/explored-designs.md, "The tables trained again".
+ *   quetschn-seqlz-train --corpus train-mix-1012 --counts
+ * on pages that are not in the dumps the benchmarks measure. docs/format.md
+ * says which pages, in "Where the tables come from".
  */
 #include "seqlz.h"
 

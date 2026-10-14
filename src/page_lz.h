@@ -87,7 +87,7 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * Unlike lz4 it tries every position, also after a long stretch without a
  * match, where lz4 starts to skip. Skipping needed more state in the loop:
  * without it, pages that compress are written faster and pages that do not
- * slower ("The matcher without its step").
+ * slower.
  *
  * Each sequence goes to the encoder as soon as it is found. With the encoder
  * inlined, finding and writing the sequences is one pass over the page.
