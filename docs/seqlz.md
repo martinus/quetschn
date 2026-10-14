@@ -34,11 +34,11 @@ How to read the numbers:
   [the book](https://martin.ankerl.com/quetschn/#ch-zram--score)). How many bytes one µs per page is
   worth to you, an exchange rate, decides which codec is the best choice.
 * **When it was measured.** [The result](#the-result-lz4s-time-zstds-size-almost) is from 5th October
-  2026, with the tables used before 7th October. The tables of 7th October, now in the code, store the
-  pages of the first dump 0.3% and of the second 4% smaller than those of 6th October, at the same speed
-  ([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
-  They are trained on pages that programs had in RAM on a desktop, on a third zram dump of that
-  desktop, and on a phone's zram dump, not on the two dumps measured here.
+  2026, with the tables used before 7th October. The code has the tables of 14th October now, trained on
+  three sessions of a phone under memory pressure, on pages that programs had in RAM on a desktop and
+  on a third zram dump of that desktop, not on the two dumps measured here. On those two dumps they
+  store 0.8% and 0.4% less than the tables of 13th October
+  ([explored-designs.md](explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
 
 ## The result: lz4's time, zstd's size, almost
 
