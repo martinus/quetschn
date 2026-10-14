@@ -1,28 +1,19 @@
 # What makes code slow on a CPU {#ch-cpu}
 
-seqlz's decoder runs 2.1 times as many instructions as lz4's: 25 284 against 11 899 per page, as of
-5th October 2026. It takes 7609 cycles for them, against lz4's 4992, so it is 1.5 times as slow, not
-2.1. In a real swap-in on the PC it takes 2.0 µs against 1.4. The difference between instruction
-count and time is what this chapter is about. Most choices in `src/` that look odd at first, a table
-of exactly {{ch03.tok_dec.entries}} entries, a bitstream read from the top bit, 8 streams of
-literals, a copy of 16 bytes for 3 literals, an `& 63U` on a shift that is never 64, follow from a
-few facts about how a CPU runs code.
-
-Each section explains one of them and shows where seqlz depends on it, with the function and the
-chapter where the code is explained line by line. Three facts decide most of the speed: waiting for
-memory, wrong guesses at branches, and chains of steps that wait for each other. The small cores of
-phones make all three worse. The rest of the chapter is about tools the code uses on the way:
-registers, loads at any address, byte order, several numbers in one register, copies of more bytes
-than needed, and the undefined behaviour of C that the code has to steer around.
+seqlz's decoder runs 2.1 times as many instructions as `lz4`'s, 25 284 against 11 899 per page, and
+takes 1.5 times the cycles, 7609 against 4992, as of 5th October 2026. In a real swap-in on the PC it
+takes 2.0 µs against 1.4. The gap between instructions and time is what this chapter is about. Most
+choices in `src/` that look odd at first, a table of exactly {{ch03.tok_dec.entries}} entries, a
+bitstream read from the top bit, 8 streams of literals, a copy of 16 bytes for 3 literals, follow
+from three facts: a core waits for memory, for wrong guesses at branches, and for chains of steps
+that need each other's results. The small cores of phones make all three worse. Each section names
+the function and the chapter where the code is.
 
 ## Instructions are not time {#ch-cpu--ipc}
 
-A CPU core runs at a clock, e.g. 4.5 GHz, which is 4.5 billion **cycles** per second, 0.22 ns each.
-A modern core does not run one instruction per cycle. It fetches several instructions ahead,
-finds the ones whose inputs are ready, and runs several of them in the same cycle on separate units:
-adders, shifters, load units. The number of instructions it completes per cycle, the **IPC**, says
-how much of that parallel work a piece of code lets it do.
-<!-- undated: an example clock, not a measurement -->
+A modern core fetches instructions ahead, finds the ones whose inputs are ready, and runs several of
+them in the same cycle on separate units. The instructions it completes per cycle, the **IPC**, say
+how much of that parallel work a piece of code allows.
 
 ::: measured seqlz against lz4, the decoder alone
 A loop over 2000 pages a desktop swapped into zram, the pages in the cache, on the Ryzen 9 7950X of
@@ -35,35 +26,27 @@ the development machine, per page, as of 5th October 2026
 | `seqlz-fast-lit` | 25 284 | 7609 | 3.3 |
 
 This loop decodes every page several times, which flatters seqlz, see
-[the branches](#ch-cpu--branches). In a swap-in in the kernel, measured in a VM on the same CPU,
-`zcomp_decompress()` takes 2.0 µs for seqlz and 1.4 µs for lz4
+[the branches](#ch-cpu--branches). In a swap-in in the kernel, in a VM on the same CPU,
+`zcomp_decompress()` takes 2.0 µs for seqlz and 1.4 µs for `lz4`
 ([The decoder in a fault, found](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
 :::
 
 seqlz gets more instructions per cycle because more of its work is independent: 8 streams of
-literals decoded side by side, a token's lookup that does not wait for the copies of the sequence
-before. So the count of instructions is a poor guide to time. What follows are the three things that make a core wait.
+literals decoded side by side, and a token's lookup that does not wait for the copies of the sequence
+before.
 
 ## Memory comes in cache lines {#ch-cpu--cache}
 
-RAM is far from the core. A load whose data is in no cache takes about 100 ns, 450 cycles at 4.5
-GHz. So the core has caches: small, fast copies of recently used memory. The smallest and fastest,
-**L1**, holds a few dozen KiB per core and answers in about 1 ns. L2 and L3 are larger and slower.
-The unit of a cache is the **cache line**, 64 bytes on every CPU this book is about: a load of one
-byte brings the whole aligned 64 bytes around it into L1, and the next load in the same line is
-cheap.
+A load whose data is in no cache takes about 100 ns, 450 cycles at 4.5 GHz. The smallest and fastest
+cache, **L1**, holds a few dozen KiB per core and answers in about 1 ns; L2 and L3 are larger and
+slower. The unit of a cache is the **cache line**, 64 bytes on every CPU this book is about: a load of
+one byte brings the aligned 64 bytes around it into L1.
 <!-- undated: typical latencies of any PC, not this project's measurement -->
 
-::: cpu Cold and warm in zram
-A page in zram was swapped out because nobody used it for a while. When a program touches it again,
-its compressed bytes are usually in no cache: the page is **cold**. The decoder's tables, {{size.tables|grp}} bytes
-shared by all CPUs, may also have been pushed out of the caches by whatever ran since the last
-swap-in. A benchmark that reads the same page twice, or decodes pages in a tight loop, has all of
-that **warm**, and measures something else than a swap-in.
-:::
-
-seqlz's decoder needs its tables on every page, so their size is chosen for L1. These are the tables
-of 4 KiB pages, from `struct seqlz_tables` in `src/seqlz_internal.h` ([chapter 7](#ch-internal)):
+In a swap-in the compressed bytes are cold ([chapter 1](#ch-zram--path)), and the decoder's tables,
+{{size.tables|grp}} bytes shared by all CPUs, may have been pushed out of the caches by whatever ran
+since the last swap-in. The decoder needs its tables on every page, so their sizes are chosen for L1.
+The tables of 4 KiB pages, from `struct seqlz_tables` ([chapter 7](#ch-internal)):
 
 | table | entries | bytes | cache lines | read |
 | --- | --- | ---: | ---: | --- |
@@ -75,41 +58,38 @@ of 4 KiB pages, from `struct seqlz_tables` in `src/seqlz_internal.h` ([chapter 7
 
 The decoder of a page with coded literals reads from {{ch03.dec_kib}} KiB of tables, the encoder
 from the {{ch03.tok_enc.kib}} KiB of token codes next to the matcher's {{ch03.hash.kib}} KiB. Each
-table's size is a format decision. The token table has {{ch03.tok_dec.entries}} entries because
-token codes have at most {{ch03.tok_bits}} bits (`SEQLZ_TOKEN_BITS`), the length tables
-{{ch03.len_dec.entries}} because their codes have at most {{ch03.len_bits}} (`SEQLZ_MAX_BITS`), the
-literal tables {{ch03.lit_dec.entries}} because literal codes have at most {{ch03.lit_bits}}
-(`SEQLZ_LIT_BITS`). Longer codes would compress a little better and double a table.
+size is a format decision: the token table has {{ch03.tok_dec.entries}} entries because token codes
+have at most {{ch03.tok_bits}} bits (`SEQLZ_TOKEN_BITS`), the length tables
+{{ch03.len_dec.entries}} for codes of at most {{ch03.len_bits}} (`SEQLZ_MAX_BITS`), the literal
+tables {{ch03.lit_dec.entries}} for codes of at most {{ch03.lit_bits}} (`SEQLZ_LIT_BITS`). One bit
+more would compress a little better and double a table.
 
 ::: measured Tables have to stay in L1
 In an early version of the format, the token had 512 symbols and codes of up to 12 bits, a decode
-table of 8 KiB of 2-byte entries then. With it, the slowest 1% of cold reads were 650 ns slower than
-with the 256-symbol token before it, whose table was smaller. Limiting the same 512 symbols to codes
-of up to 11 bits, a table of 4 KiB, took the p99 of cold reads from 5070 to 4350 ns. Measured in the userspace
-harness on the Ryzen 9 7950X
+table of 8 KiB of 2-byte entries. With it, the slowest 1% of cold reads were 650 ns slower than with
+the 256-symbol token before it. Limiting the same 512 symbols to codes of up to 11 bits, a table of 4
+KiB, took the p99 of cold reads from 5070 to 4350 ns. Measured in the userspace harness on the Ryzen 9
+7950X
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
-The comment at `SEQLZ_MAX_BITS` in `src/seqlz.h` says the same for the length tables: one twice as
-large made cold reads slower.
 :::
 
 ## Prefetching: many misses at once {#ch-cpu--prefetch}
 
-A cache miss costs about 100 ns, but a core can have several misses in flight at once. Ten misses one
-after the other cost ten times 100 ns; ten misses that start together cost little more than one. An
-out-of-order core finds such misses on its own when the addresses are known early. When they are
-known only late, e.g. because each table index depends on the bits the lookup before consumed, the
-code has to ask for the lines ahead of time. That is a **prefetch**: an instruction that asks the
-CPU to bring a line into the cache and does not wait for it. On x86-64 it is `prefetcht0`, on arm64
-`prfm`, and the kernel's name for it is `prefetch()`.
+A core can have several misses in flight at once: ten misses one after the other cost ten times 100
+ns, ten that start together little more than one. An out-of-order core finds such misses on its own
+when the addresses are known early. When they are known late, e.g. because each table index depends
+on the bits the lookup before consumed, the code asks for the lines ahead of time with a
+**prefetch**, an instruction that starts the load and does not wait for it: `prefetcht0` on x86-64,
+`prfm` on arm64, `prefetch()` in the kernel.
 <!-- undated: a typical latency of any PC, and arithmetic on it -->
 
 <!-- undated: the animation is a model with round numbers, not a measurement -->
 @anim misses A model, not a measurement: 8 lookups whose addresses do not depend on each other and whose lines are in no cache, about 100 ns per miss as above, and 20 ns of work on each entry. The out-of-order core's window holds the work of 3 lookups. One step is 20 ns.
 
 `seqlz_decode()` asks for the lines of its tables before it reads the first byte of the page,
-{{ch03.prefetch_lines}} lines per round of a small loop. [Chapter 12](#ch-dec-basics--prefetch) goes
-through that loop, `prefetch_lines()`, line by line, and says why a table that does not start at a
-cache line misses its last line: the literal tables always do.
+{{ch03.prefetch_lines}} lines per round of a small loop, `prefetch_lines()`
+([chapter 12](#ch-dec-basics--prefetch)), which also says why a table that does not start at a cache
+line misses its last line: the literal tables always do.
 @assert ch03.lit_at_mod != 0 and ch03.lit_size_mod == 0
 
 ::: measured What the prefetches give
@@ -118,175 +98,46 @@ reads were 14.5 µs slower on average and 30 µs slower at p99, 77.28 against 62
 against 90.26
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#4-prefetching-the-tables-the-a55-needs-it-the-a76-is-faster-without)).
 On the PC the prefetches cover the tables so well that, in a swap-in in the kernel VM, reading every
-line of them before the decode made the decode only 6 to 25 ns faster
+line of them before the decode made it only 6 to 25 ns faster
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 The same idea for the compressed data, in zram before the decoder runs, took `lz4`'s p99 of cold
 reads from 5600 to 3891 ns in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 :::
 
-Two traps around prefetches are handled in `src/seqlz_compat.h`, see [chapter 5](#ch-compat). The
-kernel builds x86-64 without SSE, and clang then drops `__builtin_prefetch()` without a word; the
-project carries a kernel patch for it. And the Mi 9T's 4.14 kernel says that arm64 cache lines are
-128 bytes, while its cores have 64: with 128, `prefetch_lines()` would skip every second line.
+Two traps around prefetches are handled in `src/seqlz_compat.h` ([chapter 5](#ch-compat--prefetch)):
+clang drops `__builtin_prefetch()` without a word when x86-64 is built without SSE, as the kernel is,
+and the Mi 9T's 4.14 kernel says that arm64 cache lines are 128 bytes, while its cores have 64.
 
 ## Which cache lines a lookup touches {#ch-cpu--msb-first}
 
-A decode table is indexed by the next 11 bits of the bitstream
-([chapter 2](#ch-compression--table-decoding)). A code of $l$ bits fills
-$2^{11-l}$ entries: all indices that start with its bits, whatever bits come after it. Which
-entries those are depends on the order the bits are read in, and that decides how many cache lines a
-page touches.
-
-seqlz reads its bitstream **most significant bit first** ([chapter 4](#ch-format--bitstream)). The
-next code is then the top bits of the index, and the $2^{11-l}$ entries of a code are one range.
-Token 49's code is `{{tok.code.49}}`: its entries are the indices `{{tok.code.49}}xxxxxxx`, {{ch03.t49.first}}
-to {{ch03.t49.last}}. At 4 bytes per entry and 16 entries per line, that is lines
-{{ch03.t49.line_first}} to {{ch03.t49.line_last}}. Token 4's code `{{tok.code.4}}` has the
-{{ch03.t4.entries}} entries {{ch03.t4.first}} to {{ch03.t4.last}}, all in line
+A code of $l$ bits fills $2^{11-l}$ entries of the token table, all indices that start with its bits
+([chapter 2](#ch-compression--table-decoding)). Which entries those are depends on the order the bits
+are read in, and that decides how many cache lines a page touches. Read **most significant bit
+first**, as seqlz does ([chapter 4](#ch-format--bitstream)), they are one range. Token 49's code
+`{{tok.code.49}}` fills the indices {{ch03.t49.first}} to {{ch03.t49.last}}: at 16 entries of 4 bytes
+per line, lines {{ch03.t49.line_first}} to {{ch03.t49.line_last}}. Token 4's code `{{tok.code.4}}`
+fills {{ch03.t4.entries}} entries, {{ch03.t4.first}} to {{ch03.t4.last}}, all in line
 {{ch03.t4.line_first}}.
 @assert tok.len[49] == 4 and ch03.t4.line_first == ch03.t4.line_last
 
-Read **least significant bit first**, as seqlz did until 6th October 2026, the code is in the low
-bits of the index, and its entries are every $2^l$-th entry of the table. Token 49's
-{{ch03.t49.entries}} entries are then indices {{ch03.t49.lsb.at.0}}, {{ch03.t49.lsb.at.1}},
-{{ch03.t49.lsb.at.2}}, and so on, one in every one of the {{ch03.t49.lsb.lines}} lines, and token
-4's {{ch03.t4.entries}} entries are in {{ch03.t4.lsb.lines}} lines, {{ch03.t4.lsb.line.0}},
-{{ch03.t4.lsb.line.1}}, {{ch03.t4.lsb.line.2}} and so on, {{ch03.t4.lsb.step}} lines apart:
+Read **least significant bit first**, as seqlz did until 6th October 2026, a code's entries are every
+$2^l$-th entry ([chapter 2](#ch-compression--msb)). Token 49's {{ch03.t49.entries}} entries are then
+indices {{ch03.t49.lsb.at.0}}, {{ch03.t49.lsb.at.1}}, {{ch03.t49.lsb.at.2}} and so on, one in each of
+the {{ch03.t49.lsb.lines}} lines, and token 4's are in {{ch03.t4.lsb.lines}} lines,
+{{ch03.t4.lsb.line.0}}, {{ch03.t4.lsb.line.1}}, {{ch03.t4.lsb.line.2}} and so on,
+{{ch03.t4.lsb.step}} lines apart:
 @assert (ch03.t49.line_first, ch03.t49.line_last, ch03.t4.line_first, ch03.t49.lsb.lines, ch03.t4.lsb.line[0], ch03.t4.lsb.step, ch03.t4.lsb.lines) == (0, 7, 62, 128, 3, 16, 8)
 
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 230" role="img" aria-label="Two grids of the 128 cache lines of the token table. Read most significant bit first, the 4-bit code of token 49 fills lines 0 to 7 and token 4 one line, 62; read least significant bit first, token 49 has an entry in every line and token 4 in 8 lines" font-size="12">
   <text x="186" y="28" text-anchor="middle" font-weight="bold">most significant bit first</text>
-  <g class="acc"><rect x="50" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="67" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="84" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="101" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="118" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="135" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="152" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="169" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <rect x="186" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="40" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="55" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="70" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <g class="mark"><rect x="288" y="85" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <rect x="305" y="85" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="100" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="115" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="130" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="50" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="67" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="84" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="101" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="118" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="135" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="152" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="169" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="186" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="203" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="220" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="237" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="254" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="271" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="288" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="305" y="145" width="17" height="15" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="50" y="40" width="272" height="120" class="fill-paper"/>
+  <g class="acc"><rect x="50" y="40" width="136" height="15" class="fill-acc" fill-opacity="0.3"/></g>
+  <g class="mark"><rect x="288" y="85" width="17" height="15" class="fill-mark" fill-opacity="0.75"/></g>
+  <path d="M67,40 V160 M84,40 V160 M101,40 V160 M118,40 V160 M135,40 V160 M152,40 V160 M169,40 V160 M186,40 V160 M203,40 V160 M220,40 V160 M237,40 V160 M254,40 V160 M271,40 V160 M288,40 V160 M305,40 V160 M50,55 H322 M50,70 H322 M50,85 H322 M50,100 H322 M50,115 H322 M50,130 H322 M50,145 H322" fill="none" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="50" y="40" width="272" height="120" fill="none" stroke="currentColor" stroke-width="0.5"/>
   <text x="44" y="51" text-anchor="end" class="mut" font-size="11">0</text>
   <text x="44" y="66" text-anchor="end" class="mut" font-size="11">16</text>
   <text x="44" y="81" text-anchor="end" class="mut" font-size="11">32</text>
@@ -296,134 +147,10 @@ bits of the index, and its entries are every $2^l$-th entry of the table. Token 
   <text x="44" y="141" text-anchor="end" class="mut" font-size="11">96</text>
   <text x="44" y="156" text-anchor="end" class="mut" font-size="11">112</text>
   <text x="546" y="28" text-anchor="middle" font-weight="bold">least significant bit first</text>
-  <g class="acc"><rect x="410" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="40" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="40" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="55" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="55" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="70" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="70" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="85" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="85" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="100" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="100" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="115" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="115" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="130" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="130" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="410" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="427" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="444" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="461" y="145" width="17" height="15" class="fill-mark" fill-opacity="0.75" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="478" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="495" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="512" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="529" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="546" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="563" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="580" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="597" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="614" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="631" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="648" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="665" y="145" width="17" height="15" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
+  <g class="acc"><rect x="410" y="40" width="272" height="120" class="fill-acc" fill-opacity="0.3"/></g>
+  <g class="mark"><rect x="461" y="40" width="17" height="120" class="fill-mark" fill-opacity="0.75"/></g>
+  <path d="M427,40 V160 M444,40 V160 M461,40 V160 M478,40 V160 M495,40 V160 M512,40 V160 M529,40 V160 M546,40 V160 M563,40 V160 M580,40 V160 M597,40 V160 M614,40 V160 M631,40 V160 M648,40 V160 M665,40 V160 M410,55 H682 M410,70 H682 M410,85 H682 M410,100 H682 M410,115 H682 M410,130 H682 M410,145 H682" fill="none" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="410" y="40" width="272" height="120" fill="none" stroke="currentColor" stroke-width="0.5"/>
   <text x="404" y="51" text-anchor="end" class="mut" font-size="11">0</text>
   <text x="404" y="66" text-anchor="end" class="mut" font-size="11">16</text>
   <text x="404" y="81" text-anchor="end" class="mut" font-size="11">32</text>
@@ -442,11 +169,10 @@ bits of the index, and its entries are every $2^l$-th entry of the table. Token 
 </figure>
 
 The lookup reads one entry, and which one depends on the bits after the code too. Most significant
-bit first, the frequent short codes keep coming back to the same few lines. Least significant bit
-first, they land on lines all over the table. Counted on 20 000 pages, a page touches 42.5 of the
-token table's 128 lines most significant bit first, and 55.3 least significant bit first. The bytes
-of the pages are the same either way: the change was the order, not the codes.
-
+bit first, the frequent short codes keep coming back to the same few lines. Counted on 20 000 pages, a
+page touches 42.5 of the token table's 128 lines most significant bit first, and 55.3 least
+significant bit first, with the same bytes of the pages
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#six-choices-made-on-the-pc-measured-on-the-phone-the-token-table-and-the-prefetches-matter-the-rest-does-not)).
 The same count for the {{slab.tokens}} token lookups of [chapter 16](#ch-trace)'s page, one for each
 sequence but the last, which has no token:
 
@@ -454,104 +180,86 @@ sequence but the last, which has no token:
 
 ::: measured The bit order on the phone
 On the Mi 9T's big core, a Cortex-A76, with the token table not prefetched on that core as it was
-then: with the table's codes in one range, cold reads were 9.57 to 9.73 µs in every run; with the codes spread, one build of the same decoder read in 9.39 µs and
-another in 10.50, depending on where the tables of the kernel module landed in memory (a module is
-kernel code loaded at run time, see [chapter 15](#ch-zram-glue--init)). On the PC the change
-cost nothing: 7370 against 7410 cycles per page in the decode loop
+then: with the codes in one range, cold reads were 9.57 to 9.73 µs in every run; with the codes
+spread, one build of the same decoder read in 9.39 µs and another in 10.50, depending on where the
+tables of the kernel module landed in memory. On the PC the change cost nothing: 7370 against 7410
+cycles per page in the decode loop
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
 :::
 
-The price of most significant bit first is a byte swap on every load of the bitstream, see
-[byte order](#ch-cpu--endian). It costs one instruction per refill, not per code.
+The price of most significant bit first is a byte swap on every refill of the bit register, not on
+every code ([byte order](#ch-cpu--endian)).
 
 ## Branches, and a predictor that learns the page {#ch-cpu--branches}
 
-A **branch** is an instruction that decides where the program goes next: an `if`, the end test of a
-loop, a `switch`. A core works many instructions ahead, so it has to know the outcome of a branch
-long before the branch's condition is computed. It guesses, with a **branch predictor** that
-remembers how each branch went the last times, and how the branches before it went. When the guess
-is right, the branch is nearly free. When it is wrong, a **misprediction**, the core throws away the
-work it did on the wrong path and starts again at the right one. That costs about 15 to 20 cycles.
+A core works many instructions ahead, so it has to guess the outcome of a branch long before its
+condition is computed. A **branch predictor** remembers how each branch went the last times, and how
+the branches before it went. A right guess is nearly free. A wrong one, a **misprediction**, throws
+away the work done on the wrong path, about 15 to 20 cycles.
 <!-- undated: a typical cost on current cores, not this project's measurement -->
 
 ::: measured What a misprediction costs, and that the predictor learns a page
 In the kernel VM on the Ryzen 9 7950X at 4.5 GHz, `seqlz-fast-lit`'s decoder in a swap-in mispredicted
 200.9 branches per page. When the same page was decoded once right before, it mispredicted 89.5, and
-took 1867 cycles less, with the same instructions and the same L1 misses: 111 mispredictions fewer for
-1867 cycles is about 17 cycles each
+took 1867 cycles less, with the same instructions and the same L1 misses: about 17 cycles for each of
+the 111 mispredictions
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
 :::
 
-The second number is the surprise: a branch predictor learns a page of 4 KiB after one decode.
-In userspace it is the same: 130 mispredictions per page for a page decoded once, 11.6 for a page
-decoded right after itself. Every benchmark that decodes a page more than once, a loop over pages in
-the cache, the project's read benchmark in the kernel VM, which reads each page 6 times in a row,
-warm and cold, in each of the 3 runs whose median [chapter 1](#ch-zram--codecs) quotes, measures a
-decoder that knows the page. A swap-in decodes a
-page once. Since then, the decode times the project trusts come from `MODE=swap` of its kernel VM,
-which swaps each page in once per pass, with 20 000 other pages in between.
+The surprise is the second number: a branch predictor learns a page of 4 KiB after one decode. In
+userspace it is the same, 130 mispredictions per page for a page decoded once and 11.6 right after
+itself. Every benchmark that decodes a page more than once measures a decoder that knows the page:
+a loop over pages in the cache, and the project's read benchmark in the kernel VM, which reads each
+page 6 times in a row in each run ([chapter 1](#ch-zram--codecs)). A swap-in decodes a page once.
+Since then, the decode times the project trusts come from `MODE=swap` of its kernel VM, which swaps
+each page in once per pass, with 20 000 other pages in between.
 
 Three branches of the sequence loop made 58% of the mispredictions of a page seen once: whether the
-bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, 24 (the **fast
-path** is the common case of a short sequence away from the end of the page, decoded with few
-checks, [chapter 14](#ch-decode)); and whether the match's offset is below 8, 20 to 22
+bit register needs a refill, 32 per page; whether the sequence takes the **fast path**, the common
+case of a short sequence away from the end of the page ([chapter 14](#ch-decode)), 24; and whether
+the match's offset is below 8, 20 to 22
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
-The first one could be removed. Whether {{ch03.refill_at}} bits are left in the buffer depends on
-the lengths of the codes before, which no predictor knows for a new page. But a refill leaves at
-least 56 bits, and two fast sequences take at most {{ch03.two_fast}} of them on 4 KiB pages,
-{{k16.ch03.two_fast}} on 16 KiB. So `next_token_fast()` refills every second fast sequence without
-asking, a branch that alternates and that every predictor gets right.
-[Chapter 14](#ch-decode--next-token) goes through the lines, the count of bits, and what it saved per swap-in
-in the kernel VM and on the phone.
+The first one is gone. Whether {{ch03.refill_at}} bits are left depends on the lengths of the codes
+before, which no predictor knows for a new page. But a refill leaves at least 56 bits, and two fast
+sequences take at most {{ch03.two_fast}} of them on 4 KiB pages, {{k16.ch03.two_fast}} on 16 KiB, so
+`next_token_fast()` refills every second fast sequence without asking, a branch that alternates and
+that every predictor gets right ([chapter 14](#ch-decode--next-token)).
 
 ### Code without a branch
 
-The other way to avoid a misprediction is code without a branch: compute the outcome with
-arithmetic. `seqlz_off_class()` picks the offset class of a match for the encoder. The classes come
-in no order a predictor could learn, so it has no `if`: each comparison in C is an `int`, 0 or 1, and
-the code adds and subtracts them into the class and masks it. [Chapter 6](#ch-header--offsets) works it out for a few
-offsets.
-
-Code without branches is not always faster. It runs every instruction of both outcomes, and a branch
-that the predictor gets right costs almost nothing. An early version of the decoder replaced its
-branches with masks: the mispredictions fell from 155 to 68 per page, but the instructions rose by
-15 000 per page, and the cycles from 9400 to 12 000. "At 3.4 to 3.9 instructions per cycle, instructions are
-as expensive as mispredictions here"
+The other way around a misprediction is arithmetic instead of a branch. `seqlz_off_class()` picks a
+match's offset class from comparisons added and masked, without an `if`, because the classes come in
+no order a predictor could learn ([chapter 6](#ch-header--offsets)). It is not always faster: it runs
+the work of both outcomes, and a branch the predictor gets right costs almost nothing. An early
+version of the decoder that replaced its branches with masks mispredicted 68 instead of 155 times per
+page, ran 15 000 more instructions, and took 12 000 instead of 9400 cycles. "At 3.4 to 3.9
+instructions per cycle, instructions are as expensive as mispredictions here"
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
-The fast path's copies show the same in a swap-in: fixed copies of 32 or 40 bytes instead of copies
-behind two branches had 14 fewer mispredictions per page and took more cycles
+The fast path's copies, measured again on pages seen once: fixed copies of 32 or 40 bytes instead of
+copies behind two branches had 14 fewer mispredictions per page and took more cycles
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)).
-And a `?:` in C is not a promise of code without a branch: the compiler decides, and the same
-measurement found two `?:` of the decoder compiled to branches that made 30% and 28% of all
-mispredictions.
+And a `?:` is no promise of code without a branch: the same early measurement found two `?:` of the
+decoder compiled to branches that made 30% and 28% of all mispredictions.
 
 ### One branch for two questions
 
-The matcher in `src/page_lz.h` asks two questions at every position of the page: do the next 4 bytes
-match at the repeat offset, and do they match at the candidate from the hash table? Both answers are
-close to random. It reads both candidates first and decides with one branch on `rep_hit | cand_hit`
-([chapter 9](#ch-matcher--position) has the lines). With three
-branches per position, the matcher mispredicted 539 times per page; with one branch, 329, and the p99 of
-compressing a cold page went from 15.4 to 12.6 µs
+At every position of the page the matcher asks whether the next 4 bytes match at the repeat offset,
+and whether they match at the candidate from the hash table. Both answers are close to random. It
+computes both first and decides with one branch on `rep_hit | cand_hit`
+([chapter 9](#ch-matcher--position)). With three branches per position the matcher mispredicted 539
+times per page, with one 329, and the p99 of compressing a cold page went from 15.4 to 12.6 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-seqlz-fast)).
 
 ## Chains of dependent steps {#ch-cpu--chains}
 
-Two instructions can run in the same cycle only if neither needs the other's result. A **chain** is a
-sequence of steps where each needs the result of the one before. A chain sets a lower bound on the
-time, whatever the width of the core: if each step takes 5 cycles and there are 100 of them, it takes
-500 cycles, even if the core could run 6 instructions per cycle.
-<!-- undated: arithmetic on made-up numbers -->
-
-Decoding Huffman codes is such a chain. To decode a literal, the decoder takes the next 10 bits of
-its stream, looks them up in the literal table, writes the byte the entry holds, and shifts the
-stream by the code's length, which the entry holds too ([chapter 13](#ch-literals-dec--decode) has
-the lines). The next literal's 10 bits are known only after the shift, and the shift needs the entry
-the load returns. So in one stream every literal waits for the load and the shift of the one before:
-an L1 load takes a few cycles, the shift one more. That is the chain of the top row in the figure.
-The 8 streams of a page with coded literals are 8 such chains that do not depend on each other
-([chapter 4](#ch-format--layout)): the decoder steps all 8 in turn, and while one stream's load is on
-its way, the next stream's load can start.
+A **chain** is a sequence of steps where each needs the result of the one before. It bounds the time
+from below, whatever the width of the core. Decoding Huffman codes is such a chain: to decode a
+literal, the decoder looks up the next 10 bits of its stream in the literal table and shifts the
+stream by the code length the entry holds ([chapter 13](#ch-literals-dec--decode)). The next lookup
+needs the shifted bits, so in one stream every literal waits for the load and the shift of the one
+before. The 8 streams of a page with coded literals ([chapter 4](#ch-format--layout)) are 8 chains
+that do not depend on each other: the decoder steps all 8 in turn, and while one stream's load is on
+its way, the next one's can start.
 
 <figure class="diagram">
 <div class="scroll">
@@ -646,244 +354,136 @@ its way, the next stream's load can start.
 </figure>
 
 With 4 streams a literal took about 2.9 cycles to decode, and 8 streams made a page decode faster
-for a few bytes more header; [chapter 13](#ch-literals-dec--cost) has the measurements. Measured
-again in October 2026, 4 streams made reads 0.7% to 1.8% slower in the kernel VM and saved 2.0 bytes
-per page, so 8 stayed
+for a few bytes more header ([chapter 13](#ch-literals-dec--cost)). Measured again in October 2026,
+4 streams made reads 0.7% to 1.8% slower in the kernel VM, for 0.1% to 0.2% less memory, so 8 stayed
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
+The encoder has the same chain the other way round, a shift and an or on a stream's accumulator per
+code, and `lit_streams()` writes 4 streams at a time, each with its own accumulator
+([chapter 11](#ch-literals-enc)); one stream after the other took about 3.5 cycles per literal.
 
-The encoder has the same chain the other way round: appending a code to a stream is a shift and an
-or on that stream's accumulator. `lit_streams()` in `src/seqlz_compress.c` writes 4 streams at a time,
-each with its own accumulator ([chapter 11](#ch-literals-enc)); one stream after the other took about
-3.5 cycles per literal.
-
-The sequences have a chain too, and it is the reason for the format's main idea. Each sequence's
-token is found by a table lookup, and the bits of the next token start where this sequence's bits
-end, which is known only from the entry. So the chain from one sequence to the next is lookup, shift,
-lookup. Everything that adds a step to that chain costs on every sequence. Putting the offset class
-into the token, instead of a symbol of its own after it, took a second lookup off the chain: 8168
-instead of 8758 cycles per page
+The sequences have a chain too, and it is the reason for the format's main idea. The bits of the next
+token start where this sequence's bits end, which is known only from the token's table entry: lookup,
+shift, lookup. Every step added to that chain costs on every sequence. Putting the offset class into
+the token, instead of a symbol of its own after it, took a second lookup off the chain: 8168 instead
+of 8758 cycles per page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
-The copies of the literals and the match hang off this chain but are not on it: the next lookup does
-not wait for them.
+The copies of the literals and the match hang off this chain but are not on it.
 
 ## In-order cores wait at every load {#ch-cpu--in-order}
 
-The cores of a PC and the big cores of a phone are **out of order**: they look at a window of the
-next few hundred instructions and run whichever have their inputs ready, in any order. When a load
-misses the cache, they keep working on everything that does not need it. The Mi 9T, the project's
-test phone, has both kinds: big Cortex-A76 cores, out of order, and little Cortex-A55 cores, which are
-**in order**. An A55 issues instructions strictly in program order, at most two per cycle. When an
-instruction needs a value that is not there yet, the result of a load that has not arrived, it
-stops, and every instruction behind it stops too, even those that could have run.
+The cores of a PC and the big cores of a phone are **out of order**: they look at a window of the next
+few hundred instructions and run whichever have their inputs ready. When a load misses, they keep
+working on everything that does not need it. The Mi 9T has big Cortex-A76 cores, out of order, and
+little Cortex-A55 cores, which are **in order**: an A55 issues instructions in program order, at most
+two per cycle, and when one needs a value that has not arrived, it stops, and everything behind it
+stops too. A swap-in can run on either kind of core, so the project measures on both. Three
+consequences show in `src/`:
 
-A swap-in can run on either kind of core, so the project measures on both. Three consequences of
-the in-order core show in `src/`:
-
-**Every instruction costs.** Out of order, extra instructions that are not on a chain often fit into
-cycles that would be idle anyway. In order, they do not. On the A55 the decoder's loop ran at 0.99
-instructions per cycle, so fewer instructions were faster almost one for one. That is why the token
-table's entries are 4 bytes with every field ready to use ([chapter 7](#ch-internal)): taking the
-token apart at run time took 18 of about 60 instructions per sequence. The entries of 4 bytes, with a
-flag for "a length value follows", took the decoder from 16 547 to 15 129 instructions per page on
-the A55, and together with three smaller changes from 17 842
+**Every instruction costs.** On the A55 the decoder's loop ran at 0.99 instructions per cycle, so
+fewer instructions were faster almost one for one. That is why the token table's entries are 4 bytes
+with every field ready to use ([chapter 7](#ch-internal)): taking the token apart at run time took 18
+of about 60 instructions per sequence. The entries of 4 bytes, with a flag for "a length value
+follows", took the decoder from 16 547 to 15 129 instructions per page on the A55, and with three
+smaller changes from 17 842
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)).
 
-**A load has to start early.** If a value is loaded right before it is used, an in-order core waits
-for the whole latency of the load. If the load is issued a few instructions earlier, the instructions
-in between fill the wait. Compilers do some of this, but only within what they can prove is safe and
-worth it. The matcher does it by hand: it loads the next position's 8 bytes, hash, table entry and
-candidate bytes while it compares the current one. This is called **software pipelining**
-([chapter 9](#ch-matcher--position) has the lines). On the A55 the loads ahead, with two smaller
-changes to the same loop, took compression from 43 841 to 42 349 cycles per page, 3.4%, with the same
-output; on the PC from 16 489 to 16 148
+**A load has to start early.** Loaded right before it is used, a value costs an in-order core the
+whole latency of the load; issued a few instructions earlier, the instructions in between fill the
+wait. The matcher loads the next position's 8 bytes, hash, table entry and candidate bytes while it
+compares the current one, **software pipelining** ([chapter 9](#ch-matcher--position)). On the A55
+that, with two smaller changes to the same loop, took compression from 43 841 to 42 349 cycles per
+page, 3.4%, with the same output; on the PC from 16 489 to 16 148
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)).
-An earlier try of the same idea on the PC alone did nothing: an out-of-order core already loads the
-next position ahead by itself.
-
-The decoder does the same: in the fast path, `next_token_fast()` looks up the next token before the
-copies of the current sequence, and the copies fill the time the load takes. On the phone that made
-cold reads at the median 162 ns closer to `lz4` on the little core and 126 ns on the big one
+The decoder's fast path does the same: `next_token_fast()` looks up the next token before the copies
+of the current sequence, which fill the time the load takes. On the phone that made cold reads at the
+median 162 ns closer to `lz4` on the little core and 126 ns on the big one
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept)).
 
 **A miss it did not see coming stops it.** An out-of-order core finds the table lookups of the next
-sequences in its window and starts their misses early. An in-order core reaches each one only when it
-gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read. On the PC,
-prefetching the tables once made about 100 ns of difference, within the scatter of that measurement
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)). The [model of 8 misses](#anim-misses) in the section on prefetching shows the two kinds of core and the prefetches side by side.
+sequences in its window and starts their misses early; an in-order core reaches each one only when it
+gets there. So the table prefetches matter far more on the A55, 14.5 µs per cold read, than on the PC,
+where prefetching the tables once made about 100 ns of difference, within the scatter of that
+measurement
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
+The [model of 8 misses](#anim-misses) shows the two kinds of core side by side.
 
 Until 10th October 2026 the arm64 decoder had a second loop, written for in-order cores; now one loop
 runs on every core, because nothing else in the kernel's `lib/` asks which CPU it runs on
 ([chapter 17](#ch-decisions--one-loop-for-all-cores) has the cost on the A55).
 
-## Registers and the 64-bit bit buffer {#ch-cpu--registers}
+## Registers and the 64-bit bit register {#ch-cpu--registers}
 
-A **register** is a variable inside the core. Arithmetic works on registers; memory is loaded into
-them and stored from them. x86-64 has 16 general-purpose registers of 64 bits, arm64 has 31. When a
-function needs more live values than there are registers, the compiler keeps some on the stack and
-loads them back when needed, a **spill**. A spill is an extra load and store, and in a hot loop it can
-put a load onto a chain.
-
-seqlz reads its bitstream through one register. The decoder's `struct seqlz_bit_reader` has a
-`u64 bits` with the next bits on top and an `int count` of how many of them are real. A refill loads
-8 bytes at once and ORs them in below the bits that are left, and the code then takes tokens,
-offsets and length values off the top with shifts. One load of 8 bytes serves two or three
-sequences: a refill leaves at least 56 bits, and a sequence on the fast path takes at most
+x86-64 has 16 general-purpose registers, arm64 31. A value that does not fit is **spilled** to the
+stack, and in a hot loop that can put a load onto a chain. The decoder reads its bitstream through
+one register: `struct seqlz_bit_reader` has a `u64 bits` with the next bits on top and an `int count`
+of how many are real ([chapter 12](#ch-dec-basics--bit-reader)). One refill of 8 bytes serves two or
+three sequences: it leaves at least 56 bits, and a sequence on the fast path takes at most
 {{ch03.tok_bits}} bits of token and 14 of offset ({{ch03.off_max}} on 4 KiB pages).
-[Chapter 12](#ch-dec-basics--bit-reader) shows the reader line by line.
 
-The 8 literal streams need 8 such buffers at once, and a pointer each. With a count per stream as
-well, they did not fit into the registers of x86-64. So a stream has no count: its 64 bits carry a 1
-below the last real bit, a marker, and the number of bits used is the position of that 1, found with
-one count-trailing-zeros instruction when the stream is refilled ([chapter 13](#ch-literals-dec)).
-Even so, on the A55 the 8 stream pointers did not fit and went to the stack; they are needed only at
-a refill, once per {{ch03.lit_rounds}} literals of a stream.
+The 8 literal streams need 8 such registers at once and a pointer each, and with a count each they
+did not fit into x86-64's registers. So a stream has no count: its 64 bits carry a 1 below the last
+real bit, and the number of bits used is the position of that 1, one count-trailing-zeros at the
+stream's refill ([chapter 13](#ch-literals-dec)). Even so, on the A55 the 8 stream pointers went to
+the stack; they are needed only at a refill, once per {{ch03.lit_rounds}} literals of a stream.
 
-Registers also decided a choice in the matcher. Like lz4, it once moved on faster and faster when it
-found no match for a while. That step needs one more value in the loop, and "the matcher's loop has no
-register to spare". Without it, the pages that compress are written 5% faster, and in the kernel VM
+Registers also decided a choice in the matcher. Like `lz4`, it once moved on faster and faster when it
+found no match for a while. That step needs one more value in the loop, which has no register to
+spare. Without it, the pages that compress are written 5% faster, and in the kernel VM
 `seqlz-fast-lit` writes a page 0.23 µs faster, 3%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 
-## Loads at any address {#ch-cpu--unaligned}
+## Byte order, and loads at any address {#ch-cpu--endian}
 
-A compressed page is a string of bytes, and the code reads 2, 4 and 8 of them at a time at any
-position. The obvious C, `*(u64 *)p`, is wrong for two reasons. C requires a pointer to a `u64` to be
-aligned for a `u64`, usually to 8 bytes, and `p` is not; the behaviour is undefined, and some
-architectures fault on such a load. And reading bytes through a pointer of another type breaks C's
-aliasing rules, which the compiler may use to reorder loads and stores. The kernel builds with
-`-fno-strict-aliasing`, but the alignment rule stays.
+The code reads 2, 4 and 8 bytes at any position of a byte array, so through `memcpy()` into a local,
+which gcc and clang turn into one load, never through a cast pointer
+([chapter 5](#ch-compat--endian)). x86-64 and arm64 load from any address at full speed in most cases.
+They are little endian, and s390x, which Linux also runs on, is big endian, so each load names its
+byte order, `get_unaligned_le64()` or `get_unaligned_be64()`, and a page has the same bytes on every
+CPU; CI checks that on s390x. Both orders are used on purpose:
 
-The answer in `src/seqlz_compat.h` is `memcpy()` into a local variable; the kernel's own
-`get_unaligned_le64()` gets the same single load another way. A `memcpy()` of a constant 8 bytes is
-not a call: the compiler knows what it does and writes one load, and x86-64 and arm64 both load from
-any address. gcc 16.2.1 at `-O2` turns `get_unaligned_le64()` into `movq (%rdi), %rax`, and clang for
-arm64 into `ldr x0, [x0]`. [Chapter 5](#ch-compat--endian) has the lines. In the kernel, with
-`CONFIG_FORTIFY_SOURCE`, a `memcpy()` may stay a call, which is why the copies in `src/` call
-`__builtin_memcpy()`, see [chapter 6](#ch-header--summary).
-
-## Byte order {#ch-cpu--endian}
-
-A number of several bytes can be stored with its lowest byte first, **little endian**, or its highest
-byte first, **big endian**. x86-64 and arm64 as Linux runs it are little endian; s390x, IBM's
-mainframe, which Linux also runs on, is big endian. The format fixes the order where it matters: the
-2-byte header and the stream sizes are little endian ([chapter 4](#ch-format--layout)), and the bits
-of the bitstream are read from the top bit of each byte down. `src/seqlz_compat.h` gives each load
-its order explicitly, `get_unaligned_le64()` or `get_unaligned_be64()`, and on a CPU of the other
-order the load includes a byte swap. So a page has the same bytes on every CPU; CI checks that on
-s390x, see [chapter 5](#ch-compat--endian). Both orders are used on purpose.
-
-**Little endian for comparing bytes.** `seqlz_match_len()` loads 8 bytes of two strings as
-little-endian numbers and XORs them: byte 0 of the string is the lowest byte, so the first byte that
-differs holds the lowest set bit, and counting the trailing zero bits finds it
-([chapter 9](#ch-matcher--match-len)).
-
-**Big endian for the bitstream.** The decoder wants the next bits on top of a 64-bit register. If 8
-bytes are loaded big endian, the first byte of the stream lands in the top 8 bits, and its bit 7 in
-bit 63. On x86-64 the big-endian load is `movq` and `bswap`, on arm64 `ldr` and `rev`: one
-instruction more per refill.
+- **Little endian for comparing bytes.** `seqlz_match_len()` loads 8 bytes of two strings and XORs
+  them: byte 0 of a string is the lowest byte, so the first byte that differs holds the lowest set
+  bit, and counting the trailing zero bits finds it ([chapter 9](#ch-matcher--match-len)).
+- **Big endian for the bitstream.** Loaded big endian, the first byte of the stream lands in the top
+  8 bits of the register, and its bit 7 in bit 63, where the decoder takes the next code from. On
+  x86-64 that is `movq` and `bswap`, on arm64 `ldr` and `rev`: one instruction more per refill.
 
 ## Eight sums in one register {#ch-cpu--swar}
 
-A 64-bit register can hold 8 numbers of 8 bits side by side, and one 64-bit add adds all 8 pairs at
-once, as long as no lane overflows into the next. This is called **SWAR**, SIMD within a register.
-The kernel may not use the vector registers of the CPU in most places, so SWAR is how seqlz does 8
-things at once.
-
-The encoder uses it to choose the literal table of a page ([chapter 11](#ch-literals-enc)). It has
-to know how many bits the page's literals take in each of the 8 tables. `lit_cost` in
-`struct seqlz_tables` holds, for each of the 256 byte values, one `u64` with the byte's code length
-in all 8 tables, table `k` in bits `8k` to `8k + 7`. Adding the `u64` of every literal sums all 8
-tables with one add per literal. A lane holds at most 255, so after {{ch03.lit_cost_run}} literals
-of at most {{ch03.lit_bits}} bits the sums move into wider lanes.
-[Chapter 11](#ch-literals-enc--pricing) works it through for 4 bytes of text and gives what it costs per
-write.
-
-Three more places use a register as 8 bytes at once:
-
-- `seqlz_match_len()` compares 8 bytes with one XOR, see [byte order](#ch-cpu--endian).
-- `seqlz_hash5()` in the matcher hashes 5 of 8 loaded bytes with one shift and one multiply
-  ([chapter 9](#ch-matcher--hash)).
-- `repeat_pattern()` in the decoder builds 8 bytes of a short repeating match with one multiply
-  ([chapter 12](#ch-dec-basics--pattern)).
+A 64-bit register can hold 8 numbers of 8 bits side by side, and one add adds all 8 pairs, as long as
+no lane overflows into the next: **SWAR**, SIMD within a register. The kernel may not use the vector
+registers in most places, so SWAR is how seqlz does 8 things at once. The encoder uses it to price a
+page's literals in all 8 literal tables ([chapter 11](#ch-literals-enc--pricing)): `lit_cost` in
+`struct seqlz_tables` holds, for each byte value, one `u64` with the byte's code length in all 8
+tables, table `k` in bits `8k` to `8k + 7`, so one add per literal sums all 8 tables. A lane holds at
+most 255, so after {{ch03.lit_cost_run}} literals of at most {{ch03.lit_bits}} bits the sums move into
+wider lanes. `seqlz_hash5()` ([chapter 9](#ch-matcher--hash)) and `repeat_pattern()`
+([chapter 12](#ch-dec-basics--pattern)) also use a register as 8 bytes at once, with one multiply
+each.
 
 ## Copying more than needed {#ch-cpu--wild-copy}
 
 Most sequences are short: up to {{ch03.token_ll_max}} literals and a match of up to
 {{ch03.token_ml_max}} bytes fit into the token alone, and 79% of the matches are at most 16 bytes
-long. Copying exactly `ll` bytes needs a loop whose number of rounds is the length, and the end of
-that loop is a branch that mispredicts often, because the length changes from one sequence to the
-next. So the decoder copies a fixed 16 bytes, two loads and two stores, whatever the length, and
-then moves on by the real length:
+long. A copy of exactly `ll` bytes is a loop whose end mispredicts often, because the length changes
+from one sequence to the next. So the decoder copies a fixed 16 bytes, two loads and two stores, and
+moves on by the real length; the next sequence writes over the rest:
 
 <figure class="diagram">
 <div class="scroll">
 <svg viewBox="0 0 720 198" role="img" aria-label="A copy of 16 literal bytes for a sequence with 3 literals: the decoder moves on by 3 and the next sequence overwrites the 13 extra bytes" font-size="12">
   <text x="20" y="56" text-anchor="start" font-weight="bold">before</text>
   <text x="20" y="136" text-anchor="start" font-weight="bold">after</text>
-  <rect x="90" y="40" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="108" y="40" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="126" y="40" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="144" y="40" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <g class="acc"><rect x="162" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="180" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="198" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="216" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="234" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="252" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="270" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="288" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="306" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="324" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="342" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="360" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="378" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="396" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="414" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="acc"><rect x="432" y="40" width="18" height="22" class="fill-acc" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <rect x="450" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="468" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="486" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="504" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="522" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="540" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="558" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="576" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="594" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="612" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="630" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="648" y="40" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="90" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="108" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="126" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="144" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="162" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="180" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="198" y="120" width="18" height="22" class="fill-sheet" stroke="currentColor" stroke-width="0.5"/>
-  <g class="mark"><rect x="216" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="234" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="252" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="270" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="288" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="306" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="324" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="342" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="360" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="378" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="396" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="414" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <g class="mark"><rect x="432" y="120" width="18" height="22" class="fill-mark" fill-opacity="0.3" stroke="currentColor" stroke-width="0.5"/></g>
-  <rect x="450" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="468" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="486" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="504" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="522" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="540" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="558" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="576" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="594" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="612" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="630" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
-  <rect x="648" y="120" width="18" height="22" class="fill-paper" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="90" y="40" width="72" height="22" class="fill-sheet"/>
+  <g class="acc"><rect x="162" y="40" width="288" height="22" class="fill-acc" fill-opacity="0.3"/></g>
+  <rect x="450" y="40" width="216" height="22" class="fill-paper"/>
+  <path d="M108,40 v22 M126,40 v22 M144,40 v22 M162,40 v22 M180,40 v22 M198,40 v22 M216,40 v22 M234,40 v22 M252,40 v22 M270,40 v22 M288,40 v22 M306,40 v22 M324,40 v22 M342,40 v22 M360,40 v22 M378,40 v22 M396,40 v22 M414,40 v22 M432,40 v22 M450,40 v22 M468,40 v22 M486,40 v22 M504,40 v22 M522,40 v22 M540,40 v22 M558,40 v22 M576,40 v22 M594,40 v22 M612,40 v22 M630,40 v22 M648,40 v22" fill="none" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="90" y="40" width="576" height="22" fill="none" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="90" y="120" width="126" height="22" class="fill-sheet"/>
+  <g class="mark"><rect x="216" y="120" width="234" height="22" class="fill-mark" fill-opacity="0.3"/></g>
+  <rect x="450" y="120" width="216" height="22" class="fill-paper"/>
+  <path d="M108,120 v22 M126,120 v22 M144,120 v22 M162,120 v22 M180,120 v22 M198,120 v22 M216,120 v22 M234,120 v22 M252,120 v22 M270,120 v22 M288,120 v22 M306,120 v22 M324,120 v22 M342,120 v22 M360,120 v22 M378,120 v22 M396,120 v22 M414,120 v22 M432,120 v22 M450,120 v22 M468,120 v22 M486,120 v22 M504,120 v22 M522,120 v22 M540,120 v22 M558,120 v22 M576,120 v22 M594,120 v22 M612,120 v22 M630,120 v22 M648,120 v22" fill="none" stroke="currentColor" stroke-width="0.5"/>
+  <rect x="90" y="120" width="576" height="22" fill="none" stroke="currentColor" stroke-width="0.5"/>
   <text x="306" y="32" text-anchor="middle" font-size="11">copy16(): 16 bytes from d</text>
   <path d="M162 62 V70" stroke="currentColor"/>
   <text x="162" y="84" text-anchor="middle" font-weight="bold">d</text>
@@ -896,78 +496,44 @@ then moves on by the real length:
 <figcaption>The fixed copy for <code>ll = 3</code>: 16 bytes written, 3 of them kept. Grey are bytes of the page written before.</figcaption>
 </figure>
 
-The bytes past the real length are wrong, but the next sequence writes over them. This is sometimes
-called a **wild copy**. It needs room: the copy may write past the last byte the sequence needs, and
-read past the last literal. So the fast path of `seqlz_decode()` is taken only where there is enough
-room in the page, in the literals and in the input, which it checks with one compare per buffer
-against limits computed once per page ([chapter 14](#ch-decode--rooms)). Near the end of the page the
-slow path copies fewer bytes at a time. The encoder keeps such room too ([chapter 10](#ch-encoder)).
+Such a **wild copy** writes past the last byte the sequence needs and reads past the last literal. So
+`seqlz_decode()` takes the fast path only where there is room in the page, in the literals and in the
+input, one compare per buffer against limits computed once per page
+([chapter 14](#ch-decode--rooms)); near the end of the page the slow path copies less at a time. The
+encoder keeps such room too ([chapter 10](#ch-encoder)).
 
 ::: measured 16 bytes, not 32
 Copying 32 bytes of every match made the mean faster and the p99 slower, because the slowest pages
-have many short matches and each paid for 32 bytes ([chapter 12](#ch-dec-basics--copy-match) has the
-numbers). The other way, copying byte by byte up to the end of the page, made the slowest pages 10
-times slower than lz4: with offset 1 every byte waited for the store before it
+have many short matches and each paid for 32 bytes ([chapter 12](#ch-dec-basics--copy-match)). Copying
+byte by byte up to the end of the page made the slowest pages 10 times slower than `lz4`: with offset
+1 every byte waited for the store before it
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)).
 :::
 
-When the offset is below 16, the bytes a copy of 16 reads overlap the bytes it writes: an 8-byte load
-must not read bytes that the store before it has not written yet. [Chapter 12](#ch-dec-basics--copies)
+When the offset is below 16, the bytes a copy of 16 reads overlap the bytes it writes, and an 8-byte
+load must not read bytes the store before it has not written yet. [Chapter 12](#ch-dec-basics--copies)
 shows how the copies handle offsets below 8 and from 8 on.
 
-## Undefined behaviour the code steers around {#ch-cpu--ub}
+## Shifts by 64, and what the kernel's sanitizers add {#ch-cpu--ubsan}
 
-C leaves some operations **undefined**: the standard says nothing about their result, and a compiler
-may assume they never happen. Bit-level code meets three of them often. seqlz avoids each, in ways
-that look odd until you know which one.
+Bit readers meet undefined behaviour whenever a field can have 0 bits: "the top `x` bits" is
+`v >> (64 - x)`, a shift by 64 for `x = 0`, and x86-64 then shifts by 0 and returns `v`, not 0.
+`seqlz_br_value()` shifts by 1 and then by `63 - x` instead ([chapter 12](#ch-dec-basics--bit-reader)).
+The token table's entries hold their shift as `(64 - raw_bits) & 63`, 0 for class 0, which has no
+offset bits ([chapter 7](#ch-internal)). `__builtin_ctzll(0)` is undefined too, `rep bsf` gives 64 on
+CPUs with `tzcnt` and nothing defined on older ones; `seqlz_match_len()` ORs in a bit where the XOR
+could be 0 ([chapter 9](#ch-matcher--match-len)), and the literal streams' marker bit is never shifted
+out. And the fast path's limits `lit_fast` and `in_fast` are `unsigned long`, not pointers, because
+"16 bytes before the end" of a short input would be a pointer before the buffer.
 
-**A shift by the width of the type or more.** `x << n` and `x >> n` are undefined for a 64-bit `x`
-when `n` is 64 or more. The hardware does not agree on a result either. x86 uses only the low 5 bits of
-the count for a 32-bit shift and the low 6 bits for a 64-bit one, so a shift by the width shifts by
-0 and returns `x`. 32-bit arm uses the low byte of the count, and a 32-bit value shifted by 32 is 0.
-Bit readers meet this whenever a field can have 0 bits: "the top `x` bits" is
-`v >> (64 - x)`, a shift by 64 for `x = 0`. `seqlz_br_value()` reads the `x` extra bits of a length
-value, and `x` is 0 for a value below 16. So it shifts twice: first by 1, then by `63 - x`, which is
-at most 63, and a value below 16 comes out as 0, as it should. Written the obvious way, the same
-`x = 0` would shift by 64, and on x86-64 return the whole register instead of 0.
-[Chapter 12](#ch-dec-basics--bit-reader) goes through the function.
-
-The token table's entries use a mask instead. An entry holds the shift that cuts the offset out of
-the bits, `64 - raw_bits`, but `& 63`: for class 0, without offset bits, that is 0 instead of 64, the
-shift is harmless, and the decoder then takes the repeat offset because the field is 0
-([chapter 7](#ch-internal)). The encoder's `enc_flush()` shifts by `(64U - e->cnt) & 63U` for the same
-reason.
-
-**Counting the zeros of 0.** `__builtin_ctzll(x)`, the number of trailing zero bits, is undefined for
-`x = 0`, and the hardware differs again. gcc writes `rep bsf`, which runs as `tzcnt` and returns 64
-on CPUs that have it, and as the older `bsf`, undefined for 0, on CPUs that do not; clang for arm64
-gives 64. `seqlz_match_len()` calls it only where the XOR is not 0, and makes that plain to the
-compiler with one OR ([chapter 9](#ch-matcher--match-len)).
-The literal streams never pass 0 either: their marker bit, the 1 below the last real bit
-([registers](#ch-cpu--registers)), is never shifted out.
-
-**A pointer outside its buffer.** In C, computing a pointer before the start of an array, or more
-than one past its end, is undefined even if it is never used to load. `seqlz_decode()` needs the
-limit "16 bytes before the end of the literals" for its fast path, and for a page with fewer than 16
-bytes of input that would be a pointer before the input. So `lit_fast` and `in_fast` are `unsigned
-long` numbers, not pointers, and the fast path compares addresses as numbers.
-
-What the code relies on instead is what C defines: unsigned arithmetic wraps around. `off - 1U >= (unsigned int)(d - (u8 *)dst)` checks in one compare that an offset is at least 1 and at most the bytes
-written: for `off = 0`, `off - 1U` is `0xffffffff`, larger than any page. The same wrap gives
-`seqlz_off_class()` its mask of all ones ([chapter 6](#ch-header--offsets)).
-
-## What the kernel's sanitizers add {#ch-cpu--ubsan}
-
-The kernel can check for some undefined behaviour at run time, with the undefined behaviour sanitizer,
-**UBSan**. `CONFIG_UBSAN_SHIFT` checks every
-shift whose count the compiler cannot prove to be in range, and `CONFIG_UBSAN_BOUNDS` every array
+The kernel can check for undefined behaviour at run time with **UBSan**. `CONFIG_UBSAN_SHIFT` checks
+every shift whose count the compiler cannot prove to be in range, `CONFIG_UBSAN_BOUNDS` every array
 index it cannot prove to be inside the array. Fedora's x86-64 kernel enables both, and the project
 builds its benchmark copies of every codec with the same flags, `-fsanitize=shift` and
 `-fsanitize=bounds-strict`. A check is a compare and a branch, on every shift and index in a hot loop.
-
-These two functions differ only in the mask. Compiled with gcc 16.2.1, `-O2 -fsanitize=shift
+These two functions differ only in the mask, compiled with gcc 16.2.1, `-O2 -fsanitize=shift
 -fsanitize-undefined-trap-on-error`, the last flag only to make a failed check a trap instead of a
-call, so that the code stays short:
+call:
 
 ```c
 u64 put(u64 acc, unsigned int n)        { return acc << n; }
@@ -984,18 +550,14 @@ put:                            put_masked:
     ret
 ```
 
-With the mask the compiler knows the count is below 64, and the check is gone. The mask itself costs
-nothing here: x86-64's shift already uses only the low 6 bits of the count, so the compiler drops
-the `and`. That is why the encoder's shifts are written `<< (n & 63U)` even where `n` is never 64,
-and why the encoder's array of length-value codes, `enc[]` in `struct value_table`, has
+With the mask the check is gone, and the mask itself costs nothing: x86-64's shift uses only the low
+6 bits of the count anyway, so the compiler drops the `and`. That is why the encoder's shifts are
+written `<< (n & 63U)` even where `n` is never 64, and why `enc[]` in `struct value_table` has
 {{ch03.enc_len_symbols}} entries for {{const.LEN_SYMBOLS}} or {{k16.const.LEN_SYMBOLS}} symbols: a
-power of 2, so that `s & (ENC_LEN_SYMBOLS - 1U)` proves every index in range ([chapter
-7](#ch-internal), [chapter 10](#ch-encoder)). Masked shifts and indices took the compressor from 25
-225 to 25 064 cycles per page, 4.7% fewer instructions
+power of 2, so that `s & (ENC_LEN_SYMBOLS - 1U)` proves every index in range
+([chapter 7](#ch-internal), [chapter 10](#ch-encoder)). Masked shifts and indices took the compressor
+from 25 225 to 25 064 cycles per page, with 4.7% fewer instructions
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
-
-The decoder had 65 such checks in an early version, lz4's had 18. They were not in its hot path:
-without them, the instructions per page were the same
+The decoder had 65 such checks in an early version, `lz4`'s 18, but not in its hot path: without them,
+the instructions per page were the same
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables)).
-The masks matter most in the encoder, whose shifts by a code's length are on every sequence and
-every literal.
