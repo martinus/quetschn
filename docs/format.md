@@ -33,37 +33,14 @@ It is one format, and the decoder decodes both.
 ## Status
 
 > [!IMPORTANT]
-> The format for 4 KiB pages is the one of 14th October 2026, and nobody uses it yet. Until seqlz has
-> users it may still change, the tables included, and such a change updates this file: its rules, the
-> hashes of the tables, the example and this section. Once seqlz is in a kernel, zram's pages still live
-> only as long as the kernel that wrote them, so a change needs no new name in zram, see
+> This is the format of 14th October 2026 for 4 KiB pages, and nobody uses it yet. Until seqlz has users
+> it may still change, the tables included, and such a change updates this file: its rules, the hashes
+> of the tables and the example. Once seqlz is in a kernel, zram's pages still live only as long as the
+> kernel that wrote them, so a change needs no new name in zram, see
 > [No version in the page](#no-version-in-the-page).
 
-The tables of 6th October were trained again before anyone used them, on swapped pages too
-([explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
-On 8th October a page became valid only if it ends where its bits end, see
-[The bitstream of the sequences](#the-bitstream-of-the-sequences) and [Coded literals](#coded-literals);
-the pages the compressor writes did not change. On 11th October the last sequence lost its token: a
-decoder knows it from the literals left, see [Decoding](#decoding). Pages got about 1.2 bytes smaller
-([explored-designs.md](explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
-The same day the token and length tables of both page sizes were trained again, without the last
-sequences, and the length values lost their last symbol, which no page needs, see
-[Length values](#length-values); the literal tables stayed
-([explored-designs.md](explored-designs.md#the-tables-trained-again-without-the-last-sequences-and-one-length-symbol-less-02-bytes-per-page-less)).
-On 13th October all tables for 4 KiB pages were trained again, on zram dumps of a phone under memory
-pressure next to the desktop's pages, and the example became 9 bytes: its token has no code of its own
-any more
-([explored-designs.md](explored-designs.md#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)).
-On 14th October two offset classes changed, for both page sizes: class 1 is offset 2 in 1 bit instead of
-the offsets below 16 in 4, class 5 the multiples of 8 below 2048 in 8 bits instead of all of them in 9
-or 11, see [Offsets](#offsets). The token tables were trained again, the length and literal tables
-stayed, and pages got 0.3% to 0.8% smaller on the 4 KiB dumps, 1.2% to 1.6% on the 16 KiB ones
-([explored-designs.md](explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
-
-The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own
-since 7th October 2026: trained on a zram dump of the Android 17 emulator with 16 KiB pages and measured
-on a second one, where they make `seqlz-fast-lit` 2.6% smaller than the tables before, which were
-trained on desktop pages
+The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own,
+trained on a zram dump of the Android 17 emulator with 16 KiB pages
 ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-fast-lit`
 needs 32 784 bytes of work memory per CPU, twice `lz4`'s, more than the project allows itself
@@ -227,12 +204,12 @@ byte. `quetschn-seqlz-train --from-counts <file>` does the same in C++, see `ben
 the test `seqlz_train` checks that it gives the same tables, for both page sizes. The kernel gets the
 generator as `scripts/gen-seqlz-tables.py` and the 4 KiB counts.
 
-The 4 KiB tables are counted on 524 912 pages: the resident pages of a desktop, 60 132 pages of its zram
-dump of 28th September 2026, and the first zram dump of a Xiaomi Mi 9T, five times, so that the phone
-does not lose what the desktop's pages gain. The 16 KiB tables are counted on 26 933 pages of a zram dump of the
+The 4 KiB tables are counted on 1 091 983 pages: three sessions of a Xiaomi Mi 9T under memory
+pressure, the resident pages of a desktop and 200 000 pages of its zram dump of 28th September 2026. The
+16 KiB tables are counted on 26 933 pages of a zram dump of the
 Android 17 emulator with 16 KiB pages. Those pages are not published, because memory dumps hold keys
 and passwords. The counts can't give those back: they are sums over all pages, each literal table's over
-845 pages or more for 4 KiB (the phone's counted five times) and 453 or more for 16 KiB, and they don't say which symbol came after which
+10 590 pages or more for 4 KiB and 453 or more for 16 KiB, and they don't say which symbol came after which
 or on which page. `quetschn-seqlz-train --corpus <pages> --counts <file>` counts other pages the same
 way.
 <!-- end -->
@@ -380,7 +357,7 @@ There is no count of the sequences, and the last sequence has no token. Every ma
 bytes, so once the literals left are as many as the bytes the page still needs, no match can follow:
 the literals left are the last sequence. A page whose last match reaches the end of the page ends with
 no literals left, a page of literals only has `n = PAGE` and no bits in `B`. *Why:* a decoder knows
-`n` and `PAGE`, so a token for the last sequence only says what the decoder knows already, and it took
+`n` and `PAGE`, so a token for the last sequence would only say what the decoder knows already, in
 about 1.2 bytes per page. Every sequence before the last writes at least 4 bytes, so a decoder stops
 after at most `PAGE / 4 + 1` sequences, also on pages that are not valid.
 
