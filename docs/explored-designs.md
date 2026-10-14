@@ -5572,6 +5572,11 @@ per page against 894.9, 961.7 and 1204.9:
 | only the repeated offset | 3107 | 887.8, 954.3, 1198.0 |
 | only the table's entry | | 890.3, 956.2, 1194.6 |
 
+Tables trained again on the lazy parse, on the corpus of the tables of 13th October, do not
+help: with the lazy step below 20 bytes the phone dumps and the emulator get 0.13% to 0.16% smaller, the
+desktop dumps 0.10% to 0.21% larger. The lazy matcher works with the tables there are, an option would
+need none of its own.
+
 Counting both lengths at every match costs more than the branches it saves. The repeated offset alone
 gives about 60% of the gain for 60% of the time, the same exchange rate.
 
