@@ -52,14 +52,16 @@ stream into one for writing and one for reading
 A codec without `create_dctx` gets the compression context in `decompress()`, as every backend did before
 the split; the harness's `lz4`, `lzo` and `zstd` are copies of the kernel's glue from before it.
 
-## Two codecs, one format, no dictionary {#ch-zram-glue--head}
+## Three codecs, one format, no dictionary {#ch-zram-glue--head}
 
-@listing src/zram_seqlz.c 1-9
+@listing src/zram_seqlz.c 1-8
 
-Both codecs write the same format and are read by the same decoder. `seqlz-2` lets
-`code_literals()` ([chapter 11](#ch-literals-enc)) code the literals where that saves $\frac{1}{16}$ of
-them and {{ch15.coded_min}} bytes. In the kernel they are levels 1 and 2 of one backend, `seqlz`; the
-harness names them as two codecs to compare them side by side. A dictionary could have carried other
+The three codecs are the three levels of `seqlz_compress()` ([chapter 6](#ch-header--compressor)); they
+write the same format and are read by the same decoder. `seqlz-2` lets `code_literals()`
+([chapter 11](#ch-literals-enc)) code the literals where that saves $\frac{1}{16}$ of them and
+{{ch15.coded_min}} bytes, `seqlz-3` adds the lazy matcher and a literal table of the page's own. In the
+kernel they are levels 1 to 3 of one backend, `seqlz`, with 2 the default; the harness names them as
+three codecs to compare them side by side. A dictionary could have carried other
 tables, e.g. tables trained on one phone's pages, and measured, those saved too little
 ([chapter 8](#ch-codes--fixed)). So since commit `87a0ba4` the tables are part of the format, and the
 dictionary is ignored here; the kernel's backend refuses one. The file includes only `seqlz.h`, so it sees
@@ -67,7 +69,7 @@ the tables only as a pointer to an incomplete struct.
 
 ## Setting up a device: the tables, built and checked {#ch-zram-glue--setup}
 
-@listing src/zram_seqlz.c 11-30
+@listing src/zram_seqlz.c 10-29
 
 `setup()` is `setup_params()`. seqlz is compiled for one page size, so a 4 KiB build given a corpus of
 16 KiB pages fails here instead of reading past each page. `seqlz_tables_size()` exists because the glue
@@ -85,13 +87,13 @@ zram device and priority, from constant data, was what the kernel copy did until
 review asked for the global.
 :::
 
-@listing src/zram_seqlz.c 32-42
+@listing src/zram_seqlz.c 31-41
 
 `destroy()` takes only the stream, so it serves as `destroy_cctx` and as `destroy_dctx`.
 
 ## The compression context is the matcher's table {#ch-zram-glue--cctx}
 
-@listing src/zram_seqlz.c 44-53
+@listing src/zram_seqlz.c 43-52
 
 `struct seqlz_state` is a union of the matcher's hash table and a page of bytes
 ([chapter 6](#ch-header--compressor)): {{ch17.hash_slots}} entries of 2 bytes, {{size.state}} bytes, and
@@ -104,13 +106,18 @@ same. The kernel builds without the warning about unused parameters below `W=3`,
 
 ## seqlz-1: compress and decompress {#ch-zram-glue--fast}
 
-@listing src/zram_seqlz.c 55-68
+@listing src/zram_seqlz.c 54-68
+
+`compress()` is the one compress function of all three codecs, with the level as a parameter that
+`struct zcomp_ops` does not have; each codec gets a wrapper of one line that passes its level:
+
+@listing src/zram_seqlz.c 70-75
 
 `*dst_len` is the capacity of `dst` on the way in and the compressed length on the way out. zram gives a
 compressor 2 pages of output, and a page always fits into 2 pages ([chapter 10](#ch-encoder)), so the 0
 of a page that did not fit comes only with a smaller buffer, e.g. the one page zswap gives.
 
-@listing src/zram_seqlz.c 70-85
+@listing src/zram_seqlz.c 77-92
 
 `s` is the compression context here, because this codec has no `create_dctx`, and pages with raw
 literals need no work memory. In zram with the split, a codec without `create_dctx` gets a stream with
@@ -141,33 +148,37 @@ codecs, so its decode times include a prefetch the kernel's backend does not do.
 from the VM and the phone, are the ones the project trusts for decode times.
 :::
 
-@listing src/zram_seqlz.c 87-95
+@listing src/zram_seqlz.c 94-102
 
 The fields not named are null, which is how the harness, like zram after the split, knows that this
 codec has no decompression context. The object is not `static`: `bench/bench_main.cpp` names it.
 
-## seqlz-2: a second context for the scratch {#ch-zram-glue--fast-lit}
+## seqlz-2 and seqlz-3: a second context for the scratch {#ch-zram-glue--fast-lit}
 
-@listing src/zram_seqlz.c 97-106
+@listing src/zram_seqlz.c 104-113
 
 The scratch is where the coded literals are decoded to ([chapter 13](#ch-literals-dec)), a page plus 16
-bytes, {{const.SCRATCH}} with 4 KiB pages: the decoder's 16-byte copies read up to 15 bytes past the last
+bytes, at levels 2 and 3, {{const.SCRATCH}} with 4 KiB pages: the decoder's 16-byte copies read up to 15 bytes past the last
 literal, and the last step of `decode_literals()` writes up to 8. So `seqlz-2` has
 {{size.state}} bytes per CPU for compression and {{const.SCRATCH}} for decompression,
 {{ch15.state_plus_scratch|grp}} bytes, which `kmalloc()` hands out as {{ch15.mem.split_gets|grp}}. The
 harness's one context before the split was a struct of both, also {{ch15.mem.struct_gets|grp}} bytes
 handed out, so the split cost seqlz no memory.
 
-@listing src/zram_seqlz.c 108-122
+@listing src/zram_seqlz.c 115-127
 
 `seqlz_compress()` writes the raw literals first and codes them over the raw ones in the same buffer
-where that pays, so the same 2 pages of output suffice.
+where that pays, so the same 2 pages of output suffice. Level 3 needs no more memory than level 2:
+its table of the page's own is worked out in the compression context, behind the copy of the literals
+([chapter 11](#ch-literals-enc--own)), and decoded into the output page and the scratch
+([chapter 13](#ch-literals-dec--own)).
 
-@listing src/zram_seqlz.c 124-135
+@listing src/zram_seqlz.c 129-139
 
-Here `s` is the decompression context, and pages with raw literals leave the scratch alone.
+Here `s` is the decompression context, and pages with raw literals leave the scratch alone. One
+`decompress()` serves `seqlz-2` and `seqlz-3`: the decoder reads from byte 2 which table a page uses.
 
-@listing src/zram_seqlz.c 137-147
+@listing src/zram_seqlz.c 141-163
 
 ## The kernel's copy is generated, not written {#ch-zram-glue--port}
 
@@ -327,7 +338,7 @@ template for zram trees with and without the October 2026 series.
 `zcomp.h` has `struct zcomp_cstrm`, else the `#ifndef` parts, and removes the marker's lines.
 `seqlz_release_params()` is empty but must exist, since zram calls it without a check for `NULL`. A
 dictionary is refused with `-EOPNOTSUPP`, zram's "not set" level becomes level 2, and any other level
-than 1 and 2 is `-EINVAL`, as `lz4` refuses invalid levels. The level is set per device:
+than 1 to 3 is `-EINVAL`, as `lz4` refuses invalid levels. The level is set per device:
 
 ```text
 echo "algo=seqlz level=1" > /sys/block/zram0/algorithm_params
@@ -354,16 +365,16 @@ the stream's mutex for either operation, so they never run at the same time on o
 keeps anything from one page to the next: the matcher clears its table for every page, the decoder
 writes its scratch before it reads it. The `BUILD_BUG_ON` keeps the union within
 `KMALLOC_MAX_CACHE_SIZE`, so whoever turns it back into a struct gets a build error, not a silent 16 KiB.
-The commit ran the kernel copy under KASAN, lockdep and UBSan: the corpus written and read back at both
-levels, 0 of 20 000 pages different; 10 minutes of swap with 4 workers per boot, 16.5 million pages out at
-level 2 and 16.9 million at level 1, 0 different.
+The commit ran the kernel copy under KASAN, lockdep and UBSan: the corpus written and read back at the
+two levels of then, 0 of 20 000 pages different; 10 minutes of swap with 4 workers per boot, 16.5
+million pages out at level 2 and 16.9 million at level 1, 0 different.
 :::
 
 With the split, two functions and no union:
 
 @listing tools/kernel-port/backend_seqlz.c {{ch15.backend.split.a}}-{{ch15.backend.split.b}}
 
-Both contexts come from `kmalloc-8k`: 16 KiB per CPU at level 2, 8 KiB at level 1, which has no
+Both contexts come from `kmalloc-8k`: 16 KiB per CPU at levels 2 and 3, 8 KiB at level 1, which has no
 decompression context, and `kvfree(NULL)` does nothing. The plan's score counts both, as work memory
 per CPU.
 
@@ -438,17 +449,19 @@ machine. `port.py` writes `lib/seqlz/tests/seqlz_kunit.c`, {{ch15.kunit.cases}} 
   against the specification, not a copy.
 - `seqlz_test_example`: the specification's {{ab.len}} bytes that decode to a page of `ab`; the same bytes
   without the last one, and with a zero byte more, must be `-EINVAL`.
-- `seqlz_test_round_trip`: generated pages of {{ch15.kunit.kinds}} kinds at both levels.
+- `seqlz_test_round_trip`: generated pages of {{ch15.kunit.kinds}} kinds at every level.
 - `seqlz_test_damaged`: damaged pages are rejected or decode, never out of bounds.
 - `seqlz_test_one_sequence`: pages built by hand, each valid or invalid by one rule of the specification.
 - `seqlz_test_coded_literals`: pages whose literals get coded.
+- `seqlz_test_own_table`: pages with a table of their own, whose runs the decoder takes in one lookup
+  of `quad[]` or alone, and tables that are invalid by one rule each.
 
 The test's `decompress()` copies the input into an allocation of exactly its length, "so that KASAN sees
 a read behind them": KASAN, the kernel's address sanitizer, reports a read past an allocation only where
 the allocation ends. `tools/kernel-port/kunit.sh` runs `kunit.py run --kunitconfig=lib/seqlz` on such a
 copy of the tree; CI runs it on x86-64 with KASAN and UBSan. `tools/kernel-port/stress.sh`, run by hand,
 boots the kernel copy in a VM with KASAN, lockdep, `DEBUG_ATOMIC_SLEEP` and UBSan, writes a corpus to zram
-with `lz4` and seqlz at both levels, swaps under memory pressure with every page compared, and runs the
+with `lz4` and seqlz at every level, swaps under memory pressure with every page compared, and runs the
 kernel's zram selftests: the gate of the plan's Phase 5, and the source of the page counts above.
 
 The specification goes along: `tools/kernel-port/format_rst.py` writes `docs/format.md` as
@@ -459,7 +472,7 @@ only for the repository and text only for the kernel.
 ## Testing outside the kernel {#ch-zram-glue--tests}
 
 `test/` has the doctest unit tests, one binary, `quetschn_test`. Two of them check this chapter's file.
-`seqlz takes no dictionary, its tables are part of the format` gives both codecs a dictionary of the size
+`seqlz takes no dictionary, its tables are part of the format` gives the codecs a dictionary of the size
 of `struct seqlz_lengths`, which once replaced the code lengths, and checks that a page compresses to the
 same bytes as without. `seqlz compresses with the hash table, seqlz-2 decompresses with the
 scratch` checks the context sizes, and that `seqlz-1` decodes with a stream without a context.
@@ -471,9 +484,8 @@ scratch` checks the context sizes, and that `seqlz-1` decodes with a stream with
 - `seqlz_decode_fuzz.c`: any input through `seqlz_decode()`, with and without the scratch, each buffer an
   allocation of exactly its size, so that AddressSanitizer sees one byte too far. A page that decodes
   without the scratch must decode the same with it.
-- `seqlz_roundtrip_fuzz.c`: any page through `seqlz_compress()` and `seqlz_decode()`, raw and coded. It
-  must come back, fit into 2 pages, and be the bytes `seqlz_encode()` writes for `seqlz_find()`'s
-  sequences.
+- `seqlz_roundtrip_fuzz.c`: any page through `seqlz_compress()` and `seqlz_decode()`, at every level. It must come back, fit into 2 pages, and be the bytes `seqlz_encode()` writes for
+  `seqlz_find()`'s sequences at that level.
 - `seqlz_encode_fuzz.c`: any list of sequences through `seqlz_encode()`, also lists that make no page,
   added after an encoder overflow ([#121](https://github.com/martinus/quetschn/issues/121)) that the other
   targets could not reach, since the matcher's sequences are always valid.
@@ -496,15 +508,16 @@ MemorySanitizer.
 The format's multi-byte values are little endian, and the code reads and writes them with
 `get_unaligned_le16()` and its relatives. Until commit `91fa53e` on 5th October 2026 it did not, and on
 the big-endian s390x every page failed to round trip ([chapter 5](#ch-compat--endian)).
-`test/seqlz_endian.c` keeps it fixed: 600 generated pages of six kinds, each compressed with raw and with
-coded literals and decoded again, all compressed bytes hashed with FNV-1a. It is plain C, so it builds in
+`test/seqlz_endian.c` keeps it fixed: 600 generated pages of six kinds, each compressed at every level
+and decoded again, all compressed bytes hashed with FNV-1a. It is plain C, so it builds in
 seconds under qemu. Its output on x86-64, and the same with `-m32`:
 
 ```text
 {{ch15.endian.line}}
 ```
 
-`coded {{ch15.endian.coded}}` counts the compressions, of 1200, that came out with coded literals. CI's
+`coded {{ch15.endian.coded}}` counts the compressions, of {{ch15.endian.runs|grp}}, that came out with
+coded literals, `own table {{ch15.endian.own}}` those among them with a table of the page's own. CI's
 `same-bytes` job builds it for x86-64, 32-bit x86 and s390x in qemu and `diff`s the three lines.
 
 ### CI

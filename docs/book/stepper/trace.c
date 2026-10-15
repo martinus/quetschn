@@ -91,7 +91,7 @@ int main(void) {
         int coded;
 
         pages[k].make(page);
-        n = seqlz_compress(t, &st, page, comp, sizeof(comp), pages[k].coded);
+        n = seqlz_compress(t, &st, page, comp, sizeof(comp), pages[k].coded ? 2U : 1U);
         if (!n)
             return 1;
         n_lit = get_unaligned_le16(comp);

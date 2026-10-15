@@ -28,8 +28,9 @@ arm64 and `prefetcht0` on x86-64, the latter with a patch to the kernel ([chapte
 The inner loop has constant bounds, and the compiler unrolls it to 8 prefetches in a row. The token
 table takes {{ch12.tok.rounds}} rounds, each length table {{ch12.ll.rounds}} and a literal table
 {{ch12.lit.rounds}}: {{ch12.lines_raw}} cache lines for a page with raw literals, {{ch12.lines_coded}},
-{{ch12.kib_coded}} KiB, for one with coded literals, which prefetches the one literal table it uses. The
-tables do not grow with the page, so it is the same with 16 KiB pages.
+{{ch12.kib_coded}} KiB, for one with coded literals, which prefetches the one literal table it uses. A
+page with a table of its own prefetches none: it builds its table ([chapter 13](#ch-literals-dec--own)).
+The tables do not grow with the page, so it is the same with 16 KiB pages.
 @assert F("k16.ch12.lines_coded") == ch12.lines_coded and ch12.lines_coded - ch12.lines_raw == ch12.lit.cachelines
 
 ::: why 8 lines per round, not 1
@@ -56,12 +57,12 @@ of a line, the table touches one line more than the loop reaches. In `struct seq
 build the token table is at offset {{ch12.tok.off}}, `ll.decode` and `ml.decode` at
 {{ch12.ll.off|grp}} and {{ch12.ml.off|grp}}, {{ch12.ll.mod}} bytes past a multiple of 64, and the
 literal tables at {{ch12.lit.off|grp}}, {{ch12.lit1.off|grp}} and so on, {{ch12.lit.mod}} bytes past
-one. The harness aligns the struct to a page, so there only the last 2 entries of each length and
-literal table are in a line of their own. The kernel's copy is one static object, which C aligns to its
-widest member, the `u64` of `lit_cost`; a kernel build puts it at a multiple of 32 bytes with gcc for
-x86-64 and of 8 with gcc for arm64 and clang for x86-64. So there any table can start inside a line, and
-the literal tables always do.
-@assert ch12.ml.mod == ch12.ll.mod and ch12.tok.mod == 0 and ch12.ll.last_entry - ch12.ll.first_extra == 1 and ch12.lit.last_entry - ch12.lit.first_extra == 1 and ch12.lit.mod % 8 != 0
+one. The harness aligns the struct to a page, so there the last {{ch12.ll.tail}} entries of each length
+table and the last {{ch12.lit.tail}} of each literal table are in a line of their own. The kernel's
+copy is one static object, which C aligns to its widest member, the `u64` of `lit_cost`; a kernel
+build puts it at a multiple of 32 bytes with gcc for x86-64 and of 8 with gcc for arm64 and clang for
+x86-64. So there any table can start inside a line, and the literal tables always do.
+@assert ch12.ml.mod == ch12.ll.mod and ch12.tok.mod == 0 and ch12.ll.last_entry - ch12.ll.first_extra + 1 == ch12.ll.tail and ch12.lit.last_entry - ch12.lit.first_extra + 1 == ch12.lit.tail and ch12.lit.mod % 8 != 0
 
 Until 11th October 2026 the decoder left that line out (#179). With canonical codes the last entries
 belong to the longest codes, the rarest symbols, so it cost a miss only on a rare code. Line 31 is one

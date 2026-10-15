@@ -308,7 +308,7 @@ static void cat(void) {
     cat_page(page);
     fact_num("ch02.hash.dog", seqlz_hash5(get_unaligned_le64(page + 5)));
     fact_num("ch02.hash.dog17", seqlz_hash5(get_unaligned_le64(page + 17)));
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     fact_num("ch02.cat.n", n);
     for (i = 0; i < n; i++) {
         unsigned int raw, cls, tok, mlm4 = seq[i].match - 4U;
@@ -365,7 +365,7 @@ static void cat(void) {
     /* the page with a # in front */
     memmove(page + 1, page, 24);
     page[0] = '#';
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     fact_num("ch02.hash.sharp.ll", seq[0].literals);
     fact_num("ch02.hash.sharp.ml", seq[0].match);
     fact_num("ch02.hash.sharp.off", seq[0].offset);

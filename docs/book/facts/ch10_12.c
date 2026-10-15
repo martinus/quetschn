@@ -151,7 +151,7 @@ static void encode_traced(struct trace* r, void (*make)(u8*)) {
     unsigned int n, i, len, ref_len;
 
     make(page);
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     memset(dst, 0, sizeof dst);
     encoder_init(e, T, dst, CAP, page + SEQLZ_PAGE);
     r->low = dst + CAP;
@@ -235,7 +235,7 @@ static unsigned int min_dst(void (*make)(u8*)) {
 
     make(page);
     for (cap = SEQLZ_HEADER + ENC_ROOM; cap <= CAP; cap++)
-        if (seqlz_compress(T, &st, page, out, cap, false))
+        if (seqlz_compress(T, &st, page, out, cap, 1))
             return cap;
     fail("a page does not fit two pages");
     return 0;
@@ -364,7 +364,7 @@ static void chapter11(void) {
     fact_num("ch11.letters", letters);
     fact_num("ch11.zeros", SEQLZ_PAGE - letters);
     str("ch11.first24", "%.24s", (const char*)page);
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     if (n != 2)
         fail("the page of letters has other sequences now: chapter 11 says 2");
     fact_num("ch11.ml", seq[0].match);
@@ -415,7 +415,7 @@ static void chapter11(void) {
     str("ch11.odd32", "0x%08llx", (unsigned long long)((x >> 8 & lanes) >> 32));
 
     /* the pricing of the page, the table with the fewest bits, the sizes */
-    lit_cost(T, page, n_lit, even, odd);
+    lit_cost(T, page, n_lit, even, odd, NULL);
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         total[k] = 0;
         for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
@@ -658,6 +658,7 @@ static void table_facts(const char* name, unsigned long bytes, unsigned long esi
     if (off % 64) {
         fact_num(key("ch12.%s.first_extra", name), (bytes - off % 64) / esize);
         fact_num(key("ch12.%s.last_entry", name), bytes / esize - 1);
+        fact_num(key("ch12.%s.tail", name), off % 64 / esize);
         fact_num(key("ch12.%s.extra_line", name), bytes / 64 + 1);
         str(key("ch12.%s.extra_ord", name), "%lu%s", bytes / 64 + 1, ordinal(bytes / 64 + 1));
     }

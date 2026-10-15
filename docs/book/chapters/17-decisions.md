@@ -131,7 +131,9 @@ trained on the very dump they are measured on, which no real table can be, are o
 desktop's pages and 0.7% on the phone's; more starts of k-means did not help either, since the start
 with the fewest bits on the training pages is not the one with the fewest on others
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)).
-A literal table built for each page saves 2.4% for writes 14% slower ([below](#ch-decisions--not-kept)).
+A literal table built for each page saved 2.4% for writes 14% slower the first time it was built
+([below](#ch-decisions--not-kept)); level 3 has one since 15th October 2026, only where it promises
+to save enough ([below](#ch-decisions--level3)). The tokens and the lengths stay fixed at every level.
 
 The 4 KiB tables of 13th October 2026 are trained on {{ch17.train_pages|grp}} pages: three sessions of
 the Mi 9T under memory pressure, a desktop's resident pages, and 200 000 pages of its zram dump of 28th
@@ -386,7 +388,8 @@ times the cold p99 on the A55
 With a desktop's zram pages in the phone's module and the tables before 7th October, `seqlz-2` has
 the lowest score on the A55 only up to 16 bytes per µs, `seqlz-1` up to 36
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster)).
-So both stay, as zram's levels 1 and 2, coded the default.
+So both stay, as zram's levels 1 and 2, coded the default, and level 3 adds a third choice
+([below](#ch-decisions--level3)).
 
 ## The matcher {#ch-decisions--matcher}
 
@@ -421,7 +424,9 @@ mispredictions
 the 2 newest positions per hash in the same 8 KiB, 11 bytes per page for about 1 µs, at the edge of the
 hull
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8));
-levels 3 and 4 [below](#ch-decisions--not-kept). With one branch per position instead of three, which had
+an earlier level 3 and 4 [below](#ch-decisions--not-kept). Level 3 of today searches harder only a
+little, with one lazy step for matches below 20 bytes ([below](#ch-decisions--level3)). With one branch
+per position instead of three, which had
 mispredicted almost twice as often as `lz4`'s one, the cold loop's p99 went from 15.4 to 12.6 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-seqlz-fast)).
 
@@ -622,14 +627,55 @@ kernel copy is for 4 KiB pages only
 ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 @assert k16.ch15.mem.cctx_gets <= 32768 and k16.ch15.mem.dctx_gets <= 32768 and k16.ch15.mem.split_gets == 48 * 1024
 
+## Level 3: a lazy step and a literal table of the page's own {#ch-decisions--level3}
+
+Level 3 is for a device that values memory more than level 2 does. On 15th October 2026, in the Mi
+9T's own kernel, with 19 775 pages of a phone session in zram (`tools/zram-phone/run.sh`), means of 3
+rounds in µs:
+
+| codec, Mi 9T, 15th October 2026 | zsmalloc bytes per page | A76 write | A76 warm / cold read | A55 write | A55 warm / cold read |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1364.0 | 10.16 | 3.65 / 6.06 | 25.48 | 8.85 / 23.68 |
+| `seqlz-2` | 997.0 | 11.94 | 4.50 / 7.77 | 32.78 | 12.91 / 31.68 |
+| `seqlz-3` | 952.0 | 16.18 | 4.88 / 8.30 | 42.38 | 14.00 / 34.59 |
+| `zstd` 3 | 951.4 | 36.41 | 16.10 / 21.39 | 114.23 | 39.38 / 69.03 |
+
+Level 3 stores pages as small as `zstd` 3, 0.6 bytes more, in less than half its time to write one and
+about 40% of its time to read one cold, for 4.2 µs more per write than level 2 on the Cortex-A76. From
+level 2 to level 3 a µs of the score buys 10.2 bytes per page on the A76 and 4.2 on the A55, from level
+3 to `zstd` 3 0.02 and 0.01 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)). On ten samples of 20 000 pages, in the
+bench's model of zsmalloc, level 3 stored 0.30% more than `zstd` 3 on average and 4.5% less than level
+2. One phone, and one session for the times.
+
+| decision | instead of | why |
+| --- | --- | --- |
+| one lazy step, only for matches below 20 bytes | a lazy step at every match, or a hash chain | a longer match one byte later is rare after a long one, and looking takes time ([chapter 9](#ch-matcher--lazy)) |
+| matches extended backwards, at level 3 only | the step back at every level | at levels 1 and 2 it cost writes 1% to 7% ([chapter 9](#ch-matcher--hit)) |
+| the same format and decoder at every level | a format per level | one decoder and one specification for all levels |
+| a table of the page's own, only from 512 literals on and where it saves 16 bytes | a table on every page | the description costs bytes, and building a decode table for every read costs time |
+| the entropy first, then the code | building the code on every page | many pages leave after one pass over 256 counts ([chapter 11](#ch-literals-enc--own)) |
+| code lengths from $f \cdot 2^l \ge n$, repaired in 16 buckets | a Huffman code | no sort and no tree; a few bits more on some pages |
+| the description in byte order, in a fixed code `OWN` | 256 lengths, or the bytes and their lengths | a byte value costs no bits, only its length ([chapter 4](#ch-format--own)) |
+| the decode table built in the output page | in work memory | no byte more per CPU ([chapter 13](#ch-literals-dec--own)) |
+
+The literal table of the page's own was tried three times before and not kept, for the reasons
+[below](#ch-decisions--not-kept): it cost too much time for what it saved, and it was a second way to
+code the literals, with its own rules for an invalid page, in the decoder and in both reference
+decoders. This time it came together with the lazy matcher as one level, and the result above is what
+changed the decision: `zstd` 3's memory, one end of the project's goal
+([plan.md §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)).
+The cost is in the code: `own_code()`, `own_lengths()` and their helpers in the encoder, `build_own()`,
+and `own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
+the reference decoders cover it like the rest.
+
 ## Tried and not kept {#ch-decisions--not-kept}
 
 Each of these is an obvious idea with a number now. The common reasons: the gain is below what the time
 is worth on the hull, or the format would get a second way of doing something.
 
-### Levels 3 and 4: a deeper search for the same format
+### A hash chain at levels 3 and 4: a deeper search for the same format
 
-A hash chain priced by the tables' code lengths, with one or two lazy steps, for the same format and
+An earlier level 3 and 4, before the one [above](#ch-decisions--level3): a hash chain priced by the tables' code lengths, with one or two lazy steps, for the same format and
 decoder
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)).
 Level 3 stored 3.3% less than level 2, 22.7% of the pages' size against 22.2% for `zstd` 3, and wrote a
@@ -638,9 +684,9 @@ page in 1.8 times level 2's time, still 27% faster than `zstd` 3. In the VM it i
 worth less than about 8 bytes, which is `zstd`'s place, and it cost 850 lines in the codec, the tests and
 the kernel port, and 12 KiB more work memory per CPU.
 
-### A literal table of the page's own
+### A literal table of the page's own, the first three times
 
-Built three times. With `seqlz-opt`, cold p99 went from 4809 to 5849 ns and the scratch grew by 3.3 KB
+Built three times before level 3 kept it ([above](#ch-decisions--level3)). With `seqlz-opt`, cold p99 went from 4809 to 5849 ns and the scratch grew by 3.3 KB
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept)).
 In `seqlz-2` (#43, #44) writes were 14% slower for 2.4% less memory, with 4 token tables per page
 as well 44% slower for 4.6%
@@ -742,9 +788,11 @@ cost on all pages of the desktop's and the phone's zram
    ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#not-evaluated-yet)),
    and a search that finds them takes more time than zram's writes can spend, as levels 3 and 4 showed.
 2. **A literal table of the page's own.** Coding the literals is worth 3.5 points to `zstd` 3; a table per
-   page instead of the best of 8 would save seqlz another 2.4%, 32 bytes per page, for 14% slower writes,
-   mostly on pages whose literals fit the 8 tables badly
+   page instead of the best of 8 saved seqlz another 2.4%, 32 bytes per page, for 14% slower writes the
+   first time it was measured, mostly on pages whose literals fit the 8 tables badly
    ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
+   Level 3 has one, and with it and a lazy step it stores pages as small as `zstd` 3 on the Mi 9T, in
+   less than half its time to write ([above](#ch-decisions--level3)).
 3. **Adaptive sequence coding.** `zstd` codes `ll`, `ml` and the offset with three tables it can build for
    the data, three lookups per sequence; seqlz's one fixed token table keeps its decoder fast. The offsets
    are the clearest loss: as plain bits they cost 18 bytes per page, 2%, above their entropy

@@ -231,6 +231,10 @@ int main(void) {
     if (sscanf(endian_out, "pages %*u, coded %u", &s) != 1)
         exit(1);
     fact_num("ch15.endian.coded", s);
+    if (sscanf(endian_out, "pages %*u, coded %*u, own table %u", &s) != 1)
+        exit(1);
+    fact_num("ch15.endian.own", s);
+    fact_num("ch15.endian.runs", 600 * SEQLZ_LEVELS);
 
     fact_num("ch15.state_plus_scratch", sizeof(struct seqlz_state) + SEQLZ_SCRATCH);
     fact_num("ch15.mem.union", sizeof(struct seqlz_state) > SEQLZ_SCRATCH ? sizeof(struct seqlz_state) : SEQLZ_SCRATCH);
@@ -260,7 +264,7 @@ int main(void) {
     fact_num("ch17.escape_len", tok[SEQLZ_ESCAPE]);
     fact_num("ch17.escape_bits", SEQLZ_ESCAPE_BITS);
     fact_num("ch17.rare_token_bits", tok[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS);
-    fact_num("ch17.tables", 3 + SEQLZ_LIT_SETS);
+    fact_num("ch17.tables", 4 + SEQLZ_LIT_SETS);
     fact_num("ch17.ll_alone_max", SEQLZ_LL_CAP - 1);
     fact_num("ch17.ll_value_from", SEQLZ_LL_CAP);
     fact_num("ch17.ml_alone_max", SEQLZ_ML_CAP - 1 + 4);

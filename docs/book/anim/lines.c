@@ -52,7 +52,7 @@ int main(void) {
     if (!t || seqlz_tables_init(t, &seqlz_default_own))
         return 1;
     slab_page(page);
-    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 1);
+    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 2);
     if (!n || seqlz_decode(t, comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
         fprintf(stderr, "lines.c: the page does not decode to itself\n");
         return 1;
@@ -64,7 +64,7 @@ int main(void) {
     }
     n_lit &= SEQLZ_LIT_CODED - 1U;
     /* where the bitstream starts, as seqlz_decode() gets it */
-    q = decode_literals(t, comp, n, n_lit, scratch);
+    q = decode_literals(t, comp, n, n_lit, scratch, out);
     if (!q)
         return 1;
     g_q = q;

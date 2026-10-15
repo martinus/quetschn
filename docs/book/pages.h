@@ -94,6 +94,25 @@ static inline void letters_page(u8* p) {
     }
 }
 
+/*
+ * chapter 4's text page: "words" of 2 to 9 letters of etaoinshrdlu, each followed by a space, drawn
+ * by the C library's classic linear congruential generator from seed 1, as letters_page()
+ */
+static inline void words_page(u8* p) {
+    unsigned int at = 0, seed = 1, k, n;
+
+    while (at < SEQLZ_PAGE) {
+        seed = seed * 1103515245U + 12345U;
+        n = 2 + (seed >> 16) % 8;
+        for (k = 0; k < n && at < SEQLZ_PAGE; k++) {
+            seed = seed * 1103515245U + 12345U;
+            p[at++] = (u8) "etaoinshrdlu"[(seed >> 16) % 12];
+        }
+        if (at < SEQLZ_PAGE)
+            p[at++] = ' ';
+    }
+}
+
 /* "name":[n bytes as numbers], for the JSON the programs print */
 static inline void array(const char* name, const u8* p, unsigned int n) {
     unsigned int i;

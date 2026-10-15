@@ -29,8 +29,8 @@ int main(void) {
     if (!t || seqlz_tables_init(t, &seqlz_default_own))
         return fail("tables");
     slab_page(page);
-    n_raw = seqlz_compress(t, &st, page, raw, sizeof(raw), 0);
-    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 1);
+    n_raw = seqlz_compress(t, &st, page, raw, sizeof(raw), 1);
+    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 2);
     if (!n || !n_raw)
         return fail("compress");
     n_lit = get_unaligned_le16(comp);

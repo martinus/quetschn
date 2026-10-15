@@ -235,9 +235,10 @@ struct zcomp_ops {
 ```
 
 - `setup_params()` runs once per zram device. `struct zcomp_params` has the compression **level**,
-  an optional **dictionary** and `drv_data` for the backend's data that all CPUs share. seqlz has two
-  levels: 1 stores the literals of a page as they are (`seqlz-1`), 2 codes them
-  (`seqlz-2`, the default). Its tables are fixed and part of the format, so the kernel
+  an optional **dictionary** and `drv_data` for the backend's data that all CPUs share. seqlz has three
+  levels: 1 stores the literals of a page as they are (`seqlz-1`), 2 codes them with one of 8 fixed
+  tables (`seqlz-2`, the default), 3 also searches a little longer for matches and may give a page a
+  literal table of its own (`seqlz-3`). Its tables are fixed and part of the format, so the kernel
   backend refuses a dictionary with `-EOPNOTSUPP` ([chapter 15](#ch-zram-glue)).
 - `create_ctx()` runs once per CPU and allocates the codec's work memory, `void *context`, never
   while a page is compressed.
@@ -256,7 +257,7 @@ kernel backend is written for both forms
 The benchmarks call seqlz through a copy of this interface in C, `src/zram_seqlz.c`
 ([chapter 15](#ch-zram-glue)). Its decompress function is the whole contract:
 
-@listing src/zram_seqlz.c 124-135
+@listing src/zram_seqlz.c 129-139
 
 `quetschn_prefetch_page()` asks the CPU to start loading the compressed bytes and the output page
 before the decoder needs them ([chapter 3](#ch-cpu--prefetch)); it stands for what the project's

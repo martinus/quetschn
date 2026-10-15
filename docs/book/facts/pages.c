@@ -10,6 +10,8 @@
  *   P.b.bits       bits the sequences take             P.b.pad    bits of padding in the last byte
  *   P.b.bin        those bits as 0 and 1, if at most 256
  *   P.coded.len    with coded literals, the compressed page's bytes (= P.len if coding does not pay)
+ *   P.l3.len       the compressed page's bytes at level 3, SEQLZ_LEVEL_OWN
+ *   P.l3.own       1 if it has a literal table of its own there
  */
 #include "facts.h"
 
@@ -31,7 +33,7 @@ static void page_facts(const char* name, void (*make)(u8*)) {
     len = fact_compress(page, dst, 0);
     n_lit = get_unaligned_le16(dst);
     b_bytes = len - SEQLZ_HEADER - n_lit;
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     for (i = 0; i + 1 < n; i++) {
         unsigned int raw, cls = seqlz_off_class(seq[i].offset, last, &raw);
         unsigned int tok = seqlz_token(seq[i].literals, seq[i].match, cls), te = t->token.enc[tok];
@@ -77,6 +79,8 @@ static void page_facts(const char* name, void (*make)(u8*)) {
     fact_num(K("coded.len"), coded);
     if (coded <= 256)
         fact_hex(K("coded.hex"), dst, coded);
+    fact_num(K("l3.len"), fact_compress_level(page, dst, SEQLZ_LEVEL_OWN));
+    fact_num(K("l3.own"), (dst[1] & 0x80U) && (dst[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN);
 #undef K
 }
 
@@ -87,6 +91,7 @@ int main(void) {
     page_facts("letters", letters_page);
     page_facts("slab", slab_page);
     page_facts("pointers", pointer_page);
+    page_facts("words", words_page);
     facts_end();
     return 0;
 }

@@ -141,7 +141,7 @@ run(struct run* R, const struct seqlz_tables* t, struct seqlz_state* st, const u
     R->d = dst;
     R->cap = cap;
     encoder_init(&R->e, t, dst, cap, page + SEQLZ_PAGE);
-    seqlz_match_page(st->table, page, rec_emit, R);
+    seqlz_match_page(st->table, page, false, rec_emit, R);
 }
 
 static void print_recs(const struct run* R) {
@@ -187,14 +187,14 @@ int main(void) {
     if (!t || seqlz_tables_init(t, &seqlz_default_own))
         return 1;
     slab_page(page);
-    ref_len = seqlz_compress(t, &st, page, ref, CAP_MAX, 0);
+    ref_len = seqlz_compress(t, &st, page, ref, CAP_MAX, 1);
     if (!ref_len)
         return 1;
     ref_bs = ref + SEQLZ_HEADER + get_unaligned_le16(ref);
     ref_bs_len = (unsigned int)(ref + ref_len - ref_bs);
     /* the smallest dst the page fits into */
     for (small = SEQLZ_HEADER + ENC_ROOM; small < CAP_MAX; small++)
-        if (seqlz_compress(t, &st, page, dst, small, 0))
+        if (seqlz_compress(t, &st, page, dst, small, 1))
             break;
     cs[0] = CAP_MAX;
     cs[1] = small;
@@ -215,7 +215,7 @@ int main(void) {
             fprintf(stderr, "ends.c: dst of %u: the page is not what seqlz_compress() writes\n", cap);
             return 1;
         }
-        if (k == 2 && (len != 0 || !R.fail || seqlz_compress(t, &st, page, probe_a, cap, 0))) {
+        if (k == 2 && (len != 0 || !R.fail || seqlz_compress(t, &st, page, probe_a, cap, 1))) {
             fprintf(stderr, "ends.c: dst of %u bytes should fail\n", cap);
             return 1;
         }

@@ -170,9 +170,9 @@ int main(void) {
     encoder_init(&real, t, real_dst, CAP, page + SEQLZ_PAGE);
     encoder_init(&D.e, t, shadow, CAP, page + SEQLZ_PAGE);
     printf("{\"ops\":[");
-    seqlz_match_page(st.table, page, drv_emit, &D);
+    seqlz_match_page(st.table, page, false, drv_emit, &D);
     len = encoder_finish(&real, real_dst, CAP);
-    ref_len = seqlz_compress(t, &st, page, ref, CAP, 0);
+    ref_len = seqlz_compress(t, &st, page, ref, CAP, 1);
     if (!len || len != ref_len || memcmp(real_dst, ref, len)) {
         fprintf(stderr, "accum.c: the page is not what seqlz_compress() writes\n");
         return 1;
