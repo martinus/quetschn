@@ -20,7 +20,8 @@ python3 docs/book/lint.py            # dashes, banned words, measurements withou
   (controls, a sentence per step, both themes); if `anim/<name>.c` exists, it is built with `src/`
   and the JSON it prints is the animation's data, so the numbers are the codec's own;
   `facts=<prefix>,...` after the name adds the facts under those prefixes, the same values the text
-  quotes.
+  quotes. `shot.py <name> --steps 0,5,last [--narrow] [--dark]` takes screenshots of the built
+  animation with headless Chrome and fails if a step scrolls sideways.
   `@stepper decode` and `@stepper match` are the step-throughs of chapters 14 and 9:
   `stepper/instrument.py` puts a hook in front of the statements of a copy of `seqlz_decode()` or
   `seqlz_match_page()`, on the same line, `stepper/trace.c` and `trace_match.c` run the copy on the
