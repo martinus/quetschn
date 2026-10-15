@@ -409,7 +409,7 @@ Every decision here trades bytes against work per position.
 ### Greedy, in one pass
 
 Two candidates per position, the repeat offset and the hash table's one position, the first match taken,
-extended both ways and handed to the encoder at once. A matcher that filled an array for an encoder after
+counted forwards and handed to the encoder at once. A matcher that filled an array for an encoder after
 it was slower because the encoder's branches lost the history of the matcher's, which had predicted them
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
 Searching harder always cost more than it saved: one lazy step, 24 808 instead of 20 400 compress

@@ -424,9 +424,10 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
 }
 
 TEST_CASE("seqlz: the matcher does not step back into the literals") {
-    // The page of the book's chapter 9: random bytes, bytes 0 to 63 again at 64, and 124 to 137 again at
-    // 398. Of the match at 64 only position 126 goes into the table, so the copy at 398 is found at 400,
-    // and the match starts there: 398 and 399 stay literals, although they repeat 124 and 125.
+    // The page of the book's chapter 9, random_page() in docs/book/facts/ch07_09.c: random bytes, bytes 0
+    // to 63 again at 64, and 124 to 137 again at 398. Of the match at 64 only position 126 goes into the
+    // table, so the copy at 398 is found at 400, and the match starts there: 398 and 399 stay literals,
+    // although they repeat 124 and 125.
     auto page = std::vector<unsigned char>(page_size);
     auto seed = 12345U;
     for (auto& b : page) {

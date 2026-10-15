@@ -571,8 +571,6 @@ static void ch09(void) {
         }
         /* the match found in the copy at 398 */
         if (seq[k].match && at_match <= 400 && at_match + seq[k].match > 400) {
-            fact_num("ch09.rnd.seq.lit_first", pos);
-            fact_num("ch09.rnd.seq.lit_last", at_match - 1);
             fact_num("ch09.rnd.seq.ll", seq[k].literals);
             fact_num("ch09.rnd.seq.ml", seq[k].match);
             fact_num("ch09.rnd.seq.off", seq[k].offset);

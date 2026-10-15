@@ -151,11 +151,9 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 		}
 		m = rep_hit ? pos - last : cand;
 		/*
-		 * The match may have started a byte or two before pos. It is not
-		 * extended backwards into the literals: that step stood between
-		 * choosing the candidate and counting the match, and every match
-		 * waited for it. Few matches gain from it, and the cores measured
-		 * lost more time than their bytes were worth.
+		 * The match is counted from pos, not extended backwards into the
+		 * literals: that would delay counting every match for the few it
+		 * makes longer.
 		 */
 		len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,
 					   src + SEQLZ_PAGE);

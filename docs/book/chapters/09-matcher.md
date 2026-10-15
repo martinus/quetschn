@@ -296,7 +296,7 @@ right one with a compare was 9% slower: more instructions.
 
 ## A hit: count, emit {#ch-matcher--hit}
 
-@listing src/page_lz.h 152-166
+@listing src/page_lz.h 152-164
 
 When both candidates hit, the repeat offset wins, as its offset costs 0 bits; which gives the longer
 match is not checked. Measured offline on 40 000 zram pages of a desktop, always taking the longer of
@@ -309,8 +309,7 @@ The match is counted from `pos` on, the first 4 bytes are checked already. A mat
 the position where it is found, because the positions inside a match are not in the table
 ([below](#ch-matcher--insert)) and slots are overwritten: when a later place repeats the inside of an
 earlier match, the matcher finds it only from the one position inserted near that match's end.
-[The second page below](#ch-matcher--back) shows it. The bytes before `pos` stay literals; the
-matcher does not step back into them.
+[The second page below](#ch-matcher--back) shows it.
 
 ::: measured Without a step back: writes 1% to 7% faster, pages up to 0.4% larger
 Until October 2026 the matcher stepped back while the byte before `pos` was the byte before the
@@ -327,7 +326,7 @@ it a whole byte.
 
 ## One position of a match goes into the table {#ch-matcher--insert}
 
-@listing src/page_lz.h 167-184
+@listing src/page_lz.h 165-182
 
 The positions inside a match were skipped. One of them, 2 bytes before its end, goes into the table,
 as `lz4`'s fast mode does: data that repeats once tends to repeat again, near the end of the last
