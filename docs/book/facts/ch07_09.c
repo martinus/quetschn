@@ -447,10 +447,6 @@ static void replay(const u8* src, struct step* at) {
             continue;
         }
         m = rep_hit ? pos - last : cand;
-        while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {
-            pos--;
-            m--;
-        }
         len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, src + SEQLZ_PAGE);
         last = pos - m;
         if (i >= n || seq[i].literals != pos - anchor || seq[i].match != len || seq[i].offset != last) {
@@ -557,13 +553,11 @@ static void ch09(void) {
     fact_num("ch09.ptr.before_last", n - 2);
     fact_num("ch09.ptr.odd", odd);
 
-    /* the random page: a match found late, extended backwards */
+    /* the random page: a match found late, not extended backwards */
     random_page(page);
     replay(page, at);
     for (pos = 398; pos <= 400; pos++)
         step_facts("ch09.rnd", page, at, pos);
-    fact_fmt("ch09.rnd.b397", "%02llx", page[397]);
-    fact_fmt("ch09.rnd.b123", "%02llx", page[123]);
     n = seqlz_find(&st, page, seq);
     for (k = 0, pos = 0; k < n; k++) {
         unsigned int at_match = pos + seq[k].literals;
@@ -575,10 +569,8 @@ static void ch09(void) {
             fact_num("ch09.rnd.first.off", seq[k].offset);
             fact_num("ch09.rnd.first.inserted", at_match + seq[k].match - 2);
         }
-        /* the match of the copy at 398 */
-        if (seq[k].match && at_match <= 398 && at_match + seq[k].match > 398) {
-            fact_num("ch09.rnd.seq.lit_first", pos);
-            fact_num("ch09.rnd.seq.lit_last", at_match - 1);
+        /* the match found in the copy at 398 */
+        if (seq[k].match && at_match <= 400 && at_match + seq[k].match > 400) {
             fact_num("ch09.rnd.seq.ll", seq[k].literals);
             fact_num("ch09.rnd.seq.ml", seq[k].match);
             fact_num("ch09.rnd.seq.off", seq[k].offset);

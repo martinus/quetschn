@@ -156,7 +156,7 @@ in [the choices](#the-choices-with-their-numbers)
 
 **The encoder.** The matcher is greedy. At every position of the page it checks two candidates, the
 repeat offset and the last position whose next 5 bytes had the same hash, from a table of 8 KiB that is
-cleared for each page. It takes the first match it finds, extends it in both directions, and hands the
+cleared for each page. It takes the first match it finds, counts how far it goes forwards, and hands the
 sequence to the encoder right away. The encoder writes the literals from the front of zram's output
 buffer and the bits from its back, and codes the literals at the end
 ([the matcher](https://martin.ankerl.com/quetschn/#ch-matcher),
