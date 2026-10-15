@@ -306,7 +306,12 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * and the literals decoded into a buffer first. A smaller minimum made pages a
  * few bytes smaller and writes slower, most on in-order cores.
  */
+#ifndef SEQLZ_LIT_CODED_MIN
 #define SEQLZ_LIT_CODED_MIN 51U
+#endif
+#ifndef SEQLZ_LIT_CODED_DIV
+#define SEQLZ_LIT_CODED_DIV 16U
+#endif
 /*
  * The buffer the decoder decodes coded literals into, one per CPU. 16 bytes
  * more than a page: the decoder copies literals 16 bytes at a time and may read
@@ -380,7 +385,12 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
  * faster; with 8192 in-order cores wrote pages slower. For 16 KiB pages it is
  * 16 KiB, as lz4's table.
  */
+#ifndef SEQLZ_WAYS
+#define SEQLZ_WAYS 1U
+#endif
+#ifndef SEQLZ_HASH_BITS
 #define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)
+#endif
 /* every sequence but the last covers at least 4 bytes of the page */
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
@@ -391,7 +401,7 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
  */
 struct seqlz_state {
 	union {
-		u16 table[1U << SEQLZ_HASH_BITS];
+		u16 table[SEQLZ_WAYS << SEQLZ_HASH_BITS];
 		u8 literals[SEQLZ_PAGE];
 	};
 };

@@ -562,7 +562,7 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	all |= 1U << (SEQLZ_SIZE_BITS_MIN - 1U);
 	width = 32U - (unsigned int)__builtin_clz(all);
 	header = SEQLZ_LIT_HEADER(width);
-	if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
+	if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / SEQLZ_LIT_CODED_DIV)
 		return len;
 	/*
 	 * The streams end at d + header + coded, which is before the

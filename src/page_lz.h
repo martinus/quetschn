@@ -95,6 +95,102 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
 #ifndef SEQLZ_LAZY_BELOW
 #define SEQLZ_LAZY_BELOW 16U
 #endif
+#ifdef SEQLZ_L3
+/* level 3 experiment: the repeated offset and SEQLZ_WAYS positions per hash, the longest wins */
+#ifndef SEQLZ_L3_FAR_MIN
+#define SEQLZ_L3_FAR_MIN 4U
+#endif
+#ifndef SEQLZ_L3_LAZY
+#define SEQLZ_L3_LAZY 1U
+#endif
+#ifndef SEQLZ_L3_MARGIN
+#define SEQLZ_L3_MARGIN 2U
+#endif
+#ifdef SEQLZ_L3_HASH4
+#define l3_hash(v) ((unsigned int)(((v) & 0xffffffffULL) * 0x9E3779B185EBCA87ULL >> (64U - SEQLZ_HASH_BITS)))
+#else
+#define l3_hash(v) seqlz_hash5(v)
+#endif
+static __always_inline void l3_insert(u16 *table, const u8 *src, unsigned int p)
+{
+	unsigned int h = l3_hash(get_unaligned_le64(src + p)) * SEQLZ_WAYS, k;
+
+	for (k = SEQLZ_WAYS - 1U; k > 0; k--)
+		table[h + k] = table[h + k - 1U];
+	table[h] = (u16)p;
+}
+
+static __always_inline unsigned int l3_best(const u16 *table, const u8 *src,
+					    unsigned int p, unsigned int last,
+					    unsigned int *m)
+{
+	const u8 *end = src + SEQLZ_PAGE;
+	unsigned int h = l3_hash(get_unaligned_le64(src + p)) * SEQLZ_WAYS;
+	unsigned int best = 0, k, c, l;
+	u32 cur = get_unaligned_le32(src + p);
+
+	if (last <= p && get_unaligned_le32(src + p - last) == cur) {
+		best = 4U + seqlz_match_len(src + p + 4, src + p - last + 4, end);
+		*m = p - last;
+	}
+	for (k = 0; k < SEQLZ_WAYS; k++) {
+		c = table[h + k];
+		if (c >= p || get_unaligned_le32(src + c) != cur)
+			continue;
+		l = 4U + seqlz_match_len(src + p + 4, src + c + 4, end);
+		{
+			unsigned int raw;
+
+			if (seqlz_off_class(p - c, last, &raw) == 3U &&
+			    l < SEQLZ_L3_FAR_MIN)
+				continue;
+		}
+		if (l > best + (best && *m == p - last ? SEQLZ_L3_MARGIN : 0U)) {
+			best = l;
+			*m = c;
+		}
+	}
+	return best;
+}
+
+static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
+					     emit_fn emit, void *ctx)
+{
+	const unsigned int limit = SEQLZ_PAGE - 8U;
+	unsigned int pos = 1, anchor = 0, last = 1, m = 0, len, m2 = 0, len2;
+
+	memset(table, 0, sizeof(u16) * (SEQLZ_WAYS << SEQLZ_HASH_BITS));
+	while (pos < limit) {
+		len = l3_best(table, src, pos, last, &m);
+		l3_insert(table, src, pos);
+		if (len < 4U) {
+			pos++;
+			continue;
+		}
+		for (unsigned int step = 0; step < SEQLZ_L3_LAZY && pos + 1U < limit; step++) {
+			len2 = l3_best(table, src, pos + 1U, last, &m2);
+			if (len2 <= len)
+				break;
+			l3_insert(table, src, pos + 1U);
+			pos++;
+			m = m2;
+			len = len2;
+		}
+		while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {
+			pos--;
+			m--;
+			len++;
+		}
+		last = pos - m;
+		emit(ctx, src + anchor, pos - anchor, len, last);
+		pos += len;
+		anchor = pos;
+		if (pos < limit)
+			l3_insert(table, src, pos - 2U);
+	}
+	emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);
+}
+#else
 static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 					     emit_fn emit, void *ctx)
 {
@@ -223,5 +319,7 @@ decided:
 	}
 	emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);
 }
+
+#endif /* SEQLZ_L3 */
 
 #endif
