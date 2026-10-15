@@ -340,39 +340,6 @@ extern const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS];
  */
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 16U)
 
-/* the matcher's state, below */
-struct seqlz_state;
-
-/**
- * seqlz_encode() - Write a compressed page from given sequences
- * @t: tables with a code for every symbol, see seqlz_all_symbols()
- * @st: work memory for a page's own literal table at SEQLZ_LEVEL_OWN, or NULL
- *      below that level
- * @seq: the sequences, the last one with match 0
- * @n: how many
- * @literals: the literals of all sequences, one after the other
- * @n_literals: how many
- * @dst: where the compressed page goes
- * @dst_cap: the bytes at @dst
- * @level: what to do with the literals, as seqlz_compress() at that level
- *
- * For tests and tools, which make their own sequences; zram uses
- * seqlz_compress().
- *
- * The sequences describe a page if each but the last has a match of at least
- * 4 bytes, with an offset from 1 to the bytes of the page before the match,
- * and the literals and matches add up to the page, with all @n_literals
- * literals used.
- *
- * Return: the length of the compressed page, or 0 if it does not fit into
- * @dst_cap bytes, @t lacks a code, the sequences do not describe a page, or
- * @level is not one.
- */
-unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
-			  const struct seqlz_sequence *seq, unsigned int n,
-			  const u8 *literals, unsigned int n_literals,
-			  void *dst, unsigned int dst_cap, unsigned int level);
-
 /**
  * seqlz_decode() - Decompress one page
  * @t: the tables the page was compressed with
@@ -455,6 +422,36 @@ struct seqlz_state {
  */
 unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 			struct seqlz_sequence *seq, unsigned int level);
+
+/**
+ * seqlz_encode() - Write a compressed page from given sequences
+ * @t: tables with a code for every symbol, see seqlz_all_symbols()
+ * @st: work memory for a page's own literal table at SEQLZ_LEVEL_OWN, or NULL
+ *      below that level
+ * @seq: the sequences, the last one with match 0
+ * @n: how many
+ * @literals: the literals of all sequences, one after the other
+ * @n_literals: how many
+ * @dst: where the compressed page goes
+ * @dst_cap: the bytes at @dst
+ * @level: what to do with the literals, as seqlz_compress() at that level
+ *
+ * For tests and tools, which make their own sequences; zram uses
+ * seqlz_compress().
+ *
+ * The sequences describe a page if each but the last has a match of at least
+ * 4 bytes, with an offset from 1 to the bytes of the page before the match,
+ * and the literals and matches add up to the page, with all @n_literals
+ * literals used.
+ *
+ * Return: the length of the compressed page, or 0 if it does not fit into
+ * @dst_cap bytes, @t lacks a code, the sequences do not describe a page, or
+ * @level is not one.
+ */
+unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
+			  const struct seqlz_sequence *seq, unsigned int n,
+			  const u8 *literals, unsigned int n_literals,
+			  void *dst, unsigned int dst_cap, unsigned int level);
 
 /**
  * seqlz_compress() - Compress one page

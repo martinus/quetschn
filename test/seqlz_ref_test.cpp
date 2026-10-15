@@ -21,6 +21,11 @@ seqlz_ref_tables format_tables() {
     return {seqlz_default_own.token, seqlz_default_own.ll, seqlz_default_own.ml, seqlz_lit_sets, seqlz_own_lengths};
 }
 
+// The bits of each stream's size, from byte 2 of a page with coded literals.
+unsigned int size_width(std::vector<unsigned char> const& c) {
+    return SEQLZ_SIZE_BITS_MIN + ((c[2] >> SEQLZ_LIT_WIDTH_AT) & 7U);
+}
+
 std::unique_ptr<seqlz_ref> make_ref() {
     auto r = std::make_unique<seqlz_ref>();
     auto const t = format_tables();
@@ -264,7 +269,7 @@ TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid o
             continue;
         }
         ++pages;
-        auto const at = SEQLZ_LIT_HEADER(5U + ((c[2] >> 4) & 7U));
+        auto const at = SEQLZ_LIT_HEADER(size_width(c));
         for (auto q = 8 * at; q < 8 * std::min<std::size_t>(c.size(), at + 160); ++q) {
             auto bad = c;
             bad[q / 8] = static_cast<unsigned char>(bad[q / 8] ^ (0x80U >> (q % 8)));
@@ -376,7 +381,7 @@ TEST_CASE("seqlz_ref: a page ends where its bits end, the rest of the last byte 
     for (int round = 0; tried < 10; ++round) {
         CAPTURE(round);
         auto const c = compress(t.get(), make_page(rng, 5), 2);
-        auto const w = 5U + ((c[2] >> 4) & 7U);
+        auto const w = size_width(c);
         auto S = std::vector<unsigned int>(8);
         for (unsigned int j = 0; j < 8; ++j) {
             for (unsigned int i = 0; i < w; ++i) {
@@ -419,9 +424,10 @@ std::vector<unsigned char> coded_literals(
     for (auto const& s : streams) {
         w = std::max(w, static_cast<unsigned int>(std::bit_width(s.bytes.size())));
     }
-    auto c = std::vector<unsigned char>{static_cast<unsigned char>(n),
-                                        static_cast<unsigned char>(0x80 | n >> 8),
-                                        static_cast<unsigned char>((w - 5) << 4 | (desc.empty() ? 0U : 8U))};
+    auto c = std::vector<unsigned char>{
+        static_cast<unsigned char>(n),
+        static_cast<unsigned char>(0x80 | n >> 8),
+        static_cast<unsigned char>((w - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT | (desc.empty() ? 0U : SEQLZ_LIT_OWN))};
     auto sizes = bit_writer{};
     for (int j = 7; j >= 0; --j) {
         sizes.put(static_cast<unsigned int>(streams[static_cast<std::size_t>(j)].bytes.size()), w);
@@ -466,7 +472,7 @@ own_table(seqlz_ref const& r, unsigned int x, unsigned int y, own_damage damage,
     auto run = [&](unsigned int n) {
         if (n > 0) {
             auto const k = static_cast<unsigned int>(std::bit_width(n));
-            w.symbol(r.own, 9 + k);
+            w.symbol(r.own, SEQLZ_OWN_RUN + k);
             w.put(n - (1U << (k - 1)), k - 1);
         }
     };
@@ -575,7 +581,7 @@ TEST_CASE("seqlz_ref: coded literals need byte 2's top bits zero and every code 
             check_same(t.get(), r.get(), bad);
         }
         // one byte of stream 0 given to stream 1: the same bytes, but stream 0's last code is outside
-        auto const w = 5U + ((c[2] >> 4) & 7U);
+        auto const w = size_width(c);
         auto S = std::vector<unsigned int>(8);
         for (unsigned int j = 0; j < 8; ++j) {
             for (unsigned int i = 0; i < w; ++i) {

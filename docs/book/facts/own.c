@@ -273,7 +273,7 @@ static void encoder_facts(const struct seqlz_tables* t) {
     struct own_work* w = own_work(&st);
     u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}}, odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}};
     unsigned int n_lit, bits = ~0U, set = 0, j, k, coded = 0, sizes[SEQLZ_LIT_STREAMS], width, header, d, est;
-    unsigned int h = 0, n = 0, space0 = 0, own_coded, own_width, init_len[256] = {0};
+    unsigned int h = 0, n = 0, space0 = 0, own_coded, own_width, init_len[256] = {0}, own_bits = 0;
     const u8* lits;
 
     words_page(page);
@@ -337,6 +337,8 @@ static void encoder_facts(const struct seqlz_tables* t) {
         if (w->freq[0][k]) {
             h += w->freq[0][k] * log2_256(w->freq[0][k]);
             n++;
+            /* the literals' bits with the code, which own_code() checks */
+            own_bits += w->freq[0][k] * (w->len[k] & 15U);
         }
     h = n_lit * log2_256(n_lit) - h;
     est = h / 2048U + n * 115U / 256U;
@@ -348,11 +350,11 @@ static void encoder_facts(const struct seqlz_tables* t) {
     fact_num("own.enc.est", est);
     fact_num("own.enc.est_lhs", est + SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) + OWN_SAVES_MIN);
     fact_num("own.enc.d", d);
-    fact_num("own.enc.bits", w->bits);
-    fact_num("own.enc.bits_bytes", w->bits / 8U);
-    str("own.enc.bits_per_lit", "%.2f", (double)w->bits / n_lit);
+    fact_num("own.enc.bits", own_bits);
+    fact_num("own.enc.bits_bytes", own_bits / 8U);
+    str("own.enc.bits_per_lit", "%.2f", (double)own_bits / n_lit);
     str("own.enc.set_bits_per_lit", "%.2f", (double)bits / n_lit);
-    fact_num("own.enc.first_lhs", SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) + d + w->bits / 8U + OWN_SAVES_MIN);
+    fact_num("own.enc.first_lhs", SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) + d + own_bits / 8U + OWN_SAVES_MIN);
     own_coded = own_sizes(w, lits, n_lit);
     own_width = size_width(w->sizes);
     fact_num("own.enc.own_coded", own_coded);

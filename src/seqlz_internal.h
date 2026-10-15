@@ -94,7 +94,7 @@ static_assert(SEQLZ_LIT_STREAMS == 8U,
  *   bits 16..18: the run before the first, at most 7
  *   bits 19..21: the run before the second
  *   bit  31:     the 8 bits start with a run that does not fit like that;
- *                decode() has its symbol
+ *                decode[] has its symbol
  */
 #define OWN_QUAD_NONE 11U
 #define OWN_QUAD_END1_AT 8

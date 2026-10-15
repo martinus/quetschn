@@ -36,8 +36,8 @@ spec = importlib.util.spec_from_file_location("plot_codecs", here / "plot-codecs
 plot_codecs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plot_codecs)
 
-# the phone's names: the module registers seqlz-<name> and seqlz-<name>-lit, and the phone's 4.14 has
-# lzo where newer kernels have lzo-rle
+# the phone's names: the module registers seqlz-<name>-<level>, and the phone's 4.14 has lzo where
+# newer kernels have lzo-rle
 ORDER = ["lz4", "lzo-rle", "zstd", "seqlz-1", "seqlz-2"]
 COLORS = {"lz4": "#15191e", "lzo-rle": "#7a838e", "zstd": "#eb6834", "seqlz-1": "#1baf7a", "seqlz-2": "#2a78d6"}
 KERNEL = "#c9ced5"

@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
         {
             /* the header, and the bits that fill up the last byte of each stream and the bitstream */
             double expect;
-            unsigned int width = 5 + ((dst[2] >> 4) & 7U), hdr = coded ? 3 + width : 2;
+            unsigned int width = SEQLZ_SIZE_BITS_MIN + ((dst[2] >> SEQLZ_LIT_WIDTH_AT) & 7U), hdr = coded ? 3 + width : 2;
 
             b_hdr += 8.0 * hdr;
             expect = hdr + (bits + 7) / 8;

@@ -551,7 +551,6 @@ struct own_work {
 	u8 gain[256]; /* that, for each byte in bytes[], from 0 to 15 */
 	u8 len[256]; /* the code lengths */
 	u32 enc[256]; /* code length | code << 8, as in struct lit_table */
-	u32 bits; /* the literals' bits with the code */
 	/* the streams' bytes with the code, see own_sizes() */
 	unsigned int sizes[SEQLZ_LIT_STREAMS];
 	/* the table as the page sends it, and 8 bytes of room for own_put() */
@@ -666,7 +665,8 @@ static __always_inline void own_put(struct own_work *w, u64 *acc,
  * The page's own code for its literals, from the counts in w->freq: lengths,
  * the encoder's codes, the description in w->desc. Returns the bytes of the
  * description, or 0 if it does not pay: fewer than 2 different bytes, or the
- * literals' entropy says it cannot save OWN_SAVES_MIN bytes against limit, the
+ * literals' entropy, or their bits with the code and the description with the
+ * smallest header, say it cannot save OWN_SAVES_MIN bytes against limit, the
  * bytes of the best fixed table with its header.
  */
 static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
@@ -675,7 +675,7 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 	/* the low 15 bits of each lane */
 	const u64 low = 0x7fff7fff7fff7fffULL;
 	unsigned int k, j, n = 0, count[16] = { 0 }, next[16], l, cnt = 0, prev,
-			   out = 0, h = 0, est;
+			   out = 0, h = 0, est, bits = 0;
 	u64 acc = 0, present[4] = { 0 };
 
 	/*
@@ -730,12 +730,11 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 		count[w->len[w->bytes[k & 255U]] & 15U]++;
 	for (l = 1, next[0] = 0; l < 16; l++)
 		next[l] = (next[l - 1] + count[l - 1]) << 1;
-	w->bits = 0;
 	for (k = 0; k < n; k++) {
 		unsigned int b = w->bytes[k & 255U];
 
 		l = w->len[b] & 15U;
-		w->bits += w->freq[0][b] * l;
+		bits += w->freq[0][b] * l;
 		w->enc[b] = l | next[l]++ << 8;
 	}
 
@@ -761,6 +760,11 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 		w->desc[out++ & (OWN_DESC_ROOM - 1U)] = (u8)(acc >> (cnt - 8));
 	if (cnt)
 		w->desc[out++ & (OWN_DESC_ROOM - 1U)] = (u8)(acc << (8 - cnt));
+	/* the streams' sizes are counted only where this leaves room */
+	if (SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) + out + bits / 8U +
+		    OWN_SAVES_MIN >
+	    limit)
+		return 0;
 	return out;
 }
 
@@ -878,13 +882,7 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 		unsigned int n = own_code(t, own, n_literals, header + coded),
 			     own_coded, own_width;
 
-		/*
-		 * The streams' sizes only where the literals' bits alone, with
-		 * the smallest header, would leave the fixed table behind.
-		 */
-		if (n && SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) + n +
-					 own->bits / 8U + OWN_SAVES_MIN <=
-				 header + coded) {
+		if (n) {
 			own_coded = own_sizes(own, literals, n_literals);
 			own_width = size_width(own->sizes);
 			if (SEQLZ_LIT_HEADER(own_width) + n + own_coded +
@@ -967,6 +965,7 @@ static unsigned int compress_page(const struct seqlz_tables *t,
 	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)
 		return 0;
 	encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
+	/* two copies of the matcher, lazy a constant in each */
 	if (lazy)
 		seqlz_match_page(st->table, src, true, encode_emit, &e);
 	else

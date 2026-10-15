@@ -59,8 +59,9 @@ STYLE = {
     "zstd": ("#8e44ad", "D"),
     "seqlz-1": ("#1f6fd1", "o"),
     "seqlz-2": ("#17a2b8", "v"),
+    "seqlz-3": ("#2e9e44", "s"),
 }
-OTHER_COLORS = ["#2e9e44", "#c0392b", "#16a085", "#d35400", "#2c3e50"]
+OTHER_COLORS = ["#c0392b", "#16a085", "#d35400", "#2c3e50"]
 MAIN = ("seqlz-2",)
 # what the footer says about a codec, if it is in the chart
 ABOUT = {

@@ -338,7 +338,7 @@ last sequence gets `ml` 0 whatever its `match` field says.
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
 here because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 937-959
+@listing src/seqlz_compress.c 935-957
 
 `code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
 also with a table of the page's own, and returns the new length or `len` unchanged. It gets the
@@ -347,9 +347,9 @@ For the own table it needs `struct own_work`, {{own.enc.work_size|grp}} bytes of
 description ([chapter 11](#ch-literals-enc--own)), and `own_work()` puts it into the matcher's state at
 byte {{own.enc.work_at}}: `st->work` counts in `u64`, so `OWN_LITERALS_MAX / 8U` is that byte. The
 level is checked before anything is written, so a level outside 1 to `SEQLZ_LEVELS`, or level 3
-without the state, returns 0 as the header's kernel-doc says ([chapter 6](#ch-header--encode-decode)).
+without the state, returns 0 as the header's kernel-doc says ([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 961-990
+@listing src/seqlz_compress.c 959-989
 
 `compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
 construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop

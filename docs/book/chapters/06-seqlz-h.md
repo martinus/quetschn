@@ -387,28 +387,11 @@ literal, and what the last step of `decode_literals()` may write
 ([chapter 13](#ch-literals-dec)). For raw literals the bytes after them in the compressed page play
 that part.
 
-## Encoding and decoding a page {#ch-header--encode-decode}
+## Decoding a page {#ch-header--encode-decode}
 
-@listing src/seqlz.h 343-374
+@listing src/seqlz.h 343-358
 
-`struct seqlz_state` is defined further down, with the levels, but `seqlz_encode()` takes a pointer to
-it. A struct named first inside a parameter list is a new type whose scope is that one declaration, and
-gcc warns that it "will not be visible outside of this definition or declaration"; the declaration in
-line 344 makes the parameter the same type as the definition below. `seqlz_encode()` needs the state
-only at level 3, as work memory for a page's own table ([chapter 11](#ch-literals-enc--own)); below it
-`st` may be `NULL`, and level 3 without it returns 0, as a level outside 1 to 3 does.
-
-`seqlz_encode()` is for the tests, the fuzzer that feeds the encoder raw sequences, and
-`tools/seqlz-worst/`, which writes valid pages from sequences the matcher would never find, to search
-for the pages slowest to decode. It checks the rules of lines 362 to 365, the ones the decoder checks,
-before it writes anything. It did not always: a match shorter than 4 bytes made `ml - 4` wrap to near
-$2^{32}$, its length value took more than 31 bits, and 1025 such sequences wrote past the two pages of
-`dst`. `fuzz/seqlz_encode_fuzz.c` came with the fix (commit `256768e`). 0 can mean failure because
-every page has at least its 2-byte header.
-
-@listing src/seqlz.h 376-391
-
-Lines 384 to 386 are the most important lines of this header. zram stores no checksum, so a page
+Lines 351 to 353 are the most important lines of this header. zram stores no checksum, so a page
 damaged in memory, or by a bug elsewhere, reaches the decoder as it is, and a decoder that wrote outside
 its buffers would turn a damaged page into a damaged kernel. [Chapter 14](#ch-decode--safety) has the
 checks and the fuzzing that keep the promise. The page does not say which tables wrote it. `scratch` may
@@ -416,7 +399,7 @@ be `NULL` for a device at level 1, `seqlz-1`, whose compressor never codes liter
 memory per CPU ([chapter 15](#ch-zram-glue--backend)). There is no partial result: either the page is
 valid and `dst` holds it, or `-EINVAL`.
 
-@listing src/seqlz.h 393-402
+@listing src/seqlz.h 360-369
 
 Only a sequence with a match has a token, so `ml` is at least 4; the last sequence's `ml` of 0 would
 wrap, and `min()` would make it 31. Until 11th October 2026 the last sequence had a token, and the line
@@ -435,7 +418,7 @@ conditional move per cap and no branch.
 
 ## The compressor's state {#ch-header--compressor}
 
-@listing src/seqlz.h 404-416
+@listing src/seqlz.h 371-383
 
 The first comment is the compressor's design: the matcher and the encoder are one loop over the page
 ([chapter 9](#ch-matcher), [chapter 10](#ch-encoder)). Each entry of the hash table is the position of
@@ -447,7 +430,7 @@ measurements of 2048 and 8192 entries. The kernel's copy has `12U` in place of t
 {{k16.const.MAX_SEQUENCES}} on 16 KiB pages. `seqlz_encode()` rejects more, `seqlz_find()` needs room
 for that many, and the decoder's work per page is bounded by the same count.
 
-@listing src/seqlz.h 418-428
+@listing src/seqlz.h 385-395
 
 A **level** is what zram calls the knob a user sets per device, `level=` in
 `/sys/block/zram0/algorithm_params` ([chapter 15](#ch-zram-glue--backend)). seqlz's three levels write
@@ -467,7 +450,7 @@ for level 2, and took about 16 µs to write one against 12 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 @assert ch09.lazy_len == 20
 
-@listing src/seqlz.h 430-442
+@listing src/seqlz.h 397-409
 
 `struct seqlz_state` is the compressor's work memory, one per CPU, as zram compresses on every CPU at
 once. Once the matcher is through the page, the hash table is free, and `code_literals()` keeps a copy
@@ -483,11 +466,27 @@ What it adds is the alignment of 8: a union of `u16` and `u8` alone could start 
 and `struct own_work` has `u32` members. In the kernel the hash table and the decoder's scratch share
 one allocation of 8 KiB per CPU ([chapter 15](#ch-zram-glue--backend)).
 
-@listing src/seqlz.h 444-486
+@listing src/seqlz.h 411-424
 
 `seqlz_find()` runs the matcher alone, e.g. to compare matchers or to feed `seqlz_encode()`, with the
 matcher of the level it is given: at level 3 the sequences are other ones. It does not copy the
 literals; a tool takes them from the page.
+
+@listing src/seqlz.h 426-454
+
+`seqlz_encode()` writes a page from sequences it is given. It needs the state only at level 3, as work
+memory for a page's own table ([chapter 11](#ch-literals-enc--own)); below it `st` may be `NULL`, and
+level 3 without it returns 0, as a level outside 1 to 3 does.
+
+`seqlz_encode()` is for the tests, the fuzzer that feeds the encoder raw sequences, and
+`tools/seqlz-worst/`, which writes valid pages from sequences the matcher would never find, to search
+for the pages slowest to decode. It checks the rules of lines 442 to 445, the ones the decoder checks,
+before it writes anything. It did not always: a match shorter than 4 bytes made `ml - 4` wrap to near
+$2^{32}$, its length value took more than 31 bits, and 1025 such sequences wrote past the two pages of
+`dst`. `fuzz/seqlz_encode_fuzz.c` came with the fix (commit `256768e`). 0 can mean failure because
+every page has at least its 2-byte header.
+
+@listing src/seqlz.h 456-483
 
 `seqlz_compress()`'s size contract: zram's buffer of two pages is always enough, also for random data,
 which [chapter 10](#ch-encoder) proves with the 31 bits of `SEQLZ_MAX_ESCAPE_LEN`. A smaller buffer

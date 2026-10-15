@@ -344,7 +344,6 @@ def port_header():
     t = must(t, '#include "seqlz_compat.h"\n', "#include <asm/page.h>\n#include <linux/minmax.h>\n#include <linux/types.h>\n")
     t = cut(t, r"/\* a sequence as the matcher finds it, see seqlz_find\(\) \*/\nstruct seqlz_sequence \{.*?\};\n\n")
     t = cut(t, r"/\*\*\n \* seqlz_tables_size\(\) -.*?;\n\n")
-    t = cut(t, r"/\* the matcher's state, below \*/\nstruct seqlz_state;\n\n")
     t = cut(t, r"/\*\*\n \* seqlz_encode\(\) -.*?;\n\n")
     t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the page \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")

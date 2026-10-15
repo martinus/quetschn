@@ -434,39 +434,10 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
     }
 }
 
-TEST_CASE("seqlz: the matcher does not step back into the literals") {
-    // The page of the book's chapter 9, random_page() in docs/book/facts/ch07_09.c: random bytes, bytes 0
-    // to 63 again at 64, and 124 to 137 again at 398. Of the match at 64 only position 126 goes into the
-    // table, so the copy at 398 is found at 400, and the match starts there: 398 and 399 stay literals,
-    // although they repeat 124 and 125.
-    auto page = std::vector<unsigned char>(page_size);
-    auto seed = 12345U;
-    for (auto& b : page) {
-        seed = seed * 1103515245U + 12345U;
-        b = static_cast<unsigned char>(seed >> 16);
-    }
-    std::copy_n(page.begin(), 64, page.begin() + 64);
-    std::copy_n(page.begin() + 124, 14, page.begin() + 398);
-    auto state = std::make_unique<seqlz_state>();
-    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
-    auto const n = seqlz_find(state.get(), page.data(), seq.data(), 2);
-    auto found = false;
-    for (unsigned k = 0, pos = 0; k + 1 < n; ++k) {
-        pos += seq[k].literals;
-        if (pos <= 400 && 400 < pos + seq[k].match) {
-            CHECK(pos == 400);
-            CHECK(seq[k].match == 12);
-            CHECK(seq[k].offset == 400 - 126);
-            found = true;
-        }
-        pos += seq[k].match;
-    }
-    CHECK(found);
-}
-
 namespace {
 
-// The page of the test above.
+// The page of the book's chapter 9, random_page() in docs/book/facts/ch07_09.c: random bytes, bytes 0 to 63
+// again at 64, and 124 to 137 again at 398.
 std::vector<unsigned char> late_match_page() {
     auto page = std::vector<unsigned char>(page_size);
     auto seed = 12345U;
@@ -493,8 +464,18 @@ std::array<unsigned, 3> match_at(std::vector<seqlz_sequence> const& seq, unsigne
 
 } // namespace
 
+TEST_CASE("seqlz: the matcher does not step back into the literals") {
+    // Of the match at 64 only position 126 goes into the table, so the copy at 398 is found at 400, and the
+    // match starts there: 398 and 399 stay literals, although they repeat 124 and 125.
+    auto const page = late_match_page();
+    auto state = std::make_unique<seqlz_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto const n = seqlz_find(state.get(), page.data(), seq.data(), 2);
+    CHECK(match_at(seq, n, 400) == std::array<unsigned, 3>{400, 12, 400 - 126});
+}
+
 TEST_CASE("seqlz: level 3 extends a match backwards into the literals") {
-    // The page above: at level 3 the match found at 400 starts at 398, where the repeat of 124 starts.
+    // late_match_page(): at level 3 the match found at 400 starts at 398, where the repeat of 124 starts.
     auto const page = late_match_page();
     auto state = std::make_unique<seqlz_state>();
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
@@ -531,20 +512,17 @@ TEST_CASE("seqlz: only levels 1 to 3 compress") {
     auto st = std::make_unique<seqlz_state>();
     auto const page = late_match_page();
     auto c = std::vector<unsigned char>(2 * page_size);
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto const one = seqlz_sequence{static_cast<unsigned short>(page_size), 0, 0};
     for (unsigned level : {0U, SEQLZ_LEVELS + 1}) {
         CAPTURE(level);
         CHECK(seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, level) == 0);
-        auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         CHECK(seqlz_find(st.get(), page.data(), seq.data(), level) == 0);
-        auto const lits = std::vector<unsigned char>(page.begin(), page.end());
-        auto const one = seqlz_sequence{static_cast<unsigned short>(page_size), 0, 0};
-        CHECK(seqlz_encode(t.get(), st.get(), &one, 1, lits.data(), page_size, c.data(), 2 * page_size, level) == 0);
+        CHECK(seqlz_encode(t.get(), st.get(), &one, 1, page.data(), page_size, c.data(), 2 * page_size, level) == 0);
     }
     // level 3 needs the work memory of the state
-    auto const lits = std::vector<unsigned char>(page.begin(), page.end());
-    auto const one = seqlz_sequence{static_cast<unsigned short>(page_size), 0, 0};
-    CHECK(seqlz_encode(t.get(), nullptr, &one, 1, lits.data(), page_size, c.data(), 2 * page_size, 3) == 0);
-    CHECK(seqlz_encode(t.get(), st.get(), &one, 1, lits.data(), page_size, c.data(), 2 * page_size, 3) > 0);
+    CHECK(seqlz_encode(t.get(), nullptr, &one, 1, page.data(), page_size, c.data(), 2 * page_size, 3) == 0);
+    CHECK(seqlz_encode(t.get(), st.get(), &one, 1, page.data(), page_size, c.data(), 2 * page_size, 3) > 0);
     for (unsigned level = 1; level <= SEQLZ_LEVELS; ++level) {
         CHECK(seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, level) > 0);
     }

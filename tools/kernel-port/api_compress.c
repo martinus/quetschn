@@ -1,5 +1,8 @@
 /* ---- the kernel's interface, include/linux/seqlz.h ---- */
 
+static_assert(SEQLZ_LEVEL_MIN == 1 && SEQLZ_LEVEL_MAX == SEQLZ_LEVELS,
+	      "the interface's levels are the codec's");
+
 int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 		   void *wrkmem, int level)
 {

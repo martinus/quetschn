@@ -200,28 +200,32 @@ lit_result lit_sets(std::vector<std::array<double, 256>> const& pages, lit_searc
 }
 
 // The symbols of the description of a page's own literal table (SEQLZ_LIT_OWN), counted into own: read
-// with the code of seqlz_own_lengths, as the decoder reads them. Pages with another code count nothing.
-void count_own(std::span<unsigned char const> c, std::vector<double>& own) {
+// with the code of seqlz_own_lengths, as the decoder reads them. Returns false for pages with another code,
+// which count nothing.
+bool count_own(std::span<unsigned char const> c, std::vector<double>& own) {
     if (c.size() < 3 || !(c[1] & 0x80U) || (c[2] & SEQLZ_LIT_CODE_MASK) != SEQLZ_LIT_OWN) {
-        return;
+        return false;
     }
     // the canonical code: the first code of each length, then the symbols in order
-    auto first = std::array<unsigned, 16>{};
-    auto count = std::array<unsigned, 16>{};
-    for (auto const l : seqlz_own_lengths) {
-        ++count[l];
-    }
-    for (unsigned l = 2; l < 16; ++l) {
-        first[l] = (first[l - 1] + count[l - 1]) << 1;
-    }
-    auto symbol_of = std::array<std::array<int, 256>, 16>{};
-    for (auto& row : symbol_of) {
-        row.fill(-1);
-    }
-    for (unsigned s = 0, next[16] = {}; s < SEQLZ_OWN_SYMBOLS; ++s) {
-        auto const l = seqlz_own_lengths[s];
-        symbol_of[l][first[l] + next[l]++] = static_cast<int>(s);
-    }
+    static auto const symbol_of = [] {
+        auto first = std::array<unsigned, 16>{};
+        auto count = std::array<unsigned, 16>{};
+        for (auto const l : seqlz_own_lengths) {
+            ++count[l];
+        }
+        for (unsigned l = 2; l < 16; ++l) {
+            first[l] = (first[l - 1] + count[l - 1]) << 1;
+        }
+        auto symbols = std::array<std::array<int, 256>, 16>{};
+        for (auto& row : symbols) {
+            row.fill(-1);
+        }
+        for (unsigned s = 0, next[16] = {}; s < SEQLZ_OWN_SYMBOLS; ++s) {
+            auto const l = seqlz_own_lengths[s];
+            symbols[l][first[l] + next[l]++] = static_cast<int>(s);
+        }
+        return symbols;
+    }();
     auto const width = SEQLZ_SIZE_BITS_MIN + ((c[2] >> SEQLZ_LIT_WIDTH_AT) & 7U);
     auto pos = std::size_t{8} * SEQLZ_LIT_HEADER(width);
     auto bit = [&] {
@@ -245,6 +249,7 @@ void count_own(std::span<unsigned char const> c, std::vector<double>& own) {
             }
         }
     }
+    return true;
 }
 
 void usage() {
@@ -371,16 +376,14 @@ int main(int argc, char** argv) {
                 continue;
             }
             ++pages;
-            {
+            if (!counts_out.empty() || !own_out.empty()) {
                 auto const len = seqlz_compress(tables.get(),
                                                 state.get(),
                                                 src.data(),
                                                 compressed.data(),
                                                 static_cast<unsigned>(compressed.size()),
                                                 SEQLZ_LEVELS);
-                auto const before = counts.own;
-                count_own(std::span(compressed.data(), len), counts.own);
-                own_pages += before != counts.own;
+                own_pages += count_own(std::span(compressed.data(), len), counts.own);
             }
             if (!own_out.empty()) {
                 continue;

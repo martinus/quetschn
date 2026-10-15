@@ -14,46 +14,34 @@ one in the run's table wins.
 Needs matplotlib and the Noto Sans font.
 """
 
+import importlib.util
 import re
 import sys
+from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+spec = importlib.util.spec_from_file_location("plot_codecs", Path(__file__).resolve().parent / "plot-codecs.py")
+plot_codecs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plot_codecs)
+
 R = 0.34
-# the chart's codecs: label, colour, marker, where the label goes in fractions of the axes
+# the chart's codecs: label, where the label goes in fractions of the axes; colour and marker of plot-codecs.py
 CODECS = {
-    "lz4": ("lz4", "#7f7f7f", "o", (0.30, 0.95)),
-    "zstd": ("zstd 3", "#8e44ad", "D", (0.62, 0.45)),
-    "seqlz-1": ("seqlz-1: raw literals", "#1f6fd1", "o", (0.42, 0.82)),
-    "seqlz-2": ("seqlz-2: fixed literal tables", "#17a2b8", "v", (0.42, 0.72)),
-    "seqlz-3": ("seqlz-3: lazy, the page's own literal table", "#2e9e44", "s", (0.30, 0.30)),
+    "lz4": ("lz4", (0.30, 0.95)),
+    "zstd": ("zstd 3", (0.62, 0.45)),
+    "seqlz-1": ("seqlz-1: raw literals", (0.42, 0.82)),
+    "seqlz-2": ("seqlz-2: fixed literal tables", (0.42, 0.72)),
+    "seqlz-3": ("seqlz-3: lazy, the page's own literal table", (0.30, 0.30)),
 }
 CORES = [(7, "A76", 2208), (2, "A55", 1805)]
 
 
 def name_of(codec):
-    m = re.fullmatch(r"seqlz-(?:\w+-)?([0-9])", codec)
-    return f"seqlz-{m[1]}" if m else codec
-
-
-def hull(points):
-    """the lower left convex hull, from the fastest to the smallest: the best codec for some exchange rate"""
-    pts = sorted(points)
-    best = [pts[0]]
-    for p in pts[1:]:
-        if p[1] >= best[-1][1]:
-            continue
-        while len(best) >= 2:
-            (x1, y1), (x2, y2) = best[-2], best[-1]
-            if (y2 - y1) * (p[0] - x1) >= (p[1] - y1) * (x2 - x1):
-                best.pop()
-            else:
-                break
-        best.append(p)
-    return best
+    return plot_codecs.seqlz_level(codec) or codec
 
 
 def main():
@@ -82,17 +70,18 @@ def main():
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
     for ax, (c, core, mhz) in zip(axes, CORES):
         pts = []
-        for codec, (label, color, marker, at) in CODECS.items():
+        for codec, (label, at) in CODECS.items():
             if (c, codec) not in times or codec not in size:
                 continue
+            color, marker = plot_codecs.STYLE[codec]
             write, _, cold = times[(c, codec)]
             x, y = write + R * cold, size[codec]
-            pts.append((x, y))
+            pts.append((x, y, codec))
             ax.scatter([x], [y], color=color, marker=marker, s=70, zorder=3)
             ax.annotate(f"{label}: {x:.1f} µs, {y:.1f}%", (x, y), xytext=at, textcoords="axes fraction",
                         fontsize=8.5, color="#333333", va="center",
                         arrowprops=dict(arrowstyle="-", color="#aaaaaa", lw=0.7))
-        h = hull(pts)
+        h = plot_codecs.hull(pts)
         ax.plot([p[0] for p in h], [p[1] for p in h], color="#bbbbbb", lw=1, zorder=1)
         ax.set_xlim(0, max(p[0] for p in pts) * 1.12)
         ax.set_ylim(0, max(p[1] for p in pts) * 1.15)
