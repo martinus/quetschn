@@ -4,7 +4,7 @@
 # in one process a codec's time depends on the others, by up to 1 us (docs/measuring.md). Writes
 # <out dir>/log.txt and prints summary.py's table: the mean over the rounds and the range per codec.
 #
-#   CODECS   the zram algorithms, default lz4 and seqlz-<name> and seqlz-<name>-lit of each module
+#   CODECS   the zram algorithms, default lz4 and seqlz-<name>-1 and -2 of each module
 #   ROUNDS   default 3
 #   CORES    core:kHz, the clock each core is fixed at, default "2:1804800 7:2208000" (A55, A76)
 #   BUS=1    the memory's devfreq devices (L3, LLCC, DDR) on performance, at their highest frequency
@@ -29,7 +29,7 @@ ndk=${NDK_R21E:-$HOME/opt/android-ndk-r21e}
 names="" codecs=lz4
 for ko in "$@"; do
     n=$(basename "$ko" .ko); n=${n#quetschn_}
-    names="$names $n"; codecs="$codecs seqlz-$n seqlz-$n-lit"
+    names="$names $n"; codecs="$codecs seqlz-$n-1 seqlz-$n-2"
 done
 cat >"$out/params.sh" <<PARAMS
 cores="${CORES:-2:1804800 7:2208000}"

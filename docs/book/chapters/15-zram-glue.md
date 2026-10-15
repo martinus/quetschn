@@ -56,7 +56,7 @@ the split; the harness's `lz4`, `lzo` and `zstd` are copies of the kernel's glue
 
 @listing src/zram_seqlz.c 1-9
 
-Both codecs write the same format and are read by the same decoder. `seqlz-fast-lit` lets
+Both codecs write the same format and are read by the same decoder. `seqlz-2` lets
 `code_literals()` ([chapter 11](#ch-literals-enc)) code the literals where that saves $\frac{1}{16}$ of
 them and {{ch15.coded_min}} bytes. In the kernel they are levels 1 and 2 of one backend, `seqlz`; the
 harness names them as two codecs to compare them side by side. A dictionary could have carried other
@@ -102,7 +102,7 @@ same. The kernel builds without the warning about unused parameters below `W=3`,
 `(void)p`.
 @assert ch17.hash_slots * 2 == size.state and size.state >= 4096
 
-## seqlz-fast: compress and decompress {#ch-zram-glue--fast}
+## seqlz-1: compress and decompress {#ch-zram-glue--fast}
 
 @listing src/zram_seqlz.c 55-68
 
@@ -114,9 +114,9 @@ of a page that did not fit comes only with a smaller buffer, e.g. the one page z
 
 `s` is the compression context here, because this codec has no `create_dctx`, and pages with raw
 literals need no work memory. In zram with the split, a codec without `create_dctx` gets a stream with
-no context at all; the test `seqlz compresses with the hash table, seqlz-fast-lit decompresses with the
+no context at all; the test `seqlz compresses with the hash table, seqlz-2 decompresses with the
 scratch` in `test/kernel_codecs_test.cpp` decodes every test page that way. Without a scratch, a page
-with coded literals is invalid, which `seqlz-fast` never writes.
+with coded literals is invalid, which `seqlz-1` never writes.
 
 The prefetch is in the harness's header:
 
@@ -146,13 +146,13 @@ from the VM and the phone, are the ones the project trusts for decode times.
 The fields not named are null, which is how the harness, like zram after the split, knows that this
 codec has no decompression context. The object is not `static`: `bench/bench_main.cpp` names it.
 
-## seqlz-fast-lit: a second context for the scratch {#ch-zram-glue--fast-lit}
+## seqlz-2: a second context for the scratch {#ch-zram-glue--fast-lit}
 
 @listing src/zram_seqlz.c 97-106
 
 The scratch is where the coded literals are decoded to ([chapter 13](#ch-literals-dec)), a page plus 16
 bytes, {{const.SCRATCH}} with 4 KiB pages: the decoder's 16-byte copies read up to 15 bytes past the last
-literal, and the last step of `decode_literals()` writes up to 8. So `seqlz-fast-lit` has
+literal, and the last step of `decode_literals()` writes up to 8. So `seqlz-2` has
 {{size.state}} bytes per CPU for compression and {{const.SCRATCH}} for decompression,
 {{ch15.state_plus_scratch|grp}} bytes, which `kmalloc()` hands out as {{ch15.mem.split_gets|grp}}. The
 harness's one context before the split was a struct of both, also {{ch15.mem.struct_gets|grp}} bytes
@@ -229,7 +229,7 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
 - **`PAGE_SHIFT` instead of `QUETSCHN_PAGE_BITS`.** `lib/seqlz/seqlz.h` gets
   `#error "seqlz is for 4 KiB pages only"` for any other page size, and the values for 16 KiB pages are
   cut from the constants, e.g. `SEQLZ_RAW_NIBBLES` becomes `{{ch15.raw_nibbles}}`. The format for 16 KiB
-  pages is not fixed yet, and with them `seqlz-fast-lit` asks for twice `lz4`'s work memory per CPU
+  pages is not fixed yet, and with them `seqlz-2` asks for twice `lz4`'s work memory per CPU
   ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 - **`static` and kernel-doc.** `seqlz_decode()`, `seqlz_tables_init()` and `seqlz_compress()` of `src/`
   are called from one file in the kernel, so they become `static`, with their kernel-doc moved from the
@@ -461,8 +461,8 @@ only for the repository and text only for the kernel.
 `test/` has the doctest unit tests, one binary, `quetschn_test`. Two of them check this chapter's file.
 `seqlz takes no dictionary, its tables are part of the format` gives both codecs a dictionary of the size
 of `struct seqlz_lengths`, which once replaced the code lengths, and checks that a page compresses to the
-same bytes as without. `seqlz compresses with the hash table, seqlz-fast-lit decompresses with the
-scratch` checks the context sizes, and that `seqlz-fast` decodes with a stream without a context.
+same bytes as without. `seqlz compresses with the hash table, seqlz-2 decompresses with the
+scratch` checks the context sizes, and that `seqlz-1` decodes with a stream without a context.
 
 ### Fuzzing
 

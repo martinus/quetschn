@@ -14,7 +14,7 @@ warm, swap-out; both swap-ins of a row share one time axis.
 
 --bytes takes a row's bytes per page from another log of the same pages, e.g. where other pages of the
 system went into the device while it ran. --codecs picks the codecs, by default lz4, lzo-rle, zstd and
-seqlz-fast-lit.
+seqlz-2.
 
 Needs matplotlib and the Noto Sans font.
 """
@@ -38,18 +38,15 @@ spec.loader.exec_module(plot_codecs)
 
 # the phone's names: the module registers seqlz-<name> and seqlz-<name>-lit, and the phone's 4.14 has
 # lzo where newer kernels have lzo-rle
-ORDER = ["lz4", "lzo-rle", "zstd", "seqlz-fast", "seqlz-fast-lit"]
-COLORS = {"lz4": "#15191e", "lzo-rle": "#7a838e", "zstd": "#eb6834", "seqlz-fast": "#1baf7a", "seqlz-fast-lit": "#2a78d6"}
+ORDER = ["lz4", "lzo-rle", "zstd", "seqlz-1", "seqlz-2"]
+COLORS = {"lz4": "#15191e", "lzo-rle": "#7a838e", "zstd": "#eb6834", "seqlz-1": "#1baf7a", "seqlz-2": "#2a78d6"}
 KERNEL = "#c9ced5"
 
 
 def name_of(algo):
     if algo == "lzo":
         return "lzo-rle"
-    m = re.fullmatch(r"seqlz-\w+?(-lit)?", algo)
-    if m and algo not in ("seqlz", "seqlz-lit"):
-        return "seqlz-fast-lit" if m.group(1) else "seqlz-fast"
-    return plot_codecs.NAMES.get(algo, algo)
+    return plot_codecs.seqlz_level(algo) or plot_codecs.NAMES.get(algo, algo)
 
 
 def parse(path):
@@ -137,7 +134,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--row", action="append", required=True, help="title=log")
     ap.add_argument("--bytes", action="append", default=[], help="title=log")
-    ap.add_argument("--codecs", default="lz4,lzo-rle,zstd,seqlz-fast-lit")
+    ap.add_argument("--codecs", default="lz4,lzo-rle,zstd,seqlz-2")
     ap.add_argument("--out", action="append", required=True)
     args = ap.parse_args()
     rows = [(r.split("=", 1)[0], parse(r.split("=", 1)[1])) for r in args.row]

@@ -62,7 +62,7 @@ SPEC = "Documentation/staging/seqlz.rst"
 CPU_MODEL = re.compile(r"read_cpuid|\bMIDR_|boot_cpu_data|x86_model")
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
-                       r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
+                       r"seqlz-fast|seqlz-[0-9]\b|zramphone|\bdump\b|\bcorpus\b|"
                        # the reasons of an old kernel, a distribution or our test machines, which mainline
                        # does not have
                        r"4\.14|Mi 9T|Fedora|kernel VM|\bthe phone|\bthe PC\b")

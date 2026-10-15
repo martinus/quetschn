@@ -5,7 +5,7 @@
 # /data/local/tmp/quetschn, the lock screen off, Magisk's su allowed for the shell, and the Play Store's
 # auto update off, so that every run has the same app versions (each run writes them to versions.txt).
 #
-#   ALGOS="lzo lz4 seqlz-fast"  the algorithms, each repetition starts at another one
+#   ALGOS="lzo lz4 seqlz-1"  the algorithms, each repetition starts at another one
 #   REPS="1 2 3"                the repetitions
 #   DISKS="algo:bytes ..."      an algorithm's own zram disksize, 2.5 GiB otherwise
 #   HOG=1536                    MiB that hog locks, so the apps fit in less RAM
@@ -20,7 +20,7 @@
 #
 # python3 analyze.py results, python3 perlaunch.py results: the summary
 OUT=${RESULTS:-results}; mkdir -p "$OUT"
-read -r -a algos <<< "${ALGOS:-lzo lz4 seqlz-fast}"
+read -r -a algos <<< "${ALGOS:-lzo lz4 seqlz-1}"
 n=${#algos[@]}
 # one run of algo on a freshly booted phone, into $OUT/$rep-$algo
 one() {

@@ -5,7 +5,7 @@
 Compression for memory pages, built for Linux zram. The goal is to get as close as possible to `lz4`'s
 speed and to `zstd`'s size, with no more work memory than `lz4` and without recompression.
 
-The codec is `seqlz-fast-lit`: LZ sequences from a greedy matcher, Huffman coded with static tables,
+The codec is `seqlz-2`: LZ sequences from a greedy matcher, Huffman coded with static tables,
 and one of 8 literal tables per page. On a Xiaomi Mi 9T, in the phone's own kernel, with 20 000 pages
 from the phone's zram, the whole page fault per page:
 
@@ -14,9 +14,9 @@ from the phone's zram, the whole page fault per page:
 | `lz4` | 1300 | 5.3 / 16.2 µs | 10.3 / 31.2 µs |
 | `lzo` | 1216 | 6.4 / 17.4 µs | 11.2 / 33.9 µs |
 | `zstd` 3 | 898 | 16.9 / 47.5 µs | 34.7 / 133 µs |
-| **`seqlz-fast-lit`** | **935** | **6.0 / 17.9 µs** | **12.4 / 38.8 µs** |
+| **`seqlz-2`** | **935** | **6.0 / 17.9 µs** | **12.4 / 38.8 µs** |
 
-So `seqlz-fast-lit` stores a page in 28% fewer bytes than `lz4` and 4% more than `zstd`. It swaps in
+So `seqlz-2` stores a page in 28% fewer bytes than `lz4` and 4% more than `zstd`. It swaps in
 13% slower than `lz4` on the big core and 11% slower on the little one, and 25% and 17% slower cold,
 with 2 MiB of other data read before each fault. Swap-out is all pages of a mapping in one `madvise()`
 call, and there it is 20% and 24% slower. In the mean it is slower than `lz4` in every column, so the
@@ -29,7 +29,7 @@ Lower left is better. Time is the whole fault, the grey part is the kernel's, wh
 every codec. How it was measured is in
 [explored-designs.md, "The whole page fault"](docs/explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves).
 
-<img src="docs/plots/swap-fault-2026-10-07.svg" alt="Memory per page against the time of a page fault, for lz4, lzo, zstd and seqlz-fast-lit, on the PC and on both cores of the phone">
+<img src="docs/plots/swap-fault-2026-10-07.svg" alt="Memory per page against the time of a page fault, for lz4, lzo, zstd and seqlz-2, on the PC and on both cores of the phone">
 
 </details>
 
@@ -38,7 +38,7 @@ every codec. How it was measured is in
 As of 9th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
 
 - [x] Benchmark harness, page collectors, zram dumps of a desktop and of a phone
-- [x] The codec, [`seqlz-fast-lit`](docs/seqlz.md), and every alternative that was measured
+- [x] The codec, [`seqlz-2`](docs/seqlz.md), and every alternative that was measured
 - [x] [The format](docs/format.md), two reference decoders written from it, fuzzing, the worst case measured
 - [x] Measured in a kernel: a VM on x86-64, and the Mi 9T's own kernel on arm64
 - [x] Ask the zram maintainers whether they want a new backend at all, and in which form: [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), no answer yet

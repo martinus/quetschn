@@ -1,7 +1,7 @@
 # What this book is, and how to read it {#preface}
 
 seqlz is a compressor for single memory pages, written for zram, the compressed swap device of Linux.
-On the pages a desktop swapped into zram, `seqlz-fast-lit` stores a page in 24% fewer bytes than
+On the pages a desktop swapped into zram, `seqlz-2` stores a page in 24% fewer bytes than
 `lzo-rle`, zram's default, and takes 17% more time than `lz4` to write a page and 9% more to read
 one. `zstd` stores pages 4% smaller still, for twice the time to write and about twice the time to
 read. Measured in the real kernel in a virtual machine on a Ryzen 9 7950X fixed at 4.5 GHz, on 14th

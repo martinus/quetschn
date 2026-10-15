@@ -120,8 +120,8 @@ std::vector<quetschn_codec const*> codecs() {
             &quetschn_codec_lzo,
             &quetschn_codec_lzo_rle,
             &quetschn_codec_zstd,
-            &quetschn_codec_seqlz_fast,
-            &quetschn_codec_seqlz_fast_lit};
+            &quetschn_codec_seqlz_1,
+            &quetschn_codec_seqlz_2};
 }
 
 // A zram device (params) with the per-CPU contexts of one CPU, set up the way zram does it.
@@ -368,7 +368,7 @@ TEST_CASE("kernel codecs: seqlz takes no dictionary, its tables are part of the 
     // no code at all, would have failed the setup.
     auto const dict = page(sizeof(seqlz_lengths));
     auto const p = text_page();
-    for (auto const* codec : {&quetschn_codec_seqlz_fast, &quetschn_codec_seqlz_fast_lit}) {
+    for (auto const* codec : {&quetschn_codec_seqlz_1, &quetschn_codec_seqlz_2}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
         CHECK(device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p) == device(*codec).compress(p));
@@ -417,27 +417,27 @@ TEST_CASE("kernel codecs: memory per CPU and per device") {
     CHECK(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated > 0);
 }
 
-TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-fast-lit decompresses with the scratch") {
+TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-2 decompresses with the scratch") {
     // the split of zram's series of October 2026 costs seqlz no memory: what the one context had, the
     // compression context and the decompression context have now
-    auto fast = device(quetschn_codec_seqlz_fast);
-    auto lit = device(quetschn_codec_seqlz_fast_lit);
+    auto fast = device(quetschn_codec_seqlz_1);
+    auto lit = device(quetschn_codec_seqlz_2);
     CHECK(fast.contexts().compression_bytes() == quetschn_kmalloc_size(sizeof(seqlz_state)));
     CHECK(fast.contexts().decompression_bytes() == 0);
-    CHECK(quetschn_codec_seqlz_fast.create_dctx == nullptr);
+    CHECK(quetschn_codec_seqlz_1.create_dctx == nullptr);
     CHECK(lit.contexts().compression_bytes() == quetschn_kmalloc_size(sizeof(seqlz_state)));
     CHECK(lit.contexts().decompression_bytes() == quetschn_kmalloc_size(SEQLZ_SCRATCH));
     // docs/plan.md §3.3: 8 KiB each, the scratch's 16 bytes past a page take the next cache
     CHECK(lit.contexts().compression_bytes() + lit.contexts().decompression_bytes() == 16384);
 
-    // seqlz-fast decodes with no context at all, as zram's series gives a codec without create_dctx
+    // seqlz-1 decodes with no context at all, as zram's series gives a codec without create_dctx
     for (auto const& src : test_pages()) {
         auto const c = fast.compress(src);
         auto out = page(page_size);
         auto len = static_cast<unsigned int>(out.size());
         auto none = quetschn_stream{};
         auto p = fast.params();
-        CHECK(quetschn_codec_seqlz_fast.decompress(
+        CHECK(quetschn_codec_seqlz_1.decompress(
                   &p, &none, c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) == 0);
         CHECK(out == src);
     }

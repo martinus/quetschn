@@ -382,7 +382,7 @@ Lines 353 to 355 are the most important lines of this header. zram stores no che
 damaged in memory, or by a bug elsewhere, reaches the decoder as it is, and a decoder that wrote outside
 its buffers would turn a damaged page into a damaged kernel. [Chapter 14](#ch-decode--safety) has the
 checks and the fuzzing that keep the promise. The page does not say which tables wrote it. `scratch` may
-be `NULL` for a device at level 1, `seqlz-fast`, whose compressor never codes literals, and saves that
+be `NULL` for a device at level 1, `seqlz-1`, whose compressor never codes literals, and saves that
 memory per CPU ([chapter 15](#ch-zram-glue--backend)). There is no partial result: either the page is
 valid and `dst` holds it, or `-EINVAL`.
 

@@ -89,7 +89,7 @@ done
 
 if [[ -n ${BUILD:-} ]]; then
     echo "== zsmalloc memory of phase 1: mm_stat's mem_used_total against the userspace model"
-    "$BUILD/quetschn-bench-interleaved" --codecs lz4,seqlz-fast,seqlz-fast-lit --corpus "${corpus%.pages}" \
+    "$BUILD/quetschn-bench-interleaved" --codecs lz4,seqlz-1,seqlz-2 --corpus "${corpus%.pages}" \
         --no-timing >"$work/model.txt"
     python3 - "$work/model.txt" "$out"/boot-*.log <<'PY'
 import re, sys
@@ -101,7 +101,7 @@ for line in open(sys.argv[1]):
     m = re.match(r"zsmalloc (cost|new device) +(\d+) bytes", line)
     if m:
         model.setdefault(codec, {})[m[1]] = int(m[2])
-names = {"lz4": "lz4", "seqlz:1": "seqlz-fast", "seqlz:2": "seqlz-fast-lit"}
+names = {"lz4": "lz4", "seqlz:1": "seqlz-1", "seqlz:2": "seqlz-2"}
 print(f"{'zram':10s} {'mem_used_total':>15s} {'model, new device':>18s} {'Σ zsmalloc cost':>16s}")
 for log in sys.argv[2:]:
     for line in open(log, errors="replace"):

@@ -268,9 +268,9 @@ read or write of one byte too far ([chapter 15](#ch-zram-glue--fuzzing)).
 ## What decoding the literals costs {#ch-literals-dec--cost}
 
 ::: measured 8 streams against 4
-When `seqlz-fast-lit` got its 8 literal tables on 24th September 2026, the streams went from 4 to 8.
+When `seqlz-2` got its 8 literal tables on 24th September 2026, the streams went from 4 to 8.
 With 4, a literal took about 2.9 cycles. With 8, the decode loop over 2000 pages in the cache went from
-9070 to 8676 cycles per page (median of 5, userspace; `seqlz-fast` took 7316), and cold reads in the
+9070 to 8676 cycles per page (median of 5, userspace; `seqlz-1` took 7316), and cold reads in the
 kernel from 2940 to 2860 ns at p50 and from 4810 to 4531 ns at p99
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 Measured again on 5th October 2026 in the Mi 9T's own kernel, 4 streams saved 2.7 bytes per page; the

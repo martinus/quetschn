@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
-"""The chart of docs/seqlz.md: seqlz-fast-lit against zram's codecs, in a hot loop and in the kernel.
+"""The chart of docs/seqlz.md: seqlz-2 against zram's codecs, in a hot loop and in the kernel.
 
 Four panels: the cycles per page of a hot loop, from perf, and the write, cold read and memory of the
 kernel VM of tools/zram-vm/run.sh, one log per zram dump. The hot loop is a TSV with a line per codec:
@@ -31,7 +31,7 @@ spec = importlib.util.spec_from_file_location("plot_codecs", here / "plot-codecs
 plot_codecs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plot_codecs)
 
-CODECS = ["lz4", "lzo-rle", "zstd", "seqlz-fast-lit"]
+CODECS = ["lz4", "lzo-rle", "zstd", "seqlz-2"]
 LABEL = {"zstd": "zstd 3"}
 
 
@@ -132,7 +132,7 @@ def main():
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
     fig.suptitle(
-        "seqlz-fast-lit against zram's codecs: close to lz4's time, close to zstd's memory",
+        "seqlz-2 against zram's codecs: close to lz4's time, close to zstd's memory",
         fontsize=13,
         fontweight="bold",
     )

@@ -2,8 +2,8 @@
 
 Read by agents only. Keep edits terse: rules and facts, no rationale prose, no human-facing style.
 
-Compression codec for Linux zram pages. Codec `seqlz-fast-lit`: one format, two compressors
-(`seqlz-fast` raw literals, `seqlz-fast-lit` coded literals). Target: upstream Linux. Project name
+Compression codec for Linux zram pages. Codec `seqlz-2`: one format, two compressors
+(`seqlz-1` raw literals, `seqlz-2` coded literals). Target: upstream Linux. Project name
 `quetschn` (binaries, `QUETSCHN_*` options); codec name stays `seqlz`, never propose a rename.
 
 ## Goal and design rules

@@ -12,7 +12,7 @@ timings, no page content.
     tools/plot-codecs.py --run "zram dump of 23 Sep=first.log" --run "zram dump of 24 Sep=second.log" \\
         --out codecs.png --out codecs.svg
 
-seqlz (seqlz-fast) is not in the default run: on x86-64 no exchange rate makes it the best choice
+seqlz (seqlz-1) is not in the default run: on x86-64 no exchange rate makes it the best choice
 (docs/explored-designs.md). --skip leaves codecs out of a log that has them, e.g. bytelz in old logs.
 
 Needs matplotlib and the Noto Sans font.
@@ -30,26 +30,41 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-# zram's names of the backends, and what the chart calls them
+# zram's names of the backends, and what the chart calls them; seqlz and seqlz-lit are the VM's names
+# from before the levels had numbers
 NAMES = {
     "lz4": "lz4",
     "lzo-rle": "lzo-rle",
     "zstd": "zstd",
-    "seqlz": "seqlz-fast",
-    "seqlz-lit": "seqlz-fast-lit",
+    "seqlz": "seqlz-1",
+    "seqlz-lit": "seqlz-2",
 }
+
+
+def seqlz_level(algo):
+    """seqlz-<level> for a phone module's name, seqlz-<build>-<level>, or seqlz-<build> and
+    seqlz-<build>-lit from before the levels had numbers; None for another name"""
+    if re.fullmatch(r"seqlz-[0-9]", algo):
+        return algo
+    m = re.fullmatch(r"seqlz-\w+?-([0-9])", algo)
+    if m:
+        return f"seqlz-{m[1]}"
+    m = re.fullmatch(r"seqlz-\w+?(-lit)?", algo)
+    if m and algo not in NAMES:
+        return "seqlz-2" if m[1] else "seqlz-1"
+    return None
 STYLE = {
     "lz4": ("#7f7f7f", "o"),
     "lzo-rle": ("#2b2b2b", "s"),
     "zstd": ("#8e44ad", "D"),
-    "seqlz-fast": ("#1f6fd1", "o"),
-    "seqlz-fast-lit": ("#17a2b8", "v"),
+    "seqlz-1": ("#1f6fd1", "o"),
+    "seqlz-2": ("#17a2b8", "v"),
 }
 OTHER_COLORS = ["#2e9e44", "#c0392b", "#16a085", "#d35400", "#2c3e50"]
-MAIN = ("seqlz-fast-lit",)
+MAIN = ("seqlz-2",)
 # what the footer says about a codec, if it is in the chart
 ABOUT = {
-    "seqlz-fast-lit": "seqlz-fast-lit: literals coded with one of 8 static tables per page, offsets in steps of 8 in their own classes (#40).",
+    "seqlz-2": "seqlz-2: literals coded with one of 8 static tables per page, offsets in steps of 8 in their own classes (#40).",
 }
 
 

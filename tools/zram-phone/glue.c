@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz-fast and seqlz-fast-lit as crypto compressors for zram on Linux 4.14,
+ * seqlz-1 and seqlz-2 as crypto compressors for zram on Linux 4.14,
  * which takes any registered compressor by name. Only for measuring on the
- * Mi 9T; the tables are compiled in. build.sh renames them to seqlz-<name> and
- * seqlz-<name>-lit, so that several builds can be loaded at the same time.
+ * Mi 9T; the tables are compiled in. build.sh renames them to seqlz-<name>-1
+ * and so on, so that several builds can be loaded at the same time.
  */
 #include <linux/crypto.h>
 #include <linux/init.h>
@@ -39,14 +39,14 @@ static int q_compress(struct crypto_tfm *tfm, const u8 *src, unsigned int slen,
 	return 0;
 }
 
-static int q_compress_fast(struct crypto_tfm *tfm, const u8 *src,
-			   unsigned int slen, u8 *dst, unsigned int *dlen)
+static int q_compress_1(struct crypto_tfm *tfm, const u8 *src,
+			unsigned int slen, u8 *dst, unsigned int *dlen)
 {
 	return q_compress(tfm, src, slen, dst, dlen, 0);
 }
 
-static int q_compress_lit(struct crypto_tfm *tfm, const u8 *src,
-			  unsigned int slen, u8 *dst, unsigned int *dlen)
+static int q_compress_2(struct crypto_tfm *tfm, const u8 *src,
+			unsigned int slen, u8 *dst, unsigned int *dlen)
 {
 	return q_compress(tfm, src, slen, dst, dlen, 1);
 }
@@ -65,21 +65,21 @@ static int q_decompress(struct crypto_tfm *tfm, const u8 *src,
 
 static struct crypto_alg algs[] = {
 	{
-		.cra_name = "seqlz-fast",
-		.cra_driver_name = "seqlz-fast-generic",
+		.cra_name = "seqlz-1",
+		.cra_driver_name = "seqlz-1-generic",
 		.cra_flags = CRYPTO_ALG_TYPE_COMPRESS,
 		.cra_ctxsize = sizeof(struct q_ctx),
 		.cra_module = THIS_MODULE,
-		.cra_u = { .compress = { .coa_compress = q_compress_fast,
+		.cra_u = { .compress = { .coa_compress = q_compress_1,
 					 .coa_decompress = q_decompress } },
 	},
 	{
-		.cra_name = "seqlz-fast-lit",
-		.cra_driver_name = "seqlz-fast-lit-generic",
+		.cra_name = "seqlz-2",
+		.cra_driver_name = "seqlz-2-generic",
 		.cra_flags = CRYPTO_ALG_TYPE_COMPRESS,
 		.cra_ctxsize = sizeof(struct q_ctx),
 		.cra_module = THIS_MODULE,
-		.cra_u = { .compress = { .coa_compress = q_compress_lit,
+		.cra_u = { .compress = { .coa_compress = q_compress_2,
 					 .coa_decompress = q_decompress } },
 	},
 };
@@ -111,4 +111,4 @@ static void __exit q_exit(void)
 module_init(q_init);
 module_exit(q_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("seqlz-fast and seqlz-fast-lit for zram, for measuring");
+MODULE_DESCRIPTION("seqlz-1 and seqlz-2 for zram, for measuring");

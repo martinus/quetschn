@@ -111,7 +111,7 @@ This is the one function in `src/` with inline assembly, and only in userspace. 
 x86-64 with `-mno-sse`, and the x86 instruction `prefetcht0` came with SSE, although it uses no SSE
 register. gcc still emits it for `__builtin_prefetch()` with `-mno-sse`; clang emits nothing, without
 a warning. On x86-64 the kernel's `prefetch()` is `__builtin_prefetch()`, so a kernel built with clang
-has none of the codec's prefetches. In the kernel VM that made `seqlz-fast-lit`'s cold reads at p99
+has none of the codec's prefetches. In the kernel VM that made `seqlz-2`'s cold reads at p99
 24% slower with clang than with gcc, on pages a desktop swapped into zram (Ryzen 9 7950X at 4.5 GHz,
 gcc 16.2.1 and clang 22.1.8,
 [`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)).

@@ -47,7 +47,7 @@ restore() {
 }
 trap restore EXIT
 
-for n in $mods; do insmod "./quetschn_$n.ko" || exit 1; grep -q "seqlz-$n-lit" /proc/crypto || exit 1; done
+for n in $mods; do insmod "./quetschn_$n.ko" || exit 1; grep -q "seqlz-$n-2" /proc/crypto || exit 1; done
 read -r dev < /sys/class/zram-control/hot_add
 for cc in $cores; do
 	f=/sys/devices/system/cpu/cpu${cc%%:*}/cpufreq

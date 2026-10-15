@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * compress <page>...: each 4 KiB page as seqlz-fast writes it to <page>.fast and as seqlz-fast-lit
+ * compress <page>...: each 4 KiB page as seqlz-1 writes it to <page>.fast and as seqlz-2
  * writes it to <page>.lit, both decoded again and compared before they are written.
  */
 #include <stdio.h>

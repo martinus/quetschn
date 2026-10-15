@@ -30,6 +30,10 @@ stale, which the entries do not repeat every time. Code that was removed is name
 e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the commit of 7th October
 2026 that removed it: `git show 57fb8fb^:explore/bytelz.c`.
 
+The levels got numbers on 15th October 2026: `seqlz-fast` is `seqlz-1` since, `seqlz-fast-lit` is
+`seqlz-2`. The entries before keep the old names, and so do the kernel VM's backends in their logs,
+`seqlz` and `seqlz-lit`.
+
 ## Index
 
 **How to measure, and the baselines**

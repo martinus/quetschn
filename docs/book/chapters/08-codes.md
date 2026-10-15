@@ -248,7 +248,7 @@ This prints {{tok.symbols}} and the `TOK_4k` hash of `format.md`, `{{ch08.tok.co
 The 4 KiB counts of 13th October 2026 are from {{ch08.counts4k.pages|grp}} pages: three sessions of a
 Xiaomi Mi 9T under memory pressure, the resident pages of a desktop and 200 000 pages of its zram dump
 of 28th September ([chapter 4](#ch-format--tables)). On two test sessions of the phone, with web sites
-none of the training sessions loaded, `seqlz-fast-lit` stores up to 1.7% less than with the tables
+none of the training sessions loaded, `seqlz-2` stores up to 1.7% less than with the tables
 before, and the phone dump of 3rd October, which the tables before were trained on, 1.8% more
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)).
 Nearly all of it is in the literal tables. The counts cannot give a page back: the token and length
@@ -300,7 +300,7 @@ at {{lit.0.len.101}}. The other 7 differ: tables 1 and 4 give `0x00` 2 bits, tab
 
 ::: measured 8 literal tables, not 1, 16 or 64
 k-means trained on the resident pages of a desktop and priced on its zram pages, as the share of
-`seqlz-fast`'s output saved: 1 table 6.8%, 4 tables 9.2%, 8 tables of 10 bits 11.4%, 16 tables
+`seqlz-1`'s output saved: 1 table 6.8%, 4 tables 9.2%, 8 tables of 10 bits 11.4%, 16 tables
 11.9%, 64 tables 12.9%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 16 tables were built and measured in the kernel VM: 5 bytes per page less, and twice the decode
@@ -319,7 +319,7 @@ The 16 KiB variants, `seqlz_default_tables_16k.inc` and `seqlz_lit_sets_16k.inc`
 construction with counts from {{ch08.counts16k.pages|grp}} pages of a zram dump of the Android 17
 emulator with 16 KiB pages. They give {{k16.ch08.tok.coded}} tokens a code, with a
 {{k16.tok.len.3072}}-bit escape, below that page size's limit of $31 - 14 - 12 = 5$ bits. On pages of
-the emulator that were not in the training, they made `seqlz-fast-lit` 2.6% smaller than the 16 KiB
+the emulator that were not in the training, they made `seqlz-2` 2.6% smaller than the 16 KiB
 tables before them, which were trained on desktop pages
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator and no real phone, and the format for 16 KiB pages is not fixed yet

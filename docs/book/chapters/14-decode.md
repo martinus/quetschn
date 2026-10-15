@@ -89,7 +89,7 @@ check, most lookups use bits already in the register, and the refill's load come
 three sequences.
 
 ::: measured Refill below 23 bits instead of every sequence
-September 2026, `seqlz-fast` in the kernel VM, Ryzen 9 7950X at 4.5 GHz: cold reads, with another page
+September 2026, `seqlz-1` in the kernel VM, Ryzen 9 7950X at 4.5 GHz: cold reads, with another page
 read first, went from 2811 / 4501 to 2610 / 4300 ns at p50 / p99. A hot loop over 2000 pages got slower,
 6883 to 7115 cycles per page, with 39 more mispredictions: the check is a branch on data. The kernel's
 numbers decided
@@ -134,7 +134,7 @@ condition: `br.p <= in_fast` leaves 8 bytes of input, and the bounds above keep 
 ::: measured The refill without its branch
 7th October 2026, x86-64 in userspace, gcc 16.2.1, 19 577 desktop zram pages each decoded once: branch
 misses per page from 130 to 101, cycles from about 6960 to about 6700. In the kernel VM, `MODE=swap`,
-CPU 2 of the Ryzen 9 7950X at 4.5 GHz, 3 boots each: `zcomp_decompress()` of `seqlz-fast-lit` took 1935
+CPU 2 of the Ryzen 9 7950X at 4.5 GHz, 3 boots each: `zcomp_decompress()` of `seqlz-2` took 1935
 to 1941 ns instead of 2010 to 2011 with gcc, 1976 to 1983 instead of 2020 to 2040 with clang 22.1.8. On
 the Mi 9T the A76 decoded a page seen once in 3241 to 3272 ns instead of 3309 to 3340; the A55 got
 slower and kept a loop of its own until 10th October 2026, when every core got this one loop
@@ -388,7 +388,7 @@ For any bytes and any `src_len`:
 The slowest valid page found is made up: a match of 4 bytes at an offset below 8 in every sequence, every
 token escaped, 1022 sequences. It takes 107 099 instructions on arm64 and 71 468 cycles on the A55, about
 40 µs at 1.8 GHz. Counted in instructions, the costliest valid pages found take 1.59 times the p99 of real
-pages with `seqlz-fast-lit`, against 2.58 times for `lz4`; timed on the A55, 1.33 against 1.57
+pages with `seqlz-2`, against 2.58 times for `lz4`; timed on the A55, 1.33 against 1.57
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
 The argument is checked by fuzz targets under the sanitizers and a second decoder written from
 `docs/format.md` alone ([chapter 15](#ch-zram-glue--fuzzing)). On 9th October 2026, 12 instances of AFL++
@@ -443,7 +443,7 @@ value, or come in the last 8 bytes of the input.
 
 ## What is left {#ch-decode--limits}
 
-In a swap-in in the kernel VM, decompression is 2.0 µs of `seqlz-fast-lit`'s cold swap-in, against
+In a swap-in in the kernel VM, decompression is 2.0 µs of `seqlz-2`'s cold swap-in, against
 1.4 µs for `lz4` ([plan.md](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)),
 and most of the difference is branch mispredictions on a page the CPU has not seen: about 110 more per page
 than when the same page was decoded just before

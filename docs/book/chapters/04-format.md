@@ -84,7 +84,7 @@ the whole page, and `n > PAGE` makes the page invalid.
 **Raw literals.** With the top bit clear, the `n` literals follow as they are, in page order, and
 everything after them, up to the end of the compressed page, is `B`, the bitstream of the sequences.
 `B` has no length of its own: it ends where the page ends, and zram knows where that is. This is the
-only layout `seqlz-fast` writes, and `seqlz-fast-lit` writes it for every page whose literals do not
+only layout `seqlz-1` writes, and `seqlz-2` writes it for every page whose literals do not
 code well enough.
 
 **Coded literals.** With the top bit set, the literals are Huffman coded with one of 8 fixed literal
@@ -147,7 +147,7 @@ table: that there are 8 streams and 8 tables is a coincidence.
 
 A page made up for this book: 4096 bytes of "words" of 2 to 9 letters, picked at random from the 12
 letters `etaoinshrdlu` by the C library's classic random number generator from seed 1, each word
-followed by a space. `seqlz-fast` stores it in {{ch04.text.raw}} bytes, `seqlz-fast-lit` in
+followed by a space. `seqlz-1` stores it in {{ch04.text.raw}} bytes, `seqlz-2` in
 {{ch04.text.len}}. The first {{ch04.text.streams_at}} bytes of the coded page are
 
 ```text
@@ -384,7 +384,7 @@ more per page written
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)).
 On 14th October 2026 class 1 became offset 2 in 1 bit, instead of the offsets below 16 in 4 bits, and
 class 5 the multiples of 8 below 2048 in 8 bits, instead of all of them from 256 on in 9. With the
-token tables trained again, `seqlz-fast-lit` stores 0.6% less on the 4 KiB dumps, on average, and
+token tables trained again, `seqlz-2` stores 0.6% less on the 4 KiB dumps, on average, and
 1.4% less on the 16 KiB ones, at the same speed on the Mi 9T and in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#offset-2-in-1-bit-multiples-of-8-below-2048-in-8-03-to-08-smaller-at-the-same-speed-kept)).
 :::
@@ -506,8 +506,8 @@ valid or not; that is what the fuzzers check.
 
 ## A page of `ab`, bit by bit {#ch-format--example}
 
-The {{ab.len}} bytes `{{ab.hex}}` are a 4 KiB page of `ab` 2048 times. `seqlz-fast` and
-`seqlz-fast-lit` both write exactly these bytes: 2 literals are far from saving the {{ch01.LIT_CODED_MIN}} bytes
+The {{ab.len}} bytes `{{ab.hex}}` are a 4 KiB page of `ab` 2048 times. `seqlz-1` and
+`seqlz-2` both write exactly these bytes: 2 literals are far from saving the {{ch01.LIT_CODED_MIN}} bytes
 that coding them needs ([chapter 11](#ch-literals-enc)).
 
 - `{{ch04.ab.hdr}}`: `h = {{ab.lits}}`, raw literals.

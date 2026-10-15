@@ -345,7 +345,7 @@ it writes the coded ones over the raw ones in `dst`.
 `compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
 construction, and its one line `seqlz_match_page(st->table, src, encode_emit, &e)` is the whole
 compression loop once inlined. `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)):
-`coded` false is `seqlz-fast`, true `seqlz-fast-lit`. For the coded literals it passes
+`coded` false is `seqlz-1`, true `seqlz-2`. For the coded literals it passes
 `st->literals`, the matcher's 8 KiB table as bytes through the union in `struct seqlz_state`; the
 matcher is done with it, so `code_literals()` needs no memory of its own
 ([chapter 11](#ch-literals-enc--in-place)). The kernel's copy keeps only `compress_page()` and

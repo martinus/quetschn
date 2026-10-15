@@ -92,11 +92,11 @@ undone and no two inputs collide before the shift. `zstd` uses the same constant
 where 5 bytes repeat; matches of exactly 4 bytes still come from the repeat offset, which needs no
 table. When it came, on 24th September 2026, the 5-byte hash took 5% fewer cycles to compress a page
 (20 425 against 21 440, x86-64, userspace) and cost 0.6 points of memory (27.2% against 26.6% of the
-page). In the kernel it took `seqlz-fast`'s write p99 from 11 650 to 10 480 ns, twice what the cycles
+page). In the kernel it took `seqlz-1`'s write p99 from 11 650 to 10 480 ns, twice what the cycles
 say: the slowest pages have many short matches, and the 5-byte hash finds fewer of them
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
 "A hash of 5 bytes: C3 in the kernel"). With today's tables and coded literals the 4-byte hash is not
-even smaller: `seqlz-fast-lit` gets 24 bytes per page larger with it. Most likely a match of 4 bytes at
+even smaller: `seqlz-2` gets 24 bytes per page larger with it. Most likely a match of 4 bytes at
 a new offset takes more bits than the 4 coded literals it replaces, and the greedy matcher then misses
 the longer match behind it
 ([item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)).
@@ -182,7 +182,7 @@ occurrences. `lz4`'s fast mode is greedy the same way.
 
 ::: why Lazy matching and hash chains: smaller pages, too slow
 One lazy step, taking the next position's candidate if it is longer by 2 bytes or more, took 24 808
-instead of 20 400 compress cycles per page, 21% more, and `seqlz-fast` stayed at 27.0% of the page
+instead of 20 400 compress cycles per page, 21% more, and `seqlz-1` stayed at 27.0% of the page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
 "A hash of 5 bytes: C3 in the kernel", September 2026). Levels 3 and 4, a hash chain priced by the
 tables' code lengths with one or two lazy steps, stored pages 3.3% smaller than level 2 for 1.8 times
@@ -201,7 +201,7 @@ every position.
 
 ::: measured Without `lz4`'s step: writes 3% faster, incompressible pages slower
 The step was `1 + (pos - anchor) >> 6`, as in `lz4`. Without it, on 30th September 2026, in the kernel
-in a VM (Ryzen 9 7950X, CPU fixed at 4.5 GHz, 40 000 zram pages of a desktop), `seqlz-fast-lit` wrote
+in a VM (Ryzen 9 7950X, CPU fixed at 4.5 GHz, 40 000 zram pages of a desktop), `seqlz-2` wrote
 a page 0.23 µs faster, 3%, at 0.4 bytes more per page, and the write p99 went from 12 300 to 11 400 ns.
 Pages that zram stores raw, because they do not compress, take 2.3 µs longer each: the whole page is
 searched. It is not faster because it visits other positions: a step that starts only after 1024
@@ -265,7 +265,7 @@ with `||` compilers often make a second branch. With a branch for each candidate
 mispredicted almost twice as often as `lz4`.
 
 ::: measured One branch for both candidates
-With three branches per position, the first `seqlz-fast` mispredicted 539 times per page. Reading both
+With three branches per position, the first `seqlz-1` mispredicted 539 times per page. Reading both
 candidates and deciding with one branch took that to 329, and the p99 of the cold compress loop from
 15.4 to 12.6 µs. With the page in the cache, the extra reads cost 7%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-seqlz-fast),
@@ -316,11 +316,11 @@ Until October 2026 the matcher stepped back while the byte before `pos` was the 
 candidate, down to `anchor`. That made 2.4% of the matches longer, by 1 or 2 bytes, 0.03 bytes per
 match. It also stood between choosing the candidate and counting the match, so every match waited
 for two more loads and a compare. On the Mi 9T, zram in its own kernel, 19 775 pages of a phone,
-`seqlz-fast-lit` wrote a page in 11.93 instead of 12.77 µs on the Cortex-A76 and in 33.09 instead
+`seqlz-2` wrote a page in 11.93 instead of 12.77 µs on the Cortex-A76 and in 33.09 instead
 of 34.10 µs on the A55, reads the same
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-back-writes-66-faster-on-the-a76-and-1-to-2-in-the-vm-kept),
 15th October 2026). In the kernel VM it wrote 1.0% to 2.3% faster on four dumps, at 1.6 bytes less to
-3.7 bytes more per page. `seqlz-fast` loses more, up to 15 bytes per page: a byte outside a match costs
+3.7 bytes more per page. `seqlz-1` loses more, up to 15 bytes per page: a byte outside a match costs
 it a whole byte.
 :::
 

@@ -1,7 +1,7 @@
 # Coding the literals: one table of eight, eight streams {#ch-literals-enc}
 
 When `compress_page()` is done, `dst` holds a valid page with raw literals ([chapter 10](#ch-encoder)),
-which is what `seqlz-fast` stores. For `seqlz-fast-lit`, `seqlz_compress()` then calls
+which is what `seqlz-1` stores. For `seqlz-2`, `seqlz_compress()` then calls
 `code_literals()`: it prices the literals in all 8 literal tables, takes the cheapest, decides whether
 coding them saves enough, and if so rewrites `dst` in place. The sequences' bitstream does not change;
 it only moves down behind the coded literals. This chapter is lines 323 to 595 of
@@ -161,7 +161,7 @@ pricing, and no second pass over the literals is needed.
 
 ::: measured What the pricing costs
 In the kernel, a build that prices the literals and then stores the page with raw literals wrote a
-page in 6920 ns at p50 and 10 529 ns at p99, against 6890 and 10 490 ns for `seqlz-fast`, which does
+page in 6920 ns at p50 and 10 529 ns at p99, against 6890 and 10 490 ns for `seqlz-1`, which does
 not price: 30 to 40 ns per write, about 0.5%, September 2026. In userspace loops over 2000 pages the
 pricing was at most 400 cycles, 1.5% of a write. Choosing the table from every 4th literal would save
 little, as the sizes still need a pass over all literals. Writing the streams is what costs, about
@@ -427,7 +427,7 @@ that, so source and destination overlap. In the example, {{ch11.bs}} bytes move 
 {{ch11.raw.bs}} to byte {{ch11.q.8}}, and the page goes from {{letters.len}} to
 {{letters.coded.len}} bytes. The encoder copied the bitstream once already, from the back of `dst`.
 Copying it only once, to behind the coded literals, made writes 0.2 µs slower in the kernel VM and
-0.8 µs on the A55, `seqlz-fast` too, because gcc laid out the matcher's loop differently
+0.8 µs on the A55, `seqlz-1` too, because gcc laid out the matcher's loop differently
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-bitstream-copied-once-behind-the-literals-raw-or-coded-writes-up-to-03-µs-slower-in-the-vm-and-08-µs-on-the-a55-not-kept)).
 The copy of 400 to 600 bytes on a third of the pages stayed.
 
@@ -524,14 +524,14 @@ With {{ch11.lraw}} letters instead of 200 the literals stay raw, with one more t
 ## What writing the literals costs {#ch-literals-enc--cost}
 
 The pricing is cheap, writing the streams is not. On the Cortex-A55, `code_literals()` takes about
-5400 cycles, 3 µs, per page in the hot loop of the userspace benchmark: `seqlz-fast-lit` compresses a
-page in 47 640 cycles, `seqlz-fast` in 42 241. Most pages pay part of that even when they stay raw:
+5400 cycles, 3 µs, per page in the hot loop of the userspace benchmark: `seqlz-2` compresses a
+page in 47 640 cycles, `seqlz-1` in 42 241. Most pages pay part of that even when they stay raw:
 in that sample 14 582 of 19 387 pages kept their raw literals, about 404 each, all priced in all 8
 tables first. Pricing only every 8th literal first, to send hopeless pages back early, made
 compression slower, because the literals of most raw pages come close to paying
 ([item 8 of "Six choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#8-coded-literals-on-the-a55-78-instructions-per-literal-at-one-per-cycle)).
-This is where `seqlz-fast`, which never calls `code_literals()`, gains on the phone: in an earlier
-measurement on the Mi 9T's little core, `seqlz-fast-lit` stored 55 bytes per page less and took
+This is where `seqlz-1`, which never calls `code_literals()`, gains on the phone: in an earlier
+measurement on the Mi 9T's little core, `seqlz-2` stored 55 bytes per page less and took
 4.2 µs more per page written
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-second-phone-dump-after-12-hours-of-use-seqlz-fast-reads-faster-than-lzo-rle-at-p99)).
 Which of the two a phone should use depends on how it values a byte against a µs, and that is not

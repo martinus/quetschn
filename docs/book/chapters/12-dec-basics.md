@@ -102,7 +102,7 @@ A store waits in a store buffer before it reaches the cache. A load of bytes a r
 them from there, **store forwarding**, but on most cores only when all its bytes come from one store.
 With offsets from 9 to 15, the second `copy8()` reads bytes of the store just before and of older
 memory, and waits until the store reached the cache. `ls_bad_status2.stli_other`, a counter of the
-Ryzen 9 7950X, counted 359 such loads per page for `seqlz-fast`'s decoder and 363 for `lz4`'s in
+Ryzen 9 7950X, counted 359 such loads per page for `seqlz-1`'s decoder and 363 for `lz4`'s in
 September 2026
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
 Offsets below 8 avoid it: they store one register again and again, with no load after the first.

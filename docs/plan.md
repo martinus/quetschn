@@ -7,7 +7,7 @@ first, and 16 KiB pages as a parameter from the start (§3.5). This document is 
 behind it, the phases with their gates, and where the project stands.
 
 > [!NOTE]
-> **Where it stands, 9th October 2026.** The codec, `seqlz-fast-lit`, its format and its fuzzing are
+> **Where it stands, 9th October 2026.** The codec, `seqlz-2`, its format and its fuzzing are
 > done. In the phone's own kernel it stores pages 28% smaller than `lz4`, and swaps them in 11% to
 > 13% slower warm and 17% to 25% slower cold. The question to the zram maintainers is
 > [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), the answer decides what comes next. The details
@@ -100,13 +100,13 @@ lambda is not fixed. `quetschn-score` reads the logs of `tools/zram-vm/run.sh` o
 convex hull of (time, bytes), with the exchange rate between neighbours: the lambda at which the
 faster one starts to win. A design is worth keeping if it is on the hull at a lambda that matters.
 
-**`seqlz-fast-lit` has the lowest score for any lambda from 3.1 to 155 bytes per µs on the first
+**`seqlz-2` has the lowest score for any lambda from 3.1 to 155 bytes per µs on the first
 desktop dump and from 10.3 to 211 on the second**, with the times of a swap-out and a swap-in in the VM
 of Phase 5, `r = 0.34`, `b = 1`, the tables of 7 October
 ([explored-designs.md, "The score with the swap times"](explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
-The hull is `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and `zstd` 3, with `lz4` next to `lzo-rle` within
-the noise. From `seqlz-fast-lit` to `zstd` 3 it is 3.1 and 10.3 bytes per µs, from `seqlz-fast` to
-`seqlz-fast-lit` 155 and 211. Whoever runs `lz4` or `lzo-rle` instead of `zstd` says that lambda is above
+The hull is `lzo-rle`, `seqlz-1`, `seqlz-2` and `zstd` 3, with `lz4` next to `lzo-rle` within
+the noise. From `seqlz-2` to `zstd` 3 it is 3.1 and 10.3 bytes per µs, from `seqlz-1` to
+`seqlz-2` 155 and 211. Whoever runs `lz4` or `lzo-rle` instead of `zstd` says that lambda is above
 3 to 10 for them. With the times of zram's read benchmark, which decodes every page several times, the
 range went up to 200 and 279
 ([explored-designs.md, "The designs by the score"](explored-designs.md#the-designs-by-the-score) has the
@@ -124,36 +124,36 @@ backends of zram's split contexts, 4 KiB pages, measured by `quetschn-bench-*`:
 | `lzo-rle` | 16 384 | 8.0 | 0.5 | 32.0 | 2.0 |
 | `lz4` | 20 512 | 10.0 | 0.6 | 40.1 | 2.5 |
 | `zstd` 3 | 192 544 | 94.0 | 5.9 | 376.1 | 23.5 |
-| `seqlz-fast` | 8 192 | 4.0 | 0.3 | 16.0 | 1.0 |
-| `seqlz-fast-lit` | 16 384 | 8.0 | 0.5 | 32.0 | 2.0 |
+| `seqlz-1` | 8 192 | 4.0 | 0.3 | 16.0 | 1.0 |
+| `seqlz-2` | 16 384 | 8.0 | 0.5 | 32.0 | 2.0 |
 
-`zstd` 3 holds 176 160 bytes per CPU more than `seqlz-fast-lit` and stores 25 and 87 bytes per page
+`zstd` 3 holds 176 160 bytes per CPU more than `seqlz-2` and stores 25 and 87 bytes per page
 less on the two desktop dumps, with the swap times above. So it drops off the hull below 27 and 7.9 MiB
 in zram per CPU, 218 and 63 MiB with 8 CPUs, 874 and 253 MiB with 32. With 8 CPUs and 1 GiB the step
-from `seqlz-fast-lit` to `zstd` 3 costs 2.5 and 9.7 bytes per µs instead of 3.1 and 10.3. The other
+from `seqlz-2` to `zstd` 3 costs 2.5 and 9.7 bytes per µs instead of 3.1 and 10.3. The other
 steps of the hull move by 5% at most with 8 CPUs, and the most at 32 CPUs and 64 MiB, where
-`seqlz-fast` to `seqlz-fast-lit` is 127 and 195 bytes per µs instead of 155 and 213
+`seqlz-1` to `seqlz-2` is 127 and 195 bytes per µs instead of 155 and 213
 ([explored-designs.md](explored-designs.md#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu)).
 zram's own 3 pages per CPU are the same for every codec and left out. How full zram is on a phone is
 not measured.
 
 **Levels 3 and 4 (#139) were measured and are not kept.** The same format with a matcher that searches
 a hash chain and prices each match by the tables: level 3 stores 2.7% to 4.3% less than
-`seqlz-fast-lit` on four dumps, as much as `zstd` 3 on two of them, for about twice the write time. In
-the VM it follows `seqlz-fast-lit` on the hull at 4.2 and 8.3 bytes per µs on two dumps and is off it
+`seqlz-2` on four dumps, as much as `zstd` 3 on two of them, for about twice the write time. In
+the VM it follows `seqlz-2` on the hull at 4.2 and 8.3 bytes per µs on two dumps and is off it
 on the other two, also with a literal table of each page's own, which made it 2.5% to 3.4% smaller
 ([explored-designs.md](explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept),
 [and the own table](explored-designs.md#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)).
 
 **The time in the score is the codec's alone**, which is what the codecs differ in. A task waits for
 the whole page fault: on the PC 1.9 µs of it are the kernel's for every codec, and `lz4`'s
-decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-fast-lit`'s 2.0 µs of 4.1 µs. So a codec
+decompression is 1.4 µs of a cold swap-in of 3.5 µs, `seqlz-2`'s 2.0 µs of 4.1 µs. So a codec
 40% slower than `lz4` makes a swap-in about 20% slower
 ([explored-designs.md, "The whole page fault"](explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)).
 In the fault the gap between the two decoders is 0.28 µs larger than in zram's read benchmark with
 `O_DIRECT`, which the hull above counts now: the swap times have the kernel's part in them too, the
 same for every codec, which moves no exchange rate. The read benchmark decodes every page several
-times, which trains the branch predictor on it: in a fault `seqlz-fast-lit` mispredicts about 110
+times, which trains the branch predictor on it: in a fault `seqlz-2` mispredicts about 110
 branches per page more, and cold caches add 0.12 µs ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 
 Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
@@ -366,7 +366,7 @@ On top of that, the backend's work memory, with 4 KiB pages, as `quetschn-bench-
 | `lz4` | `LZ4_MEM_COMPRESS` = ((1<<11)+4) × 8 = 16 416 B, `vmalloc()`, and a struct of 24 B | **20 512 B** |
 | `842` | `SW842_MEM_COMPRESS` = 0xf000 = 61 440 B, `kmalloc()` | **65 536 B** |
 | `zstd` 3 | `zstd_cctx_workspace_bound()` and `zstd_dctx_workspace_bound()`, `vzalloc()`, and a struct, 186 112 B | **192 544 B** |
-| `seqlz-fast-lit` | 8192 B with one context, 12 304 B with the contexts split, `kvzalloc()` | **8192 B**, **16 384 B** split |
+| `seqlz-2` | 8192 B with one context, 12 304 B with the contexts split, `kvzalloc()` | **8192 B**, **16 384 B** split |
 
 This memory is a cost in the score of §1.1, not a limit. Until 14th October 2026 it was C5, at most
 `lz4`'s 16 416 B, and 4 KiB before 23rd September 2026. Neither number was priced (#203). Per page it is
@@ -380,7 +380,7 @@ That time is in the score already, as the time of a larger table is for any desi
 The split into read and write streams of October 2026 (§3.2) keeps the 3 pages: `buffer`, 2 pages,
 goes with the write stream, `local_copy`, 1 page, with the read stream. A backend gets two contexts
 too, one from `create_cctx` for compression and an optional one from `create_dctx` for decompression.
-`seqlz-fast-lit` splits without extra memory asked for, because compression uses only the hash table
+`seqlz-2` splits without extra memory asked for, because compression uses only the hash table
 and decompression only the scratch for the coded literals (`struct seqlz_state` and `SEQLZ_SCRATCH` in
 [`src/seqlz.h`](../src/seqlz.h)).
 
@@ -407,7 +407,7 @@ zeros in the image until `seqlz_init()` builds them, in `vmlinux` or in the modu
 even with `ZRAM=m`, because the bool `ZRAM_BACKEND_SEQLZ` selects it, as `ZRAM_BACKEND_LZ4` selects
 `LZ4_COMPRESS`. Both are for the cover letter, or for tables built at compile time (#153).
 
-`seqlz-fast` needs no decompression context. The harness (`bench/kernel_codecs/zram_codec.h`) and the
+`seqlz-1` needs no decompression context. The harness (`bench/kernel_codecs/zram_codec.h`) and the
 kernel's backend (`tools/kernel-port/backend_seqlz.c`) have the two contexts since #102, the
 backend for a tree with the series; at level 1 it has no decompression context.
 `lz4`'s 16 416 B are for compression only, and after
@@ -466,7 +466,7 @@ as one unit. Tangquan Zheng (OPPO) proposed it in March 2024, "mTHP-friendly com
 and zram based on multi-pages". At `986c24e0fe44` nothing of that kind is merged in
 `drivers/block/zram/` or `mm/zsmalloc.c`. What is merged is the swap-in of large folios from zram,
 page by page, and in 2026 no newer version of the series was on the lists. Neighbouring swap slots
-compressed as blocks of 16 KiB give `zstd` 3 13% to 22% less memory than `seqlz-fast-lit` on 4 KiB
+compressed as blocks of 16 KiB give `zstd` 3 13% to 22% less memory than `seqlz-2` on 4 KiB
 pages ([explored-designs.md, "The ideas of #29 and #31"](explored-designs.md#the-ideas-of-29-and-31-measured)).
 It is tracked as R9.
 
@@ -513,7 +513,7 @@ Each phase ends in an artifact and a gate. The durations are calendar weeks at 3
 | [1](#phase-1-corpus-tooling-4-weeks) | collecting pages | done for zram dumps of a desktop and of a phone |
 | [2](#phase-2-benchmark-harness-and-baseline-8-weeks) | harness and baseline | done, the gate passed, not published yet |
 | [2b](#phase-2b-decoder-latency-spike-2-weeks) | decoder latency spike | done on x86-64 |
-| [3](#phase-3-page-analysis-and-design-exploration-12-weeks) | design exploration | done: `seqlz-fast-lit` |
+| [3](#phase-3-page-analysis-and-design-exploration-12-weeks) | design exploration | done: `seqlz-2` |
 | [4](#phase-4-reference-implementation-format-spec-fuzzing-20-weeks) | spec, reference decoders, fuzzing | done on 9th October 2026 |
 | [5](#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) | kernel port, validation in a VM | done, the gate passed on 8th October 2026 |
 | [6](#phase-6-arm64-validation-a-hard-gate-before-phase-7) | arm64 | half: one phone, 4 KiB pages |
@@ -763,7 +763,7 @@ latency only interleaved. The arm64 half was not measured with the spike.
 ### Phase 3: page analysis and design exploration (12 weeks)
 
 > [!NOTE]
-> Done. The design is `seqlz-fast-lit`, described in [seqlz.md](seqlz.md). Every design that was
+> Done. The design is `seqlz-2`, described in [seqlz.md](seqlz.md). Every design that was
 > measured, with its numbers and why it was kept or dropped, is in
 > [explored-designs.md](explored-designs.md). Add to it before trying something new.
 
@@ -982,15 +982,15 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 | R1 | **No arm64 hardware.** Phones are the users, and lzo-rle was merged on arm64 data first. | a known constraint | An old rooted phone with a big and a little core is used from Phase 2 on. Phase 6 adds a current phone with 16 KiB pages and is a hard gate. Do not submit without it. |
 | R2 | **Not enough headroom over `lz4` with a dictionary.** Nobody had measured it, and the project rested on it. | the gate of Phase 2: `zstd -1` needs 16.9% less than `lzo-rle` | Answered before any codec work. The fallback would have been the benchmark, and then *a targeted improvement of `lz4` or `lzo-rle` for page-sized inputs*. That is what lzo-rle was, and it is a much easier merge. |
 | R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Ask before the kernel port. The question to Sergey Senozhatsky and Minchan Kim is [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/) (9th October 2026), with the phone's numbers, and not answered yet. A "no" sends the project to the fallback of R2. |
-| R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-fast-lit` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. On the Android 17 emulator they are within 0.6% of tables trained on its own pages, and its 16 KiB pages have tables of their own ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)). Open: a current phone. |
+| R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-2` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. On the Android 17 emulator they are within 0.6% of tables trained on its own pages, and its 16 KiB pages have tables of their own ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)). Open: a current phone. |
 | R5 | **The zram backend API changes.** The rewrite of 2024, the preemption series of 2025, parameter and naming changes in 2026. | `git log drivers/block/zram/`, and the split of zcomp into read and write streams posted in October 2026 (§3.2) | The codec has no kernel API dependency, `backend_quetschn.c` absorbs the changes. Rebase against mainline in CI. |
 | R6 | **A fuzzing bug or a sleep in atomic context burns the maintainers' goodwill.** | Biggers's objection, Minchan's panic | Phase 4, and the gate of Phase 5 with KASAN and `DEBUG_ATOMIC_SLEEP`, exist for this. Continuous fuzzing with ClusterFuzzLite before the submission, OSS-Fuzz if it takes the project. |
 | R7 | **Time.** 3 to 8 hours a week against a path of 18 to 24 months. | lzo-rle: 4 months, v5, paid work, an existing codec | Each phase can be published on its own. Phase 2 alone is worth it. |
 | R8 | **Employer rules on open-source side projects**, especially kernel work with a `MAINTAINERS` entry. | checked on 23rd September 2026: side projects are fine | Resolved. |
-| R9 | **The input size changes under the codec.** Kernels with 16 KiB pages on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5. Multi-page compression was proposed in 2024, is not merged at `986c24e0fe44`, and had no newer version in 2026. `zstd` 3 on blocks of 16 KiB needs 13% to 22% less than `seqlz-fast-lit` on 4 KiB pages | `PAGE_SIZE` is a parameter of the format, the cost model and the harness. Watch the zram and mm lists for multi-page compression. If it comes back, measure `seqlz-fast-lit` against `zstd` on whole folios, in time per page too, before more work on the codec. |
-| R10 | **No p99 decode win over `lz4`.** C2 rested on the argument about branch mispredictions in §3.2. | measured: `seqlz-fast-lit` decodes slower than `lz4`, 18% to 25% per swap-in, for 28% less memory | C2 is not met. The score of §1.1 replaced the bars as the target. The merge argument is memory at a small cost in time, not a faster read. |
+| R9 | **The input size changes under the codec.** Kernels with 16 KiB pages on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5. Multi-page compression was proposed in 2024, is not merged at `986c24e0fe44`, and had no newer version in 2026. `zstd` 3 on blocks of 16 KiB needs 13% to 22% less than `seqlz-2` on 4 KiB pages | `PAGE_SIZE` is a parameter of the format, the cost model and the harness. Watch the zram and mm lists for multi-page compression. If it comes back, measure `seqlz-2` against `zstd` on whole folios, in time per page too, before more work on the codec. |
+| R10 | **No p99 decode win over `lz4`.** C2 rested on the argument about branch mispredictions in §3.2. | measured: `seqlz-2` decodes slower than `lz4`, 18% to 25% per swap-in, for 28% less memory | C2 is not met. The score of §1.1 replaced the bars as the target. The merge argument is memory at a small cost in time, not a faster read. |
 | R11 | **zram's backend interface goes away.** The zcomp API was to be replaced by the acomp crypto API. A series of October 2026 redesigns the zcomp API instead of removing it. | Sergey Senozhatsky, March 2026 (§3.4), not done at `986c24e0fe44`. His series of October 2026 splits zcomp's streams (§3.2), and Qualcomm posted a new zcomp backend in September 2026 (§3.4) | The codec has no kernel API dependency. Ask in the question of R3 which form the maintainers want, and port to whatever exists then. |
-| R12 | **Hardware `lz4` on new Qualcomm SoCs.** It makes `lz4` faster, and if it writes the bytes of software `lz4` it moves `lz4` along the time axis of the score (§1.1), not along the memory axis. | Qualcomm's QPaCE series of 30th September 2026, [series 1177021](https://patchwork.kernel.org/series/1177021/): a zcomp backend `qpace-lz4`, synchronous, the CPU polls the engine, no speed numbers. | The argument stays memory. As a what-if with the VM's swap times, `lz4` with its own time at 0 still leaves `seqlz-fast-lit` the lowest score from 3.1 to 73 and from 10.3 to 72 bytes per µs, instead of up to 155 and 211; on the phone's big core from 0.9 to 25. A faster `lz4` only lowers the upper end; to push `seqlz-fast-lit` off the hull it would need a time below 0 ([explored-designs.md](explored-designs.md#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)). Measure on a device if one becomes available. Open: does `qpace-lz4` write the lz4 block format at the ratio of `LZ4_compress_fast()` with acceleration 1? If it stores more, the gap to `seqlz-fast-lit` is larger than 28%. And does it take a dictionary? zram's `lz4` does (C4), patch 4 ignores `params->dict`. |
+| R12 | **Hardware `lz4` on new Qualcomm SoCs.** It makes `lz4` faster, and if it writes the bytes of software `lz4` it moves `lz4` along the time axis of the score (§1.1), not along the memory axis. | Qualcomm's QPaCE series of 30th September 2026, [series 1177021](https://patchwork.kernel.org/series/1177021/): a zcomp backend `qpace-lz4`, synchronous, the CPU polls the engine, no speed numbers. | The argument stays memory. As a what-if with the VM's swap times, `lz4` with its own time at 0 still leaves `seqlz-2` the lowest score from 3.1 to 73 and from 10.3 to 72 bytes per µs, instead of up to 155 and 211; on the phone's big core from 0.9 to 25. A faster `lz4` only lowers the upper end; to push `seqlz-2` off the hull it would need a time below 0 ([explored-designs.md](explored-designs.md#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)). Measure on a device if one becomes available. Open: does `qpace-lz4` write the lz4 block format at the ratio of `LZ4_compress_fast()` with acceleration 1? If it stores more, the gap to `seqlz-2` is larger than 28%. And does it take a dictionary? zram's `lz4` does (C4), patch 4 ignores `params->dict`. |
 
 ---
 
@@ -999,7 +999,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 As of 9th October 2026:
 
 - **Phases 0 to 3: done.** The harness, the collectors, zram dumps of the desktop and of the Mi 9T,
-  and the design: `seqlz-fast-lit` ([seqlz.md](seqlz.md)), with every alternative that was measured in
+  and the design: `seqlz-2` ([seqlz.md](seqlz.md)), with every alternative that was measured in
   [explored-designs.md](explored-designs.md). Not done from them: the scripted VM workloads, and
   publishing the comparison.
 - **Phase 4: done.** [The format](format.md), and two reference decoders written from it. The
@@ -1008,7 +1008,7 @@ As of 9th October 2026:
   tables of 6th October, 1.5 billion with libFuzzer on the new ones, and 3.65 billion with AFL++ on the
   codec of 9th October, no difference found. ASan and UBSan
   in CI, big-endian on s390x in CI. The worst case is measured: against its own p99,
-  `seqlz-fast-lit`'s slowest pages cost 1.14 times to compress and 1.59 times to decode, the least of
+  `seqlz-2`'s slowest pages cost 1.14 times to compress and 1.59 times to decode, the least of
   it, `lz4`, `lzo-rle` and `zstd`. The tests run with 16 KiB pages too, in CI. MSan on the fuzz targets
   and continuous fuzzing with ClusterFuzzLite since 9th October.
 - **Phase 5: done, the gate passed.** `tools/kernel-port/` writes `lib/seqlz/`, a minimal
@@ -1020,7 +1020,7 @@ As of 9th October 2026:
   page fault.
 - **Phase 6: half.** The Mi 9T, A76 and A55, 4 KiB pages, its own pages, in its own kernel as zram and
   as swap: done. Open: 16 KiB pages and a current phone. The 16 KiB tables are trained on the pages
-  of the Android 17 emulator, and with 16 KiB pages `seqlz-fast-lit` asks for twice `lz4`'s work memory
+  of the Android 17 emulator, and with 16 KiB pages `seqlz-2` asks for twice `lz4`'s work memory
   per CPU, a cost in the score (§1.1). The first series is for 4 KiB pages only (Phase 7), so 16 KiB
   pages are for the second one.
 - **Phase 7: the question to the maintainers is sent** (R3, R11), on 9th October 2026 to linux-mm,

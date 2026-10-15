@@ -1,7 +1,7 @@
 # One page, through every function {#ch-trace}
 
 Part II explained each function on its own. This chapter follows one page through all of them in the
-order they run: the tables are built, the page is compressed with `seqlz-fast-lit`, and decoded again.
+order they run: the tables are built, the page is compressed with `seqlz-2`, and decoded again.
 Every number was printed by a small program that calls the real code of `src/`, or by a copy of the
 decoder with two counters added. The program is at the end, so you can change the page and watch the
 numbers move.
@@ -185,7 +185,7 @@ written on top of the byte below `p`. `encoder_finish()` ([chapter 10](#ch-encod
 count, `{{ch16.raw.u16}}`, and moves the bitstream to right after the literals, turned around in
 {{ch16.raw.copies}} copies of 8 bytes and {{ch16.raw.singles}} single bytes; the gap of
 {{ch16.raw.gap}} bytes is far more than the bitstream, so they cannot overlap. That is
-$2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$ bytes, the page as `seqlz-fast` stores it.
+$2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$ bytes, the page as `seqlz-1` stores it.
 @assert ch16.pad_bits > 0 and ch16.raw.gap >= ch16.bytes
 
 ## code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
@@ -336,7 +336,7 @@ where a refill without a check could read past it.
 the loop leaves without a token. The bit reader has read every byte, and the {{ch16.pad}} bits left are
 the zero padding of the last byte ([chapter 4](#ch-format--validity)). `seqlz_decode()` returns 0, and
 `dst` holds the page we started with. Without the scratch the same bytes are `-EINVAL`, which is why
-`seqlz-fast-lit` has a decompression context and `seqlz-fast` does not
+`seqlz-2` has a decompression context and `seqlz-1` does not
 ([chapter 15](#ch-zram-glue--fast-lit)).
 @assert ch16.pad == 3 and ch16.pad_bits == 5
 
@@ -527,7 +527,7 @@ int main(void)
 		printf(" %u:%u", i, per_class[i]);
 	printf(", escapes %u, length values %u\n", escapes, values);
 
-	/* seqlz-fast: raw literals */
+	/* seqlz-1: raw literals */
 	len0 = seqlz_compress(t, &st, page, dst, sizeof dst, 0);
 	printf("raw literals: %u bytes = 2 + %u + %u\n", len0, n_lit,
 	       len0 - 2 - n_lit);
@@ -556,7 +556,7 @@ int main(void)
 	}
 	printf("fewest bits: table %u\n", set);
 
-	/* seqlz-fast-lit: coded literals where that saves enough */
+	/* seqlz-2: coded literals where that saves enough */
 	len1 = seqlz_compress(t, &st, page, dst, sizeof dst, 1);
 	printf("coded literals: %u bytes, u16 0x%04x\n", len1,
 	       get_unaligned_le16(dst));
@@ -626,8 +626,8 @@ sequences, the classes and the size class move.
 :::
 
 The page was built for the walk and is not typical. On a desktop's zram pages, in the kernel VM with the
-tables of 7th October 2026, `seqlz-fast-lit` stored a page in 1161.0 bytes of zsmalloc memory on average
-and `seqlz-fast` in 1298.1, so coded literals saved 137 bytes per page, against {{ch16.zs.saved}} on this
+tables of 7th October 2026, `seqlz-2` stored a page in 1161.0 bytes of zsmalloc memory on average
+and `seqlz-1` in 1298.1, so coded literals saved 137 bytes per page, against {{ch16.zs.saved}} on this
 page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
 Without the text, this page gains nothing.

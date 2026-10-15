@@ -15,7 +15,7 @@ sense given here.
 - **code, code length**: the bits written for one symbol, {{ch17.tok_shortest}} to {{ch17.tok_longest}}
   for tokens, and how many there are. A table is a list of code lengths. [Chapter 2](#ch-compression)
 - **coded literals**: literals written as Huffman codes of one literal table in 8 streams, by
-  `seqlz-fast-lit` where that saves $\frac{1}{16}$ of them plus {{ch15.coded_min}} bytes.
+  `seqlz-2` where that saves $\frac{1}{16}$ of them plus {{ch15.coded_min}} bytes.
   [Chapter 11](#ch-literals-enc)
 - **complete**: a prefix code whose codes use up every bit pattern, Kraft sum 1, so a decode table has no
   empty entry. [Chapter 2](#ch-compression--complete)
@@ -168,7 +168,7 @@ sense given here.
   [Chapter 17](#ch-decisions--unknown)
 - **kernel VM**: `tools/zram-vm/run.sh`, a kernel with the codecs in a virtual machine on one core of a
   Ryzen 9 7950X fixed at 4.5 GHz; its times decide. [Chapter 17](#ch-decisions)
-- **levels 1 and 2**: zram's level for seqlz, `seqlz-fast` and `seqlz-fast-lit`, the default.
+- **levels 1 and 2**: zram's level for seqlz, `seqlz-1` and `seqlz-2`, the default.
   [Chapter 15](#ch-zram-glue--backend)
 - **`lz4`, `lz4hc`, `lzo`, `lzo-rle`, `zstd`**: zram's codecs: `lz4` the fastest, `lz4hc` its slow
   compressor for the same format, `lzo-rle` zram's default, `zstd` the smallest, level 3 its default in
@@ -177,7 +177,7 @@ sense given here.
   Android 11 and Linux 4.14. [Chapter 3](#ch-cpu)
 - **quetschn, seqlz**: quetschn is the project, its binaries and options; seqlz the codec, one format
   with two compressors and one decoder. [Preface](#preface)
-- **`seqlz-fast`, `seqlz-fast-lit`**: seqlz with raw literals, and with coded literals where they pay.
+- **`seqlz-1`, `seqlz-2`**: seqlz with raw literals, and with coded literals where they pay.
   [Chapter 10](#ch-encoder), [chapter 11](#ch-literals-enc)
 - **`seqlz-opt`**: an optimal parser for the same format, for zram's recompression, removed.
   [Chapter 17](#ch-decisions--not-kept)

@@ -139,8 +139,8 @@ copied into this repository.
 ```sh
 cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
 cmake --build build
-./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-fast-lit --corpus corpus/test --cpu 2 --out results
-./build/quetschn-compare --baseline results/lz4.tsv --candidate results/seqlz-fast-lit.tsv
+./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-2 --corpus corpus/test --cpu 2 --out results
+./build/quetschn-compare --baseline results/lz4.tsv --candidate results/seqlz-2.tsv
 ```
 
 `quetschn-bench-interleaved` runs all codecs in one binary, in turns on the same page, so that drift
@@ -154,7 +154,7 @@ range of the 5. Run the full `quetschn-bench-interleaved` only to confirm a resu
 document.
 
 ```sh
-tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-fast-lit
+tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-2
 ```
 
 **The score.** `quetschn-score` puts memory against time per page, the score of
@@ -171,7 +171,7 @@ does not, `--per-cpu` gives it, with the codec's name in the log. `r`, the reads
 ```sh
 ./build/quetschn-score --reads-per-write 0.34 run.txt
 ./build/quetschn-score --what-if lz4:0.5 swap.log
-./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-fast,seqlz-fast-lit --corpus corpus/test | grep -E '^codec|memory per CPU'
+./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2 --corpus corpus/test | grep -E '^codec|memory per CPU'
 ./build/quetschn-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
     --per-cpu seqlz:8192 --per-cpu seqlz-lit:16384 --device 8:256 swap.log
 ./build/quetschn-swap-bursts --seconds 3600
@@ -283,7 +283,7 @@ Each of these cost a wrong result first. The measurements behind them are in
   physical pages its buffers got. Five identical runs gave `zstd -1` against `lz4` from +1800 to
   +4620 ns, with about ±80 ns each.
 - **Decode each page once, for the decoder's time.** A decode of the same page just before trains the
-  branch predictor: `seqlz-fast-lit` then decodes a page in a fault in 1.41 instead of 2.01 µs. The read
+  branch predictor: `seqlz-2` then decodes a page in a fault in 1.41 instead of 2.01 µs. The read
   benchmark of `tools/zram-vm/run.sh` reads every page 6 times in a row, the userspace harness takes
   the median of 5 decodes, so both make `seqlz` look faster than it is in a swap-in. `MODE=swap` decodes
   each page once per pass and is the one to trust ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).

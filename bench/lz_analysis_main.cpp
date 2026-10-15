@@ -361,7 +361,7 @@ void usage() {
                  "usage: quetschn-lz-analysis --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>]\n"
                  "\n"
                  "The matches come from --codec, default lz4hc, at zram's default level unless --level; seqlz is\n"
-                 "seqlz-fast's own matcher.\n");
+                 "seqlz-1's own matcher.\n");
 }
 
 } // namespace
@@ -472,7 +472,7 @@ int main(int argc, char** argv) {
             sequences += static_cast<double>(p.sequences.size());
         }
         if (own_matcher) {
-            std::printf("corpus %s, %zu pages, seqlz-fast's matcher\n", base.c_str(), pages.size());
+            std::printf("corpus %s, %zu pages, seqlz-1's matcher\n", base.c_str(), pages.size());
         } else {
             std::printf("corpus %s, %zu pages, %s level %d\n", base.c_str(), pages.size(), codec->name, params.level);
         }

@@ -4,10 +4,10 @@
 
 > [!NOTE]
 > **In short.** zram keeps swapped-out memory pages compressed in RAM. On the pages my desktop swapped
-> there, `seqlz-fast-lit` stores a page in **24% fewer bytes** than `lzo-rle`, zram's default, and
+> there, `seqlz-2` stores a page in **24% fewer bytes** than `lzo-rle`, zram's default, and
 > 29% and 28% fewer than `lz4`, the fastest common choice. It takes **16% and 18% more time** than
 > `lz4` to write a page and 6% and 13% more to read one. `zstd`, which compresses best, stores a page
-> in 2% and 6% fewer bytes than `seqlz-fast-lit`, but takes 2.2 and 2.1 times the time to write and
+> in 2% and 6% fewer bytes than `seqlz-2`, but takes 2.2 and 2.1 times the time to write and
 > 1.9 times the time to read. Each pair of numbers is for two sets of pages, see below.
 
 This page is the overview: the result, what is not known yet, and the choices with their numbers. The
@@ -18,9 +18,9 @@ idea, also of the ones that failed, is in [explored-designs.md](explored-designs
 
 How to read the numbers:
 
-* **Two names, one format.** `seqlz-fast` stores the leftover bytes of a page as they are,
-  `seqlz-fast-lit` also compresses them. Both write the same format, and one decoder reads both.
-  Numbers are for `seqlz-fast-lit` unless they say otherwise.
+* **Two names, one format.** `seqlz-1` stores the leftover bytes of a page as they are,
+  `seqlz-2` also compresses them. Both write the same format, and one decoder reads both.
+  Numbers are for `seqlz-2` unless they say otherwise.
 * **Dumps.** A dump is a copy of all pages that were in zram on my desktop at one moment. The numbers
   come from two of them: the first from 23rd September 2026, the second from 24th September. Two
   numbers like "1030 / 1269" or "29% and 28%" are the first and the second dump.
@@ -40,7 +40,7 @@ How to read the numbers:
 
 ## The result: lz4's time, zstd's size, almost
 
-![seqlz-fast-lit against zram's codecs](plots/seqlz-speed.svg)
+![seqlz-2 against zram's codecs](plots/seqlz-speed.svg)
 
 Measured in the real kernel, in a virtual machine, on 20 000 pages of each dump, on one desktop CPU
 core, means over the pages, first dump / second dump:
@@ -49,7 +49,7 @@ core, means over the pages, first dump / second dump:
 | --- | --- | --- | --- | --- |
 | `lz4` (fastest) | 1450 / 1755 | 5.28 / 5.76 | 2.65 / 2.63 | 6.18 / 6.65 |
 | `lzo-rle` (zram's default) | 1361 / 1679 | 5.11 / 5.70 | 2.87 / 2.94 | 6.08 / 6.70 |
-| **`seqlz-fast-lit`** | **1030 / 1269** | **6.13 / 6.82** | **2.80 / 2.97** | **7.08 / 7.83** |
+| **`seqlz-2`** | **1030 / 1269** | **6.13 / 6.82** | **2.80 / 2.97** | **7.08 / 7.83** |
 | `zstd` 3 (smallest) | 1012 / 1197 | 13.45 / 14.47 | 5.46 / 5.72 | 15.31 / 16.41 |
 
 Compare the bold row with `lz4` and `zstd`: its size is close to `zstd`'s, its time close to
@@ -61,7 +61,7 @@ the lighter one decoding.
 
 > [!NOTE]
 > **How the times are measured, and what p99 is.** The VM is [`tools/zram-vm/run.sh`](../tools/zram-vm/run.sh),
-> all codecs in each boot, `seqlz-fast` too, 3 boots per dump and the means over them, one CPU of a
+> all codecs in each boot, `seqlz-1` too, 3 boots per dump and the means over them, one CPU of a
 > Ryzen 9 7950X fixed at 4.5 GHz. A program in
 > the VM writes each page to zram with `pwrite` and reads it back with `pread`, and times each call.
 > So a time is the whole system call, zram and zsmalloc included, not only the codec. Each page is
@@ -75,7 +75,7 @@ the lighter one decoding.
 <details>
 <summary>The slowest pages, p99, and the work memory</summary>
 
-At p99 `seqlz-fast-lit` reads cold pages in 4.66 and 4.74 µs, faster than `lzo-rle` (5.55 and 5.61);
+At p99 `seqlz-2` reads cold pages in 4.66 and 4.74 µs, faster than `lzo-rle` (5.55 and 5.61);
 `lz4` needs 4.90 and 4.68. It writes in 10.7 and 10.9 µs, where `lz4` needs 9.2 and 9.5 and `zstd`
 23.6 and 24.2. Its work memory is 8 KiB per CPU, one `kmalloc()` for the matcher's table of
 8192 bytes and a buffer of 4112 bytes the decoder decodes literals into, which are never in use at the
@@ -88,15 +88,15 @@ lengths and shared by all CPUs: once when the kernel starts in the kernel's copy
 
 </details>
 
-No codec is better on both counts: nothing stores pages smaller than `seqlz-fast-lit` without taking
+No codec is better on both counts: nothing stores pages smaller than `seqlz-2` without taking
 twice its time, and none of zram's codecs is faster without taking at least 32% more bytes. `zstd`
-saves 2 and 8 bytes per page for each µs more than `seqlz-fast-lit`. `seqlz-fast`, the same format
+saves 2 and 8 bytes per page for each µs more than `seqlz-2`. `seqlz-1`, the same format
 with raw literals, was measured in the same boots, 1118 / 1462 bytes and 6.61 / 7.08 µs per page
-written. `seqlz-fast-lit` saves 189 and 258 bytes per page for each µs more than `seqlz-fast`, and
-`seqlz-fast` about 460 and 570 for each µs more than `lzo-rle`. So if a µs is worth less than 8 bytes
+written. `seqlz-2` saves 189 and 258 bytes per page for each µs more than `seqlz-1`, and
+`seqlz-1` about 460 and 570 for each µs more than `lzo-rle`. So if a µs is worth less than 8 bytes
 to you, `zstd`'s smaller pages pay for its extra time, at least on the second dump. From there up to
-189 bytes, `seqlz-fast-lit` is the best choice on both dumps, from 258 to about 460 bytes
-`seqlz-fast`, and above about 570 bytes `lzo-rle`. The chart below shows it, without `seqlz-fast`.
+189 bytes, `seqlz-2` is the best choice on both dumps, from 258 to about 460 bytes
+`seqlz-1`, and above about 570 bytes `lzo-rle`. The chart below shows it, without `seqlz-1`.
 
 ![Stored size against time for all codecs](plots/seqlz-codecs.svg)
 
@@ -141,7 +141,7 @@ offset that is a multiple of 8 divided by 8, in 3 bits less
 rest follows the offset bits as a length value: a code from one of two more fixed tables and some plain
 bits ([length values](https://martin.ankerl.com/quetschn/#ch-format--length-values)).
 
-**The literals, in 8 streams.** `seqlz-fast-lit` codes the literals of a page with one of 8 fixed
+**The literals, in 8 streams.** `seqlz-2` codes the literals of a page with one of 8 fixed
 literal tables, the one that takes the fewest bits for this page, and only where that saves 1/16 of
 them; otherwise they stay as they are. The coded literals are dealt out to 8 streams, literal `k` to
 stream `k mod 8`, so that the decoder can decode 8 of them side by side
@@ -192,14 +192,14 @@ data. Each of these costs time that zram's writes and reads cannot spend
 >   zram dump of a phone.
 > * **arm64 on one phone.** The times here are from x86-64. On the small core of a Mi 9T phone, a
 >   Cortex-A55, in the phone's own kernel, on the pages of the first dump, a cold read takes 59 µs for
->   `seqlz-fast` and 61 µs for `seqlz-fast-lit` at the median, against 52 µs for `lz4`: 12% and 17% more.
->   On the big core it is 9.3 and 9.4 µs against 7.2. On the little core `seqlz-fast-lit` is the best
->   choice only up to 16 bytes per µs, `seqlz-fast` up to 36
+>   `seqlz-1` and 61 µs for `seqlz-2` at the median, against 52 µs for `lz4`: 12% and 17% more.
+>   On the big core it is 9.3 and 9.4 µs against 7.2. On the little core `seqlz-2` is the best
+>   choice only up to 16 bytes per µs, `seqlz-1` up to 36
 >   ([explored-designs.md](explored-designs.md#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster)).
 >   In a test that switches between 25 apps, with the same RAM given to zram, launches were not
 >   slower, and because `seqlz` stores pages smaller every app stayed in memory, where `lz4` lost some
 >   ([Apps on the phone](explored-designs.md#apps-on-the-phone-with-the-same-ram-no-cold-launch-in-6-runs-of-seqlz-54-in-3-runs-of-lz4)).
-> * **16 KiB pages.** Android is moving to them, and there `seqlz-fast-lit` needs 32 784 bytes of
+> * **16 KiB pages.** Android is moving to them, and there `seqlz-2` needs 32 784 bytes of
 >   work memory per CPU, twice `lz4`'s, a cost in
 >   [the score](plan.md#11-the-score-memory-against-time-not-bars). A way around it is built and
 >   measured, but not kept, see [explored-designs.md](explored-designs.md). Their

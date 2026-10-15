@@ -9,8 +9,8 @@ not part of the format; the measurements behind them are in
 in the book [seqlz, line by line](https://martin.ankerl.com/quetschn/), the result and the numbers in
 [seqlz.md](seqlz.md).
 
-`seqlz-fast` and `seqlz-fast-lit` are the same format: `seqlz-fast` always stores the literals as they
-are, `seqlz-fast-lit` codes them where that pays. A decoder for one decodes both.
+`seqlz-1` and `seqlz-2` are the same format: `seqlz-1` always stores the literals as they
+are, `seqlz-2` codes them where that pays. A decoder for one decodes both.
 
 `tools/seqlz-ref/seqlz_ref.py` and `tools/seqlz-ref/seqlz_ref.c` are decoders written from this
 file, slow on purpose, and checked against `seqlz_decode()`, see
@@ -42,7 +42,7 @@ It is one format, and the decoder decodes both.
 The format for 16 KiB pages is not fixed yet. Its tables, the literal tables included, are its own,
 trained on a zram dump of the Android 17 emulator with 16 KiB pages
 ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
-That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-fast-lit`
+That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-2`
 asks for 32 784 bytes of work memory per CPU, twice `lz4`'s
 ([seqlz.md](seqlz.md#what-is-not-known-yet)). So it is not in the first series for the kernel:
 `tools/kernel-port/` builds seqlz for 4 KiB pages only.

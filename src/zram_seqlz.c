@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz as a zram backend calls it, for the benchmarks: "seqlz-fast" with raw
- * literals, "seqlz-fast-lit" with the literals Huffman coded where that pays.
+ * seqlz as a zram backend calls it, for the benchmarks: "seqlz-1" with raw
+ * literals, "seqlz-2" with the literals Huffman coded where that pays.
  * The tables are fixed, part of the format (docs/format.md), so zram's
  * dictionary is ignored, as lzo ignores it.
  */
@@ -42,7 +42,7 @@ static void destroy(struct quetschn_stream *s)
 }
 
 /*
- * The compression context is the matcher's hash table, for both. seqlz-fast
+ * The compression context is the matcher's hash table, for both. seqlz-1
  * decompresses without a context.
  */
 static int create_cctx(struct quetschn_params *p, struct quetschn_stream *s)
@@ -84,8 +84,8 @@ static int fast_decompress(struct quetschn_params *p, struct quetschn_stream *s,
 	return 0;
 }
 
-const struct quetschn_codec quetschn_codec_seqlz_fast = {
-	.name = "seqlz-fast",
+const struct quetschn_codec quetschn_codec_seqlz_1 = {
+	.name = "seqlz-1",
 	.setup_params = setup,
 	.release_params = release,
 	.create_cctx = create_cctx,
@@ -95,7 +95,7 @@ const struct quetschn_codec quetschn_codec_seqlz_fast = {
 };
 
 /*
- * seqlz-fast-lit's decompression context: the scratch the decoder decodes the
+ * seqlz-2's decompression context: the scratch the decoder decodes the
  * literals into
  */
 static int create_dctx(struct quetschn_params *p, struct quetschn_stream *s)
@@ -134,8 +134,8 @@ static int fast_lit_decompress(struct quetschn_params *p,
 	return 0;
 }
 
-const struct quetschn_codec quetschn_codec_seqlz_fast_lit = {
-	.name = "seqlz-fast-lit",
+const struct quetschn_codec quetschn_codec_seqlz_2 = {
+	.name = "seqlz-2",
 	.setup_params = setup,
 	.release_params = release,
 	.create_cctx = create_cctx,

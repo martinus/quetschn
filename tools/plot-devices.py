@@ -29,8 +29,8 @@ spec = importlib.util.spec_from_file_location("plot_codecs", here / "plot-codecs
 plot_codecs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plot_codecs)
 
-# zramphone's names: the variant modules register seqlz-<name> and seqlz-<name>-lit, and the phone's
-# 4.14 has lzo where newer kernels have lzo-rle
+# zramphone's names: the variant modules register seqlz-<name>-1 and so on, see plot_codecs.seqlz_level(),
+# and the phone's 4.14 has lzo where newer kernels have lzo-rle
 PHONE_NAMES = {"lzo": "lzo-rle"}
 
 
@@ -41,7 +41,7 @@ def parse_phone(path):
         if not m:
             continue
         algo, what, rest = m.groups()
-        name = PHONE_NAMES.get(algo) or re.sub(r"^seqlz-[^-]+(-lit)?$", r"seqlz-fast\1", algo)
+        name = PHONE_NAMES.get(algo) or plot_codecs.seqlz_level(algo) or algo
         c = codecs.setdefault(name, {})
         if what == "mm_stat":
             f = rest.split()

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqs <pages file> <output>: the sequences seqlz-fast-lit's matcher finds on the pages zram keeps
+ * seqs <pages file> <output>: the sequences seqlz-2's matcher finds on the pages zram keeps
  * compressed, for offsets.py, which prices layouts of the offset classes on them. Same-filled pages and
  * pages of 3625 bytes and more are left out, as in bound.c. One record of four u16 per sequence with a
  * match, the last sequence has no token: min(ll, 15) + 16 * min(ml - 4, 31), the offset, the offset

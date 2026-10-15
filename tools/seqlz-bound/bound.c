@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * bound <pages file>: per symbol kind of seqlz-fast-lit, the bits its codes take on these pages, and
+ * bound <pages file>: per symbol kind of seqlz-2, the bits its codes take on these pages, and
  * the counts of the symbols, as JSON for bound.py, which compares them with the entropy and with
  * Huffman codes fitted to the same pages. Checks per page that the counted bits give the compressed
  * size. Same-filled pages are left out, as zram does; pages zram stores raw, of 3625 bytes and more,
