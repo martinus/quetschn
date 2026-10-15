@@ -29,6 +29,11 @@ much closer it gets, not by whether it arrives.
 - Format not frozen: format/table changes allowed. Each one updates `docs/format.md` (rules, SHA-256
   table, worked example, Status) and both reference decoders. `docs/format.md` describes the format
   as it is: Status = current state only, never a change log (history goes to explored-designs.md).
+- A new format path or level costs decoder attack surface and upstream review: state its code and
+  format cost next to the measured gain; it goes in only with Martin's yes (own literal tables: no on
+  9 Oct at 2.5-3.4%, yes on 15 Oct as level 3 at `zstd` 3's size in half its time).
+- Before changing or simplifying `src/` code: grep `docs/book/chapters` for the function. The book
+  records why code is as it is ("on purpose", "measured"); tell review subagents the same.
 
 ## Layout
 
@@ -83,9 +88,9 @@ follows these rules; open gaps in existing code: issues #151 to #157 (review of 
   allocations = 16 KiB, as one union = 8 KiB (#154).
 - `tools/kernel-port/check.sh`: W=1 warning-free on x86-64, arm64, arm, s390; no new checkpatch
   `--strict` finding; stack frames < 1024 bytes (older kernels' 32-bit `FRAME_WARN`; now 1280, 2048 on
-  64-bit). It prints the three deepest and fails at 1024. Deepest: `decode_literals()` and
-  `code_literals()`, 640 and 584 (gcc 16.2.1, x86-64 defconfig, `W=1`), 952 and 944 with KASAN+UBSan as
-  `stress.sh` sets them; `own_table()` is `noinline` to keep its locals out of `decode_literals()`.
+  64-bit). It prints the three deepest and fails at 1024; deepest are `decode_literals()` and
+  `code_literals()`, near 1000 with KASAN+UBSan as `stress.sh` sets them; `own_table()` is `noinline`
+  to keep its locals out of `decode_literals()`.
 - The copy never names this repo, our machines, phones or dumps. `port.py` fails on names
   (`FORBIDDEN`), not on wording like "on pages of a phone"; also on a `REWRITES` entry that matches no
   comment any more (change or remove it with its comment).
@@ -128,8 +133,8 @@ Source: kernel Maintainers Summit, Oct 2026. Never quote, cite or link its repor
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
-cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 140 cases, ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only), 119 cases
+cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # ctest 2/2 with kernel tree
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only)
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
@@ -183,6 +188,13 @@ Commands: `docs/measuring.md`.
 - A/B of a branch in the VM: from the branch's worktree, `VARIANTS="main=<worktree of main> same=."
   ALGOS=lz4,seqlz-1,seqlz-2,main-1,main-2,same-1,same-2 BOOTS=3 MODE=swap tools/zram-vm/run.sh`, then
   `tools/zram-vm/variants.py <log>`; `same` = control copy, a difference inside its spread is noise.
+- Levels against other codecs in the VM: `ALGOS=lz4,zstd,seqlz-1,seqlz-2,seqlz-3 BOOTS=3 MODE=swap
+  tools/zram-vm/run.sh /home/martinus/gra/linux/finehill <base>`, then `quetschn-score <log>` (hull,
+  bytes per µs). About 4 min per dump. At most 8 codecs per boot.
+- Samples, 20 000 pages each, `~/quetschn-corpus/<name>-sample20000.pages`: `phone-dump/p1` to `p5`
+  (p1, p2, p4 are in `train-mix`), `zram0` (desktop, "23rd September"), `zram0-2026-09-24`,
+  `zram0-2026-09-28`, `phone-mi9t-2026-10-03`, `phone-mi9t-2026-10-04`. Size counts: all ten, mean
+  per row. VM set: p3, p5, `zram0`, `zram0-2026-09-24`.
 - Two sizes: summed compressed bytes per page (a page stored raw = 4096) are not zsmalloc memory;
   zsmalloc memory = mean of column `cost` of quick-bench's `<out>/sizes/<codec>.tsv`. Offline layout
   prices (`tools/seqlz-bound/offsets.py`, `space.py`) count token and offset bits only, about 300 B
@@ -213,12 +225,16 @@ Commands: `docs/measuring.md`.
 - Codec charts: x = time per page, y = memory as % of page, both from 0. Every chart labels every
   axis, categorical ones too. `tools/plot-*.py` take the mean over the boots of a `BOOTS=n` log.
 - `docs/book/` lists `src/` by line numbers. A `src/` change that moves lines fails CI `book` ("not
-  covered") or silently shifts a listing. Same PR: `python3 docs/book/remap.py origin/main` (shows
-  moves; `--write` applies), reread the prose next to each listing marked CHANGED, then
+  covered") or silently shifts a listing. After the last `src/` edit: `python3 docs/book/remap.py
+  <ref>`, `<ref>` = the commit the listings last matched (`origin/main` on a fresh branch, `HEAD` when
+  the branch's book was in sync before the edit); shows moves, `--write` applies. `--write` shifts
+  again on every run: if `src/` changes after it, `git checkout <ref> -- docs/book/chapters`, redo hand
+  edits there, remap once more. Reread the prose next to each listing marked CHANGED, then
   `docs/book/build.py --check` (`npm install` in `docs/book` once, or `ln -s` another worktree's
   `docs/book/node_modules`; git ignores it). The book's reader knows C and C++ (`docs/book/STYLE.md`). Computed values are `{{key}}` from
   `docs/book/facts/*.c`, `@program`/`@output` or `@assert` (docs/book/README.md): format/table
-  changes fail the build where prose needs a look.
+  changes fail the build where prose needs a look. New or changed animation: look at it with
+  `docs/book/shot.py <anim> --steps ...`, wide and `--narrow`, light and `--dark`.
 
 ## Writing and git
 
@@ -232,8 +248,8 @@ Commands: `docs/measuring.md`.
   before pushing to or editing a PR; if merged, new branch from `origin/main`.
 - Repo and worktrees via `gra` (global instructions). `gra -y done <name>` allowed for finished,
   merged, clean worktrees, never the session's own.
-- Merge only when Martin says so; "merge when green" = `gh pr merge <n> --merge` once every check of
-  the head passes (`pages` skips on PRs).
+- Merge only when Martin says so; "merge when green" = `gh pr checks <n> --watch` in the background,
+  then `gh pr merge <n> --merge` once every check of the head passes (`pages` skips on PRs).
 - Subagents editing one worktree: one at a time (shared git index). Big doc rewrites: one commit and
   push per chapter, so a stopped run resumes from `git log`.
 - Hardware: Xiaomi Mi 9T (rooted, A76 + A55, kernel 4.14) = test phone. Pixel 9a: static binary over

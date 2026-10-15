@@ -110,6 +110,20 @@ Some options are for finding where a fault's time goes, all in `KARGS`:
 - `quetschn.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, and
   `quetschn.cond=3` runs only its condition "flushed, other page first".
 
+A profile of the whole boot comes from the host, with `perf kvm`. Add `nokaslr` to `KARGS`, else the
+guest's addresses move, and give a fixed period, so that the sample counts of two boots compare:
+
+```sh
+perf kvm --guest --guestvmlinux=<build>/vmlinux record -e cycles:G,instructions:G -c 50000 -C 2 -- <boot>
+```
+
+perf ends with "double free", the data is written anyway. `perf kvm report` did not resolve the
+guest's symbols here: map the `[g] 0xffffffff8...` addresses with `<build>/System.map`. A kernel built
+once in a directory that stays, with the build steps of `run.sh`, saves the build per run. Short
+periods disturb the guest: at 100 000 cycles `lz4`'s swap-in took 7.1 instead of 3.5 µs, so for the
+time of one fault use `zram.zram_pmu=1` instead
+([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
+
 `tools/kernel-port/stress.sh` is the gate of Phase 5, not a benchmark: the kernel's own seqlz from
 `port.py`, built with KASAN, lockdep, `DEBUG_ATOMIC_SLEEP` and UBSan, booted in a VM with 4 CPUs. It
 writes the corpus to new zram devices and prints `mm_stat`, swaps to zram with seqlz under memory
