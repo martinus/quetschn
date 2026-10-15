@@ -84,6 +84,7 @@ The levels got numbers on 15th October 2026: `seqlz-fast` is `seqlz-1` since, `s
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
+- [Stream sizes as differences to the first: 0.5 bytes per page, counted offline, not pursued](#stream-sizes-as-differences-to-the-first-05-bytes-per-page-counted-offline-not-pursued)
 - [Length values in 5 plain bits instead of their tables: 3 bytes per page more, not kept](#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)
 - [The sequences' bitstream most significant bit first: the token table's codes in one range on every CPU, kept](#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)
 - [Offset classes from a histogram: today's are close, two more give 0.1 points at most](#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)
@@ -1709,8 +1710,25 @@ length, `own+lazy` the combination without the fused histogram, so slower to wri
 
 The hull by `quetschn-score`: `seqlz-fast-lit`, then own, then own+lazy, then `zstd` 3 on p3, p5 and
 the 24th September; on the 23rd own+lazy right after `seqlz-fast-lit`, and `zstd` 3 off the hull. From
-own+lazy to `zstd` 3 a µs saves 0.1 to 3.2 bytes per page. The lazy step alone is on no hull. The level
-3 of this PR was not measured in the VM.
+own+lazy to `zstd` 3 a µs saves 0.1 to 3.2 bytes per page. The lazy step alone is on no hull.
+
+**Kernel VM, the level 3 of this PR**, measured after the merge: `tools/zram-vm/run.sh` at `613b86a`,
+`MODE=swap`, `BOOTS=3`, the same samples, CPU 2 at 4.5 GHz, boost off, gcc 16.2.1, bytes per page /
+swap-out / cold swap-in in µs, means of 3 boots, on 15th October:
+
+| dump | `lz4` | level 1 | level 2 | level 3 | `zstd` 3 |
+| --- | --- | --- | --- | --- | --- |
+| p3 | 1408.1 / 5.99 / 3.13 | 1114.7 / 6.24 / 3.53 | 1037.5 / 6.73 / 3.84 | 993.4 / 8.74 / 4.02 | 998.4 / 13.97 / 6.32 |
+| p5 | 1366.8 / 6.61 / 3.31 | 1063.3 / 6.82 / 3.70 | 998.8 / 7.33 / 3.93 | 957.0 / 9.26 / 4.09 | 943.9 / 14.60 / 6.47 |
+| 23rd September | 1450.3 / 6.50 / 3.27 | 1119.0 / 6.88 / 3.76 | 1033.0 / 7.36 / 3.97 | 995.7 / 9.25 / 4.07 | 1012.3 / 14.62 / 6.48 |
+| 24th September | 1754.4 / 7.07 / 3.30 | 1477.6 / 7.34 / 3.88 | 1268.5 / 8.11 / 4.25 | 1211.7 / 10.54 / 4.39 | 1197.4 / 15.97 / 6.78 |
+
+The hull by `quetschn-score` is `lz4`, level 1, level 2, level 3 on all four. From level 2 to level 3 a
+µs saves 19.4 to 22.9 bytes per page. Level 3 stores 0.5% and 1.6% less than `zstd` 3 on p3 and the
+23rd September, which puts `zstd` 3 off the hull there, and 1.4% and 1.2% more on p5 and the 24th
+September, where `zstd` 3 follows at 2.1 and 2.3 bytes per µs. Its time per page written is 34% to 37%
+less than `zstd` 3's, and 1.9 to 2.5 µs more than level 2's. The p5 run had one slow boot: `lz4`'s
+swap-out was 6.14 to 6.91 µs over the 3 boots, its same-filled pages 2.53 to 3.18.
 
 **Not kept.** The own table's gate on every 4th literal, slower, and wrong on pages of 32-bit values,
 where every 4th byte is one lane of them; one pass for the histograms' sum and the entropy, no gain; the
@@ -2530,6 +2548,34 @@ and the difference was gone; all numbers above are from those builds.
 `tools/seqlz-ref/seqlz_ref.py` agreed with `seqlz_decode()` on 12 690 inputs, 9803 valid with the same page, the
 pages of the roundtrip target and damaged copies with bytes replaced, cut short, another width and a
 header bit flipped, and on 3200 inputs with 16 KiB pages.
+
+## Stream sizes as differences to the first: 0.5 bytes per page, counted offline, not pursued
+
+*The 8 streams' sizes are `w` bits each, `w` the width of the largest. The streams get every 8th
+literal and one table, so their sizes are close, and the idea was to send one size and the other 7 as
+differences, the way a run of a page's own table is sent: a width, then the bits. It saves 0.5 bytes
+per page at level 3, about 0.05% of a page. Not pursued: a second variable-length structure in the
+header, read before the decoder knows where streams 1 to 7 start, for that.*
+Code: none in `src/`; the count was a tool on the codec of `613b86a`, not committed.
+
+Offline, on the ten 20 000-page samples, at level 3, bytes per page over all pages, the mean over the
+samples. The first size stays in `w` bits; the 7 differences are zigzag numbers, as in the column, the
+whole rounded up to bytes per page; the last row is the entropy of the differences, a code trained on
+the same pages, without the rounding:
+
+| the sizes | bytes per page | saved |
+| --- | ---: | ---: |
+| `w` bits each, now | 2.52 | |
+| differences to the first, Exp-Golomb order 0 | 2.23 | 0.29 |
+| differences to the first, Exp-Golomb order 1 | 2.09 | 0.43 |
+| differences to the first, Exp-Golomb order 2 | 2.03 | 0.49 |
+| differences to the size before, Exp-Golomb order 2 | 2.06 | 0.46 |
+| differences to the first, their entropy | 1.80 | 0.72 |
+
+The mean difference to the first size is 2.4 to 14.3 bytes on the samples, the largest 519 to 569.
+Order 2 saves 0.18 bytes per page on the phone dump of 3rd October and 1.33 on the desktop dump of
+28th September, where 62% of the pages have coded literals. At level 2 it is 0.47 of 2.22 bytes, the
+entropy 0.68. All the sizes together are 2.52 bytes of level 3's 940.5 per page, 0.27%.
 
 ## Length values in 5 plain bits instead of their tables: 3 bytes per page more, not kept
 

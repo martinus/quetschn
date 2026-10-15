@@ -658,6 +658,27 @@ bench's model of zsmalloc, level 3 stored 0.30% more than `zstd` 3 on average an
 | the description in byte order, in a fixed code `OWN` | 256 lengths, or the bytes and their lengths | a byte value costs no bits, only its length ([chapter 4](#ch-format--own)) |
 | the decode table built in the output page | in work memory | no byte more per CPU ([chapter 13](#ch-literals-dec--own)) |
 
+The description was measured six ways, bytes per table of the page's own, counted offline on the tables
+level 3 made on three samples of 20 000 pages, each way with a code built for it, the mean over the
+samples
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-pages-own-literal-table-in-the-order-of-the-bytes-decoded-two-lengths-at-a-time-05-smaller-than-by-code-length-reads-29-slower-on-the-a76-kept)):
+
+| how the lengths are sent | bytes per table |
+| --- | ---: |
+| by length, each byte as its distance to the one before, Exp-Golomb order 0 | 68.8 |
+| the same, Exp-Golomb order 1 | 61.3 |
+| the same, Exp-Golomb order 2 | 62.7 |
+| by length, the distance's width in a prefix code, then its bits | 59.3 |
+| in byte order, the lengths and runs in `OWN` (level 3) | 53.1 |
+| in byte order, the changes of the length and runs | 53.0 |
+
+An Exp-Golomb code of order `j` needs no table: a number's width in unary, then its bits, the `j`
+lowest always. On 9th October the description was the fourth way, the distance's width in a fixed code
+of 10 symbols. Exp-Golomb order 1 replaced it first: tables built 12% faster on the PC, for 2.0 bytes
+more per table. Byte order then saved 6.2 bytes against the fourth way: the byte values cost no bits,
+only the lengths and the runs between them, and a run is coded like the fourth way's distances, its
+width in `OWN` and then its bits ([chapter 4](#ch-format--own)). The last two ways are 0.1 bytes apart.
+
 The literal table of the page's own was tried three times before and not kept, for the reasons
 [below](#ch-decisions--not-kept): it cost too much time for what it saved, and it was a second way to
 code the literals, with its own rules for an invalid page, in the decoder and in both reference

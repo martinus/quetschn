@@ -253,6 +253,15 @@ one whether it has a code, and how long it is:
   no code, a **run**. Symbol 10 is a run of 1 with no bits after it, symbol 15 with the 5 bits `00000`
   a run of 32.
 
+A run goes out as its width in bits, `k`, and the `k - 1` bits below its top bit, which is always 1.
+That is the [Elias gamma code](https://en.wikipedia.org/wiki/Elias_gamma_coding), the same bits as
+the [Exp-Golomb code](https://en.wikipedia.org/wiki/Exponential-Golomb_coding) of order 0 for
+`run - 1`, with one change: Elias gamma writes the width as `k - 1` zeros and a 1, `OWN` as one of its
+symbols, in the same code as the lengths. So one symbol says that a run comes and how wide it is, and
+how long its code is follows from how often that width came on the pages `OWN` was counted on. A run of
+32 is `100000`, 6 bits wide: Elias gamma writes `00000100000`, 11 bits, and would still need a bit to
+tell it from a length; `OWN` writes symbol 15 and `00000`, {{own.len.15}} + 5 bits.
+
 The list ends as soon as the codes fill the code space, when $\sum 2^{-l}$ over the lengths so far
 is exactly 1: the code is then [complete](#ch-compression--complete), and the byte values after the
 last one have no code. The bits after the last symbol, up to the end of its byte, are 0, and `d` is
@@ -303,6 +312,8 @@ The text page above, at level 3, is {{own.text.len}} bytes. Its byte 2 is `{{own
 | `{{own.text.d.18.bits}}` | {{own.text.d.18.sym}} | {{own.text.d.18.what}} | {{own.text.d.18.space}} |
 | `{{own.text.d.19.bits}}` | {{own.text.d.19.sym}} | {{own.text.d.19.what}} | {{own.text.d.19.space}} |
 @assert own.text.rows == 20 and own.text.last_row == 19 and own.text.d[19].space == 1024 and own.text.d[18].space < 1024
+
+@anim owndesc wide The same {{own.text.dbytes}} bytes, one symbol of `OWN` per step: the byte values get their lengths or a run skips them, and the lengths fill the code space until the code is complete; then the canonical codes. From the real compressor at level 3.
 
 The sum reaches 1 with `u`, after {{own.text.desc_bits}} bits, and the last byte has
 {{own.text.desc_pad}} zero bits after them. {{own.text.with_code}} byte values have a code: the space,
