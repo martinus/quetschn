@@ -426,7 +426,7 @@ int main(int argc, char** argv) {
             }
             auto parsed = parsed_page{};
             if (own_matcher) {
-                auto const n = seqlz_find(state.get(), src.data(), seqs.data());
+                auto const n = seqlz_find(state.get(), src.data(), seqs.data(), 2);
                 auto in = std::size_t{0};
                 for (unsigned k = 0; k < n; ++k) {
                     parsed.sequences.push_back({seqs[k].literals, seqs[k].match, seqs[k].offset});

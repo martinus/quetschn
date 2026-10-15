@@ -32,7 +32,8 @@ static void seqlz_release_params(struct zcomp_params *params)
 
 /*
  * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
- * them where that saves enough: smaller pages for more time.
+ * them where that saves enough, level 3 searches longer for matches and gives
+ * a page a literal table of its own: smaller pages for more time each.
  * The tables are the library's, built once.
  */
 static int seqlz_setup_params(struct zcomp_params *params)
@@ -42,9 +43,9 @@ static int seqlz_setup_params(struct zcomp_params *params)
 		return -EOPNOTSUPP;
 	}
 	if (params->level == ZCOMP_PARAM_NOT_SET)
-		params->level = SEQLZ_LEVEL_CODED;
-	if (params->level != SEQLZ_LEVEL_RAW &&
-	    params->level != SEQLZ_LEVEL_CODED) {
+		params->level = SEQLZ_LEVEL_DEFAULT;
+	if (params->level < SEQLZ_LEVEL_MIN ||
+	    params->level > SEQLZ_LEVEL_MAX) {
 		pr_err("compression level %d is not supported\n",
 		       params->level);
 		return -EINVAL;
@@ -64,7 +65,7 @@ static int seqlz_create_cctx(struct zcomp_params *params,
 static int seqlz_create_dctx(struct zcomp_params *params,
 			     struct zcomp_ctx *ctx)
 {
-	if (params->level == SEQLZ_LEVEL_RAW)
+	if (params->level == SEQLZ_LEVEL_MIN)
 		return 0;
 	ctx->context = kvzalloc(SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
 	return ctx->context ? 0 : -ENOMEM;

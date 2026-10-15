@@ -2,8 +2,10 @@
 
 Read by agents only. Keep edits terse: rules and facts, no rationale prose, no human-facing style.
 
-Compression codec for Linux zram pages. Codec `seqlz-2`: one format, two compressors
-(`seqlz-1` raw literals, `seqlz-2` coded literals). Target: upstream Linux. Project name
+Compression codec for Linux zram pages. Codec `seqlz`: one format, three levels of the compressor,
+harness names `seqlz-1` (raw literals), `seqlz-2` (one of 8 fixed literal tables, zram's default) and
+`seqlz-3` (lazy matcher, a literal table of the page's own); levels by number, so that what a level does
+can change. Target: upstream Linux. Project name
 `quetschn` (binaries, `QUETSCHN_*` options); codec name stays `seqlz`, never propose a rename.
 
 ## Goal and design rules
@@ -81,9 +83,9 @@ follows these rules; open gaps in existing code: issues #151 to #157 (review of 
   allocations = 16 KiB, as one union = 8 KiB (#154).
 - `tools/kernel-port/check.sh`: W=1 warning-free on x86-64, arm64, arm, s390; no new checkpatch
   `--strict` finding; stack frames < 1024 bytes (older kernels' 32-bit `FRAME_WARN`; now 1280, 2048 on
-  64-bit). It prints the three deepest and fails at 1024. Deepest: `code_literals()` and
-  `decode_literals()`, 640 (gcc 16.2.1, x86-64 defconfig, `W=1`), 1000 and 952 with KASAN+UBSan as
-  `stress.sh` sets them.
+  64-bit). It prints the three deepest and fails at 1024. Deepest: `decode_literals()` and
+  `code_literals()`, 640 and 584 (gcc 16.2.1, x86-64 defconfig, `W=1`), 952 and 944 with KASAN+UBSan as
+  `stress.sh` sets them; `own_table()` is `noinline` to keep its locals out of `decode_literals()`.
 - The copy never names this repo, our machines, phones or dumps. `port.py` fails on names
   (`FORBIDDEN`), not on wording like "on pages of a phone"; also on a `REWRITES` entry that matches no
   comment any more (change or remove it with its comment).
@@ -126,8 +128,8 @@ Source: kernel Maintainers Summit, Oct 2026. Never quote, cite or link its repor
 
 ```sh
 cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
-cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 133 cases, ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only), 112 cases
+cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # 140 cases, ctest 2/2 with kernel tree
+# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only), 119 cases
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only

@@ -31,9 +31,9 @@ int main(int argc, char** argv) {
 
         for (k = 1; k < SEQLZ_PAGE && page[k] == page[0]; k++)
             ;
-        if (k == SEQLZ_PAGE || seqlz_compress(t, &st, page, dst, sizeof dst, 1) >= 3625)
+        if (k == SEQLZ_PAGE || seqlz_compress(t, &st, page, dst, sizeof dst, 2) >= 3625)
             continue;
-        n = seqlz_find(&st, page, seq);
+        n = seqlz_find(&st, page, seq, 2);
         for (i = 0; i + 1 < n; i++) {
             unsigned int ll = seq[i].literals, ml = seq[i].match;
             unsigned short r[4];

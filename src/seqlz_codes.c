@@ -150,6 +150,73 @@ static int build_lit_sets(struct seqlz_tables *t)
 }
 
 /*
+ * The fixed code of a page's own literal table, seqlz_own_lengths: its codes,
+ * its decode table, and quad[], see struct own_table. For quad[], the symbols
+ * at the start of each 8 bits are decoded one after the other, as long as
+ * their codes and extra bits end within the 8 bits: at most one run, then a
+ * length, twice. A run longer than OWN_QUAD_RUN_MAX ends it, and so does a
+ * second run in a row, which a valid table does not have.
+ */
+static int build_own(struct own_table *t)
+{
+	const unsigned int bits = SEQLZ_OWN_CODE_BITS;
+	unsigned int next[16], s, k;
+
+	if (first_codes(seqlz_own_lengths, SEQLZ_OWN_SYMBOLS, bits, next))
+		return -EINVAL;
+	for (s = 0; s < SEQLZ_OWN_SYMBOLS; s++) {
+		unsigned int l = seqlz_own_lengths[s], c = next[l]++;
+
+		t->enc[s] = (u16)(c | l << 8);
+		for (k = c << (bits - l); k < (c + 1U) << (bits - l); k++)
+			t->decode[k] = (u16)(s | l << 8);
+	}
+	for (k = 0; k < 1U << bits; k++) {
+		unsigned int pos = 0, got = 0, run = 0, end[2],
+			     len[2] = { OWN_QUAD_NONE, OWN_QUAD_NONE },
+			     before[2] = { 0, 0 };
+
+		while (got < 2) {
+			unsigned int w = k << pos & ((1U << bits) - 1U),
+				     sym = t->decode[w] & 0xffU,
+				     l = t->decode[w] >> 8, nb;
+
+			if (pos + l > bits)
+				break;
+			if (sym < SEQLZ_OWN_RUN + 1U) {
+				before[got] = run;
+				run = 0;
+				len[got] = sym + 1U;
+				pos += l;
+				end[got++] = pos;
+				continue;
+			}
+			nb = sym - SEQLZ_OWN_RUN;
+			if (pos + l + nb - 1U > bits || run)
+				break;
+			/* the top bit, then the nb - 1 bits after the code */
+			run = 1U << (nb - 1U) |
+			      (w << l & ((1U << bits) - 1U)) >>
+				      (bits + 1U - nb);
+			if (run > OWN_QUAD_RUN_MAX)
+				break;
+			pos += l + nb - 1U;
+		}
+		if (got == 0) {
+			t->quad[k] = 1U << OWN_QUAD_ALONE_AT;
+			continue;
+		}
+		if (got == 1)
+			end[1] = end[0];
+		t->quad[k] = len[0] | len[1] << 4 | end[0] << OWN_QUAD_END1_AT |
+			     end[1] << OWN_QUAD_END2_AT |
+			     before[0] << OWN_QUAD_RUN1_AT |
+			     before[1] << OWN_QUAD_RUN2_AT;
+	}
+	return 0;
+}
+
+/*
  * Whether the encoder can write every page: every token has a code or the
  * escape has one, every length value and every literal has one.
  */
@@ -179,7 +246,8 @@ int seqlz_tables_init(struct seqlz_tables *t,
 	memset(t, 0, sizeof(*t));
 	if (build_token(lengths->token, &t->token) ||
 	    build_values(lengths->ll, &t->ll) ||
-	    build_values(lengths->ml, &t->ml) || build_lit_sets(t))
+	    build_values(lengths->ml, &t->ml) || build_lit_sets(t) ||
+	    build_own(&t->own))
 		return -EINVAL;
 	t->all_symbols = has_all_symbols(lengths);
 	return 0;

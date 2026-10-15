@@ -65,7 +65,7 @@ pages=0
 wrong=0
 for p in "$out"/*.page; do
     want=$(sha256sum "$p" | cut -d' ' -f1)
-    for c in "$p.fast" "$p.lit"; do
+    for c in "$p.1" "$p.2" "$p.3"; do
         got=$(python3 "$here/seqlz_ref.py" "$c" | cut -d' ' -f2-)
         if [[ "$got" != "valid $want" ]]; then
             echo "$(basename "$c"): $got, the page is $want" >&2

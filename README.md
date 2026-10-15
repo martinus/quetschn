@@ -5,9 +5,13 @@
 Compression for memory pages, built for Linux zram. The goal is to get as close as possible to `lz4`'s
 speed and to `zstd`'s size, with no more work memory than `lz4` and without recompression.
 
-The codec is `seqlz-2`: LZ sequences from a greedy matcher, Huffman coded with static tables,
-and one of 8 literal tables per page. On a Xiaomi Mi 9T, in the phone's own kernel, with 20 000 pages
-from the phone's zram, the whole page fault per page:
+The codec is `seqlz`, with three levels of the compressor and one format. `seqlz-2`, zram's default
+level: LZ sequences from a greedy matcher, Huffman coded with static tables, and one of 8 literal tables
+per page. `seqlz-1` keeps the literals as they are, `seqlz-3` looks one position further for matches and
+gives a page a literal table of its own where that saves, which stores pages as small as `zstd` 3 in
+less than half its time ([seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time)).
+On a Xiaomi Mi 9T, in the phone's own kernel, with 20 000 pages from the phone's zram, the whole page
+fault per page with `seqlz-2`:
 
 | codec | bytes per page | swap-in warm, A76 / A55 | swap-out, A76 / A55 |
 | --- | ---: | ---: | ---: |

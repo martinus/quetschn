@@ -9,8 +9,9 @@ not part of the format; the measurements behind them are in
 in the book [seqlz, line by line](https://martin.ankerl.com/quetschn/), the result and the numbers in
 [seqlz.md](seqlz.md).
 
-`seqlz-1` and `seqlz-2` are the same format: `seqlz-1` always stores the literals as they
-are, `seqlz-2` codes them where that pays. A decoder for one decodes both.
+`seqlz-1`, `seqlz-2` and `seqlz-3`, the levels of `seqlz_compress()`, are the same format: level 1
+always stores the literals as they are, level 2 codes them with one of 8 fixed tables where that pays,
+level 3 also with a table of the page's own. A decoder for one decodes all of them.
 
 `tools/seqlz-ref/seqlz_ref.py` and `tools/seqlz-ref/seqlz_ref.c` are decoders written from this
 file, slow on purpose, and checked against `seqlz_decode()`, see
@@ -25,15 +26,16 @@ seqlz compresses one memory page into one compressed page, for zram. This docume
 bytes, so that a decoder can be written from it alone, and it says which compressed pages are valid.
 Sentences marked *Why:* explain a choice and are not part of the format.
 
-At level 1 the compressor stores the literals as they are, at level 2 it codes them where that pays.
-It is one format, and the decoder decodes both.
+At level 1 the compressor stores the literals as they are, at level 2 it codes them with one of 8 fixed
+tables where that pays, at level 3 also with a table of the page's own. It is one format, and the
+decoder decodes all of them.
 -->
 
 <!-- not in the kernel's copy -->
 ## Status
 
 > [!IMPORTANT]
-> This is the format of 14th October 2026 for 4 KiB pages, and nobody uses it yet. Until seqlz has users
+> This is the format of 15th October 2026 for 4 KiB pages, and nobody uses it yet. Until seqlz has users
 > it may still change, the tables included, and such a change updates this file: its rules, the hashes
 > of the tables and the example. Once seqlz is in a kernel, zram's pages still live only as long as the
 > kernel that wrote them, so a change needs no new name in zram, see
@@ -108,28 +110,33 @@ layouts.
 | offset | size | content |
 | --- | --- | --- |
 | 0 | 2 | `h`, which is `0x8000 + n` |
-| 2 | 1 | `t`: `set = t & 7` is which of the 8 literal tables codes them, `w = 5 + ((t >> 3) & 7)` the bits of each stream size, `t >> 6` is 0 |
+| 2 | 1 | `t`: `code = t & 15` is how the literals are coded, `w = 5 + ((t >> 4) & 7)` the bits of each stream size, `t >> 7` is 0 |
 | 3 | `w` | `s[0]` to `s[7]`, the size of each literal stream, `w` bits each |
-| `3 + w` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
-| `3 + w + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
+| `3 + w` | `d` | with `code = 8` the page's own literal table, see [A page's own literal table](#a-pages-own-literal-table), else nothing, `d = 0` |
+| `3 + w + d` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
+| `3 + w + d + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
+
+`code` 0 to 7 is one of the 8 fixed literal tables, `code` 8 a table of the page's own, and 9 to 15
+are invalid.
 
 The `w` bytes from byte 3 on are one number `S` of `8 * w` bits, little endian, and
 `s[j] = (S >> (j * w)) & ((1 << w) - 1)`: 8 sizes of `w` bits fill exactly `w` bytes; `w` is 5 to 12.
 *Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most 640 bytes in a 4 KiB
 page and 2560 in a 16 KiB page; the largest stream of most pages is below 128 bytes, so 7 bits each
-do, and 2 bytes each made pages about 5 bytes larger on average. The two top bits of `t` are kept for
-later.
+do, and 2 bytes each made pages about 5 bytes larger on average. The top bit of `t` and the codes 9 to
+15 are kept for later.
 
 The coded literals are split into 8 **streams**: literal 0 goes to stream 0, literal 1 to stream 1, ...,
-literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + s[0] + ... + s[j-1]`, so
-`start[0] = 3 + w`. *Why:* in one stream each literal's code can only be found once the one before is
+literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + d + s[0] + ... + s[j-1]`,
+so `start[0] = 3 + w + d`. *Why:* in one stream each literal's code can only be found once the one before is
 decoded, a chain of table lookups; 8 streams are 8 chains, which a CPU works on side by side.
 
 A page is invalid if
 
 - `len < 2`, or `n > PAGE`;
 - with raw literals `2 + n > len`;
-- with coded literals `len < 3 + w`, `t >> 6` is not 0, or `3 + w + s[0] + ... + s[7] > len`.
+- with coded literals `len < 3 + w`, `t >> 7` is not 0, `code > 8`, the page's own table is invalid,
+  or `3 + w + d + s[0] + ... + s[7] > len`.
 
 ## Prefix codes
 
@@ -169,6 +176,7 @@ is a list of code lengths, one byte per symbol, symbol 0 first:
 | literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_own.ll` |
 | match length values, `ML` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_own.ml` |
 | literal tables 0 to 7 | 256 each | 10 bits | `seqlz_lit_sets[0]` to `[7]` |
+| a page's own literal table, `OWN` | 19 | 8 bits | `seqlz_own_lengths` |
 -->
 <!-- not in the kernel's copy -->
 | table | symbols | longest code | 4 KiB pages | 16 KiB pages |
@@ -177,19 +185,21 @@ is a list of code lengths, one byte per symbol, symbol 0 first:
 | literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | the same, `.ll` | the same, `.ll` |
 | match length values, `ML` | `LEN_SYMBOLS` | 8 bits | the same, `.ml` | the same, `.ml` |
 | literal tables 0 to 7 | 256 each | 10 bits | `src/seqlz_lit_sets_4k.inc`, `seqlz_lit_sets[0]` to `[7]` | `src/seqlz_lit_sets_16k.inc`, the same |
+| a page's own literal table, `OWN` | 19 | 8 bits | the same, `seqlz_own_lengths` | the same, `seqlz_own_lengths` |
 <!-- end -->
 
 `LL` and `ML` are not the literal tables: they code the lengths `ll` and `ml` of a sequence when they
-are too large for a token. The literal tables code the literals themselves.
+are too large for a token. The literal tables code the literals themselves. `OWN` codes the description
+of a page's own literal table.
 
 ### Where the tables come from
 
 <!-- in the kernel's copy:
 Every table is built from counts that are in the kernel, `lib/seqlz/seqlz_counts.txt`, by
 `scripts/gen-seqlz-tables.py`, which writes `lib/seqlz/seqlz_tables.c`. The counts say how often each
-token, `ll` and `ml` symbol occurred on the training pages, and for each literal table, how often each
-byte occurred as a literal on the pages that table codes best. The pages are 1 091 983 memory pages of
-a desktop and a phone. They are not published, because memory pages hold keys and passwords. The counts
+token, `ll` and `ml` symbol occurred on the training pages, for each literal table, how often each
+byte occurred as a literal on the pages that table codes best, and how often each symbol of `OWN`
+occurred in the pages' own tables. The pages are 1 091 983 memory pages of a desktop and a phone. They are not published, because memory pages hold keys and passwords. The counts
 can't give those back: they are sums over all pages, each literal table's over 10 590 pages or more, and
 they don't say which symbol came after which or on which page.
 -->
@@ -197,8 +207,9 @@ they don't say which symbol came after which or on which page.
 Every table is built from counts that are in this repository:
 [`bench/seqlz_counts_4k.txt`](../bench/seqlz_counts_4k.txt) and
 [`bench/seqlz_counts_16k.txt`](../bench/seqlz_counts_16k.txt). They have how often each token, `ll` and
-`ml` symbol occurred on the training pages, and for each literal table, how often each byte occurred as
-a literal on the pages that table codes best. `tools/kernel-port/gen-seqlz-tables.py` turns the counts
+`ml` symbol occurred on the training pages, for each literal table, how often each byte occurred as
+a literal on the pages that table codes best, and how often each symbol of `OWN` occurred in the
+descriptions of the pages that level 3 gives a table of their own. `tools/kernel-port/gen-seqlz-tables.py` turns the counts
 into the tables in `src/`, and `tools/seqlz-ref/check.sh` checks in CI that they are its output, byte for
 byte. `quetschn-seqlz-train --from-counts <file>` does the same in C++, see `bench/seqlz_train.cpp`, and
 the test `seqlz_train` checks that it gives the same tables, for both page sizes. The kernel gets the
@@ -223,10 +234,12 @@ so that a decoder can check that it has the right ones:
 | `LL_4k` | `ce0b70bdefdad678f22ef1139cf8284c48b61f720adb007b0a28b0ad3777bf16` |
 | `ML_4k` | `c39358b16a14c2462e092ee13b345e9b5002e59c5efc9521f0967063a7873289` |
 | `LIT_4k` | `43f552dca80dcdffd6dc21231555f1c938580650a1b90b94b8c515120ad9ad9e` |
+| `OWN_4k` | `96312d8701c3fa72a06db3dcdb982aab0075aaac91bc895cf1eed3ae88e00721` |
 | `TOK_16k` | `e33e3a2353fbc5c9296abb79034a3d118ce34344e059099e1c85afda996b7219` |
 | `LL_16k` | `5e9e225ea55c28a9b0f358101521c670e89cbd32cec5e7f02fe608648dabb8b2` |
 | `ML_16k` | `fe6a87649f4b95830e663270eefe4289561269420cba951931f95c5fe38ccfce` |
 | `LIT_16k` | `cc37c3ba7e7ffdb91ff873d7c9a19f04301efe79c4b2fd7202c137212a769db4` |
+| `OWN_16k` | `53a7c56537de2052791c0d016ff3c92467ef61bfb7be0ef33ad2b81f3bc58906` |
 
 <!-- not in the kernel's copy -->
 `tools/seqlz-ref/seqlz_ref.py` checks them. How the tables were trained is in
@@ -368,12 +381,34 @@ before it, and the first match's offset is at most that sequence's `ll`.
 
 Each literal stream is read most significant bit first: bit `i` of stream `j` is bit `7 - (i mod 8)` of
 the page's byte `start[j] + i div 8`. Stream `j` holds literal `j`, `j + 8`, `j + 16`, ... below `n`,
-each as one symbol of literal table `set`, one after the other; a code's first bit is the first one
-read.
+each as one symbol of the literal table that `code` names, one after the other; a code's first bit is
+the first one read.
 
 The codes of stream `j`'s literals must end in its last byte: they take at most `8 * s[j]` bits and
 fewer than 8 less, and the bits after the last code are 0. A stream without literals has `s[j] = 0`.
 Else the page is invalid. A decoder may read past the end of a stream, as long as it checks this.
+
+## A page's own literal table
+
+With `code = 8` the literals are coded with a table that the page brings. It starts at byte `3 + w`,
+right after the sizes, and is read most significant bit first, as a literal stream: bit `i` of it is
+bit `7 - (i mod 8)` of byte `3 + w + i div 8`. It is a list of symbols of the table `OWN`, which say
+the code length of each byte value with a code, in the order of the byte values, from 0 on:
+
+- symbol `l - 1`, for `l` from 1 to 10: the next byte value has a code of `l` bits;
+- symbol `9 + k`, for `k` from 1 to 9, then `x = read(k - 1)`: the next `2^(k-1) + x` byte values
+  have no code. `k = 1` is one byte value, `read(0)` is 0.
+
+The list ends as soon as the codes fill the code space: when `2^-l`, summed over the lengths so far,
+is exactly 1. Byte values after the last one with a code have none. The table's last byte is the one
+with its last bit, the bits after that one in it are 0, and `d` is its number of bytes. The codes
+follow from the lengths as in [Prefix codes](#prefix-codes), the byte value being the symbol.
+
+The page is invalid if the sum goes above 1, a byte value with a code is above 255, a bit after the
+last symbol in its byte is not 0, or `3 + w + d > len`. *Why:* the description is in the order of the
+byte values, so a byte value takes no bits of its own, and the long lengths, which most bytes of a
+page's own table have, get the shortest codes in `OWN`. A table takes 0.4 to 0.5 bytes per byte value
+with a code, 40 to 100 bytes on most pages that have one.
 
 ## Example
 
@@ -398,12 +433,19 @@ The 9 bytes `02 00 61 62 23 f2 ff fb 60` are a 4 KiB page of `ab` 2048 times, wi
 Not part of the format: any page that decodes is fine, and one page can be written in many ways, as
 with lz4 or zstd. For reference, `seqlz_compress()` writes:
 
-- the matches of a greedy matcher (`page_lz.h`); each offset with class 0 when it is the last
-  one, else the class with the fewest offset bits that holds it;
+- at levels 1 and 2 the matches of a greedy matcher (`page_lz.h`); level 3 takes a match shorter than
+  20 bytes only where the next position has no longer one, and extends each match backwards over
+  the literals before it while their bytes are the same;
+- each offset with class 0 when it is the last one, else the class with the fewest offset bits that
+  holds it;
 - the escape only for a token without a code;
-- coded literals only when `51 + s[0] + ... + s[7] < n - n div 16`, with the literal table that codes
-  them in the fewest bits, and the smallest `w` that holds every `s[j]`, at least 5. The 51 is not the
-  size of the header; with it, a page has to save enough to be worth decoding its literals.
+- at levels 2 and 3 coded literals only when `51 + d + s[0] + ... + s[7] < n - n div 16`, with the
+  literal table that codes them in the fewest bits, and the smallest `w` that holds every `s[j]`, at
+  least 5. The 51 is not the size of the header; with it, a page has to save enough to be worth decoding
+  its literals;
+- at level 3, for pages with 512 literals or more, a table of the page's own where that and its
+  description take at least 16 bytes less than the best fixed table. Its code lengths are close to a
+  Huffman code's, at most 10 bits.
 
 The compressed page fits the buffer the compressor is given, or the compressor fails. zram gives it two
 pages, which every page fits, and stores a page that does not compress well enough as it is, so that
@@ -416,8 +458,8 @@ code, also the ones it wrote back to a backing device, and no page meets a newer
 the format needs a new kernel, not a new algorithm name in zram, which would be visible to users in
 `comp_algorithm` and in the Kconfig default. Two things would change that: another user of the codec
 that keeps pages longer, or zram's pages kept across a kexec by live update (`kernel/liveupdate/`),
-which zram does not do in 2026. The values of byte 2 with its top bits set are invalid now and free for
-a format that has to tell itself apart.
+which zram does not do in 2026. The values of byte 2 with its top bit set or a code above 8 are invalid
+now and free for a format that has to tell itself apart.
 
 <!-- not in the kernel's copy -->
 ## How this file was checked
@@ -432,7 +474,9 @@ is valid or what it decodes to. `fuzz/smoke.sh` runs it for a minute in CI, `fuz
 on 6 October, 10 AFL++ instances for 2 hours, 1.7 billion inputs, found no difference, and on 9 October,
 with the encoder and decoder of `5342a9b`, 12 instances for 2 hours, 1.94 billion inputs on this target,
 found none either.
-`test/seqlz_ref_test.cpp` checks the example above, the compressor's pages, damaged pages, and pages
-made by hand for the rules that damage rarely reaches: the top bits of `t`, a literal code outside its
-stream, a page of literals only, and a last sequence with a token, which is invalid.
+`test/seqlz_ref_test.cpp` checks the example above, the compressor's pages at every level, damaged
+pages, and pages made by hand for the rules that damage rarely reaches: the top bit of `t` and the codes
+above 8, a literal code outside its stream, a page of literals only, a last sequence with a token, which
+is invalid, and pages' own tables that overfill the code space, name a byte value above 255 or have
+bits after their end.
 <!-- end -->

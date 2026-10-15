@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
-/* seqlz (src/seqlz.h) as zram backends, for the VM test of run.sh: seqlz-1 and seqlz-2, one per level of
+/* seqlz (src/seqlz.h) as zram backends, for the VM test of run.sh: seqlz-1 to seqlz-3, one per level of
  * seqlz_compress(), the tables compiled in, a hash table per CPU. */
 #include <linux/kernel.h>
 
@@ -87,7 +87,7 @@ static int sz_setup_params(struct zcomp_params *params)
 			warm_dst[k] = (x >> 16) % 5 == 0 ? ' ' :
 				      "etaoinshrdlucmfwypvbgkqjxz"[((x >> 16) % 89) % 26 % (1 + (x >> 28))];
 		}
-		warm_len = seqlz_compress(t, st, warm_dst, warm_src, sizeof(warm_src), 1);
+		warm_len = seqlz_compress(t, st, warm_dst, warm_src, sizeof(warm_src), 2);
 		kfree(st);
 	}
 	zram_warm_fn = sz_warm;
@@ -139,7 +139,7 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
 	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
-			     req->dst_len, level >= 2);
+			     req->dst_len, level);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -180,3 +180,4 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 
 SZ_BACKEND(1);
 SZ_BACKEND(2);
+SZ_BACKEND(3);

@@ -24,7 +24,8 @@ rm -rf "$out"; mkdir -p "$out"
 # the codec's files, whether src/ has it in one seqlz.c or split
 cp "$src"/seqlz*.c "$src"/*.h "$src"/*.inc "$out"/
 objs=$(cd "$out" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' ')
-sed -e "s/\"seqlz-\([0-9]\)\(-generic\)\{0,1\}\"/\"seqlz-$name-\1\2\"/" "$here/glue.c" >"$out/glue.c"
+sed -e "s/\"seqlz-\" #level/\"seqlz-$name-\" #level/g" "$here/glue.c" >"$out/glue.c"
+grep -q "\"seqlz-$name-\" #level \"-generic\"" "$out/glue.c" || { echo "glue.c: no name to put $name into" >&2; exit 1; }
 printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o %s\n' "$name" "$name" "$objs" >"$out/Kbuild"
 for o in $objs; do
     printf 'CFLAGS_%s += %s\n' "$o" "${OPT:--O3}" >>"$out/Kbuild"

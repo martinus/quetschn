@@ -121,7 +121,8 @@ std::vector<quetschn_codec const*> codecs() {
             &quetschn_codec_lzo_rle,
             &quetschn_codec_zstd,
             &quetschn_codec_seqlz_1,
-            &quetschn_codec_seqlz_2};
+            &quetschn_codec_seqlz_2,
+            &quetschn_codec_seqlz_3};
 }
 
 // A zram device (params) with the per-CPU contexts of one CPU, set up the way zram does it.
@@ -368,7 +369,7 @@ TEST_CASE("kernel codecs: seqlz takes no dictionary, its tables are part of the 
     // no code at all, would have failed the setup.
     auto const dict = page(sizeof(seqlz_lengths));
     auto const p = text_page();
-    for (auto const* codec : {&quetschn_codec_seqlz_1, &quetschn_codec_seqlz_2}) {
+    for (auto const* codec : {&quetschn_codec_seqlz_1, &quetschn_codec_seqlz_2, &quetschn_codec_seqlz_3}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
         CHECK(device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p) == device(*codec).compress(p));
@@ -437,8 +438,8 @@ TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-2 decompre
         auto len = static_cast<unsigned int>(out.size());
         auto none = quetschn_stream{};
         auto p = fast.params();
-        CHECK(quetschn_codec_seqlz_1.decompress(
-                  &p, &none, c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) == 0);
+        CHECK(quetschn_codec_seqlz_1.decompress(&p, &none, c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) ==
+              0);
         CHECK(out == src);
     }
 }

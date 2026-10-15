@@ -50,8 +50,9 @@
  * A page starts with a u16, little endian: the number of literals of all
  * sequences. The literals follow, all of them one after the other, then the
  * bitstream. Text and code have many literals, so a page can have its literals
- * Huffman coded too, with one of SEQLZ_LIT_SETS fixed tables. Then the u16 has
- * SEQLZ_LIT_CODED set and a header follows, see SEQLZ_LIT_HEADER.
+ * Huffman coded too, with one of SEQLZ_LIT_SETS fixed tables or with a table
+ * of its own. Then the u16 has SEQLZ_LIT_CODED set and a header follows, see
+ * SEQLZ_LIT_HEADER.
  *
  * docs/format.md is the specification.
  */
@@ -280,10 +281,11 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 /*
  * The header of a page with coded literals, 3 + w bytes: the u16 of every page,
- * then a byte with the literal table in bits 0 to 2 and w - SEQLZ_SIZE_BITS_MIN
- * in bits 3 to 5, bits 6 and 7 zero, then the sizes of the 8 streams in bytes,
- * w bits each, lowest bit first. The decoder needs the sizes to know where each
- * stream starts.
+ * then byte 2, with the literals' code in bits 0 to 3 and w -
+ * SEQLZ_SIZE_BITS_MIN in bits 4 to 6, bit 7 zero, then the sizes of the 8
+ * streams in bytes, w bits each, lowest bit first. The code is one of the
+ * SEQLZ_LIT_SETS fixed tables, or SEQLZ_LIT_OWN; codes above it are invalid.
+ * The decoder needs the sizes to know where each stream starts.
  *
  * w is the fewest bits that hold the largest size, but at least 5. A stream
  * holds every 8th literal of at most 10 bits, at most 640 bytes in a 4 KiB page
@@ -293,12 +295,35 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_HEADER(w) (3U + (w))
 #define SEQLZ_SIZE_BITS_MIN 5U
 #define SEQLZ_SIZE_BITS_MAX 12U
+/* the fields of byte 2, as above */
+#define SEQLZ_LIT_CODE_MASK 15U
+#define SEQLZ_LIT_WIDTH_AT 4
+#define SEQLZ_LIT_ZERO_AT 7
 /*
- * Where the fields of byte 2 start: the table at bit 0, w - SEQLZ_SIZE_BITS_MIN
- * at bit 3, the two bits that must be zero at bit 6.
+ * The literals' code SEQLZ_LIT_OWN: a table of the page's own, which follows
+ * the stream sizes, before the streams. It is the code length of every byte
+ * that has a code, from 1 to SEQLZ_LIT_BITS, in the order of the bytes, and
+ * before such a length the number of bytes without a code since the last one,
+ * the run, where that is not 0. Both are sent as symbols of a fixed prefix
+ * code, seqlz_own_lengths, of at most SEQLZ_OWN_CODE_BITS bits: symbol l - 1 is
+ * the length l, symbol SEQLZ_OWN_RUN + k a run of k bits, followed by the k - 1
+ * bits below its top one. The table ends where its codes fill the code space;
+ * the bits after it up to the next byte are zero. The codes are canonical, as
+ * those of the fixed tables.
+ *
+ * The decoder builds the table in the page it decodes into: the literals are
+ * decoded before the first byte of the page is written, so the table needs no
+ * memory of its own.
  */
-#define SEQLZ_LIT_WIDTH_AT 3
-#define SEQLZ_LIT_ZERO_AT 6
+#define SEQLZ_LIT_OWN 8U
+#define SEQLZ_OWN_RUN 9U
+/*
+ * the 10 lengths, then runs of 1 to 9 bits; a run of 9 bits is more than a
+ * table has bytes, and invalid, but makes the code complete
+ */
+#define SEQLZ_OWN_SYMBOLS (SEQLZ_OWN_RUN + 10U)
+#define SEQLZ_OWN_CODE_BITS 8U
+extern const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS];
 /*
  * The encoder codes a page's literals only where that saves more than 1/16 of
  * them plus this many bytes. Decoding coded literals has a cost that does not
@@ -315,16 +340,21 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  */
 #define SEQLZ_SCRATCH (SEQLZ_PAGE + 16U)
 
+/* the matcher's state, below */
+struct seqlz_state;
+
 /**
  * seqlz_encode() - Write a compressed page from given sequences
  * @t: tables with a code for every symbol, see seqlz_all_symbols()
+ * @st: work memory for a page's own literal table at SEQLZ_LEVEL_OWN, or NULL
+ *      below that level
  * @seq: the sequences, the last one with match 0
  * @n: how many
  * @literals: the literals of all sequences, one after the other
  * @n_literals: how many
  * @dst: where the compressed page goes
  * @dst_cap: the bytes at @dst
- * @coded: whether to Huffman code the literals where that saves enough
+ * @level: what to do with the literals, as seqlz_compress() at that level
  *
  * For tests and tools, which make their own sequences; zram uses
  * seqlz_compress().
@@ -335,12 +365,13 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * literals used.
  *
  * Return: the length of the compressed page, or 0 if it does not fit into
- * @dst_cap bytes, @t lacks a code, or the sequences do not describe a page.
+ * @dst_cap bytes, @t lacks a code, the sequences do not describe a page, or
+ * @level is not one.
  */
-unsigned int seqlz_encode(const struct seqlz_tables *t,
+unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
-			  void *dst, unsigned int dst_cap, bool coded);
+			  void *dst, unsigned int dst_cap, unsigned int level);
 
 /**
  * seqlz_decode() - Decompress one page
@@ -385,14 +416,28 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_PAGE / 4U + 1U)
 
 /*
+ * The levels of seqlz_compress(), 1 to SEQLZ_LEVELS, from the fastest to the
+ * one with the smallest pages. Level 1 keeps the literals raw. From
+ * SEQLZ_LEVEL_CODED on they are Huffman coded where that saves enough, with
+ * one of the fixed tables. SEQLZ_LEVEL_OWN looks one position ahead before it
+ * takes a short match, extends matches backwards, and gives a page a literal
+ * table of its own where that saves enough.
+ */
+#define SEQLZ_LEVELS 3U
+#define SEQLZ_LEVEL_CODED 2U
+#define SEQLZ_LEVEL_OWN 3U
+
+/*
  * The matcher's hash table, one per CPU, cleared for each page. Once the
- * matcher is done it holds the raw literals while they are coded, see
- * code_literals() in seqlz_compress.c.
+ * matcher is done it holds the raw literals while they are coded, and at
+ * SEQLZ_LEVEL_OWN, at its end, what the encoder needs for a table of the
+ * page's own, see code_literals() in seqlz_compress.c.
  */
 struct seqlz_state {
 	union {
 		u16 table[1U << SEQLZ_HASH_BITS];
 		u8 literals[SEQLZ_PAGE];
+		u64 work[(2U << SEQLZ_HASH_BITS) / 8U];
 	};
 };
 
@@ -401,6 +446,7 @@ struct seqlz_state {
  * @st: the matcher's state
  * @src: the page, SEQLZ_PAGE bytes
  * @seq: room for SEQLZ_MAX_SEQUENCES sequences
+ * @level: the level of seqlz_compress() whose matcher to use
  *
  * For tests and tools. The last sequence has no match; the literals are the
  * bytes of the page no match covers.
@@ -408,7 +454,7 @@ struct seqlz_state {
  * Return: the number of sequences.
  */
 unsigned int seqlz_find(struct seqlz_state *st, const void *src,
-			struct seqlz_sequence *seq);
+			struct seqlz_sequence *seq, unsigned int level);
 
 /**
  * seqlz_compress() - Compress one page
@@ -417,7 +463,7 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * @src: the page, SEQLZ_PAGE bytes
  * @dst: where the compressed page goes
  * @dst_cap: the bytes at @dst
- * @coded: whether to Huffman code the literals where that saves enough
+ * @level: from 1 to SEQLZ_LEVELS, see there
  *
  * Two pages, as zram's buffer has, are always enough, even for random data,
  * see the encoder in seqlz_compress.c. A smaller @dst works too: a page that
@@ -425,14 +471,14 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * full.
  * The page is written with raw literals first, so it has to fit that way; the
  * coded literals then go over the raw ones, which @st holds meanwhile. The same
- * bytes as seqlz_encode() for the sequences of seqlz_find().
+ * bytes as seqlz_encode() for the sequences of seqlz_find(), at the same level.
  *
  * Return: the length of the compressed page, or 0 if it does not fit into
- * @dst_cap bytes or @t lacks a code.
+ * @dst_cap bytes, @t lacks a code, or @level is not one.
  */
 unsigned int seqlz_compress(const struct seqlz_tables *t,
 			    struct seqlz_state *st, const void *src, void *dst,
-			    unsigned int dst_cap, bool coded);
+			    unsigned int dst_cap, unsigned int level);
 
 /* the code lengths compiled in, see seqlz_default_tables.c */
 extern const struct seqlz_lengths seqlz_default_own;

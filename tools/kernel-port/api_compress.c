@@ -5,10 +5,10 @@ int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 {
 	unsigned int len;
 
-	if (level != SEQLZ_LEVEL_RAW && level != SEQLZ_LEVEL_CODED)
+	if (level < SEQLZ_LEVEL_MIN || level > SEQLZ_LEVEL_MAX)
 		return -EINVAL;
 	len = seqlz_compress_page(&seqlz_fixed_tables, wrkmem, src, dst,
-				  dst_len, level == SEQLZ_LEVEL_CODED);
+				  dst_len, level);
 	return len ? (int)len : -E2BIG;
 }
 EXPORT_SYMBOL_GPL(seqlz_compress);

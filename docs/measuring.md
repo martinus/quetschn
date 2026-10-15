@@ -171,9 +171,9 @@ does not, `--per-cpu` gives it, with the codec's name in the log. `r`, the reads
 ```sh
 ./build/quetschn-score --reads-per-write 0.34 run.txt
 ./build/quetschn-score --what-if lz4:0.5 swap.log
-./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2 --corpus corpus/test | grep -E '^codec|memory per CPU'
+./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 --corpus corpus/test | grep -E '^codec|memory per CPU'
 ./build/quetschn-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
-    --per-cpu seqlz:8192 --per-cpu seqlz-lit:16384 --device 8:256 swap.log
+    --per-cpu seqlz-1:8192 --per-cpu seqlz-2:16384 --per-cpu seqlz-3:16384 --device 8:256 swap.log
 ./build/quetschn-swap-bursts --seconds 3600
 ```
 

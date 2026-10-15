@@ -145,6 +145,7 @@ seqlz_built_tables seqlz_build_tables(seqlz_counts const& c) {
     for (auto const& h : c.lit) {
         t.lit.push_back(seqlz_lit_lengths(h));
     }
+    t.own = seqlz_code_lengths(plus_one(c.own), SEQLZ_OWN_CODE_BITS);
     return t;
 }
 
@@ -197,6 +198,7 @@ void write_seqlz_counts(std::ostream& out, seqlz_counts const& c) {
         v.insert(v.end(), c.lit[k].begin(), c.lit[k].end());
         write_line(out, "lit", v.data(), v.size());
     }
+    write_line(out, "own", c.own.data(), c.own.size());
     out.precision(precision);
 }
 
@@ -217,6 +219,7 @@ seqlz_counts read_seqlz_counts(std::istream& in) {
         std::copy(v.begin() + 1, v.end(), h.begin());
         c.lit.push_back(h);
     }
+    c.own = read_line(in, "own", SEQLZ_OWN_SYMBOLS);
     auto line = std::string();
     while (std::getline(in, line)) {
         if (!line.empty() && line[0] != '#') {

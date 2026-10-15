@@ -14,6 +14,7 @@ struct seqlz_ref_tables {
     const unsigned char* ll;         /* 12 + page_bits symbols */
     const unsigned char* ml;         /* 12 + page_bits symbols */
     const unsigned char (*lit)[256]; /* the 8 literal tables */
+    const unsigned char* own;        /* OWN, 19 symbols */
 };
 
 /* The codes of one table, docs/format.md "Prefix codes", for symbols with codes of at most 15 bits. */
@@ -27,7 +28,7 @@ struct seqlz_ref_code {
 /* Everything the decoder needs: the page size and the codes of all tables. */
 struct seqlz_ref {
     unsigned int page_bits;
-    struct seqlz_ref_code tok, ll, ml, lit[8];
+    struct seqlz_ref_code tok, ll, ml, lit[8], own;
 };
 
 /*

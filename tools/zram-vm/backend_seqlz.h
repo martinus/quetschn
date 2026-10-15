@@ -4,6 +4,6 @@
 
 #include "zcomp.h"
 
-extern const struct zcomp_ops backend_seqlz_1, backend_seqlz_2;
+extern const struct zcomp_ops backend_seqlz_1, backend_seqlz_2, backend_seqlz_3;
 
 #endif

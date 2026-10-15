@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
             k++;
         if (k == 4096)
             continue;
-        unsigned l = seqlz_compress(t, &st, p, buf, sizeof buf, 1);
+        unsigned l = seqlz_compress(t, &st, p, buf, sizeof buf, 2);
         if (!l || l >= 3625)
             continue;
         c[m] = malloc(l);

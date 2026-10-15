@@ -5,9 +5,9 @@
 # of docs/plan.md Phase 5. port.py into a copy of the tree's HEAD, built with KASAN, lockdep
 # (PROVE_LOCKING), DEBUG_ATOMIC_SLEEP, UBSan's bounds and shift checks, PREEMPT_DYNAMIC and the KUnit
 # tests of seqlz, which run at boot. Then boots it in a VM, 4 CPUs and 2 GiB, once per entry of RUNS,
-# with stress.c as /init: phase 0 checks that the backend refuses level 0 and 3 and a dictionary, with
+# with stress.c as /init: phase 0 checks that the backend refuses level 0 and 4 and a dictionary, with
 # the errors it returns; phase 1 writes every page of the corpus to new zram devices, lz4 and seqlz at
-# both levels, prints mm_stat and reads them back; phase 2 swaps to zram with seqlz under memory
+# every level, prints mm_stat and reads them back; phase 2 swaps to zram with seqlz under memory
 # pressure for MINUTES, comparing every page with what it should hold; phase 3 runs the kernel's zram
 # selftests with seqlz. The VM sees the host's root read-only, for the corpus and the selftests' tools.
 #
@@ -67,15 +67,15 @@ for run in ${RUNS:-full:2 lazy:1}; do
     qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 2G -kernel "$work/build/arch/x86/boot/bzImage" \
         -initrd "$work/initramfs.cpio" \
         -virtfs local,path=/,mount_tag=host,security_model=none,readonly=on \
-        -append "console=ttyS0 panic=-1 preempt=$preempt zswap.enabled=0 zram.num_devices=4 \
+        -append "console=ttyS0 panic=-1 preempt=$preempt zswap.enabled=0 zram.num_devices=5 \
 quetschn.corpus=$corpus quetschn.mmstat=$first quetschn.level=$level quetschn.minutes=${MINUTES:-10} \
 quetschn.selftests=1" \
         -nographic -no-reboot >"$log" 2>&1 || true
     first=0
     grep -a '^RESULT\|# seqlz: \|selftest: .*\(PASS\|FAIL\)' "$log" || true
     bad=$(grep -a -c -E 'BUG:|WARNING:|UBSAN:|Oops|general protection|possible (circular|recursive) locking|inconsistent lock state|sleeping function called from invalid context|Kernel panic|RESULT FAIL' "$log" || true)
-    for need in 'RESULT done' '# seqlz: pass:6 fail:0' 'zram01 : \[PASS\]' 'zram02 : \[PASS\]' \
-        'RESULT ok disksize after "algo=seqlz level=0"' 'RESULT ok disksize after "algo=seqlz level=3"' \
+    for need in 'RESULT done' '# seqlz: pass:7 fail:0' 'zram01 : \[PASS\]' 'zram02 : \[PASS\]' \
+        'RESULT ok disksize after "algo=seqlz level=0"' 'RESULT ok disksize after "algo=seqlz level=4"' \
         'RESULT ok disksize after "algo=seqlz dict=/init"'; do
         grep -a -q "$need" "$log" || { echo "missing: $need" >&2; bad=$((bad + 1)); }
     done
@@ -89,7 +89,7 @@ done
 
 if [[ -n ${BUILD:-} ]]; then
     echo "== zsmalloc memory of phase 1: mm_stat's mem_used_total against the userspace model"
-    "$BUILD/quetschn-bench-interleaved" --codecs lz4,seqlz-1,seqlz-2 --corpus "${corpus%.pages}" \
+    "$BUILD/quetschn-bench-interleaved" --codecs lz4,seqlz-1,seqlz-2,seqlz-3 --corpus "${corpus%.pages}" \
         --no-timing >"$work/model.txt"
     python3 - "$work/model.txt" "$out"/boot-*.log <<'PY'
 import re, sys
@@ -101,7 +101,7 @@ for line in open(sys.argv[1]):
     m = re.match(r"zsmalloc (cost|new device) +(\d+) bytes", line)
     if m:
         model.setdefault(codec, {})[m[1]] = int(m[2])
-names = {"lz4": "lz4", "seqlz:1": "seqlz-1", "seqlz:2": "seqlz-2"}
+names = {"lz4": "lz4", "seqlz:1": "seqlz-1", "seqlz:2": "seqlz-2", "seqlz:3": "seqlz-3"}
 print(f"{'zram':10s} {'mem_used_total':>15s} {'model, new device':>18s} {'Σ zsmalloc cost':>16s}")
 for log in sys.argv[2:]:
     for line in open(log, errors="replace"):

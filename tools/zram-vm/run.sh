@@ -12,7 +12,7 @@
 # boots the kernel n times, the order of ALGOS rotated by one per boot, each boot's lines after a line
 # "BOOT k of n", and prints the range of every mean over the boots at the end; one boot can be off by
 # 18%. quetschn-score takes the mean over the boots. VARIANTS="name=dir[:cflags] ..." adds more builds of
-# seqlz as backends <name>-1 and <name>-2, from <dir>/src, e.g. another worktree, with cflags after its
+# seqlz as backends <name>-1 to <name>-3, from <dir>/src, e.g. another worktree, with cflags after its
 # -O3, e.g. VARIANTS="o2=.:-O2 le16=../other": variants compared within one boot, the codecs taking turns.
 # PORT=1 builds seqlz as tools/kernel-port/port.py writes it into the tree, the kernel's own copy, with
 # its backend seqlz and the level as zram's parameter, e.g. ALGOS=lz4,seqlz:2.
@@ -52,9 +52,9 @@ if [[ -n ${PORT:-} ]]; then
     python3 "$here/../kernel-port/port.py" "$work/src" >/dev/null
     echo "KERNEL seqlz as tools/kernel-port/port.py writes it"
 else
-    # seqlz as zram backends, seqlz-1 and seqlz-2, one per level, with lz4's -O3
+    # seqlz as zram backends, seqlz-1 to seqlz-3, one per level, with lz4's -O3
     z="$work/src/drivers/block/zram"
-    levels="1 2"
+    levels="1 2 3"
     # the codec's files, whether a src/ has it in one seqlz.c or split
     codec_objs() { (cd "$1" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' '); }
     cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/"seqlz*.c "$here/../../src/"*.h \

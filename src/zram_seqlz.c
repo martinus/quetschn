@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * seqlz as a zram backend calls it, for the benchmarks: "seqlz-1" with raw
- * literals, "seqlz-2" with the literals Huffman coded where that pays.
- * The tables are fixed, part of the format (docs/format.md), so zram's
- * dictionary is ignored, as lzo ignores it.
+ * seqlz as a zram backend calls it, for the benchmarks: "seqlz-1" to "seqlz-3",
+ * one per level of seqlz_compress(). The tables are fixed, part of the format
+ * (docs/format.md), so zram's dictionary is ignored, as lzo ignores it.
  */
 #include "seqlz.h"
 #include "zram_codec.h"
@@ -42,8 +41,8 @@ static void destroy(struct quetschn_stream *s)
 }
 
 /*
- * The compression context is the matcher's hash table, for both. seqlz-1
- * decompresses without a context.
+ * The compression context is the matcher's hash table, for all levels.
+ * seqlz-1 decompresses without a context.
  */
 static int create_cctx(struct quetschn_params *p, struct quetschn_stream *s)
 {
@@ -52,28 +51,36 @@ static int create_cctx(struct quetschn_params *p, struct quetschn_stream *s)
 	return s->context ? 0 : -1;
 }
 
-static int fast_compress(struct quetschn_params *p, struct quetschn_stream *s,
-			 const void *src, unsigned int src_len, void *dst,
-			 unsigned int *dst_len)
+static int compress(struct quetschn_params *p, struct quetschn_stream *s,
+		    const void *src, unsigned int src_len, void *dst,
+		    unsigned int *dst_len, unsigned int level)
 {
 	unsigned int len;
 
 	if (src_len != SEQLZ_PAGE)
 		return -1;
-	len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len, 0);
+	len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len,
+			     level);
 	if (!len)
 		return -1;
 	*dst_len = len;
 	return 0;
 }
 
+static int compress_1(struct quetschn_params *p, struct quetschn_stream *s,
+		      const void *src, unsigned int src_len, void *dst,
+		      unsigned int *dst_len)
+{
+	return compress(p, s, src, src_len, dst, dst_len, 1);
+}
+
 /*
  * without a scratch, pages with coded literals are invalid; s is the
  * compression context, which it does not touch
  */
-static int fast_decompress(struct quetschn_params *p, struct quetschn_stream *s,
-			   const void *src, unsigned int src_len, void *dst,
-			   unsigned int *dst_len)
+static int decompress_1(struct quetschn_params *p, struct quetschn_stream *s,
+			const void *src, unsigned int src_len, void *dst,
+			unsigned int *dst_len)
 {
 	(void)s;
 	quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
@@ -90,13 +97,13 @@ const struct quetschn_codec quetschn_codec_seqlz_1 = {
 	.release_params = release,
 	.create_cctx = create_cctx,
 	.destroy_cctx = destroy,
-	.compress = fast_compress,
-	.decompress = fast_decompress,
+	.compress = compress_1,
+	.decompress = decompress_1,
 };
 
 /*
- * seqlz-2's decompression context: the scratch the decoder decodes the
- * literals into
+ * The decompression context from level 2 on: the scratch the decoder decodes
+ * the literals into
  */
 static int create_dctx(struct quetschn_params *p, struct quetschn_stream *s)
 {
@@ -105,26 +112,23 @@ static int create_dctx(struct quetschn_params *p, struct quetschn_stream *s)
 	return s->context ? 0 : -1;
 }
 
-static int fast_lit_compress(struct quetschn_params *p,
-			     struct quetschn_stream *s, const void *src,
-			     unsigned int src_len, void *dst,
-			     unsigned int *dst_len)
+static int compress_2(struct quetschn_params *p, struct quetschn_stream *s,
+		      const void *src, unsigned int src_len, void *dst,
+		      unsigned int *dst_len)
 {
-	unsigned int len;
-
-	if (src_len != SEQLZ_PAGE)
-		return -1;
-	len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len, 1);
-	if (!len)
-		return -1;
-	*dst_len = len;
-	return 0;
+	return compress(p, s, src, src_len, dst, dst_len, 2);
 }
 
-static int fast_lit_decompress(struct quetschn_params *p,
-			       struct quetschn_stream *s, const void *src,
-			       unsigned int src_len, void *dst,
-			       unsigned int *dst_len)
+static int compress_3(struct quetschn_params *p, struct quetschn_stream *s,
+		      const void *src, unsigned int src_len, void *dst,
+		      unsigned int *dst_len)
+{
+	return compress(p, s, src, src_len, dst, dst_len, 3);
+}
+
+static int decompress(struct quetschn_params *p, struct quetschn_stream *s,
+		      const void *src, unsigned int src_len, void *dst,
+		      unsigned int *dst_len)
 {
 	quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
 	if (*dst_len < SEQLZ_PAGE ||
@@ -142,6 +146,18 @@ const struct quetschn_codec quetschn_codec_seqlz_2 = {
 	.destroy_cctx = destroy,
 	.create_dctx = create_dctx,
 	.destroy_dctx = destroy,
-	.compress = fast_lit_compress,
-	.decompress = fast_lit_decompress,
+	.compress = compress_2,
+	.decompress = decompress,
+};
+
+const struct quetschn_codec quetschn_codec_seqlz_3 = {
+	.name = "seqlz-3",
+	.setup_params = setup,
+	.release_params = release,
+	.create_cctx = create_cctx,
+	.destroy_cctx = destroy,
+	.create_dctx = create_dctx,
+	.destroy_dctx = destroy,
+	.compress = compress_3,
+	.decompress = decompress,
 };

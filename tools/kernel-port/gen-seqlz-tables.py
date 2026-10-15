@@ -8,9 +8,10 @@
 #   gen-seqlz-tables.py [--lengths | --lit-sets] <counts file>
 #
 # The counts file has comment lines starting with '#', then "token", "ll" and "ml", each followed by the
-# number of symbols and how often each occurred, and 8 times "lit", each followed by 257 and the number
-# of pages that literal table codes, then how often each byte occurred as a literal on them. Numbers may
-# go over several lines.
+# number of symbols and how often each occurred, 8 times "lit", each followed by 257 and the number
+# of pages that literal table codes, then how often each byte occurred as a literal on them, and "own",
+# followed by 19 and how often each symbol of the description of a page's own literal table occurred.
+# Numbers may go over several lines.
 #
 # Each table is a length-limited prefix code, built by package-merge, with every count plus 1. Only the
 # most frequent tokens get a code; the others are sent as the escape, the last symbol of the token
@@ -28,6 +29,8 @@ LIT_BITS = 10       # the longest code of a literal
 ESCAPE_BITS = 12    # the bits of a token after the escape
 LIT_SETS = 8
 TOKENS = 3072
+OWN_BITS = 8        # the longest code of a symbol of a page's own literal table
+OWN_SYMBOLS = 19
 
 
 def code_lengths(counts, max_bits):
@@ -109,7 +112,7 @@ def read_counts(path):
             if not line.startswith("#"):
                 words += line.split()
     tables, pos = [], 0
-    for name in ["token", "ll", "ml"] + ["lit"] * LIT_SETS:
+    for name in ["token", "ll", "ml"] + ["lit"] * LIT_SETS + ["own"]:
         if pos + 2 > len(words) or words[pos] != name:
             sys.exit(f"{path}: expected {name}")
         n = int(words[pos + 1])
@@ -120,7 +123,8 @@ def read_counts(path):
         pos += 2 + n
     if pos != len(words):
         sys.exit(f"{path}: more than the tables")
-    if len(tables[0]) != TOKENS or len(tables[1]) != len(tables[2]) or any(len(t) != 257 for t in tables[3:]):
+    if len(tables[0]) != TOKENS or len(tables[1]) != len(tables[2]) or \
+            any(len(t) != 257 for t in tables[3:3 + LIT_SETS]) or len(tables[-1]) != OWN_SYMBOLS:
         sys.exit(f"{path}: the tables have the wrong sizes")
     return tables
 
@@ -154,10 +158,19 @@ def lengths_initializer(tables):
 def lit_sets_initializer(tables):
     # every byte gets a code, the encoder needs one; the first number of a literal table's counts is its
     # pages, not a byte
-    sets = [code_lengths([c + 1.0 for c in t[1:]], LIT_BITS) for t in tables[3:]]
+    sets = [code_lengths([c + 1.0 for c in t[1:]], LIT_BITS) for t in tables[3:3 + LIT_SETS]]
     for k, s in enumerate(sets):
         check(f"lit {k}", s, LIT_BITS, True)
     return initializer("const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256]", [("", s) for s in sets], "\t")
+
+
+def own_initializer(tables):
+    # the code of a page's own literal table, see SEQLZ_LIT_OWN; every symbol gets a code, so that the
+    # decoder's table has no gap
+    own = code_lengths([c + 1.0 for c in tables[-1]], OWN_BITS)
+    check("own", own, OWN_BITS, True)
+    rows = [", ".join(str(v) for v in own[i:i + 16]) for i in range(0, len(own), 16)]
+    return "const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS] = {\n" + "".join(f"\t{r},\n" for r in rows) + "};\n"
 
 
 def main():
@@ -172,14 +185,15 @@ def main():
     if what == "--lengths":
         print(head + lengths_initializer(tables), end="")
     elif what == "--lit-sets":
-        print(head + lit_sets_initializer(tables), end="")
+        print(head + lit_sets_initializer(tables) + "\n" + own_initializer(tables), end="")
     else:
         print(head + "/*\n * seqlz's tables, part of its format: the code lengths of the tokens and\n"
-              " * the length values, and the 8 literal tables, one chosen per page, the most\n"
-              " * used first.\n */\n"
+              " * the length values, the 8 literal tables, one chosen per page, the most\n"
+              " * used first, and the code of a page's own literal table.\n */\n"
               "#include <kunit/visibility.h>\n#include <linux/export.h>\n\n#include \"seqlz.h\"\n\n" +
               lengths_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_default_own);\n\n" +
-              lit_sets_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_lit_sets);\n", end="")
+              lit_sets_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_lit_sets);\n\n" +
+              own_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_own_lengths);\n", end="")
 
 
 if __name__ == "__main__":

@@ -18,9 +18,11 @@ idea, also of the ones that failed, is in [explored-designs.md](explored-designs
 
 How to read the numbers:
 
-* **Two names, one format.** `seqlz-1` stores the leftover bytes of a page as they are,
-  `seqlz-2` also compresses them. Both write the same format, and one decoder reads both.
-  Numbers are for `seqlz-2` unless they say otherwise.
+* **Three levels, one format.** `seqlz-1` stores the leftover bytes of a page as they are,
+  `seqlz-2` also compresses them with one of 8 fixed tables, `seqlz-3` searches one position further
+  for matches and can give a page a table of its own, see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time).
+  All write the same format, and one decoder reads all of them. Numbers are for `seqlz-2` unless they
+  say otherwise.
 * **Dumps.** A dump is a copy of all pages that were in zram on my desktop at one moment. The numbers
   come from two of them: the first from 23rd September 2026, the second from 24th September. Two
   numbers like "1030 / 1269" or "29% and 28%" are the first and the second dump.
@@ -148,10 +150,10 @@ stream `k mod 8`, so that the decoder can decode 8 of them side by side
 ([coding the literals](https://martin.ankerl.com/quetschn/#ch-literals-enc),
 [decoding them](https://martin.ankerl.com/quetschn/#ch-literals-dec)).
 
-**Fixed tables.** All tables are trained once, on many pages, and are part of the format. A page
-carries no table, and the decoder builds nothing from it. A table of the page's own would fit the page
-better, but it has to be stored in the page and built for every page; what that would save and cost is
-in [the choices](#the-choices-with-their-numbers)
+**Fixed tables.** All tables are trained once, on many pages, and are part of the format. At levels 1
+and 2 a page carries no table, and the decoder builds nothing from it. A table of the page's own fits
+the page better, but it has to be stored in the page and built for every page: only level 3 does that,
+see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time)
 ([where the code lengths come from](https://martin.ankerl.com/quetschn/#ch-codes--lengths)).
 
 **The encoder.** The matcher is greedy. At every position of the page it checks two candidates, the
@@ -182,7 +184,37 @@ compressed page can be prefetched before decoding starts
 **Why `zstd` still stores pages smaller.** `zstd` 3 searches more for matches, codes a page's literals
 with a table built for that page, and codes `ll`, `ml` and the offset with tables it can fit to the
 data. Each of these costs time that zram's writes and reads cannot spend
-([where zstd still wins](https://martin.ankerl.com/quetschn/#ch-decisions--zstd)).
+([where zstd still wins](https://martin.ankerl.com/quetschn/#ch-decisions--zstd)). Level 3 does the
+first two in part, below.
+
+## Level 3: zstd 3's memory in less than half its time
+
+Level 3 is level 2 with two more steps. The matcher looks one position further before it takes a match
+shorter than 20 bytes, and extends a match backwards over the literals before it. And a page with 512
+literals or more gets a literal table of its own where that and the table's description save 16 bytes
+against the best of the 8 fixed tables. The description is the code length of each byte, in the order of
+the bytes, about 50 to 75 bytes; the decoder builds the table in the page it decodes into, so it needs no
+more memory ([format.md](format.md#a-pages-own-literal-table)).
+
+On the Mi 9T, zram in the phone's own kernel, the 19 775 pages of a phone session that the tables were
+not trained on, 15th October 2026, time per page written as above:
+
+![seqlz's levels against lz4 and zstd 3 on the Mi 9T, memory against time](plots/levels-phone.svg)
+
+| codec | bytes per page | big core, A76 | little core, A55 |
+| --- | ---: | ---: | ---: |
+| `lz4` | 1364 | 12.2 µs | 33.5 µs |
+| `seqlz-1` | 1071 | 13.1 µs | 38.9 µs |
+| `seqlz-2` | 997 | 14.6 µs | 43.6 µs |
+| `seqlz-3` | 952 | 19.0 µs | 54.1 µs |
+| `zstd` 3 | 951 | 43.7 µs | 137.7 µs |
+
+So `seqlz-3` stores a page in as much memory as `zstd` 3, 0.6 bytes more, in 43% of its time on the big
+core and 39% on the little one, and in 4.5% less memory than `seqlz-2` for 30% and 24% more time. On ten
+dumps of desktops and phones it stores 0.30% more than `zstd` 3 on average, between 1.6% less and 3.5%
+more. Its reads are 0.4 and 1.1 µs slower than `seqlz-2`'s warm, 0.5 and 2.9 µs cold, and its work memory
+is the same, 16 KiB per CPU. It is not measured in the kernel VM yet
+([explored-designs.md](explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 
 ## What is not known yet
 

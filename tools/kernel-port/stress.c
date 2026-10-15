@@ -5,18 +5,18 @@
  * RESULT, then powers the VM off. From the kernel command line:
  *   quetschn.corpus=<file>     a corpus' .pages, a path on the host
  *   quetschn.mmstat=1          also phase 1
- *   quetschn.level=1|2         seqlz's level for the swap
+ *   quetschn.level=1|2|3       seqlz's level for the swap
  *   quetschn.minutes=<n>       how long the swap is stressed, 0 for no phase 2
  *   quetschn.selftests=1       phase 3, the kernel's selftests of zram, which
  *                              stress.sh puts into /selftests; they run in a
  *                              chroot of the host, for its shell and tools
  *
- * 0. The backend refuses what it does not have: level 0 and 3, and a
+ * 0. The backend refuses what it does not have: level 0 and 4, and a
  *    dictionary. zram creates its streams when disksize is written, so that
  *    write fails, with the backend's error.
  * 1. The pages of the corpus written to a new zram device with lz4, seqlz at
- *    level 1 and at level 2: mm_stat right after, then every page read back
- *    and compared.
+ *    level 1, 2 and 3: mm_stat right after, then every page read back and
+ *    compared.
  * 2. zram as swap with seqlz, under memory pressure: one worker per CPU fills
  *    its part of 1.5 times the free memory with corpus pages, each with its
  *    worker, index and generation in its first 16 bytes. Then until the time
@@ -432,10 +432,10 @@ int main(void)
 	corpus = arg("corpus", "");
 	level = atoi(arg("level", "2"));
 
-	expect_refused(3, "algo=seqlz level=0", EINVAL);
-	expect_refused(3, "algo=seqlz level=3", EINVAL);
+	expect_refused(4, "algo=seqlz level=0", EINVAL);
+	expect_refused(4, "algo=seqlz level=4", EINVAL);
 	/* any file is a dictionary to zram, this one is there */
-	expect_refused(3, "algo=seqlz dict=/init", EOPNOTSUPP);
+	expect_refused(4, "algo=seqlz dict=/init", EOPNOTSUPP);
 
 	if (*corpus && open_corpus(corpus, &cf)) {
 		close(cf);
@@ -443,9 +443,10 @@ int main(void)
 			write_all(corpus, 0, "lz4", 0);
 			write_all(corpus, 1, "seqlz", 1);
 			write_all(corpus, 2, "seqlz", 2);
+			write_all(corpus, 3, "seqlz", 3);
 		}
 		if (atol(arg("minutes", "10")) > 0)
-			thrash(corpus, 3, level, atol(arg("minutes", "10")));
+			thrash(corpus, 4, level, atol(arg("minutes", "10")));
 	}
 	if (atoi(arg("selftests", "0")))
 		selftests();
