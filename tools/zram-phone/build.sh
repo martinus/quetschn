@@ -1,7 +1,7 @@
 #!/bin/bash
 # build.sh <name> <src dir> <out dir>: the codec in <src dir> (a copy of src/) as a module for the Mi 9T's
-# Linux 4.14, <out dir>/quetschn_<name>.ko, registering the crypto compressors seqlz-<name> and
-# seqlz-<name>-lit for zram. Built as the phone's kernel is, with NDK r21e's clang 9, the codec with -O3
+# Linux 4.14, <out dir>/quetschn_<name>.ko, registering the crypto compressors seqlz-<name>-1 and so on,
+# one per level, for zram. Built as the phone's kernel is, with NDK r21e's clang 9, the codec with -O3
 # as lib/lz4, every function aligned to 64 bytes so that a change in one does not move the others. The
 # module's symbol versions get the phone's CRCs (patch_versions.py), else 4.14 refuses it. OPT=-O2
 # builds the codec with that instead of -O3, ALIGN=0 without -falign-functions=64, as the kernel builds
@@ -24,9 +24,8 @@ rm -rf "$out"; mkdir -p "$out"
 # the codec's files, whether src/ has it in one seqlz.c or split
 cp "$src"/seqlz*.c "$src"/*.h "$src"/*.inc "$out"/
 objs=$(cd "$out" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' ')
-sed -e "s/\"seqlz-fast-lit\"/\"seqlz-$name-lit\"/; s/\"seqlz-fast\"/\"seqlz-$name\"/" \
-    -e "s/\"seqlz-fast-lit-generic\"/\"seqlz-$name-lit-generic\"/; s/\"seqlz-fast-generic\"/\"seqlz-$name-generic\"/" \
-    "$here/glue.c" >"$out/glue.c"
+sed -e "s/\"seqlz-\" #level/\"seqlz-$name-\" #level/g" "$here/glue.c" >"$out/glue.c"
+grep -q "\"seqlz-$name-\" #level \"-generic\"" "$out/glue.c" || { echo "glue.c: no name to put $name into" >&2; exit 1; }
 printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o %s\n' "$name" "$name" "$objs" >"$out/Kbuild"
 for o in $objs; do
     printf 'CFLAGS_%s += %s\n' "$o" "${OPT:--O3}" >>"$out/Kbuild"

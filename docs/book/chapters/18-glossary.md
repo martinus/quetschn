@@ -14,8 +14,8 @@ sense given here.
   stores only lengths. [Chapter 2](#ch-compression--canonical-codes)
 - **code, code length**: the bits written for one symbol, {{ch17.tok_shortest}} to {{ch17.tok_longest}}
   for tokens, and how many there are. A table is a list of code lengths. [Chapter 2](#ch-compression)
-- **coded literals**: literals written as Huffman codes of one literal table in 8 streams, by
-  `seqlz-fast-lit` where that saves $\frac{1}{16}$ of them plus {{ch15.coded_min}} bytes.
+- **coded literals**: literals written as Huffman codes of one literal table in 8 streams, from level 2
+  on where that saves $\frac{1}{16}$ of them plus {{ch15.coded_min}} bytes.
   [Chapter 11](#ch-literals-enc)
 - **complete**: a prefix code whose codes use up every bit pattern, Kraft sum 1, so a decode table has no
   empty entry. [Chapter 2](#ch-compression--complete)
@@ -48,8 +48,10 @@ sense given here.
   `ml` table and plain bits. [Chapter 4](#ch-format--length-values)
 - **literal, match, offset**: a literal is a byte stored as it is; a match copies `ml` bytes from `offset`
   bytes back. [Chapter 2](#ch-compression--lz77)
-- **literal table**: one of the 8 fixed tables for coded literals; a page uses one. Not related to the 8
-  streams. [Chapter 8](#ch-codes--lit-sets-file)
+- **lazy step**: a look at the next position before a match is taken, for a longer one there; level 3
+  does it for matches below 20 bytes. [Chapter 9](#ch-matcher--lazy)
+- **literal table**: one of the 8 fixed tables for coded literals, or a page's own table; a page uses
+  one. Not related to the 8 streams. [Chapter 8](#ch-codes--lit-sets-file)
 - **`ll`, `ml`**: literal length and match length of a sequence, `ml` 4 or more.
   [Chapter 4](#ch-format)
 - **LZ77**: the family of compressors that write data as literals and matches; `lz4`, `lzo`, `zstd` and
@@ -58,6 +60,9 @@ sense given here.
   [Chapter 4](#ch-format--token)
 - **MSB first**: most significant bit first, so the next token is the top {{ch18.bits.token}} bits of a
   64-bit register. [Chapter 2](#ch-compression--msb)
+- **own table, `OWN`**: a literal table of the page's own, at level 3: code lengths for the byte values
+  the page has, sent in front of the streams as symbols of the fixed code `OWN`, in byte order, with
+  runs for the byte values without a code. [Chapter 4](#ch-format--own)
 - **offset bits, offset class**: the class, in the token, says how the offset is stored: the repeat
   offset in 0 bits, offset 2 in {{ch18.class_bits.1}}, below 256 and below the page size in
   {{ch18.class_bits.2}} and {{ch18.class_bits.3}}, multiples of 8 below 256 and 2048, divided by 8, in
@@ -168,17 +173,18 @@ sense given here.
   [Chapter 17](#ch-decisions--unknown)
 - **kernel VM**: `tools/zram-vm/run.sh`, a kernel with the codecs in a virtual machine on one core of a
   Ryzen 9 7950X fixed at 4.5 GHz; its times decide. [Chapter 17](#ch-decisions)
-- **levels 1 and 2**: zram's level for seqlz, `seqlz-fast` and `seqlz-fast-lit`, the default.
-  [Chapter 15](#ch-zram-glue--backend)
+- **level**: zram's knob per device for how hard a codec works; seqlz has 1 to 3, `seqlz-1` to
+  `seqlz-3`, 2 the default, all in one format. [Chapter 6](#ch-header--compressor)
 - **`lz4`, `lz4hc`, `lzo`, `lzo-rle`, `zstd`**: zram's codecs: `lz4` the fastest, `lz4hc` its slow
   compressor for the same format, `lzo-rle` zram's default, `zstd` the smallest, level 3 its default in
   zram. [Chapter 1](#ch-zram--codecs)
 - **Mi 9T**: the Xiaomi Mi 9T test phone, a Snapdragon 730 with Cortex-A76 and Cortex-A55 cores,
   Android 11 and Linux 4.14. [Chapter 3](#ch-cpu)
 - **quetschn, seqlz**: quetschn is the project, its binaries and options; seqlz the codec, one format
-  with two compressors and one decoder. [Preface](#preface)
-- **`seqlz-fast`, `seqlz-fast-lit`**: seqlz with raw literals, and with coded literals where they pay.
-  [Chapter 10](#ch-encoder), [chapter 11](#ch-literals-enc)
+  with three levels of the compressor and one decoder. [Preface](#preface)
+- **`seqlz-1`, `seqlz-2`, `seqlz-3`**: seqlz at levels 1 to 3: raw literals; coded literals where they
+  pay; and also a lazy step and a table of the page's own. [Chapter 10](#ch-encoder),
+  [chapter 11](#ch-literals-enc)
 - **`seqlz-opt`**: an optimal parser for the same format, for zram's recompression, removed.
   [Chapter 17](#ch-decisions--not-kept)
 

@@ -17,6 +17,7 @@ struct seqlz_counts {
     std::vector<double> ml;                   // SEQLZ_LEN_SYMBOLS
     std::vector<std::array<double, 256>> lit; // SEQLZ_LIT_SETS, the most used table first
     std::vector<double> lit_pages;            // pages per literal table
+    std::vector<double> own;                  // SEQLZ_OWN_SYMBOLS, of the descriptions of pages' own tables
     std::vector<std::string> comments;        // the lines of the file's head, without "# "
 };
 
@@ -27,6 +28,7 @@ struct seqlz_built_tables {
     std::vector<unsigned char> ll;
     std::vector<unsigned char> ml;
     std::vector<std::vector<unsigned char>> lit;
+    std::vector<unsigned char> own; // seqlz_own_lengths
 };
 
 // The optimal code lengths of at most max_bits bits for the counts.
@@ -38,12 +40,12 @@ struct seqlz_built_tables {
 // A literal table for a histogram: every byte gets a code, one more than its count.
 [[nodiscard]] std::vector<unsigned char> seqlz_lit_lengths(std::array<double, 256> const& histogram);
 
-// The tables of the counts: each token, ll and ml count one more, so that a symbol that never occurred
-// still gets a code.
+// The tables of the counts: each token, ll, ml and own count one more, so that a symbol that never
+// occurred still gets a code.
 [[nodiscard]] seqlz_built_tables seqlz_build_tables(seqlz_counts const& c);
 
 // The counts as text: the comments as "# " lines, then one line per table, its name, how many numbers
-// follow and the numbers: token, ll, ml, then lit with the pages of the table first. read_seqlz_counts()
+// follow and the numbers: token, ll, ml, then lit with the pages of the table first, then own. read_seqlz_counts()
 // throws std::runtime_error for anything else, or for sizes that are not this build's.
 void write_seqlz_counts(std::ostream& out, seqlz_counts const& c);
 [[nodiscard]] seqlz_counts read_seqlz_counts(std::istream& in);

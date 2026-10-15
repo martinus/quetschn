@@ -85,7 +85,8 @@ int main(int argc, char** argv) {
     static unsigned char page[SEQLZ_PAGE], in[SEQLZ_PAGE + 1], dst[2 * SEQLZ_PAGE];
     static struct seqlz_state st;
     struct seqlz_tables* t = malloc(seqlz_tables_size());
-    int kind, coded;
+    int kind;
+    unsigned int level;
 
     if (argc != 3 || !t || seqlz_tables_init(t, &seqlz_default_own)) {
         fprintf(stderr, "usage: make_seeds <decode dir> <roundtrip dir>\n");
@@ -93,11 +94,12 @@ int main(int argc, char** argv) {
     }
     for (kind = 0; kind < N_PAGES; kind++) {
         make_page(kind, page);
-        for (coded = 0; coded < 2; coded++) {
-            unsigned int len = seqlz_compress(t, &st, page, dst, sizeof(dst), coded);
+        for (level = 1; level <= SEQLZ_LEVELS; level++) {
+            static const char* const prefix[] = {"", "level1-", "level2-", "level3-"};
+            unsigned int len = seqlz_compress(t, &st, page, dst, sizeof(dst), level);
             if (!len)
                 return 1;
-            write_file(argv[1], coded ? "coded-" : "raw-", kind, dst, len);
+            write_file(argv[1], prefix[level], kind, dst, len);
         }
         memcpy(in + 1, page, SEQLZ_PAGE);
         write_file(argv[2], "page-", kind, in, sizeof(in));

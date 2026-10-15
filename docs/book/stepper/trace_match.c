@@ -99,7 +99,7 @@ int main(void) {
         g_steps = 0;
         memset(&r, 0, sizeof(r));
         printf("%s\"%s\":{\"steps\":[", k ? "," : "", pages[k].id);
-        seqlz_match_page(table, page, emit, &r);
+        seqlz_match_page(table, page, false, emit, &r);
         if (r.n != SEQLZ_PAGE || memcmp(r.out, page, SEQLZ_PAGE)) {
             fprintf(stderr, "trace_match.c: the sequences of page %s do not make it again\n", pages[k].id);
             return 1;

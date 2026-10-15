@@ -38,10 +38,10 @@ two halves.
 
 ## In a kernel build: the kernel's headers {#ch-compat--kernel}
 
-@listing src/seqlz_compat.h 16-44
+@listing src/seqlz_compat.h 16-45
 
 `linux/build_bug.h` brings `static_assert()`, `linux/compiler.h` `__always_inline`, `noinline` and
-`__cold`, `linux/stddef.h` `sizeof_field()`, `linux/string.h` the kernel's own `memcpy()`,
+`__cold`, `linux/math64.h` `div_u64()`, `linux/stddef.h` `sizeof_field()`, `linux/string.h` the kernel's own `memcpy()`,
 `memmove()` and `memset()`, `linux/types.h` `u8` to `u64`. The rest are fallbacks for 4.14, each for
 a name that arrived later: `min()` moved from `linux/kernel.h` into `linux/minmax.h` in 5.10, the
 unaligned accessors from each architecture's `asm/unaligned.h` into `linux/unaligned.h` in 6.12, the
@@ -51,7 +51,7 @@ lets you leave out the message and C11's `_Static_assert` does not, so every `st
 with gcc, clang and arm64 clang with `W=1`, the kernel's build with extra warnings, without a warning,
 and against the Mi 9T's 4.14 tree.
 
-@listing src/seqlz_compat.h 45-53
+@listing src/seqlz_compat.h 46-54
 
 This is the one place where the header changes a value of the kernel. `L1_CACHE_BYTES` is a cache
 line as the kernel sees it, and older arm64 kernels, 4.14 among them, say 128 there, where the Mi 9T's
@@ -75,7 +75,7 @@ for current kernels, does not have the block.
 
 ## Outside the kernel: the same names from the compiler {#ch-compat--userspace}
 
-@listing src/seqlz_compat.h 54-75
+@listing src/seqlz_compat.h 55-76
 
 Outside the kernel the header relies on the **freestanding** headers, which come with gcc and clang
 themselves, not with glibc. `string.h` and `errno.h` are part of the C library, and most builds have
@@ -87,7 +87,7 @@ library. With userspace flags the compiler would vectorize the codec's loops wit
 it may not do in the kernel, and the benchmarks would not measure what the kernel runs
 ([`docs/plan.md`](https://github.com/martinus/quetschn/blob/main/docs/plan.md#51-codecs-under-test)).
 
-@listing src/seqlz_compat.h 77-101
+@listing src/seqlz_compat.h 78-102
 
 The kernel's `u64` is `unsigned long long` on every architecture, glibc's `uint64_t` is `unsigned
 long` on 64-bit Linux. Defining `u64` the kernel's way gives userspace the same types the kernel code
@@ -99,19 +99,19 @@ or per literal costs more than the helper's work; glibc's `sys/cdefs.h` has its 
 would also replace the words inside `[[gnu::noinline]]` and `[[gnu::cold]]`, which gcc 16 then
 ignores with a warning. The decoder uses both on `lit_load_tail()`, which runs only at the end of a
 literal stream, and `noinline` on `decode_literals()` ([chapter 13](#ch-literals-dec)).
-`static_assert` is a keyword in C23 and in C++, so the macro is only for C before C23. Line 101 says
+`static_assert` is a keyword in C23 and in C++, so the macro is only for C before C23. Line 102 says
 that cache lines have 64 bytes, true for every x86-64 CPU and for the arm64 cores that were measured;
 it decides only how many prefetches `prefetch_lines()` sends, never a result.
 
 ## prefetch(): the instruction, also without SSE {#ch-compat--prefetch}
 
-@listing src/seqlz_compat.h 103-117
+@listing src/seqlz_compat.h 104-118
 
 This is the one function in `src/` with inline assembly, and only in userspace. The kernel builds
 x86-64 with `-mno-sse`, and the x86 instruction `prefetcht0` came with SSE, although it uses no SSE
 register. gcc still emits it for `__builtin_prefetch()` with `-mno-sse`; clang emits nothing, without
 a warning. On x86-64 the kernel's `prefetch()` is `__builtin_prefetch()`, so a kernel built with clang
-has none of the codec's prefetches. In the kernel VM that made `seqlz-fast-lit`'s cold reads at p99
+has none of the codec's prefetches. In the kernel VM that made `seqlz-2`'s cold reads at p99
 24% slower with clang than with gcc, on pages a desktop swapped into zram (Ryzen 9 7950X at 4.5 GHz,
 gcc 16.2.1 and clang 22.1.8,
 [`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs)).
@@ -132,7 +132,7 @@ the tree it writes into. Its commit message has the measurement: with clang 22.1
 decompression took 2086 to 2155 ns per page without the patch and 1978 to 1988 ns with it, and a whole
 swap-in 3887 to 3950 ns against 3761 to 3775 ns, three boots each
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)).
-Line 113 is the same instruction for the benchmarks that build with the kernel's flags, so they
+Line 114 is the same instruction for the benchmarks that build with the kernel's flags, so they
 measure what a patched kernel runs. The `"m"` operand lets the compiler fold the offset of
 `prefetch_lines()` into the addressing mode, e.g. `64(%rdi)`; nothing is loaded at C level, and an
 `asm` without outputs is volatile, so it stays. `cmake/check_prefetch.cmake`, run by `ctest`,
@@ -148,13 +148,22 @@ the `prfm` instruction. On the Mi 9T's A55 that cost 0.1 to 0.3 µs per warm rea
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
 :::
 
-## min() as a function {#ch-compat--min}
+## min() as a function, and div_u64() {#ch-compat--min}
 
-@listing src/seqlz_compat.h 119-123
+@listing src/seqlz_compat.h 120-124
 
 A function-like macro `min` would expand inside `std::min(a, b)` in the C++ files. The function takes
 `unsigned int`, which is all its callers need: `seqlz_token()` in `seqlz.h`
 ([chapter 6](#ch-header)) caps `ll` at {{ch05.ll_cap}} and `ml - 4` at {{ch05.ml_cap}} with it.
+
+@listing src/seqlz_compat.h 126-133
+
+`div_u64()` is the kernel's name for the one division of 64 bits the codec has, in `own_lengths()`
+([chapter 11](#ch-literals-enc--own)). On 32-bit arm and x86 the compiler turns a `u64 / u32` into a
+call of a helper of its runtime library, `__aeabi_uldivmod` or `__udivdi3`, and the kernel has neither:
+the module would not link. The kernel's `div_u64()` divides with what the CPU has; outside the kernel
+the plain division is fine. `tools/kernel-port/check.sh` looks for calls of those helpers in the
+objects of `lib/seqlz/`, because its builds do not link.
 
 ## Little and big endian at any address {#ch-compat--endian}
 
@@ -162,15 +171,15 @@ The `u16` at the start of a page and the stream sizes are little endian
 ([the layout](#ch-format--layout)), the bitstreams are read most significant bit first, and the code
 needs both kinds of loads, from any address, on any CPU ([chapter 3](#ch-cpu--endian)).
 
-@listing src/seqlz_compat.h 125-153
+@listing src/seqlz_compat.h 135-163
 
 On a little-endian CPU a little-endian value needs nothing and a big-endian one a
 `__builtin_bswap64()`, one instruction, `bswap` on x86-64 and `rev` on arm64; on a big-endian CPU it
 is the other way round. Nothing in the codec reads a big-endian number of 16 or 32 bits. The test in
-line 129 relies on gcc and clang defining both macros: a compiler with neither would see `0 == 0` and
+line 139 relies on gcc and clang defining both macros: a compiler with neither would see `0 == 0` and
 take the big-endian branch on any CPU.
 
-@listing src/seqlz_compat.h 155-193
+@listing src/seqlz_compat.h 165-203
 
 `memcpy()` into a local is the defined way to read a `u64` from any address of a byte array, and with
 a constant size gcc and clang make it one load, which is also why each accessor is `__always_inline`:

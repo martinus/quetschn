@@ -12,7 +12,7 @@
 # boots the kernel n times, the order of ALGOS rotated by one per boot, each boot's lines after a line
 # "BOOT k of n", and prints the range of every mean over the boots at the end; one boot can be off by
 # 18%. quetschn-score takes the mean over the boots. VARIANTS="name=dir[:cflags] ..." adds more builds of
-# seqlz as backends <name> and <name>-lit, from <dir>/src, e.g. another worktree, with cflags after its
+# seqlz as backends <name>-1 to <name>-3, from <dir>/src, e.g. another worktree, with cflags after its
 # -O3, e.g. VARIANTS="o2=.:-O2 le16=../other": variants compared within one boot, the codecs taking turns.
 # PORT=1 builds seqlz as tools/kernel-port/port.py writes it into the tree, the kernel's own copy, with
 # its backend seqlz and the level as zram's parameter, e.g. ALGOS=lz4,seqlz:2.
@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-lit] [LLVM=1] [MODE=swap] [BOOTS=3] [VARIANTS=name=dir[:cflags]] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
+[[ $# -eq 2 ]] || { echo "usage: [ALGOS=lz4,seqlz-2] [LLVM=1] [MODE=swap] [BOOTS=3] [VARIANTS=name=dir[:cflags]] tools/zram-vm/run.sh <linux tree> <corpus base>" >&2; exit 2; }
 # ALGOS: zram's names of the backends, a level after a colon, e.g. zstd:-1 or zstd:9; at most 8, one zram
 # device each (init.c's MAX_ALGOS, zram.num_devices): init.c dropped the rest without a word
 n_algos=$(tr ',' '\n' <<<"${ALGOS:-lz4}" | wc -l)
@@ -52,13 +52,17 @@ if [[ -n ${PORT:-} ]]; then
     python3 "$here/../kernel-port/port.py" "$work/src" >/dev/null
     echo "KERNEL seqlz as tools/kernel-port/port.py writes it"
 else
-    # seqlz as zram backends, seqlz (raw literals) and seqlz-lit, with lz4's -O3
+    # seqlz as zram backends, seqlz-1 to seqlz-3, one per level, with lz4's -O3
     z="$work/src/drivers/block/zram"
+    levels="1 2 3"
     # the codec's files, whether a src/ has it in one seqlz.c or split
     codec_objs() { (cd "$1" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' '); }
     cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/"seqlz*.c "$here/../../src/"*.h \
         "$here/../../src/"*_4k.inc "$z/"
-    sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|; s|^\tNULL$|\t\&backend_seqlz,\n\t\&backend_seqlz_lit,\n\tNULL|' "$z/zcomp.c"
+    sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|' "$z/zcomp.c"
+    for l in $levels; do
+        sed -i "s|^\tNULL$|\t\&backend_seqlz_$l,\n\tNULL|" "$z/zcomp.c"
+    done
     objs=$(codec_objs "$here/../../src")
     printf 'zram-y += backend_seqlz.o %s\n' "$objs" >>"$z/Makefile"
     for o in $objs; do
@@ -72,11 +76,14 @@ else
         mkdir -p "$d"
         cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$d/"
         cp "$dir/src/"seqlz*.c "$dir/src/"*.h "$dir/src/"*_4k.inc "$d/"
-        sed -i "s/\.name\t\t= \"seqlz\"/.name\t\t= \"$name\"/; s/\.name\t\t= \"seqlz-lit\"/.name\t\t= \"$name-lit\"/" "$d/backend_seqlz.c"
-        grep -q "\"$name-lit\"" "$d/backend_seqlz.c" || { echo "variant $name: no backend name" >&2; exit 1; }
+        # backend_seqlz.c passes a level; a src/ from before the levels took a bool there, and would
+        # build and code the literals at every level
+        grep -q "define SEQLZ_LEVELS" "$d/seqlz.h" || { echo "variant $name: $dir/src has no levels, it is older than this run.sh" >&2; exit 1; }
+        sed -i "s/^#define SZ_NAME \"seqlz-\"$/#define SZ_NAME \"$name-\"/" "$d/backend_seqlz.c"
+        grep -q "^#define SZ_NAME \"$name-\"$" "$d/backend_seqlz.c" || { echo "variant $name: no backend name" >&2; exit 1; }
         # the global symbols of this build, renamed so that the builds do not clash
         for s in seqlz_compress seqlz_decode seqlz_tables_init seqlz_tables_size seqlz_all_symbols seqlz_find \
-            seqlz_encode seqlz_default_own seqlz_lit_sets backend_seqlz backend_seqlz_lit; do
+            seqlz_encode seqlz_default_own seqlz_lit_sets seqlz_own_lengths $(printf 'backend_seqlz_%s ' $levels); do
             echo "#define $s ${s}_v_$name"
         done >"$d/rename.h"
         objs="v_$name/backend_seqlz.o $(codec_objs "$d" | sed "s#\([^ ][^ ]*\)#v_$name/\1#g")"
@@ -87,7 +94,9 @@ else
         for o in $(codec_objs "$d"); do
             printf 'CFLAGS_v_%s/%s += -O3 %s\n' "$name" "$o" "$flags" >>"$z/Makefile"
         done
-        sed -i "s|^#include \"backend_seqlz.h\"$|#include \"backend_seqlz.h\"\nextern const struct zcomp_ops backend_seqlz_v_$name, backend_seqlz_lit_v_$name;|; s|^\tNULL$|\t\&backend_seqlz_v_$name,\n\t\&backend_seqlz_lit_v_$name,\n\tNULL|" "$z/zcomp.c"
+        for l in $levels; do
+            sed -i "s|^#include \"backend_seqlz.h\"$|#include \"backend_seqlz.h\"\nextern const struct zcomp_ops backend_seqlz_${l}_v_$name;|; s|^\tNULL$|\t\&backend_seqlz_${l}_v_$name,\n\tNULL|" "$z/zcomp.c"
+        done
         echo "VARIANT $name from $dir/src${flags:+, $flags}"
     done
     # zram's contexts split into compression and decompression, see backend_seqlz.c

@@ -40,6 +40,7 @@ TEST_CASE("seqlz_train: the tables compiled in are built from the counts in benc
         CAPTURE(k);
         CHECK(t.lit[k] == std::vector<unsigned char>(seqlz_lit_sets[k], seqlz_lit_sets[k] + 256));
     }
+    CHECK(t.own == std::vector<unsigned char>(seqlz_own_lengths, seqlz_own_lengths + SEQLZ_OWN_SYMBOLS));
 }
 
 TEST_CASE("seqlz_train: each literal table's counts are summed over many pages, none is one page's") {
@@ -63,6 +64,7 @@ TEST_CASE("seqlz_train: the counts come back as they were written, other sizes a
     CHECK(back.ml == c.ml);
     CHECK(back.lit == c.lit);
     CHECK(back.lit_pages == c.lit_pages);
+    CHECK(back.own == c.own);
 
     c.ll.pop_back();
     out = std::ostringstream();

@@ -152,3 +152,8 @@ const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256] = {
 		7, 9, 8, 8, 9, 9, 9, 8, 7, 10, 9, 9, 9, 9, 9, 8,
 	},
 };
+
+const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS] = {
+	8, 8, 8, 7, 7, 5, 3, 2, 2, 2, 5, 7, 8, 8, 8, 8,
+	8, 8, 8,
+};

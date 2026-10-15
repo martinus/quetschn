@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
-"""seqlz-fast-lit against zstd at every level: memory against time, from logs of tools/zram-vm/run.sh with
-MODE=swap and zstd's levels as zram's algorithm_params, e.g. ALGOS=lz4,seqlz-lit,zstd:-1,zstd:3.
+"""seqlz-2 against zstd at every level: memory against time, from logs of tools/zram-vm/run.sh with
+MODE=swap and zstd's levels as zram's algorithm_params, e.g. ALGOS=lz4,seqlz-2,zstd:-1,zstd:3.
 
 One row per corpus, from one or more logs of it; a codec in several logs gets the mean of them. Three
 panels: the swap-out with one page per call, the swap-in with the compressed data cold, and the time per
@@ -9,7 +9,7 @@ page written of the score, docs/plan.md §1.1, all means per page. zstd's levels
 order of the levels. The numbers come from quetschn-score, so they are the score's: the corpus's pages
 without the same-filled ones the swap mode adds. Lower left is better.
 
-    ALGOS=lz4,seqlz-lit,zstd:-5,zstd:-1,zstd:1,zstd:3 MODE=swap KARGS=zram.zram_prefetch=8 \\
+    ALGOS=lz4,seqlz-2,zstd:-5,zstd:-1,zstd:1,zstd:3 MODE=swap KARGS=zram.zram_prefetch=8 \\
         tools/zram-vm/run.sh <linux tree> <corpus> >a.log
     tools/plot-zstd-levels.py --row "Desktop=a.log,b.log" --out zstd-levels.svg
 
@@ -35,7 +35,8 @@ spec.loader.exec_module(plot_codecs)
 ZSTD = plot_codecs.STYLE["zstd"][0]
 # memory in % of the page: where the labels of levels close to another one go, in a row
 LABEL_ROW = 14.0
-OTHERS = {"lz4": "lz4", "lzo-rle": "lzo-rle", "seqlz": "seqlz-fast", "seqlz-lit": "seqlz-fast-lit"}
+OTHERS = {"lz4": "lz4", "lzo-rle": "lzo-rle", "seqlz": "seqlz-1", "seqlz-lit": "seqlz-2", "seqlz-1": "seqlz-1",
+          "seqlz-2": "seqlz-2", "seqlz-3": "seqlz-3"}
 
 
 def score_rows(score, log, r):
@@ -178,7 +179,7 @@ def main():
 
     handles, labels = axes[0][2].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=len(labels), frameon=False, bbox_to_anchor=(0.5, 1 - 0.42 / height))
-    fig.suptitle("seqlz-fast-lit against zstd at each level, in zram as swap: memory against time, lower left is better",
+    fig.suptitle("seqlz-2 against zstd at each level, in zram as swap: memory against time, lower left is better",
                  fontsize=14, fontweight="bold", y=1 - 0.05 / height)
     fig.text(
         0.01,
@@ -187,7 +188,7 @@ def main():
         f"{plot_codecs.cpu_model()}, one CPU at a fixed {args.clock}. The levels are zram's algorithm_params, the numbers next to\n"
         f"zstd's points; levels slower than {args.max_us:g} µs are arrows at the edge of the swap-out and score panels. Per page the median of 3 runs, then the mean over the pages; a codec in several boots gets the mean of them. "
         "Swap-in cold: the compressed data flushed from the cache before the fault.\n"
-        f"seqlz-fast-lit prefetches the compressed data in its zram backend. Time per page written: the score of docs/plan.md §1.1, "
+        f"seqlz-2 prefetches the compressed data in its zram backend. Time per page written: the score of docs/plan.md §1.1, "
         f"{r:g} reads per write, with the time of the whole fault, which includes the kernel's part, the same for every codec.",
         fontsize=8.5,
         color="#555555",

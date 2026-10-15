@@ -62,7 +62,7 @@ SPEC = "Documentation/staging/seqlz.rst"
 CPU_MODEL = re.compile(r"read_cpuid|\bMIDR_|boot_cpu_data|x86_model")
 # what may not be left in the kernel's copy
 FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
-                       r"seqlz-fast|zramphone|\bdump\b|\bcorpus\b|"
+                       r"seqlz-fast|seqlz-[0-9]\b|zramphone|\bdump\b|\bcorpus\b|"
                        # the reasons of an old kernel, a distribution or our test machines, which mainline
                        # does not have
                        r"4\.14|Mi 9T|Fedora|kernel VM|\bthe phone|\bthe PC\b")
@@ -70,7 +70,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
     ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
-    (" The same bytes as seqlz_encode() for the sequences of seqlz_find().", ""),
+    (" The same bytes as seqlz_encode() for the sequences of seqlz_find(), at the same level.", ""),
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
     ("seqlz_compress()", "seqlz_compress_page()"),
@@ -85,7 +85,7 @@ REWRITES = [
     # port_compress() takes out raw and the check of all_symbols, which the tables built once pass
     ("a copy: raw if the caller has one, else spare, at least a page,", "a copy in spare, at least a page,"),
     # the second line of seqlz_compress_page()'s Return:, a line of its own
-    ("@dst_cap bytes or @t lacks a code.", "@dst_cap bytes."),
+    ("@dst_cap bytes, @t lacks a code, or @level is not one.", "@dst_cap bytes, or @level is not one."),
     ("@t: tables with a code for every symbol, see seqlz_all_symbols()", "@t: the tables"),
     ("QUETSCHN_PAGE_BITS bits, 20 or 22;", "QUETSCHN_PAGE_BITS bits, 20;"),
 ]
@@ -108,7 +108,9 @@ ZRAM_RST = "Documentation/admin-guide/blockdev/zram.rst"
 ZRAM_DOC = """seqlz (CONFIG_ZRAM_BACKEND_SEQLZ) is for 4 KiB pages only. It supports
 `level`, but no dictionary. Level 1 stores the literals, the bytes that are
 not copied from earlier in the page, as they are. Level 2, the default,
-Huffman codes them where that saves space, which takes more time::
+Huffman codes them where that saves space, which takes more time. Level 3
+also searches longer for matches and gives a page a code of its own for its
+literals, which saves more space and takes more time again::
 
 	echo "algo=seqlz level=1" > /sys/block/zram0/algorithm_params
 
@@ -120,10 +122,11 @@ PAGE_BITS_BLOCK = re.compile(r"(/\*[^*]*?(?:\*[^/][^*]*?)*?\*/\n)?#ifndef QUETSC
 # the comment of the counts in the kernel's copy, instead of the one of bench/
 COUNTS_HEAD = """# The symbol counts of seqlz's tables for 4 KiB pages, which
 # scripts/gen-seqlz-tables.py turns into lib/seqlz/seqlz_tables.c. Counted on
-# 524 912 memory pages of desktops and a phone, with seqlz's matcher; the
-# literal tables by k-means over the 440 898 pages with more than 64 literals.
+# 1 091 983 memory pages of a desktop and a phone, with seqlz's matcher; the
+# literal tables by k-means over the 963 723 pages with more than 64 literals.
 # token, ll and ml: how often each symbol occurred, by number. lit: the pages of
-# a literal table, then how often each byte occurred as a literal on them.
+# a literal table, then how often each byte occurred as a literal on them. own:
+# how often each symbol occurred in the pages' own literal tables at level 3.
 """
 
 
@@ -269,10 +272,11 @@ def rename_compress(text, end):
     from REWRITES, which wraps them again."""
     return must(text, "unsigned int seqlz_compress(const struct seqlz_tables *t,\n"
                       "\t\t\t    struct seqlz_state *st, const void *src, void *dst,\n"
-                      "\t\t\t    unsigned int dst_cap, bool coded)" + end,
+                      "\t\t\t    unsigned int dst_cap, unsigned int level)" + end,
                 "unsigned int seqlz_compress_page(const struct seqlz_tables *t,\n"
                 "\t\t\t\t struct seqlz_state *st, const void *src,\n"
-                "\t\t\t\t void *dst, unsigned int dst_cap, bool coded)" + end)
+                "\t\t\t\t void *dst, unsigned int dst_cap,\n"
+                "\t\t\t\t unsigned int level)" + end)
 
 
 def common(text):
@@ -368,7 +372,8 @@ def port_internal():
 INCLUDES = {
     "codes": ["linux/build_bug.h", "linux/errno.h", "linux/init.h", "linux/module.h", "linux/seqlz.h",
               "linux/string.h"],
-    "compress": ["linux/errno.h", "linux/export.h", "linux/seqlz.h", "linux/string.h", "linux/unaligned.h"],
+    "compress": ["linux/errno.h", "linux/export.h", "linux/math64.h", "linux/seqlz.h", "linux/string.h",
+                 "linux/unaligned.h"],
     "decompress": ["linux/cache.h", "linux/errno.h", "linux/export.h", "linux/prefetch.h", "linux/seqlz.h",
                    "linux/unaligned.h"],
 }
@@ -414,26 +419,33 @@ def port_compress(docs):
     t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)\n", "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n")
     # code_literals()' copy of the raw literals is always the matcher's table: raw is the harness'
     t = must(t, "static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,\n"
-                "\t\t\t\t  unsigned int len, const u8 *raw, u8 *spare)\n",
+                "\t\t\t\t  unsigned int len, const u8 *raw, u8 *spare,\n"
+                "\t\t\t\t  struct own_work *own)\n",
              "static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,\n"
-             "\t\t\t\t  unsigned int len, u8 *spare)\n")
+             "\t\t\t\t  unsigned int len, u8 *spare,\n"
+             "\t\t\t\t  struct own_work *own)\n")
     t = must(t, "\tliterals = raw ? raw : memcpy(spare, literals, n_literals);\n",
              "\tliterals = memcpy(spare, literals, n_literals);\n")
-    t = must(t, "code_literals(t, dst, len, NULL, st->literals);", "code_literals(t, dst, len, st->literals);")
+    t = must(t, "\treturn code_literals(t, dst, len, NULL, st->literals,\n",
+             "\treturn code_literals(t, dst, len, st->literals,\n")
     # the matcher of page_lz.h, right before the one function that calls it, calling encode_emit()
     # itself: in the kernel's copy it has no other caller
     lz = (SRC / "page_lz.h").read_text()
     lz = lz[lz.index('#include "seqlz.h"\n') + len('#include "seqlz.h"\n'):lz.rindex("#endif")].strip("\n")
     lz = cut(lz, r"/\*\n \* The matcher calls this for every sequence it finds.*?\);\n\n")
     lz = must(lz, "static __always_inline void seqlz_match_page(u16 *table, const u8 *src,\n"
-                  "\t\t\t\t\t     emit_fn emit, void *ctx)\n",
+                  "\t\t\t\t\t     bool lazy, emit_fn emit, void *ctx)\n",
               "static __always_inline void seqlz_match_page(u16 *table, const u8 *src,\n"
+              "\t\t\t\t\t     bool lazy,\n"
               "\t\t\t\t\t     struct seqlz_encoder *e)\n")
     lz = must(lz, "emit(ctx, ", "encode_emit(e, ", 2)
     t = must(t, '#include "page_lz.h"\n\n', "")
     t = must(t, "static unsigned int compress_page(", "/* ---- the matcher ---- */\n\n" + lz + "\n\n"
              "static unsigned int compress_page(")
-    t = must(t, "\tseqlz_match_page(st->table, src, encode_emit, &e);\n", "\tseqlz_match_page(st->table, src, &e);\n")
+    t = must(t, "\t\tseqlz_match_page(st->table, src, true, encode_emit, &e);\n",
+             "\t\tseqlz_match_page(st->table, src, true, &e);\n")
+    t = must(t, "\t\tseqlz_match_page(st->table, src, false, encode_emit, &e);\n",
+             "\t\tseqlz_match_page(st->table, src, false, &e);\n")
     t = must(t, "static __always_inline void encode_emit(void *ctx, const u8 *in,\n"
                 "\t\t\t\t\tunsigned int ll, unsigned int ml,\n\t\t\t\t\tunsigned int off)\n{\n"
                 "\tstruct seqlz_encoder *e = ctx;\n",
@@ -461,7 +473,7 @@ def port_counts():
              if not line.startswith("#") for w in line.split()]
     out, line = [], ""
     for w in words:
-        if w in ("token", "ll", "ml", "lit") and line:
+        if w in ("token", "ll", "ml", "lit", "own") and line:
             out.append(line)
             line = ""
         if line and len(line) + 1 + len(w) > WIDTH:
@@ -625,7 +637,8 @@ def main():
               "\t  compiled in. It stores pages in less memory than lz4, and\n"
               "\t  takes more time to compress and decompress them. Level 1\n"
               "\t  keeps the literals raw, level 2, the default, codes them\n"
-              "\t  too.\n\n")
+              "\t  too, level 3 also searches longer for matches and codes\n"
+              "\t  the literals of a page with a table of its own.\n\n")
     kc = must(kc, "\t\t!ZRAM_BACKEND_842\n", "\t\t!ZRAM_BACKEND_842 && !ZRAM_BACKEND_SEQLZ\n")
     # without help, as the other ZRAM_DEF_COMP_* entries: checkpatch's CONFIG_DESCRIPTION stays
     kc = must(kc, "config ZRAM_DEF_COMP_842\n\tbool \"842\"\n\tdepends on ZRAM_BACKEND_842\n\n",

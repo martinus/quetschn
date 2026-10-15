@@ -152,10 +152,12 @@ this page, and others.
 
 The compressor here is **greedy**: it takes the first match it finds and moves on behind it. A
 deeper search pays in bytes, `zstd` 3 looks for a long match first and checks one byte later, `lz4hc`
-searches chains of older positions, and costs time on every write. A seqlz that searches a hash
-chain, picks the match that saves the most bits by the tables and looks one position ahead, level 3,
-stored pages 3.3% smaller for about twice the time to write; it was not kept, nor the deeper level 4
+searches chains of older positions, and costs time on every write. A seqlz that searched a hash
+chain, picked the match that saves the most bits by the tables and looked one position ahead stored
+pages 3.3% smaller for about twice the time to write; it was not kept, nor a deeper one
 ([`docs/plan.md` §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)).
+seqlz's level 3 of today looks one position ahead only for a match shorter than 20 bytes
+([chapter 9](#ch-matcher--lazy)).
 
 ## Fixed-width numbers waste bits {#ch-compression--entropy}
 

@@ -30,6 +30,10 @@ stale, which the entries do not repeat every time. Code that was removed is name
 e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the commit of 7th October
 2026 that removed it: `git show 57fb8fb^:explore/bytelz.c`.
 
+The levels got numbers on 15th October 2026: `seqlz-fast` is `seqlz-1` since, `seqlz-fast-lit` is
+`seqlz-2`. The entries before keep the old names, and so do the kernel VM's backends in their logs,
+`seqlz` and `seqlz-lit`.
+
 ## Index
 
 **How to measure, and the baselines**
@@ -88,6 +92,8 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The token's table by the offset before it: 3 and 12 bytes per page, not kept](#the-tokens-table-by-the-offset-before-it-3-and-12-bytes-per-page-not-kept)
 - [Per page: its own literal table and one of 4 token tables, measured, not kept](#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)
 - [A literal table of the page's own at levels 3 and 4: 2.5% to 3.4% less, a second literal path in the format, not kept](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
+- [Level 3, a lazy matcher and a literal table of the page's own: zstd 3's memory in less than half its time on the phone, kept](#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)
+- [A page's own literal table in the order of the bytes, decoded two lengths at a time: 0.5% smaller than by code length, reads 2.9% slower on the A76, kept](#a-pages-own-literal-table-in-the-order-of-the-bytes-decoded-two-lengths-at-a-time-05-smaller-than-by-code-length-reads-29-slower-on-the-a76-kept)
 - [Pages without matches but with literals that code well: coded now](#pages-without-matches-but-with-literals-that-code-well-coded-now)
 - [Coded literals only where they save 51 bytes: 2.7 µs per page written less on the A55, kept](#coded-literals-only-where-they-save-51-bytes-27-µs-per-page-written-less-on-the-a55-kept)
 - [seqlz-fast-lit by the score: no budget, offsets in steps of 8](#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)
@@ -1581,6 +1587,203 @@ after the store, 9% more cycles, from more instructions; `count()` with 16 bytes
 most matches end in its first 16 bytes. Two that change the output, measured for later: `lz4`'s growing
 step without a match, 2.4% fewer cycles for 2.4 bytes more per page, and a hash of 4 bytes with a 32
 bit multiply, 2.3% fewer cycles for 1.9% more memory.
+
+## Level 3, a lazy matcher and a literal table of the page's own: zstd 3's memory in less than half its time on the phone, kept
+
+*`seqlz_compress()` at level 3, `seqlz-3` in the harness: the matcher of levels 1 and 2 with one lazy
+step and the step back, and the literals coded with a table of the page's own where that saves 16 bytes
+against the best fixed table. On ten 20 000-page samples it stores 0.30% more than `zstd` 3 on average,
+from 1.56% less to 3.45% more, less on four of them, and 4.5% less than level 2. On the Mi 9T's
+Cortex-A76, zram in its own kernel, a page written takes 19.0 µs against 43.7 for `zstd` 3 and
+14.6 for level 2, by the score of [plan.md §1.1](plan.md#11-the-score-memory-against-time-not-bars);
+54.1, 137.7 and 43.6 on the A55. Kept: Martin asked for it on 15th October 2026, with the
+levels named by number, `seqlz-1` to `seqlz-3`, so that what a level does can change without a new
+name.*
+Code: `seqlz_lazy()` and the `lazy` branch of `seqlz_match_page()` in `src/page_lz.h`; `struct
+own_work`, `own_code()`, `own_lengths()` and `code_literals()` in `src/seqlz_compress.c`; `own_table()`
+in `src/seqlz_decompress.c`; `build_own()` in `src/seqlz_codes.c`; the format in
+[format.md, "A page's own literal table"](format.md#a-pages-own-literal-table).
+
+**What changed since 9th October.** [A literal table of the page's own at levels 3 and 4](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
+had the same idea on top of [a hash chain](#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)
+and was not kept: 1.8 to 1.9 times level 2's write time, and a second way to code the literals in the
+format. This level 3 replaces the hash chain with one lazy step, from the unmerged branch
+`explored-night-1014` ("The matcher lazy by one position"), and makes the table's part cheaper. The
+second way to code the literals is still there: byte 2's code 8, a description with its own rules for an
+invalid one, its parser in the decoder and in both reference decoders.
+
+**The parts**, each measured on 14th and 15th October:
+
+* **The lazy step.** A match shorter than 20 bytes is taken only where the next position has no longer
+  one, at the repeated offset or at the hash table's entry; else the byte becomes a literal. Bytes per
+  page on the first 20 000 pages of p3 and the samples of 23rd and 24th September, with the step below
+  a length of 4 + n bytes: n = 0 (no step) 894.9 / 961.7 / 1204.9, 4: 888.6 / 955.0 / 1193.9, 8: 886.0 /
+  952.0 / 1190.8, 16: 884.7 / 950.2 / 1189.2, 32: 884.0 / 949.4 / 1188.4, always 883.1 / 948.9 / 1187.9.
+  16 keeps most of it. On its own it was a point on no hull once the own table was there (VM below).
+* **The step back.** Levels 1 and 2 lost it in [PR #213](#the-matcher-without-its-step-back-writes-66-faster-on-the-a76-and-1-to-2-in-the-vm-kept);
+  level 3 keeps it: without it level 3 is 0.69% larger on ten dumps, 4.2 to 12.0 bytes per page, and
+  on the A76 in userspace writes 2.1% faster and reads 3.5% slower, about 22 bytes per µs.
+* **The histogram counted in `lit_cost()`**, the pass over the literals that prices the fixed tables,
+  two histograms for even and odd literals: the same bytes, and the own table makes writes 20.2% instead
+  of 23.9% slower in userspace on the A76; in the phone's kernel, together with the step back gone,
+  15.24 instead of 14.13 µs on the A76 and 42.21 instead of 39.93 on the A55. On the PC on 9th October
+  this had saved nothing.
+* **Only from 512 literals.** Pages with fewer gain little, from the offline count on p3 on 15th
+  October: 0.00, 0.20 and 1.15 bytes per page for pages below 128, 256 and 512 literals, 3.19 below 1024
+  and 24.43 above. Userspace on the A76, nobx with the fused histogram, against no own table:
+
+  | own table from | bytes per page, p3 | write | read |
+  | ---: | ---: | ---: | ---: |
+  | 512 literals | 828.6 | +21.4% | +7.7% |
+  | 768 | 829.6 | +17.7% | +5.5% |
+  | 1024 | 831.1 | +11.8% to +13.1% | +5.2% to +5.9% |
+  | 1536 | 834.7 | +7.2% | +7.7% |
+  | 2048 | 837.6 | +4.5% | +4.2% |
+
+  In the kernel VM, 3 boots, both 512 and 2048 were on the hull on p3, p5 and the dump of 24th
+  September. Level 3 takes 512, where it saves most. An own table in level 2 from 2048 literals was not
+  built: it saved little on the desktop dumps.
+* **The description in the order of the bytes**, see the entry below: 0.5% smaller pages than the one by
+  code length of 9th October.
+* **16 KiB pages.** The work of the own table, 4096 bytes, sits at the end of the matcher's state, behind
+  the copy of the literals, so a page gets one only with at most 12 288 literals; every page of 4 KiB
+  does. The state stays 8 KiB and 16 KiB.
+
+**Sizes**, the bench's zsmalloc model, bytes per page, the 20 000-page samples, the code of this PR. p1,
+p2 and p4 are among the pages the tables were trained on, the others are not:
+
+| dump | `lz4` | `zstd` 3 | level 1 | level 2 | level 3 | level 3 against `zstd` 3 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| p1 | 1184.1 | 817.6 | 899.9 | 849.1 | 812.8 | -0.59% |
+| p2 | 1356.5 | 938.8 | 1052.3 | 985.6 | 939.8 | +0.11% |
+| p3 | 1364.0 | 951.4 | 1071.1 | 997.0 | 952.0 | +0.06% |
+| p4 | 1369.1 | 954.4 | 1078.4 | 1004.8 | 959.6 | +0.54% |
+| p5 | 1328.6 | 900.6 | 1013.8 | 951.2 | 906.8 | +0.69% |
+| desktop, 23rd September | 1411.8 | 964.6 | 1079.9 | 991.2 | 956.8 | -0.81% |
+| desktop, 24th September | 1737.3 | 1163.0 | 1445.6 | 1239.4 | 1176.8 | +1.19% |
+| desktop, 28th September | 1622.2 | 1120.3 | 1405.4 | 1214.0 | 1158.9 | +3.45% |
+| phone, 3rd October | 1059.3 | 692.0 | 749.6 | 716.3 | 681.2 | -1.56% |
+| phone, 4th October | 1248.7 | 860.7 | 951.0 | 898.4 | 860.0 | -0.08% |
+
+Level 3 gives 18% to 20% of the pages a table of their own (p3 and the 23rd September sample), and its
+description takes 73 and 52 bytes per page on average there, 0.41 and 0.49 bytes per byte with a code.
+
+**Phone**, the Mi 9T, zram in its own kernel, `tools/zram-phone/run.sh` with `BUS=1`, the 19 775 pages
+of p3, NDK r21e's clang 9 with the module's flags, `lz4` and `zstd` 3 as the phone kernel's modules,
+means of 3 rounds in µs, and the score `write + 0.34 * cold read`:
+
+| codec | bytes per page | A76 write | A76 warm / cold read | A76 score | A55 write | A55 warm / cold read | A55 score |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1364.0 | 10.16 | 3.65 / 6.06 | 12.22 | 25.48 | 8.85 / 23.68 | 33.53 |
+| `zstd` 3 | 951.4 | 36.41 | 16.10 / 21.39 | 43.68 | 114.23 | 39.38 / 69.03 | 137.70 |
+| level 1 | 1071.1 | 10.70 | 3.84 / 6.97 | 13.07 | 29.06 | 11.35 / 29.07 | 38.94 |
+| level 2 | 997.0 | 11.94 | 4.50 / 7.77 | 14.58 | 32.78 | 12.91 / 31.68 | 43.55 |
+| level 3 | 952.0 | 16.18 | 4.88 / 8.30 | 19.00 | 42.38 | 14.00 / 34.59 | 54.14 |
+
+From level 2 to level 3 a µs saves 10.2 bytes per page on the A76 and 4.2 on the A55, from level 3 to
+`zstd` 3 0.02 and 0.01: `zstd` 3 is the better choice only where a µs is worth less than that.
+
+![seqlz's levels against lz4 and zstd 3 on the Mi 9T, memory against time](plots/levels-phone.svg)
+
+The chart is `tools/plot-levels.py` on this run.
+
+Against the code of the experiments, the same level 3 in the old byte 2 and with the description's code
+counted on p3 and two desktop dumps, the code of this PR writes 1.7% slower on the A76 and 4.3% faster on the
+A55, 16.18 against 15.91 and 42.38 against 44.27 µs, and reads within the noise, 4.88 / 8.30 against
+4.92 / 8.24 µs on the A76. The table fill of the own table's
+decoder costs reads: with one loop over all lengths and a branch per byte on how many entries it has,
+level 3 read 1.5% slower warm than the experiment in userspace on the A76; with a loop per length,
+2.7% faster, as fast as the experiment's stores of 4 entries for codes of 9 and 10 bits, which give
+another table on a big-endian CPU. Cold reads on the A76 moved by ±5% between runs of the same binary.
+
+**Kernel VM**, `tools/zram-vm/run.sh MODE=swap BOOTS=3`, Ryzen 9 7950X, the samples, bytes per page /
+swap-out / cold swap-in in µs, means of 3 boots, on 15th October; `own` with the description by code
+length, `own+lazy` the combination without the fused histogram, so slower to write than this PR:
+
+| dump | `lz4` | `seqlz-fast-lit` | lazy | own | own+lazy | `zstd` 3 |
+| --- | --- | --- | --- | --- | --- | --- |
+| p3 | 1408.1 / 5.96 / 3.14 | 1039.1 / 6.68 / 3.84 | 1032.8 / 7.52 / 3.82 | 1003.5 / 7.72 / 3.93 | 998.8 / 8.53 / 3.92 | 998.4 / 14.00 / 6.28 |
+| p5 | 1366.8 / 6.05 / 3.21 | 995.1 / 6.71 / 3.80 | 989.3 / 7.58 / 3.78 | 972.3 / 7.61 / 3.90 | 960.5 / 8.50 / 3.90 | 943.9 / 13.83 / 6.26 |
+| 23rd September | 1450.3 / 6.40 / 3.24 | 1029.7 / 7.24 / 3.91 | 1016.8 / 8.20 / 3.93 | 1016.2 / 8.04 / 3.99 | 998.6 / 8.96 / 3.98 | 1012.3 / 14.62 / 6.41 |
+| 24th September | 1754.4 / 6.97 / 3.30 | 1268.5 / 7.99 / 4.21 | 1252.3 / 9.17 / 4.20 | 1227.9 / 9.12 / 4.30 | 1217.9 / 10.24 / 4.30 | 1197.4 / 15.89 / 6.68 |
+
+The hull by `quetschn-score`: `seqlz-fast-lit`, then own, then own+lazy, then `zstd` 3 on p3, p5 and
+the 24th September; on the 23rd own+lazy right after `seqlz-fast-lit`, and `zstd` 3 off the hull. From
+own+lazy to `zstd` 3 a µs saves 0.1 to 3.2 bytes per page. The lazy step alone is on no hull. The level
+3 of this PR was not measured in the VM.
+
+**Not kept.** The own table's gate on every 4th literal, slower, and wrong on pages of 32-bit values,
+where every 4th byte is one lane of them; one pass for the histograms' sum and the entropy, no gain; the
+description in Exp-Golomb codes, see below; the lazy step as a level of its own.
+
+## A page's own literal table in the order of the bytes, decoded two lengths at a time: 0.5% smaller than by code length, reads 2.9% slower on the A76, kept
+
+*The description of a page's own table in [format.md](format.md#a-pages-own-literal-table): the code
+length of every byte with a code, in the order of the bytes, with runs of the bytes without one, as
+symbols of a fixed prefix code of 19 symbols of at most 8 bits, `OWN`. On 9th October it was the bytes
+by code length, each as its distance to the one before. In byte order the bytes take no bits of their
+own: pages get 0.5% smaller. The decoder then has to sort the bytes by length; with a bucket per length
+and a lookup that decodes two lengths at a time it builds a table in 1.7 µs on the A76, 36% less than
+the first version, and level 3 reads 2.9% slower than with the description by length, 1.0% on the A55.
+Kept, at about 34 bytes per µs on the A76.*
+Code: `own_code()` in `src/seqlz_compress.c`, `own_table()` in `src/seqlz_decompress.c`, `build_own()`
+and `struct own_table` for the code; the code's counts are the `own` line of `bench/seqlz_counts_4k.txt`.
+
+**The description.** Bytes per own table, offline on the tables level 3 made on p3 and the samples of
+23rd and 24th September, each way with a code built for it:
+
+| how the lengths are sent | p3 | 23rd September | 24th September |
+| --- | ---: | ---: | ---: |
+| by length, distances, Exp-Golomb order 0 | 94.6 | 65.4 | 46.5 |
+| by length, distances, Exp-Golomb order 1 | 83.4 | 58.8 | 41.7 |
+| by length, distances, Exp-Golomb order 2 | 86.0 | 59.4 | 42.6 |
+| by length, a prefix code for the distance's class and its bits | 80.5 | 56.9 | 40.4 |
+| byte order, lengths and runs, a prefix code (built) | 70.0 | 50.8 | 38.5 |
+| byte order, changes of the length and runs | 70.6 | 51.5 | 36.8 |
+
+Exp-Golomb order 1 had replaced the code of 9th October first: tables built 12% faster on the PC, pages
+0.3 to 0.6 bytes larger. Byte order with lengths and runs then saved 4.9, 2.6 and 2.7 bytes per page
+against it on p3 and the two desktop samples, 0.56% and 0.52% in userspace on the A76 and the A55.
+
+**The code** `OWN` is counted on the descriptions of the pages the tables were trained on,
+`quetschn-seqlz-train --corpus train-mix --own-counts`: 209 923 of the 1 091 983 pages get an own table
+at level 3, 210 160 after a second round with the code of the first, which gave the same lengths. The
+code of the experiments, counted on p3 and two desktop dumps, had two lengths that differ; p3 got 0.1
+bytes per page smaller with the trained one. For 16 KiB pages it is counted on the emulator's training
+pages, 4410 with an own table.
+
+**The decoder.** The table is built in the page the decoder writes to, before any byte of the page is
+written. Building alone, the 3657 own tables of p3, 20 repetitions, ns per table, every variant checked
+against the first entry by entry under ASan and UBSan on the PC:
+
+| variant | A76 | A55 |
+| --- | ---: | ---: |
+| V1: a lookup per symbol, the bytes sorted by length, then the canonical fill | 2543 to 2677 | 6949 to 7027 |
+| V3: no branch on run or length, a run as a length of 11 | 3026 to 3059 | |
+| V4: V3 with a wide entry per code | 2808 to 2835 | |
+| V2: V4 with each byte's rank taken while reading, no sort | 3306 to 3449 | |
+| V6: each byte into a bucket of its length while reading, no sort | 2082 to 2121 | 5209 to 5218 |
+| V7: V6 and two lengths per lookup where the 8 bits hold both | 1995 to 2039 | 4694 to 4712 |
+| V8: V7 and stores of 4 entries for codes of 9 and 10 bits | 1931 | 4261 to 4320 |
+| V9: V8, each length with the run before it, the checks after the loop (built) | 1689 to 1740 | 3807 to 3832 |
+| V10: V9 with the counts per length in two registers | 1943 | 4527 |
+| V11: V9 with a lookup of 10 bits, a table of 4 KiB | 1585 to 1647 | 3613 to 3663 |
+
+Reading the description is about 60% of V1's time (`simpleperf`, V1 against V1 stopped after reading).
+V11 is 5% to 6% faster than V9 when its table is warm; it is not kept, because its 4 KiB table is 64 more
+cache lines for a cold read, not measured. The fill in this PR is V9's with a loop per length instead of
+the stores of 4 entries for 9 and 10 bits, which wrote another table on big-endian CPUs; it reads as fast,
+see the entry above.
+
+Level 3 with V9 in userspace, p3, ns per page, the description by length against byte order:
+
+| | bytes | A76 write | A76 read | A55 write | A55 read |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| by length | 816.4 | 12 529 | 3539 | 33 630 | 10 573 |
+| byte order | 811.8 | 12 628 | 3643 | 33 907 | 10 680 |
+
+4.6 bytes for 0.13 µs on the A76, 34 bytes per µs, and 4.3 bytes for 0.31 µs on the A55, 14 bytes per
+µs; with V1 it was 18 and 8.
 
 ## The matcher without its step back: writes 6.6% faster on the A76 and 1% to 2% in the VM, kept
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * bound <pages file>: per symbol kind of seqlz-fast-lit, the bits its codes take on these pages, and
+ * bound <pages file>: per symbol kind of seqlz-2, the bits its codes take on these pages, and
  * the counts of the symbols, as JSON for bound.py, which compares them with the entropy and with
  * Huffman codes fitted to the same pages. Checks per page that the counted bits give the compressed
  * size. Same-filled pages are left out, as zram does; pages zram stores raw, of 3625 bytes and more,
@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     if (!t || !f || seqlz_tables_init(t, L))
         return 1;
     while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
-        unsigned int len = seqlz_compress(t, &st, page, dst, sizeof dst, 1), n = seqlz_find(&st, page, seq);
+        unsigned int len = seqlz_compress(t, &st, page, dst, sizeof dst, 2), n = seqlz_find(&st, page, seq, 2);
         unsigned int coded = dst[1] >> 7, set = dst[2] & 7U, last = 1, extra, k, in = 0, nlit = 0;
         double bits = 0, sbits[8] = {0};
 
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
         {
             /* the header, and the bits that fill up the last byte of each stream and the bitstream */
             double expect;
-            unsigned int width = 5 + ((dst[2] >> 3) & 7U), hdr = coded ? 3 + width : 2;
+            unsigned int width = SEQLZ_SIZE_BITS_MIN + ((dst[2] >> SEQLZ_LIT_WIDTH_AT) & 7U), hdr = coded ? 3 + width : 2;
 
             b_hdr += 8.0 * hdr;
             expect = hdr + (bits + 7) / 8;

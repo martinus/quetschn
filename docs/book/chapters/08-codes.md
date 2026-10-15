@@ -1,13 +1,15 @@
 # seqlz_codes.c: from code lengths to lookup tables {#ch-codes}
 
-The format defines its 11 tables by their code lengths alone, {{ch08.length_bytes}} bytes compiled
-into the codec: {{tok.symbols}} for the token table, {{ll.symbols}} each for the two tables of length
-values, 256 for each of the 8 literal tables. `src/seqlz_codes.c` turns them into
+The format defines its {{ch17.tables}} tables by their code lengths alone, {{ch08.length_bytes}} bytes
+compiled into the codec: {{tok.symbols}} for the token table, {{ll.symbols}} each for the two tables of
+length values, 256 for each of the 8 literal tables, and {{own.symbols}} for `OWN`, the code a page's own
+literal table is written in. `src/seqlz_codes.c` turns them into
 `struct seqlz_tables`, the {{size.tables|grp}} bytes of codes and decode tables of
 [chapter 7](#ch-internal). It runs once, at boot in the kernel. `first_codes()` computes the
 [canonical codes](#ch-compression--canonical-codes) and checks that the lengths are a complete prefix
-code; `build_token()`, `build_values()` and `build_lit()` write each code into the encoder's table and
-into the range of decode entries that starts with it; `seqlz_tables_init()` calls them all. The second
+code; `build_token()`, `build_values()`, `build_lit()` and `build_own()` write each code into the
+encoder's table and into the range of decode entries that starts with it; `seqlz_tables_init()` calls
+them all. The second
 half of the chapter is where the lengths come from.
 
 ## The size, for callers that cannot see the struct {#ch-codes--size}
@@ -140,9 +142,47 @@ and shifting an `int` by 56 for table 7 is undefined. For byte `0x65` the 8 lane
 `{{ch08.lit101_row}}`, which gives `lit_cost[0x65][0] = {{ch07.lit_cost.101}}`, table 7 in the top
 byte.
 
+## build_own(): the code of OWN, and quad[] by decoding every byte {#ch-codes--own}
+
+@listing src/seqlz_codes.c 152-173
+
+`OWN` is the fixed code a page's own literal table is written in ([chapter 4](#ch-format--own)), and
+its lengths are not in `struct seqlz_lengths` either: `seqlz_own_lengths` is generated into the same
+`.inc` file as the literal tables. The first part is `build_lit()` again for {{own.symbols}} symbols
+and 8 bits, with the two halves of each entry the other way round, the code or symbol in the low byte
+([chapter 7](#ch-internal--own)). `first_codes()` returns `-EINVAL` only if the generated lengths are
+broken, and then `seqlz_tables_init()` fails as for any table.
+
+@listing src/seqlz_codes.c 174-217
+
+`quad[k]` is filled by decoding the 8 bits `k` with the `decode[]` just built, symbol after symbol, as
+far as the 8 bits go. `w` is what is left of `k` after `pos` bits, moved to the top, with zeros below;
+a code that runs into those zeros is not in `k`, and `pos + l > bits` stops there. A length takes its
+place in `len[]` with the run before it in `before[]`. A run reads its `nb - 1` bits below the top one
+from right after its code: `w << l` drops the code, and the shift by `bits + 1 - nb` keeps the top `nb -
+1` of the 8 bits. For a run of 1, `nb` is 1 and the shift is 8, which leaves 0 of an 8-bit value, so
+`read(0)` needs no case of its own. The loop stops at a run whose bits do not fit, at a run above
+`OWN_QUAD_RUN_MAX`, which has no room in 3 bits, and at a second run before a length: the encoder never
+writes two in a row, and a page that has them is decoded one step at a time.
+
+For `k = 0xd1`, binary `{{own.q.d1.bits}}`:
+
+| `pos` | `w` | symbol, code | what happens |
+| --- | --- | --- | --- |
+| 0 | `{{own.q.d1.bits}}` | {{own.q.d1.sym}}, `{{own.code.10}}` | a run, `nb = 1`, `run = 1`, `pos = 4` |
+| 4 | `{{own.q.d1.w4}}` | 8, `{{own.code.8}}` | the length 9, `before[0] = 1`, `pos = end[0] = 6` |
+| 6 | `{{own.q.d1.w6}}` | 9, `{{own.code.9}}` | the length 10, `before[1] = 0`, `pos = end[1] = 8` |
+@assert own.q.d1.sym == 10 and own.code[8] == "00" and own.code[9] == "01" and own.q.d1.end1 == 6
+
+Two lengths, so the loop ends, and the entry is `{{own.q.d1.entry}}`. With no length at all, `got ==
+0`, the entry is only the bit that sends the decoder to `decode[]`. With one, `end[1]` is set to
+`end[0]`: the decoder reads the second end whenever the first length leaves room in the code space,
+also where the entry has no second length, and then it must move by the first's bits. 256 entries are
+256 runs of this loop at boot, once.
+
 ## has_all_symbols(): can the encoder write every page {#ch-codes--all-symbols}
 
-@listing src/seqlz_codes.c 152-170
+@listing src/seqlz_codes.c 219-237
 
 The decoder can use any complete prefix code: a symbol left out cannot be in a valid page. The encoder
 gets whatever page zram hands it and needs a code for every symbol that page might need: each token a
@@ -155,7 +195,7 @@ last symbol has no code: the tables build, the decoder can use them, and `seqlz_
 
 ## seqlz_tables_init(): all of it, from a clean slate {#ch-codes--init}
 
-@listing src/seqlz_codes.c 172-186
+@listing src/seqlz_codes.c 239-254
 
 The `memset()` does more than the comment says: tokens without a code need `enc[]` 0, the encoder's
 masked index could reach the entries behind the last length symbol, `lit_cost` is built with `|=`,
@@ -248,7 +288,7 @@ This prints {{tok.symbols}} and the `TOK_4k` hash of `format.md`, `{{ch08.tok.co
 The 4 KiB counts of 13th October 2026 are from {{ch08.counts4k.pages|grp}} pages: three sessions of a
 Xiaomi Mi 9T under memory pressure, the resident pages of a desktop and 200 000 pages of its zram dump
 of 28th September ([chapter 4](#ch-format--tables)). On two test sessions of the phone, with web sites
-none of the training sessions loaded, `seqlz-fast-lit` stores up to 1.7% less than with the tables
+none of the training sessions loaded, `seqlz-2` stores up to 1.7% less than with the tables
 before, and the phone dump of 3rd October, which the tables before were trained on, 1.8% more
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-tables-trained-on-phone-sessions-up-to-17-smaller-on-them-an-old-phone-dump-18-larger)).
 Nearly all of it is in the literal tables. The counts cannot give a page back: the token and length
@@ -298,9 +338,13 @@ at {{lit.0.len.101}}. The other 7 differ: tables 1 and 4 give `0x00` 2 bits, tab
 {{lit.7.len.255}} bits. Every table has codes of 10 bits.
 @assert ch08.litinc.line60 <= 17 and min(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 4 and max(lit[0].len[0x61], lit[0].len[0x62], lit[0].len[0x63], lit[0].len[0x64], lit[0].len[0x65], lit[0].len[0x66], lit[0].len[0x67], lit[0].len[0x68], lit[0].len[0x69], lit[0].len[0x6b], lit[0].len[0x6c], lit[0].len[0x6d], lit[0].len[0x6e], lit[0].len[0x6f]) == 8 and lit[0].len[0x60] > 8 and lit[0].len[0x6a] > 8 and lit[1].len[0] == lit[4].len[0] == 2 and lit[7].len[0xff] == 2 and ch08.lit[0].max == ch08.lit[1].max == ch08.lit[2].max == ch08.lit[3].max == ch08.lit[4].max == ch08.lit[5].max == ch08.lit[6].max == ch08.lit[7].max == 10
 
+The file ends with `seqlz_own_lengths`, the {{own.symbols}} code lengths of `OWN`, which the same
+generator makes from the line `own` of the counts ([chapter 4](#ch-format--tables)), and which
+`build_own()` above turns into a code.
+
 ::: measured 8 literal tables, not 1, 16 or 64
 k-means trained on the resident pages of a desktop and priced on its zram pages, as the share of
-`seqlz-fast`'s output saved: 1 table 6.8%, 4 tables 9.2%, 8 tables of 10 bits 11.4%, 16 tables
+`seqlz-1`'s output saved: 1 table 6.8%, 4 tables 9.2%, 8 tables of 10 bits 11.4%, 16 tables
 11.9%, 64 tables 12.9%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 16 tables were built and measured in the kernel VM: 5 bytes per page less, and twice the decode
@@ -310,8 +354,9 @@ tables made cold reads 0.27 µs slower, so they were dropped
 
 ## Fixed tables, part of the format {#ch-codes--fixed}
 
-Everything in this chapter happens once, before the first page: no page carries a table, and no zram
-device has tables of its own. [Chapter 4](#ch-format--tables) has the measurements of both, and why a
+Everything in this chapter happens once, before the first page, and no zram device has tables of its
+own. A page carries no token or length table; at level 3 it may carry a literal table, which the
+decoder builds per page in [chapter 13](#ch-literals-dec--own), written in the fixed code `OWN`. [Chapter 4](#ch-format--tables) has the measurements of both, and why a
 page needs no version of its tables. That is also why the tables could be trained again on 13th and
 14th October 2026: nobody uses the format yet, and new tables only need new hashes in `format.md`.
 
@@ -319,7 +364,7 @@ The 16 KiB variants, `seqlz_default_tables_16k.inc` and `seqlz_lit_sets_16k.inc`
 construction with counts from {{ch08.counts16k.pages|grp}} pages of a zram dump of the Android 17
 emulator with 16 KiB pages. They give {{k16.ch08.tok.coded}} tokens a code, with a
 {{k16.tok.len.3072}}-bit escape, below that page size's limit of $31 - 14 - 12 = 5$ bits. On pages of
-the emulator that were not in the training, they made `seqlz-fast-lit` 2.6% smaller than the 16 KiB
+the emulator that were not in the training, they made `seqlz-2` 2.6% smaller than the 16 KiB
 tables before them, which were trained on desktop pages
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
 That is one emulator and no real phone, and the format for 16 KiB pages is not fixed yet

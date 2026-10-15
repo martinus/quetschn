@@ -346,6 +346,122 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
 	       (left == 0 || !(start[sz - 1U] & ((1U << left) - 1U)));
 }
 
+/* the most bits one step of own_table() takes: a run's code and 8 bits more */
+#define OWN_STEP_MAX (2U * SEQLZ_OWN_CODE_BITS)
+static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
+	       (sizeof(u16) << SEQLZ_LIT_BITS) + 1U <= SEQLZ_PAGE),
+	      "own_table()'s buckets fit the scratch, its table the page");
+
+/*
+ * A page's own literal table, see SEQLZ_LIT_OWN: reads it from p and writes its
+ * decode table to lt, 1 << SEQLZ_LIT_BITS entries as those of the fixed
+ * tables. Returns where the table ends, or NULL if it is not valid: codes that
+ * overfill the code space, more than 256 bytes, bits that are not zero after
+ * its last symbol, or fewer bytes than it needs.
+ *
+ * The bytes go into one bucket per code length, by value, in bucket: 256 bytes
+ * per length from 1 to OWN_QUAD_NONE, the last for none. Then the entries are
+ * written length by length, which is the order of the canonical codes. Each
+ * step decodes up to two lengths with one lookup of own->quad[]; the checks of
+ * the bytes wait until the end, nothing reads the table before. Each step
+ * moves on by at least one code, so the loop ends for any input: past its end
+ * the page reads as zeros, and a code of zeros is a length. Not inlined: in
+ * decode_literals() its locals made the stack frame larger than the kernel
+ * allows with KASAN.
+ */
+static noinline const u8 *own_table(const struct own_table *own, const u8 *p,
+				    const u8 *end, u16 *lt, u8 *bucket)
+{
+	const unsigned int full = 1U << SEQLZ_LIT_BITS,
+			   len = (unsigned int)(end - p);
+	unsigned int at = 0, avail = 0, space = 0, b = 0, l, k, used,
+		     count[OWN_QUAD_NONE + 1] = { 0 };
+	u64 bits = 0;
+	u16 *o = lt;
+
+	while (space < full) {
+		unsigned int top, e, l1, l2, next, two;
+
+		if (avail < OWN_STEP_MAX) {
+			/* whole bytes, as many as fit below 64 bits */
+			unsigned int n = (63U - avail) >> 3;
+			u64 w = at + 8U <= len ?
+					get_unaligned_be64(p + at) :
+					lit_load_tail(p + min(at, len), end);
+
+			bits = (bits | w >> avail) &
+			       ~(~0ULL >> (avail + 8U * n));
+			at += n;
+			avail += 8U * n;
+		}
+		top = (unsigned int)(bits >> (64U - SEQLZ_OWN_CODE_BITS));
+		e = own->quad[top];
+		if (e >> OWN_QUAD_ALONE_AT) {
+			/* a run alone: its code, then nb - 1 bits below its top */
+			unsigned int d = own->decode[top],
+				     nb = (d & 0xffU) - SEQLZ_OWN_RUN;
+
+			bits <<= d >> 8;
+			b += (1U << (nb - 1U)) +
+			     (unsigned int)((bits >> 1) >> (64U - nb));
+			bits <<= nb - 1U;
+			avail -= (d >> 8) + nb - 1U;
+			continue;
+		}
+		l1 = e & 15U;
+		b += e >> OWN_QUAD_RUN1_AT & OWN_QUAD_RUN_MAX;
+		next = space + (full >> l1);
+		/* the second length only while the first leaves room */
+		two = next < full;
+		l2 = two ? e >> 4 & 15U : OWN_QUAD_NONE;
+		k = e >> (two ? OWN_QUAD_END2_AT : OWN_QUAD_END1_AT) & 15U;
+		bits <<= k;
+		avail -= k;
+		bucket[l1 * 256U + (count[l1]++ & 255U)] = (u8)b;
+		b += 1U + (two ? e >> OWN_QUAD_RUN2_AT & OWN_QUAD_RUN_MAX : 0U);
+		bucket[l2 * 256U + (count[l2]++ & 255U)] = (u8)b;
+		space = next + (full >> l2);
+		b += l2 != OWN_QUAD_NONE;
+	}
+	used = 8U * at - avail;
+	if (space != full || b > 256U || (used + 7U) / 8U > len ||
+	    ((used & 7U) && bits >> (64U - (8U - (used & 7U)))))
+		return NULL;
+	/*
+	 * Each byte's entries, all the same, so the order of their bytes does
+	 * not matter: 8 bytes at a time down to codes of 8 bits, which have 4
+	 * entries; codes of 9 bits have 2, codes of 10 one. A loop per length
+	 * without a branch per byte read faster than one loop for all.
+	 */
+	for (l = 1; l <= SEQLZ_LIT_BITS - 2U; l++) {
+		const unsigned int run = full >> l;
+		const u8 *bk = bucket + l * 256U;
+
+		for (k = 0; k < count[l]; k++) {
+			u64 v = (u64)(l | (unsigned int)bk[k] << 8) *
+				0x0001000100010001ULL;
+			u16 *q;
+
+			for (q = o; q < o + run; q += 4)
+				__builtin_memcpy(q, &v, 8);
+			o += run;
+		}
+	}
+	for (k = 0; k < count[SEQLZ_LIT_BITS - 1U]; k++) {
+		u32 v = ((SEQLZ_LIT_BITS - 1U) |
+			 (u32)bucket[(SEQLZ_LIT_BITS - 1U) * 256U + k] << 8) *
+			0x00010001U;
+
+		__builtin_memcpy(o, &v, 4);
+		o += 2;
+	}
+	for (k = 0; k < count[SEQLZ_LIT_BITS]; k++)
+		*o++ = (u16)(SEQLZ_LIT_BITS |
+			     (unsigned int)bucket[SEQLZ_LIT_BITS * 256U + k]
+				     << 8);
+	return p + (used + 7U) / 8U;
+}
+
 /*
  * Decodes the coded literals of a page into out, the scratch, see
  * SEQLZ_LIT_HEADER for the layout. Returns where the sequences' bitstream
@@ -354,12 +470,12 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
  */
 static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 					  const u8 *s, unsigned int src_len,
-					  unsigned int n_lit, u8 *out)
+					  unsigned int n_lit, u8 *out, u8 *page)
 {
 	const u8 *const end = s + src_len;
 	/*
-	 * byte 2: the table in bits 0 to 2, width - SEQLZ_SIZE_BITS_MIN in bits
-	 * 3 to 5, bits 6 and 7 zero
+	 * byte 2: the literals' code in bits 0 to 3, width - SEQLZ_SIZE_BITS_MIN
+	 * in bits 4 to 6, bit 7 zero
 	 */
 	const unsigned int width =
 		SEQLZ_SIZE_BITS_MIN +
@@ -377,16 +493,29 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	const u16 *lt;
 
 	if (src_len < SEQLZ_LIT_HEADER(width) || s[2] >> SEQLZ_LIT_ZERO_AT ||
-	    n_lit > SEQLZ_PAGE)
+	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN || n_lit > SEQLZ_PAGE)
 		return NULL;
-	lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
-	prefetch_lines(lt, sizeof(t->lit[0].decode));
+	if ((s[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN) {
+		/*
+		 * the page's own table, built in the page itself, from an even
+		 * address: the caller's page may start at an odd one
+		 */
+		u16 *own = (u16 *)(page + ((unsigned long)page & 1U));
+
+		q = own_table(&t->own, q, end, own, out);
+		if (!q)
+			return NULL;
+		lt = own;
+	} else {
+		lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
+		prefetch_lines(lt, sizeof(t->lit[0].decode));
+	}
 	total = lit_stream_sizes(s, width, q, sz, start);
 	for (i = 0; i < SEQLZ_LIT_STREAMS; i++) {
 		ip[i] = start[i];
 		b[i] = 1;
 	}
-	if (SEQLZ_LIT_HEADER(width) + total > src_len)
+	if ((u64)(q - s) + total > src_len)
 		return NULL;
 	/*
 	 * Full rounds of SEQLZ_LIT_ROUNDS literals per stream, all 8 streams
@@ -558,7 +687,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		n_lit &= SEQLZ_LIT_CODED - 1U;
 		if (!scratch)
 			return -EINVAL;
-		q = decode_literals(t, s, src_len, n_lit, scratch);
+		q = decode_literals(t, s, src_len, n_lit, scratch, d);
 		if (!q)
 			return -EINVAL;
 		br = (struct seqlz_bit_reader){ .p = q, .end = s_end };

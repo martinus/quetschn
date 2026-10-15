@@ -20,13 +20,13 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`seqlz-bound/`](seqlz-bound) | per kind of field the bits a dump's pages take, next to their entropy, and layouts of the offset classes priced on real sequences |
 | [`seqlz-branches/`](seqlz-branches) | which branches of the decoder mispredict on pages it sees once, as in a swap-in: `perf stat` per decode, and the mispredicted branches by source line from the CPU's branch records |
 | [`seqlz-worst/`](seqlz-worst) | the worst case: `quetschn-seqlz-worst` counts the instructions of every page of a corpus and writes made-up pages that are slow, `cost_fuzz.c` searches for slower ones, also for `lz4`, `lzo-rle` and `zstd`. The slowest pages found are in [`seqlz-worst/pages/`](seqlz-worst/pages) |
-| [`seqlz-compress/`](seqlz-compress) | `compress.c`: writes each 4 KiB page file compressed as `seqlz-fast` and as `seqlz-fast-lit`, both decoded again first; for checking a byte count in the docs, and for `seqlz-ref/check.sh` |
+| [`seqlz-compress/`](seqlz-compress) | `compress.c`: writes each 4 KiB page file compressed at each level, `<page>.1` to `<page>.3`, each decoded again first; for checking a byte count in the docs, and for `seqlz-ref/check.sh` |
 | [`check-links.py`](check-links.py) | every relative link and `#anchor` in the Markdown files must resolve, run by CI |
 | [`quick-bench.sh`](quick-bench.sh) | the fast benchmark for trying out a change: exact sizes on the whole corpus, times on a sample of 20 000 pages in 5 processes |
 | [`bench-dict.sh`](bench-dict.sh) | trains a dictionary on one dump and measures every codec with and without it on another |
 | [`plot-codecs.py`](plot-codecs.py) | memory against time, from the logs of `zram-vm/run.sh` |
 | [`plot-swap-fault.py`](plot-swap-fault.py) | the same for the whole page fault, from `zram-vm/run.sh` with `MODE=swap` and from `swap-fault/` |
-| [`plot-zstd-levels.py`](plot-zstd-levels.py) | `seqlz-fast-lit` against `zstd` at each level, from `zram-vm/run.sh` logs with `MODE=swap` and `zstd:<level>` codecs |
+| [`plot-zstd-levels.py`](plot-zstd-levels.py) | `seqlz-2` against `zstd` at each level, from `zram-vm/run.sh` logs with `MODE=swap` and `zstd:<level>` codecs |
 | [`plot-devices.py`](plot-devices.py) | memory against time on several CPUs, one row per CPU |
 | [`plot-speed.py`](plot-speed.py) | the first chart of [docs/seqlz.md](../docs/seqlz.md#the-result-lz4s-time-zstds-size-almost): cycles in a hot loop, and write, cold read and memory in the kernel VM |
 | [`retrain-tables.py`](retrain-tables.py) | seqlz's tables trained again: the counts, their literal tables in the committed order, the `.inc` files of `src/` and the tables' SHA-256 in `docs/format.md`, in one step |

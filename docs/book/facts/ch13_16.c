@@ -690,7 +690,7 @@ static void ch14(void) {
         {
             static struct seqlz_state st;
             static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-            unsigned int ns = seqlz_find(&st, page, seq), left = seq[ns - 1].literals;
+            unsigned int ns = seqlz_find(&st, page, seq, 2), left = seq[ns - 1].literals;
             char end[32];
 
             if (seq[ns - 1].match || ns != ch14_n + 1)
@@ -775,7 +775,7 @@ static unsigned int ch16_seqs(const u8* page, struct ch16_seq* out) {
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     const struct seqlz_tables* t = fact_tables();
-    unsigned int n = seqlz_find(&st, page, seq), i, pos = 0, last = 1;
+    unsigned int n = seqlz_find(&st, page, seq, 2), i, pos = 0, last = 1;
 
     for (i = 0; i < n; i++) {
         struct ch16_seq* q = &out[i];

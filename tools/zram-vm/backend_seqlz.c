@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
-/* seqlz (src/seqlz.h) as zram backends, for the VM test of run.sh: seqlz with raw literals
- * (seqlz-fast) and seqlz-lit with coded ones (seqlz-fast-lit), the tables compiled in, a hash table per
- * CPU. */
+/* seqlz (src/seqlz.h) as zram backends, for the VM test of run.sh: seqlz-1 to seqlz-3, one per level of
+ * seqlz_compress(), the tables compiled in, a hash table per CPU. */
 #include <linux/kernel.h>
 
 /* zram-prefetch.patch */
@@ -17,7 +16,7 @@ extern int zram_prefetch;
 extern void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
 			    unsigned int size);
 
-/* the hash table, and the scratch for seqlz-fast-lit's literals */
+/* the hash table, and the scratch for coded literals */
 struct sz_ctx {
 	struct seqlz_state st;
 	unsigned char scratch[SEQLZ_SCRATCH];
@@ -88,7 +87,7 @@ static int sz_setup_params(struct zcomp_params *params)
 			warm_dst[k] = (x >> 16) % 5 == 0 ? ' ' :
 				      "etaoinshrdlucmfwypvbgkqjxz"[((x >> 16) % 89) % 26 % (1 + (x >> 28))];
 		}
-		warm_len = seqlz_compress(t, st, warm_dst, warm_src, sizeof(warm_src), 1);
+		warm_len = seqlz_compress(t, st, warm_dst, warm_src, sizeof(warm_src), 2);
 		kfree(st);
 	}
 	zram_warm_fn = sz_warm;
@@ -132,28 +131,15 @@ static void sz_destroy(struct zcomp_ctx *ctx)
 	.destroy_ctx	= sz_destroy
 #endif
 
-static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
+static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req,
+		       unsigned int level)
 {
 	unsigned int len;
 
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
 	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
-			     req->dst_len, 0);
-	if (!len)
-		return -EINVAL;
-	req->dst_len = len;
-	return 0;
-}
-
-static int sz_lit_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
-{
-	unsigned int len;
-
-	if (req->src_len != SEQLZ_PAGE)
-		return -EINVAL;
-	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
-				   req->dst_len, 1);
+			     req->dst_len, level);
 	if (!len)
 		return -EINVAL;
 	req->dst_len = len;
@@ -173,21 +159,25 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	return 0;
 }
 
-const struct zcomp_ops backend_seqlz = {
-	.compress	= sz_compress,
-	.decompress	= sz_decompress,
-	SZ_CTX_OPS,
-	.setup_params	= sz_setup_params,
-	.release_params	= sz_release_params,
-	.name		= "seqlz",
-};
+/* the backends' names, SZ_NAME "1" and so on; run.sh gives a variant its own */
+#define SZ_NAME "seqlz-"
 
-/* seqlz-fast with the literals coded too */
-const struct zcomp_ops backend_seqlz_lit = {
-	.compress	= sz_lit_compress,
-	.decompress	= sz_decompress,
-	SZ_CTX_OPS,
-	.setup_params	= sz_setup_params,
-	.release_params	= sz_release_params,
-	.name		= "seqlz-lit",
-};
+/* the backend of one level */
+#define SZ_BACKEND(level)                                                                                 \
+	static int sz_compress_##level(struct zcomp_params *params, struct zcomp_ctx *ctx,              \
+				       struct zcomp_req *req)                                           \
+	{                                                                                               \
+		return sz_compress(params, ctx, req, level);                                            \
+	}                                                                                               \
+	const struct zcomp_ops backend_seqlz_##level = {                                                \
+		.compress	= sz_compress_##level,                                                  \
+		.decompress	= sz_decompress,                                                        \
+		SZ_CTX_OPS,                                                                             \
+		.setup_params	= sz_setup_params,                                                      \
+		.release_params	= sz_release_params,                                                    \
+		.name		= SZ_NAME #level,                                                       \
+	}
+
+SZ_BACKEND(1);
+SZ_BACKEND(2);
+SZ_BACKEND(3);

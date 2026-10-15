@@ -73,20 +73,20 @@ on such a page is the kernel's part. `KARGS` adds to the kernel command line, an
 clang, as Android does. `run.sh` works on trees with zram's contexts split into compression and
 decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`), and on trees whose zram
 reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`. `VARIANTS` puts more builds of
-seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>` and
-`<name>-lit`: variants of the codec are compared in one boot, taking turns, which a kernel per variant
-cannot do. At most 8 codecs fit into one boot, `run.sh` refuses more. 7 codecs, 3 boots and 20 000 pages take
+seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>-1`
+to `<name>-3`, one per level: variants of the codec are compared in one boot, taking turns, which a kernel
+per variant cannot do. A `src/` from before the levels is refused. At most 8 codecs fit into one boot, `run.sh` refuses more. 7 codecs, 3 boots and 20 000 pages take
 about 5 minutes per kernel. `PORT=1` builds the kernel copy as
 `tools/kernel-port/port.py` writes it instead of `src/` with the VM's backend, `ALGOS=lz4,seqlz:2`:
 the code the kernel would get, with its tables in one global; it is what to measure a change of
 `port.py` or of `static` and inlining with.
 
 ```sh
-ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
-VARIANTS="o2=.:-O2 same=." ALGOS=seqlz,seqlz-lit,o2,o2-lit,same,same-lit BOOTS=3 MODE=swap \
+ALGOS=lz4,lzo-rle,zstd,seqlz-2 tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
+VARIANTS="o2=.:-O2 same=." ALGOS=seqlz-1,seqlz-2,o2-1,o2-2,same-1,same-2 BOOTS=3 MODE=swap \
     tools/zram-vm/run.sh <linux tree> corpus/first >variants.log
-tools/zram-vm/variants.py variants.log    # each variant against seqlz or seqlz-lit, in us and %
-KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit \
+tools/zram-vm/variants.py variants.log    # each variant <name>-<level> against seqlz-<level>, in us and %
+KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-2 \
     tools/zram-vm/run.sh <linux tree> corpus/first >swap.log
 ```
 
@@ -139,8 +139,8 @@ copied into this repository.
 ```sh
 cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
 cmake --build build
-./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-fast-lit --corpus corpus/test --cpu 2 --out results
-./build/quetschn-compare --baseline results/lz4.tsv --candidate results/seqlz-fast-lit.tsv
+./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-2 --corpus corpus/test --cpu 2 --out results
+./build/quetschn-compare --baseline results/lz4.tsv --candidate results/seqlz-2.tsv
 ```
 
 `quetschn-bench-interleaved` runs all codecs in one binary, in turns on the same page, so that drift
@@ -154,7 +154,7 @@ range of the 5. Run the full `quetschn-bench-interleaved` only to confirm a resu
 document.
 
 ```sh
-tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-fast-lit
+tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-2
 ```
 
 **The score.** `quetschn-score` puts memory against time per page, the score of
@@ -171,9 +171,9 @@ does not, `--per-cpu` gives it, with the codec's name in the log. `r`, the reads
 ```sh
 ./build/quetschn-score --reads-per-write 0.34 run.txt
 ./build/quetschn-score --what-if lz4:0.5 swap.log
-./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-fast,seqlz-fast-lit --corpus corpus/test | grep -E '^codec|memory per CPU'
+./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 --corpus corpus/test | grep -E '^codec|memory per CPU'
 ./build/quetschn-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
-    --per-cpu seqlz:8192 --per-cpu seqlz-lit:16384 --device 8:256 swap.log
+    --per-cpu seqlz-1:8192 --per-cpu seqlz-2:16384 --per-cpu seqlz-3:16384 --device 8:256 swap.log
 ./build/quetschn-swap-bursts --seconds 3600
 ```
 
@@ -225,7 +225,7 @@ For zram in the phone's own kernel, `tools/zram-phone/` builds the codec as a mo
 Linux 4.14 and runs `zramphone` on it, each codec alone in its own process, in turns:
 
 ```sh
-tools/zram-phone/build.sh a <src copy A> out/a     # out/a/quetschn_a.ko: seqlz-a and seqlz-a-lit
+tools/zram-phone/build.sh a <src copy A> out/a     # out/a/quetschn_a.ko: seqlz-a-1 to seqlz-a-3
 tools/zram-phone/build.sh b <src copy B> out/b
 BUS=1 tools/zram-phone/run.sh corpus/phone.pages out/run out/a/quetschn_a.ko out/b/quetschn_b.ko
 ```
@@ -283,7 +283,7 @@ Each of these cost a wrong result first. The measurements behind them are in
   physical pages its buffers got. Five identical runs gave `zstd -1` against `lz4` from +1800 to
   +4620 ns, with about ±80 ns each.
 - **Decode each page once, for the decoder's time.** A decode of the same page just before trains the
-  branch predictor: `seqlz-fast-lit` then decodes a page in a fault in 1.41 instead of 2.01 µs. The read
+  branch predictor: `seqlz-2` then decodes a page in a fault in 1.41 instead of 2.01 µs. The read
   benchmark of `tools/zram-vm/run.sh` reads every page 6 times in a row, the userspace harness takes
   the median of 5 decodes, so both make `seqlz` look faster than it is in a swap-in. `MODE=swap` decodes
   each page once per pass and is the one to trust ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).

@@ -7,6 +7,8 @@
 // tools/kernel-port/gen-seqlz-tables.py from the counts that --counts writes, the same tables.
 // --counts also writes the counts the tables are built from, --from-counts builds them from such a file
 // instead of a corpus: bench/seqlz_counts_4k.txt and _16k.txt are the ones of the tables in src/.
+// --own-counts counts only the symbols of the description of a page's own literal table, from the pages
+// level 3 writes with one, and puts them into such a file.
 
 #include "harness.h"
 #include "page_stats.h"
@@ -197,9 +199,63 @@ lit_result lit_sets(std::vector<std::array<double, 256>> const& pages, lit_searc
     return sorted;
 }
 
+// The symbols of the description of a page's own literal table (SEQLZ_LIT_OWN), counted into own: read
+// with the code of seqlz_own_lengths, as the decoder reads them. Returns false for pages with another code,
+// which count nothing.
+bool count_own(std::span<unsigned char const> c, std::vector<double>& own) {
+    if (c.size() < 3 || !(c[1] & 0x80U) || (c[2] & SEQLZ_LIT_CODE_MASK) != SEQLZ_LIT_OWN) {
+        return false;
+    }
+    // the canonical code: the first code of each length, then the symbols in order
+    static auto const symbol_of = [] {
+        auto first = std::array<unsigned, 16>{};
+        auto count = std::array<unsigned, 16>{};
+        for (auto const l : seqlz_own_lengths) {
+            ++count[l];
+        }
+        for (unsigned l = 2; l < 16; ++l) {
+            first[l] = (first[l - 1] + count[l - 1]) << 1;
+        }
+        auto symbols = std::array<std::array<int, 256>, 16>{};
+        for (auto& row : symbols) {
+            row.fill(-1);
+        }
+        for (unsigned s = 0, next[16] = {}; s < SEQLZ_OWN_SYMBOLS; ++s) {
+            auto const l = seqlz_own_lengths[s];
+            symbols[l][first[l] + next[l]++] = static_cast<int>(s);
+        }
+        return symbols;
+    }();
+    auto const width = SEQLZ_SIZE_BITS_MIN + ((c[2] >> SEQLZ_LIT_WIDTH_AT) & 7U);
+    auto pos = std::size_t{8} * SEQLZ_LIT_HEADER(width);
+    auto bit = [&] {
+        auto const b = pos / 8 < c.size() ? (c[pos / 8] >> (7 - pos % 8)) & 1U : 0U;
+        ++pos;
+        return b;
+    };
+    for (auto space = 0U; space < 1U << SEQLZ_LIT_BITS;) {
+        auto code = 0U;
+        auto sym = -1;
+        for (unsigned l = 1; sym < 0 && l <= SEQLZ_OWN_CODE_BITS; ++l) {
+            code = code << 1 | bit();
+            sym = symbol_of[l][code];
+        }
+        own[static_cast<std::size_t>(sym)] += 1;
+        if (static_cast<unsigned>(sym) <= SEQLZ_OWN_RUN) {
+            space += (1U << SEQLZ_LIT_BITS) >> (sym + 1);
+        } else {
+            for (auto k = static_cast<unsigned>(sym) - SEQLZ_OWN_RUN; k > 1; --k) {
+                bit();
+            }
+        }
+    }
+    return true;
+}
+
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train (--corpus <base> [--counts <file>] | --from-counts <file>)\n"
+                 "usage: quetschn-seqlz-train (--corpus <base> [--counts <file> | --own-counts <file>] |\n"
+                 "                             --from-counts <file>)\n"
                  "                            [--lit-sets [--seeds n] [--first-seed n] [--rounds n]]\n"
                  "\n"
                  "Counts seqlz's symbols over the matches of its own matcher on every page. Prints the code\n"
@@ -208,7 +264,9 @@ void usage() {
                  "the pages with more than 64 literals: k-means from --seeds starts (32), seeds --first-seed (1)\n"
                  "on, each at most --rounds rounds (60).\n"
                  "--counts also writes the counts both kinds of tables are built from to <file>, e.g.\n"
-                 "bench/seqlz_counts_4k.txt; --from-counts builds the tables from such a file.\n");
+                 "bench/seqlz_counts_4k.txt; --from-counts builds the tables from such a file.\n"
+                 "--own-counts counts only the symbols of the description of a page's own literal table, on\n"
+                 "the pages level 3 gives one, and writes them into <file>, the other counts as they are.\n");
 }
 
 void print_lengths(quetschn::seqlz_built_tables const& t, std::string const& what) {
@@ -244,6 +302,7 @@ int main(int argc, char** argv) {
     auto base = std::string();
     auto counts_out = std::string();
     auto counts_in = std::string();
+    auto own_out = std::string();
     auto want_lit_sets = false;
     auto search = lit_search{};
     for (int i = 1; i < argc; ++i) {
@@ -253,6 +312,8 @@ int main(int argc, char** argv) {
             base = argv[++i];
         } else if (arg == "--counts" && has_value) {
             counts_out = argv[++i];
+        } else if (arg == "--own-counts" && has_value) {
+            own_out = argv[++i];
         } else if (arg == "--from-counts" && has_value) {
             counts_in = argv[++i];
         } else if (arg == "--lit-sets") {
@@ -268,7 +329,8 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (base.empty() == counts_in.empty() || (!counts_in.empty() && !counts_out.empty())) {
+    if (base.empty() == counts_in.empty() || (!counts_in.empty() && !(counts_out.empty() && own_out.empty())) ||
+        (!counts_out.empty() && !own_out.empty())) {
         usage();
         return 2;
     }
@@ -295,6 +357,15 @@ int main(int argc, char** argv) {
         counts.token.assign(SEQLZ_TOKEN_SYMBOLS, 0.0);
         counts.ll.assign(SEQLZ_LEN_SYMBOLS, 0.0);
         counts.ml.assign(SEQLZ_LEN_SYMBOLS, 0.0);
+        counts.own.assign(SEQLZ_OWN_SYMBOLS, 0.0);
+        // the tables compiled in, for the pages level 3 writes, whose own literal tables are counted
+        auto tables = std::unique_ptr<seqlz_tables, void (*)(void*)>(
+            static_cast<seqlz_tables*>(std::malloc(seqlz_tables_size())), std::free);
+        if (!tables || seqlz_tables_init(tables.get(), &seqlz_default_own) != 0) {
+            throw std::runtime_error("cannot build the tables compiled in");
+        }
+        auto compressed = std::vector<unsigned char>(2 * SEQLZ_PAGE);
+        auto own_pages = std::size_t{0};
         auto state = std::make_unique<seqlz_state>();
         auto buffer = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         auto pages = std::size_t{0};
@@ -305,7 +376,19 @@ int main(int argc, char** argv) {
                 continue;
             }
             ++pages;
-            auto const sequences = std::span(buffer.data(), seqlz_find(state.get(), src.data(), buffer.data()));
+            if (!counts_out.empty() || !own_out.empty()) {
+                auto const len = seqlz_compress(tables.get(),
+                                                state.get(),
+                                                src.data(),
+                                                compressed.data(),
+                                                static_cast<unsigned>(compressed.size()),
+                                                SEQLZ_LEVELS);
+                own_pages += count_own(std::span(compressed.data(), len), counts.own);
+            }
+            if (!own_out.empty()) {
+                continue;
+            }
+            auto const sequences = std::span(buffer.data(), seqlz_find(state.get(), src.data(), buffer.data(), 2));
             // the literal bytes, for pages with coded literals
             {
                 auto in = std::size_t{0};
@@ -342,6 +425,28 @@ int main(int argc, char** argv) {
             }
         }
         auto const what = "trained on " + std::to_string(pages) + " pages of " + base;
+        auto const own_comment = "own: the symbols of the descriptions of the " + std::to_string(own_pages) +
+                                 " pages that level 3 gives a literal table of their own, by number.";
+        if (!own_out.empty()) {
+            auto in = std::ifstream(own_out);
+            if (!in) {
+                throw std::runtime_error("cannot read " + own_out);
+            }
+            auto c2 = quetschn::read_seqlz_counts(in);
+            in.close();
+            c2.own = counts.own;
+            std::erase_if(c2.comments, [](std::string const& l) {
+                return l.starts_with("own: ");
+            });
+            c2.comments.push_back(own_comment);
+            auto out = std::ofstream(own_out);
+            quetschn::write_seqlz_counts(out, c2);
+            if (!out) {
+                throw std::runtime_error("cannot write " + own_out);
+            }
+            std::printf("%s\n", own_comment.c_str());
+            return 0;
+        }
 
         auto lit = lit_result{};
         if (want_lit_sets || !counts_out.empty()) {
@@ -358,7 +463,8 @@ int main(int argc, char** argv) {
                     " of them with more than 64 literals, k-means seeds " + std::to_string(search.first_seed) + " to " +
                     std::to_string(search.first_seed + search.seeds - 1) + ". token, ll and ml: how often",
                 "each symbol occurred, by number; lit: a literal table's pages, then how often each byte",
-                "occurred as a literal on them."};
+                "occurred as a literal on them.",
+                own_comment};
             auto out = std::ofstream(counts_out);
             quetschn::write_seqlz_counts(out, counts);
             if (!out) {

@@ -104,25 +104,6 @@ static void codes(void) {
 
 /* ---- chapter 4 ---- */
 
-/*
- * The text page: "words" of 2 to 9 letters of etaoinshrdlu, each followed by a space, drawn by the C
- * library's classic linear congruential generator from seed 1, as letters_page() in pages.h.
- */
-static void words_page(u8* p) {
-    unsigned int at = 0, seed = 1, k, n;
-
-    while (at < SEQLZ_PAGE) {
-        seed = seed * 1103515245U + 12345U;
-        n = 2 + (seed >> 16) % 8;
-        for (k = 0; k < n && at < SEQLZ_PAGE; k++) {
-            seed = seed * 1103515245U + 12345U;
-            p[at++] = (u8) "etaoinshrdlu"[(seed >> 16) % 12];
-        }
-        if (at < SEQLZ_PAGE)
-            p[at++] = ' ';
-    }
-}
-
 static void text_facts(void) {
     static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
     const char* P = "ch04.text";
@@ -135,7 +116,7 @@ static void text_facts(void) {
     h = get_unaligned_le16(dst);
     n = h & (SEQLZ_LIT_CODED - 1U);
     t = dst[2];
-    set = t & 7;
+    set = t & SEQLZ_LIT_CODE_MASK;
     w = SEQLZ_SIZE_BITS_MIN + ((t >> SEQLZ_LIT_WIDTH_AT) & 7);
     if (!(h & SEQLZ_LIT_CODED))
         return; /* chapter 4 quotes it for 4 KiB pages, where it is coded */
@@ -152,7 +133,7 @@ static void text_facts(void) {
         static u8 lits[SEQLZ_PAGE];
         static struct seqlz_state st;
         static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-        unsigned int ns = seqlz_find(&st, page, seq), i, at = 0, m = 0, k;
+        unsigned int ns = seqlz_find(&st, page, seq, 2), i, at = 0, m = 0, k;
 
         for (i = 0; i < ns; i++) {
             memcpy(lits + m, page + at, seq[i].literals);
@@ -286,7 +267,7 @@ static void page_walk(const char* name, void (*make)(u8*)) {
     make(page);
     len = fact_compress(page, dst, 0);
     n_lit = get_unaligned_le16(dst);
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     all[0] = 0;
     snprintf(P, sizeof P, "ch04.%s", name);
     fact_hex(K(P, "hdr"), dst, SEQLZ_HEADER);
@@ -366,7 +347,7 @@ static void pointer_facts(void) {
     unsigned int n, i, last = 1, raw, t49 = 0, t34 = 0;
 
     pointer_page(page);
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     for (i = 0; i + 1 < n; i++) {
         unsigned int tok = seqlz_token(seq[i].literals, seq[i].match, seqlz_off_class(seq[i].offset, last, &raw));
 
@@ -413,6 +394,8 @@ static void sha_facts(void) {
         memcpy(lit + 256 * k, seqlz_lit_sets[k], 256);
     sha256(lit, sizeof lit, hex);
     fact_str("ch04.sha.LIT", hex);
+    sha256(seqlz_own_lengths, sizeof seqlz_own_lengths, hex);
+    fact_str("ch04.sha.OWN", hex);
 }
 
 /* the longest code of each kind of table */

@@ -135,11 +135,11 @@ include(cmake/kernel_codecs.cmake)
 # The search for slow pages on the kernel's codecs as zram calls them, all with kernel flags, see
 # tools/seqlz-worst/cost_fuzz.c
 if(QUETSCHN_FUZZ AND QUETSCHN_HAVE_KERNEL_CODECS)
-    foreach(codec lz4 lzo_rle zstd seqlz_fast_lit)
+    foreach(codec lz4 lzo_rle zstd seqlz_2)
         set(lib quetschn_kernel_${codec})
         if(codec STREQUAL "lzo_rle")
             set(lib quetschn_kernel_lzo)
-        elseif(codec STREQUAL "seqlz_fast_lit")
+        elseif(codec STREQUAL "seqlz_2")
             set(lib quetschn_kernel_seqlz)
         endif()
         add_executable(${codec}_cost_fuzz tools/seqlz-worst/cost_fuzz.c)

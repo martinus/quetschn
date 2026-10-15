@@ -1,7 +1,7 @@
 # One page, through every function {#ch-trace}
 
 Part II explained each function on its own. This chapter follows one page through all of them in the
-order they run: the tables are built, the page is compressed with `seqlz-fast-lit`, and decoded again.
+order they run: the tables are built, the page is compressed with `seqlz-2`, and decoded again.
 Every number was printed by a small program that calls the real code of `src/`, or by a copy of the
 decoder with two counters added. The program is at the end, so you can change the page and watch the
 numbers move.
@@ -74,8 +74,8 @@ for this page, which gives `0x00` {{lit.3.len.0}} bits.
 
 ## seqlz_compress(), and the matcher's first sequence {#ch-trace--matcher}
 
-The backend calls `seqlz_compress(t, st, page, dst, 8192, 1)`: the per-CPU state of {{size.state}}
-bytes, an output buffer of 2 pages, and `coded = 1`. `compress_page()` checks that `dst_cap` is at
+The backend calls `seqlz_compress(t, st, page, dst, 8192, 2)`: the per-CPU state of {{size.state}}
+bytes, an output buffer of 2 pages, and level 2, the default. `compress_page()` checks that `dst_cap` is at
 least {{ch16.enc_min}} bytes, sets up the encoder with the bitstream growing down from `dst + 8192` and
 the literals up from `dst + 2` ([chapter 10](#ch-encoder--layout)), and runs `seqlz_match_page()`
 ([chapter 9](#ch-matcher)) with `encode_emit()` as its callback. The matcher clears its
@@ -185,7 +185,7 @@ written on top of the byte below `p`. `encoder_finish()` ([chapter 10](#ch-encod
 count, `{{ch16.raw.u16}}`, and moves the bitstream to right after the literals, turned around in
 {{ch16.raw.copies}} copies of 8 bytes and {{ch16.raw.singles}} single bytes; the gap of
 {{ch16.raw.gap}} bytes is far more than the bitstream, so they cannot overlap. That is
-$2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$ bytes, the page as `seqlz-fast` stores it.
+$2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$ bytes, the page as `seqlz-1` stores it.
 @assert ch16.pad_bits > 0 and ch16.raw.gap >= ch16.bytes
 
 ## code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
@@ -206,8 +206,8 @@ The rule `coded + {{ch11.coded_min}} < n - n / 16` is `{{ch16.lt.rule_l}} < {{ch
 literals get coded. The page without the text would not: its {{ch16.nt.lits}} literals take
 {{ch16.nt.coded}} bytes in table {{ch16.nt.set}}, and `{{ch16.nt.rule_l}}` is not below
 `{{ch16.nt.rule_r}}`. Then the raw literals go into the matcher's table, the streams are written over
-them in `dst`, the u16 becomes `{{ch16.coded.u16}}`, byte 2 `{{ch16.coded.byte2}}` for table
-{{ch16.lt.set}} and width {{ch16.lt.width}}, bytes 3 to 9 the sizes, `{{ch16.coded.sizes_hex}}`, and the
+them in `dst`, the u16 becomes `{{ch16.coded.u16}}`, byte 2 `{{ch16.coded.byte2}}` for code
+{{ch16.lt.set}}, the fixed table {{ch16.lt.set}}, in bits 0 to 3 and width {{ch16.lt.width}} in bits 4 to 6, bytes 3 to 9 the sizes, `{{ch16.coded.sizes_hex}}`, and the
 bitstream moves down to byte {{ch16.lt.end}}: {{ch16.coded.len}} bytes.
 @assert ch16.lt.rule_l < ch16.lt.rule_r and ch16.nt.rule_l >= ch16.nt.rule_r and ch16.nt.kept_raw == 1
 
@@ -336,7 +336,7 @@ where a refill without a check could read past it.
 the loop leaves without a token. The bit reader has read every byte, and the {{ch16.pad}} bits left are
 the zero padding of the last byte ([chapter 4](#ch-format--validity)). `seqlz_decode()` returns 0, and
 `dst` holds the page we started with. Without the scratch the same bytes are `-EINVAL`, which is why
-`seqlz-fast-lit` has a decompression context and `seqlz-fast` does not
+`seqlz-2` has a decompression context and `seqlz-1` does not
 ([chapter 15](#ch-zram-glue--fast-lit)).
 @assert ch16.pad == 3 and ch16.pad_bits == 5
 
@@ -456,7 +456,7 @@ int main(void)
 		return 1;
 
 	/* the sequences, and the bits each one takes in the bitstream */
-	n = seqlz_find(&st, page, seq);
+	n = seqlz_find(&st, page, seq, 2);
 	printf("%u sequences\n", n);
 	printf("  # |  pos |  ll |   ml |  off | cl | token | code | off | values | bits\n");
 	for (i = 0; i < n; i++) {
@@ -527,8 +527,8 @@ int main(void)
 		printf(" %u:%u", i, per_class[i]);
 	printf(", escapes %u, length values %u\n", escapes, values);
 
-	/* seqlz-fast: raw literals */
-	len0 = seqlz_compress(t, &st, page, dst, sizeof dst, 0);
+	/* seqlz-1: raw literals */
+	len0 = seqlz_compress(t, &st, page, dst, sizeof dst, 1);
 	printf("raw literals: %u bytes = 2 + %u + %u\n", len0, n_lit,
 	       len0 - 2 - n_lit);
 	if (seqlz_decode(t, dst, len0, out, NULL) ||
@@ -556,17 +556,19 @@ int main(void)
 	}
 	printf("fewest bits: table %u\n", set);
 
-	/* seqlz-fast-lit: coded literals where that saves enough */
-	len1 = seqlz_compress(t, &st, page, dst, sizeof dst, 1);
+	/* seqlz-2: coded literals where that saves enough */
+	len1 = seqlz_compress(t, &st, page, dst, sizeof dst, 2);
 	printf("coded literals: %u bytes, u16 0x%04x\n", len1,
 	       get_unaligned_le16(dst));
 	if (get_unaligned_le16(dst) & SEQLZ_LIT_CODED) {
-		unsigned int w = SEQLZ_SIZE_BITS_MIN + (dst[2] >> 3 & 7);
+		unsigned int w = SEQLZ_SIZE_BITS_MIN +
+				 (dst[2] >> SEQLZ_LIT_WIDTH_AT & 7);
 		unsigned int sum = 0, cnt = 0, at = 3;
 		unsigned long long acc = 0;
 
-		printf("byte 2 = 0x%02x: table %u, w %u, header %u bytes, sizes",
-		       dst[2], dst[2] & 7, w, SEQLZ_LIT_HEADER(w));
+		printf("byte 2 = 0x%02x: code %u, w %u, header %u bytes, sizes",
+		       dst[2], dst[2] & SEQLZ_LIT_CODE_MASK, w,
+		       SEQLZ_LIT_HEADER(w));
 		for (k = 0; k < SEQLZ_LIT_STREAMS; k++) {
 			while (cnt < w) {
 				acc |= (unsigned long long)dst[at++] << cnt;
@@ -626,8 +628,14 @@ sequences, the classes and the size class move.
 :::
 
 The page was built for the walk and is not typical. On a desktop's zram pages, in the kernel VM with the
-tables of 7th October 2026, `seqlz-fast-lit` stored a page in 1161.0 bytes of zsmalloc memory on average
-and `seqlz-fast` in 1298.1, so coded literals saved 137 bytes per page, against {{ch16.zs.saved}} on this
+tables of 7th October 2026, `seqlz-2` stored a page in 1161.0 bytes of zsmalloc memory on average
+and `seqlz-1` in 1298.1, so coded literals saved 137 bytes per page, against {{ch16.zs.saved}} on this
 page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
 Without the text, this page gains nothing.
+
+At level 3, `seqlz-3`, the same page is {{slab.l3.len}} bytes, {{slab.coded.len}} at level 2. The
+matcher's lazy step and the extension backwards ([chapter 9](#ch-matcher--lazy)) make the difference;
+the literals keep table {{ch16.lt.set}}, as a table of the page's own would not save
+{{own.enc.saves_min}} bytes on them, so the text's last sentence holds for this page at both levels.
+@assert slab.l3.own == 0 and slab.l3.len < slab.coded.len

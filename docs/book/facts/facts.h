@@ -74,10 +74,10 @@ static inline struct seqlz_tables* fact_tables(void) {
     return t;
 }
 
-/* the page compressed as seqlz_compress() writes it, raw (coded = 0) or with coded literals */
-static inline unsigned int fact_compress(const unsigned char* page, unsigned char* dst, int coded) {
+/* the page compressed as seqlz_compress() writes it at a level, 1 to SEQLZ_LEVELS, and decoded again */
+static inline unsigned int fact_compress_level(const unsigned char* page, unsigned char* dst, unsigned int level) {
     static struct seqlz_state st;
-    unsigned int n = seqlz_compress(fact_tables(), &st, page, dst, 2 * SEQLZ_PAGE, coded);
+    unsigned int n = seqlz_compress(fact_tables(), &st, page, dst, 2 * SEQLZ_PAGE, level);
     static unsigned char out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
 
     if (!n || seqlz_decode(fact_tables(), dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
@@ -85,6 +85,11 @@ static inline unsigned int fact_compress(const unsigned char* page, unsigned cha
         exit(1);
     }
     return n;
+}
+
+/* the page compressed as seqlz_compress() writes it, raw (coded = 0, level 1) or with coded literals (level 2) */
+static inline unsigned int fact_compress(const unsigned char* page, unsigned char* dst, int coded) {
+    return fact_compress_level(page, dst, coded ? 2U : 1U);
 }
 
 /*

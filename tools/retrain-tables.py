@@ -15,6 +15,10 @@ base's file name. --counts takes counts trained before. Then, from the repositor
 - bench/seqlz_counts_<4k|16k>.txt, and the two .inc of src/ by tools/kernel-port/gen-seqlz-tables.py;
 - the SHA-256 of each table in docs/format.md.
 
+The counts' own line comes from the pages level 3 gives a table of their own with the tables <build> has
+compiled in, the old ones: after a retrain, count it again with a build of the new tables,
+quetschn-seqlz-train --corpus <base> --own-counts <counts file>, and run this with --counts.
+
 Prints which tables changed. Not done here: docs/format.md's example and Status, the example bytes in
 test/seqlz_ref_test.cpp (both from tools/seqlz-compress/compress.c), the book's facts
 (docs/book/build.py --check), the entry in docs/explored-designs.md."""
@@ -46,8 +50,14 @@ def numbers(text):
 
 def lit_lengths(inc):
     """the 8 literal tables' code lengths of a lit_sets .inc"""
-    v = numbers(inc[inc.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
+    end = inc.index("seqlz_own_lengths[SEQLZ_OWN_SYMBOLS] =")
+    v = numbers(inc[inc.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") : end].split("=", 1)[1])
     return [v[256 * k : 256 * (k + 1)] for k in range(8)]
+
+
+def own_lengths(inc):
+    """the code lengths of OWN, the code of a page's own literal table, of a lit_sets .inc"""
+    return numbers(inc[inc.index("seqlz_own_lengths[SEQLZ_OWN_SYMBOLS] =") :].split("=", 1)[1])
 
 
 def ordered(counts, old_inc):
@@ -79,8 +89,9 @@ def table_hashes(size):
     """SHA-256 of each table's code lengths, as tools/seqlz-ref/seqlz_ref.py computes them"""
     src = (REPO / "src" / f"seqlz_default_tables_{size}.inc").read_text()
     field = lambda n: numbers(re.search(r"\." + n + r"\s*=\s*\{([^}]*)\}", src).group(1))  # noqa: E731
-    lit = sum(lit_lengths((REPO / "src" / f"seqlz_lit_sets_{size}.inc").read_text()), [])
-    tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml"), "LIT": lit}
+    inc = (REPO / "src" / f"seqlz_lit_sets_{size}.inc").read_text()
+    lit = sum(lit_lengths(inc), [])
+    tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml"), "LIT": lit, "OWN": own_lengths(inc)}
     return {f"{k}_{size}": hashlib.sha256(bytes(v)).hexdigest() for k, v in tables.items()}
 
 

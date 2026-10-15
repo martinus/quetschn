@@ -43,10 +43,10 @@ int main(void) {
     if (!t || seqlz_tables_init(t, &seqlz_default_own))
         return 1;
     ab_page(page);
-    len = seqlz_compress(t, &st, page, dst, sizeof dst, 0);
+    len = seqlz_compress(t, &st, page, dst, sizeof dst, 1);
     if (!len || seqlz_decode(t, dst, len, out, NULL) || memcmp(out, page, SEQLZ_PAGE))
         return 1;
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     n_lit = get_unaligned_le16(dst);
     cls = seqlz_off_class(seq[0].offset, 1, &raw);
     tok = seqlz_token(seq[0].literals, seq[0].match, cls);

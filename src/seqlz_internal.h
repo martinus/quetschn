@@ -69,11 +69,12 @@ struct lit_table {
 #define LIT_COST_WORDS ((SEQLZ_LIT_SETS + 7U) / 8U)
 #define LIT_COST_RUN (255U / SEQLZ_LIT_BITS) /* 25 */
 /* byte 2 of a page with coded literals, see SEQLZ_LIT_HEADER */
-static_assert(SEQLZ_LIT_SETS == 8U, "byte 2 has 3 bits for the table");
-static_assert(SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U,
+static_assert((SEQLZ_LIT_SETS == 8U && SEQLZ_LIT_OWN == 8U &&
+	       SEQLZ_LIT_CODE_MASK == 15U && SEQLZ_LIT_WIDTH_AT == 4),
+	      "byte 2: the fixed tables, then the page's own, in 4 bits");
+static_assert((SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
+	       SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3),
 	      "byte 2 has 3 bits for the width");
-static_assert(SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3,
-	      "the width is 3 bits");
 /* the largest stream: every 8th literal of a page, all with the longest code */
 #define LIT_STREAM_MAX \
 	((SEQLZ_PAGE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)
@@ -82,10 +83,37 @@ static_assert(LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX,
 static_assert(SEQLZ_LIT_STREAMS == 8U,
 	      "the literal coder is written out for 8 streams");
 
+/*
+ * The code of a page's own literal table, see SEQLZ_LIT_OWN. quad[] decodes the
+ * lengths whose codes the next 8 bits hold whole, at most two, each with the
+ * run before it where that fits too, with one lookup:
+ *   bits  0..3:  the first length
+ *   bits  4..7:  the second, or OWN_QUAD_NONE
+ *   bits  8..11: the bits up to the end of the first, run and length
+ *   bits 12..15: the same up to the end of the second
+ *   bits 16..18: the run before the first, at most 7
+ *   bits 19..21: the run before the second
+ *   bit  31:     the 8 bits start with a run that does not fit like that;
+ *                decode[] has its symbol
+ */
+#define OWN_QUAD_NONE 11U
+#define OWN_QUAD_END1_AT 8
+#define OWN_QUAD_END2_AT 12
+#define OWN_QUAD_RUN1_AT 16
+#define OWN_QUAD_RUN2_AT 19
+#define OWN_QUAD_RUN_MAX 7U
+#define OWN_QUAD_ALONE_AT 31
+struct own_table {
+	u16 decode[1U << SEQLZ_OWN_CODE_BITS]; /* symbol | code length << 8 */
+	u16 enc[SEQLZ_OWN_SYMBOLS]; /* code | code length << 8 */
+	u32 quad[1U << SEQLZ_OWN_CODE_BITS];
+};
+
 struct seqlz_tables {
 	struct token_table token;
 	struct lit_table lit[SEQLZ_LIT_SETS];
 	u64 lit_cost[256][LIT_COST_WORDS];
+	struct own_table own;
 	struct value_table ll, ml;
 	bool all_symbols; /* see seqlz_all_symbols() */
 };

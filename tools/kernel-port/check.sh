@@ -40,6 +40,10 @@ done
     grep -E 'warning|error' && exit 1
 ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null && echo "build: no warnings"
+# a division of 64 bits that the compiler leaves to a library call: the kernel has none, and only the
+# link, which check.sh does not do, would say so on 32-bit arm and x86; div_u64() is the kernel's way
+calls=$(nm -u "$work/build"/lib/seqlz/*.o | grep -E '__aeabi_l(div|mod)|__aeabi_uldivmod|__(u?div|u?mod)di3' || true)
+[[ -z $calls ]] || { echo "lib/seqlz/ calls a 64-bit division of the libgcc: $calls" >&2; exit 1; }
 # the codec's deepest stack frames, from -fstack-usage: gcc writes file:line:column:function, clang
 # file:line:function. They stay below 1024 bytes, the 32-bit FRAME_WARN of older kernels; CLAUDE.md has
 # them with KASAN and UBSan too

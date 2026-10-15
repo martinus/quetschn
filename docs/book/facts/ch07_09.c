@@ -295,6 +295,9 @@ static void ch07(void) {
     fact_num("ch07.off.pad", offsetof(struct seqlz_tables, lit) + sizeof t->lit);
     fact_num("ch07.pad", offsetof(struct seqlz_tables, lit_cost) - offsetof(struct seqlz_tables, lit) - sizeof t->lit);
     fact_num("ch07.off.lit_cost", offsetof(struct seqlz_tables, lit_cost));
+    fact_num("ch07.off.own", offsetof(struct seqlz_tables, own));
+    fact_num("ch07.size.own", sizeof t->own);
+    fact_num("ch07.pad_own", offsetof(struct seqlz_tables, ll) - offsetof(struct seqlz_tables, own) - sizeof t->own);
     fact_num("ch07.off.ll", offsetof(struct seqlz_tables, ll));
     fact_num("ch07.off.ml", offsetof(struct seqlz_tables, ml));
     fact_num("ch07.off.all_symbols", offsetof(struct seqlz_tables, all_symbols));
@@ -320,7 +323,7 @@ static void ch08(void) {
     char lengths[3 * SEQLZ_LEN_SYMBOLS + 1], *w = lengths;
 
     fact_num("ch08.lines", lines_of("src/seqlz_codes.c"));
-    fact_num("ch08.length_bytes", sizeof(struct seqlz_lengths) + sizeof seqlz_lit_sets);
+    fact_num("ch08.length_bytes", sizeof(struct seqlz_lengths) + sizeof seqlz_lit_sets + sizeof seqlz_own_lengths);
     for (k = 0; k < sizeof symbols / sizeof symbols[0]; k++)
         fact_fmt(K("ch08.le.%u", symbols[k]), "%#llx", length_entry(symbols[k]));
     fact_num("ch08.le_last_symbol", SEQLZ_LEN_SYMBOLS - 1);
@@ -430,7 +433,7 @@ static void replay(const u8* src, struct step* at) {
     static u16 table[1U << SEQLZ_HASH_BITS];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    unsigned int pos = 1, anchor = 0, last = 1, n = seqlz_find(&st, src, seq), i = 0;
+    unsigned int pos = 1, anchor = 0, last = 1, n = seqlz_find(&st, src, seq, 2), i = 0;
 
     memset(table, 0, sizeof table);
     memset(at, 0, SEQLZ_PAGE * sizeof *at);
@@ -529,7 +532,7 @@ static void ch09(void) {
     for (pos = 3; pos <= 7; pos++)
         cand0 += at[pos].cand != 0 || at[pos].rep_hit || at[pos].cand_hit;
     fact_num("ch09.ptr.miss3to7", cand0);
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     for (k = 0, pos = 0; k < n; k++) {
         unsigned int i;
 
@@ -558,7 +561,7 @@ static void ch09(void) {
     replay(page, at);
     for (pos = 398; pos <= 400; pos++)
         step_facts("ch09.rnd", page, at, pos);
-    n = seqlz_find(&st, page, seq);
+    n = seqlz_find(&st, page, seq, 2);
     for (k = 0, pos = 0; k < n; k++) {
         unsigned int at_match = pos + seq[k].literals;
 
@@ -577,6 +580,53 @@ static void ch09(void) {
             fact_num("ch09.rnd.seq.at", at_match);
         }
         pos += seq[k].literals + seq[k].match;
+    }
+    /* level 3 on the same page: the match at 400 extended backwards over 398 and 399 */
+    n = seqlz_find(&st, page, seq, SEQLZ_LEVEL_OWN);
+    for (k = 0, pos = 0, first = 0; k < n; k++) {
+        unsigned int at_match = pos + seq[k].literals;
+
+        if (seq[k].match && at_match <= 400 && at_match + seq[k].match > 400) {
+            fact_num("ch09.rnd3.seq.ll", seq[k].literals);
+            fact_num("ch09.rnd3.seq.ml", seq[k].match);
+            fact_num("ch09.rnd3.seq.off", seq[k].offset);
+            fact_num("ch09.rnd3.seq.at", at_match);
+            first = 1;
+        }
+        pos += seq[k].literals + seq[k].match;
+    }
+    if (!first)
+        exit(1);
+    fact_num("ch09.lazy_len", SEQLZ_LAZY_LEN);
+
+    /*
+     * the page of the lazy step: random bytes as random_page() without its copies; 100 to 104 the
+     * byte 0x5a and the 4 bytes at 21, 105 not the byte at 25; at 199 the byte 0x5a, then the 31
+     * bytes of 21 to 51
+     */
+    for (k = 0, pos = 12345; k < SEQLZ_PAGE; k++) {
+        pos = pos * 1103515245U + 12345U;
+        page[k] = (u8)(pos >> 16);
+    }
+    page[100] = 0x5a;
+    memcpy(page + 101, page + 21, 4);
+    page[105] = (u8)(page[25] ^ 0xff);
+    page[199] = 0x5a;
+    memcpy(page + 200, page + 21, 31);
+    if (page[20] == 0x5a)
+        page[20] ^= 1;
+    for (pos = 2; pos <= 3; pos++) {
+        unsigned int level = pos, i;
+
+        n = seqlz_find(&st, page, seq, level);
+        fact_num(K("ch09.lazy.l%u.seqs", level), n);
+        for (k = 0, i = 0; k + 1 < n; k++) {
+            fact_num(K("ch09.lazy.l%u.%u.at", level, k), i + seq[k].literals);
+            fact_num(K("ch09.lazy.l%u.%u.ll", level, k), seq[k].literals);
+            fact_num(K("ch09.lazy.l%u.%u.ml", level, k), seq[k].match);
+            fact_num(K("ch09.lazy.l%u.%u.off", level, k), seq[k].offset);
+            i += seq[k].literals + seq[k].match;
+        }
     }
 }
 

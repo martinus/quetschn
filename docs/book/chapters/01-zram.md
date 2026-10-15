@@ -126,7 +126,7 @@ cache first, and in the end the whole page fault in a virtual machine and on the
 
 ::: measured How much of a swap-in is the codec
 In a virtual machine on the Ryzen 9 7950X, with pages the desktop swapped into zram, a cold swap-in
-with `lz4` takes 3.51 µs, of which 1.43 µs are `zcomp_decompress()`; with `seqlz-fast-lit` 4.13 µs, of
+with `lz4` takes 3.51 µs, of which 1.43 µs are `zcomp_decompress()`; with `seqlz-2` 4.13 µs, of
 which 2.04 µs are the codec. The kernel's part, the fault, the swap entry and zram's slot, is about
 1.9 to 2.0 µs for every codec, so a codec 43% slower than `lz4` makes a swap-in 18% slower
 ([explored-designs.md, "The whole page fault"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves)).
@@ -235,9 +235,10 @@ struct zcomp_ops {
 ```
 
 - `setup_params()` runs once per zram device. `struct zcomp_params` has the compression **level**,
-  an optional **dictionary** and `drv_data` for the backend's data that all CPUs share. seqlz has two
-  levels: 1 stores the literals of a page as they are (`seqlz-fast`), 2 codes them
-  (`seqlz-fast-lit`, the default). Its tables are fixed and part of the format, so the kernel
+  an optional **dictionary** and `drv_data` for the backend's data that all CPUs share. seqlz has three
+  levels: 1 stores the literals of a page as they are (`seqlz-1`), 2 codes them with one of 8 fixed
+  tables (`seqlz-2`, the default), 3 also searches a little longer for matches and may give a page a
+  literal table of its own (`seqlz-3`). Its tables are fixed and part of the format, so the kernel
   backend refuses a dictionary with `-EOPNOTSUPP` ([chapter 15](#ch-zram-glue)).
 - `create_ctx()` runs once per CPU and allocates the codec's work memory, `void *context`, never
   while a page is compressed.
@@ -256,7 +257,7 @@ kernel backend is written for both forms
 The benchmarks call seqlz through a copy of this interface in C, `src/zram_seqlz.c`
 ([chapter 15](#ch-zram-glue)). Its decompress function is the whole contract:
 
-@listing src/zram_seqlz.c 124-135
+@listing src/zram_seqlz.c 129-139
 
 `quetschn_prefetch_page()` asks the CPU to start loading the compressed bytes and the output page
 before the decoder needs them ([chapter 3](#ch-cpu--prefetch)); it stands for what the project's
@@ -382,7 +383,7 @@ rate at which the faster one starts to win. `quetschn-score` computes it from th
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 360" role="img" aria-label="Stored bytes per page against time per page written for lz4, lzo-rle, seqlz-fast-lit and zstd 3, means over the pages of a desktop's zram, with the lower left hull from lzo-rle through seqlz-fast-lit to zstd 3.">
+<svg viewBox="0 0 720 360" role="img" aria-label="Stored bytes per page against time per page written for lz4, lzo-rle, seqlz-2 and zstd 3, means over the pages of a desktop's zram, with the lower left hull from lzo-rle through seqlz-2 to zstd 3.">
   <g fill="none" stroke="currentColor" stroke-width="1">
     <line x1="70" y1="320" x2="690" y2="320"/><line x1="70" y1="320" x2="70" y2="30"/>
   </g>
@@ -414,7 +415,7 @@ rate at which the faster one starts to win. `quetschn-score` computes it from th
   <g font-size="11" class="halo">
     <text x="311" y="84">lz4, 6.42 µs, 1602 B</text>
     <text x="293" y="117" text-anchor="end">lzo-rle, 6.39 µs, 1520 B</text>
-    <text x="350" y="175">seqlz-fast-lit, 7.46 µs, 1149 B</text>
+    <text x="350" y="175">seqlz-2, 7.46 µs, 1149 B</text>
     <text x="690" y="146" text-anchor="end">zstd 3, 15.86 µs, 1105 B</text>
     <text x="330" y="122" class="acc">348 B/µs</text>
     <text x="460" y="150" class="acc">5.3 B/µs</text>
@@ -425,16 +426,16 @@ rate at which the faster one starts to win. `quetschn-score` computes it from th
 </figure>
 
 Read the figure from the right, with the numbers of the table in the next section, measured on 14th
-October 2026. Going from `zstd` 3 to `seqlz-fast-lit` saves 8.41 µs per page written and costs 44
-bytes, 5.3 bytes per µs: whoever values a µs at less should run `zstd`. Going from `seqlz-fast-lit` to
+October 2026. Going from `zstd` 3 to `seqlz-2` saves 8.41 µs per page written and costs 44
+bytes, 5.3 bytes per µs: whoever values a µs at less should run `zstd`. Going from `seqlz-2` to
 `lzo-rle` saves 1.07 µs and costs 371 bytes, 348 bytes per µs: whoever values a µs at more should run
 `lzo-rle`. In between,
-`seqlz-fast-lit` has the lowest score. `lz4` is not on the hull, `lzo-rle` is faster and smaller in
+`seqlz-2` has the lowest score. `lz4` is not on the hull, `lzo-rle` is faster and smaller in
 these runs.
 
 With the times of a real swap-out and swap-in in the virtual machine, measured later with the tables
-of 7th October, `seqlz-fast-lit` has the lowest score for any lambda from 6.7 to 183 bytes per µs, the
-means over the desktop dumps. The hull is then `lzo-rle`, `seqlz-fast`, `seqlz-fast-lit` and `zstd`
+of 7th October, `seqlz-2` has the lowest score for any lambda from 6.7 to 183 bytes per µs, the
+means over the desktop dumps. The hull is then `lzo-rle`, `seqlz-1`, `seqlz-2` and `zstd`
 3, with `lz4` next to `lzo-rle` within the noise
 ([explored-designs.md, "The score with the swap times"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
 Whoever runs `lz4` or `lzo-rle` instead of `zstd` says, by that choice, that a µs is worth more than
@@ -458,20 +459,20 @@ flushed from the CPU caches first. Means over the pages and over 3 boots, 14th O
 | --- | --- | --- | --- | --- |
 | `lz4` | 1602 | 5.52 | 2.64 | 6.42 |
 | `lzo-rle` | 1520 | 5.41 | 2.91 | 6.39 |
-| **`seqlz-fast-lit`** | **1149** | **6.48** | **2.89** | **7.46** |
+| **`seqlz-2`** | **1149** | **6.48** | **2.89** | **7.46** |
 | `zstd` 3 | 1105 | 13.96 | 5.59 | 15.86 |
 
-In these runs of 14th October 2026, `seqlz-fast-lit` stores pages 24% smaller than `lzo-rle` and 28%
+In these runs of 14th October 2026, `seqlz-2` stores pages 24% smaller than `lzo-rle` and 28%
 smaller than `lz4`, 4% larger than `zstd` 3, for 17% more time than `lz4` to write a page.
 
 ::: warn The read times in this table flatter the decoder
 The read benchmark reads every page several times in a row, warm and cold, and that trains the CPU's
 branch predictor on the page ([chapter 3](#ch-cpu--branches)). In a real swap-in, which decodes a page
-once, `seqlz-fast-lit` mispredicts about 110 branches per page more, and its reads are 0.62 µs slower
+once, `seqlz-2` mispredicts about 110 branches per page more, and its reads are 0.62 µs slower
 than `lz4`'s instead of the 0.25 µs above
 ([explored-designs.md, "The decoder in a fault, found"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)).
 The hull of the swap times above has this in it. On the phone, in its own Linux 4.14 kernel,
-`seqlz-fast-lit` stores pages 28% smaller than `lz4` and swaps them in 11% to 13% slower warm and 17%
+`seqlz-2` stores pages 28% smaller than `lz4` and swaps them in 11% to 13% slower warm and 17%
 to 25% slower cold
 ([`docs/plan.md`](https://github.com/martinus/quetschn/blob/main/docs/plan.md), 9th October 2026).
 :::

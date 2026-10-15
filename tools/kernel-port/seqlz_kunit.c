@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * KUnit tests for seqlz: the tables against the hashes the specification
- * gives, its worked example, round trips of generated pages at both levels,
+ * gives, its worked example, round trips of generated pages at every level,
  * damaged pages, and pages made here from the specification's rules, each
  * valid or invalid by one rule.
  */
@@ -29,6 +29,8 @@ static const char *const sha256_ml =
 	"@ML_4k@";
 static const char *const sha256_lit =
 	"@LIT_4k@";
+static const char *const sha256_own =
+	"@OWN_4k@";
 static const u8 example[] = {
 	@EXAMPLE@
 };
@@ -52,6 +54,8 @@ static void seqlz_test_tables(struct kunit *test)
 	check_sha256(test, seqlz_default_own.ml, sizeof(seqlz_default_own.ml),
 		     sha256_ml);
 	check_sha256(test, seqlz_lit_sets, sizeof(seqlz_lit_sets), sha256_lit);
+	check_sha256(test, seqlz_own_lengths, sizeof(seqlz_own_lengths),
+		     sha256_own);
 }
 
 /* buffers for one test, freed by KUnit */
@@ -114,7 +118,10 @@ static void seqlz_test_example(struct kunit *test)
 			-EINVAL);
 }
 
-/* pages of several kinds, so that every offset class and both levels occur */
+/*
+ * pages of several kinds, so that every offset class and every way to code
+ * the literals occur
+ */
 static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 {
 	static const char *const words[] = { "the ", "page ",   "swap ",
@@ -182,18 +189,20 @@ static void seqlz_test_round_trip(struct kunit *test)
 {
 	struct rnd_state rng;
 	struct bufs b;
-	int round, level, len, coded = 0;
+	int round, level, len, coded = 0, own = 0;
 
 	get_bufs(test, &b);
 	prandom_seed_state(&rng, 41);
 	for (round = 0; round < 210; round++) {
 		make_page(&rng, round, b.page);
-		for (level = SEQLZ_LEVEL_RAW; level <= SEQLZ_LEVEL_CODED;
+		for (level = SEQLZ_LEVEL_MIN; level <= SEQLZ_LEVEL_MAX;
 		     level++) {
 			len = seqlz_compress(b.page, b.c, 2 * PAGE_SIZE,
 					     b.cmem, level);
 			KUNIT_ASSERT_GT(test, len, 0);
 			coded += !!(b.c[1] & 0x80);
+			own += (b.c[1] & 0x80) &&
+			       (b.c[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN;
 			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
 					0);
 			KUNIT_ASSERT_MEMEQ(test, b.out, b.page, PAGE_SIZE);
@@ -229,13 +238,16 @@ static void seqlz_test_round_trip(struct kunit *test)
 						     2 * PAGE_SIZE - len + 1));
 		}
 	}
-	/* the pages have to give both layouts */
+	/* the pages have to give both layouts, and pages' own tables */
 	KUNIT_EXPECT_GE(test, coded, 20);
+	KUNIT_EXPECT_GE(test, own, 10);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem, 0),
+			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
+				       SEQLZ_LEVEL_MIN - 1),
 			-EINVAL);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem, 3),
+			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
+				       SEQLZ_LEVEL_MAX + 1),
 			-EINVAL);
 }
 
@@ -257,7 +269,7 @@ static void seqlz_test_damaged(struct kunit *test)
 	for (round = 0; round < 1000; round++) {
 		make_page(&rng, round, b.page);
 		len = seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
-				     1 + round % 2);
+				     SEQLZ_LEVEL_MIN + round % SEQLZ_LEVEL_MAX);
 		KUNIT_ASSERT_GT(test, len, 0);
 
 		memcpy(d, b.c, len);
@@ -336,8 +348,11 @@ static unsigned int bytes(const struct bits *w)
 
 struct maker {
 	struct kunit *test;
-	struct code tok, ll, ml, lit;
+	/* page_own: a page's own literal table, see own_table() */
+	struct code tok, ll, ml, lit, own, page_own;
 	u8 streams[SEQLZ_LIT_STREAMS][PAGE_SIZE / 8];
+	/* the bits after the last symbol of the page's own table */
+	unsigned int own_padding;
 };
 
 static void symbol(struct maker *m, struct bits *w, const struct code *c,
@@ -382,6 +397,7 @@ static struct maker *get_maker(struct kunit *test)
 	canonical(&m->ll, seqlz_default_own.ll, SEQLZ_LEN_SYMBOLS);
 	canonical(&m->ml, seqlz_default_own.ml, SEQLZ_LEN_SYMBOLS);
 	canonical(&m->lit, seqlz_lit_sets[0], 256);
+	canonical(&m->own, seqlz_own_lengths, SEQLZ_OWN_SYMBOLS);
 	return m;
 }
 
@@ -468,32 +484,79 @@ static void seqlz_test_one_sequence(struct kunit *test)
 /* what coded_literals() does to the page it makes */
 enum damage {
 	GOOD,
-	TOP_BIT_6, /* bit 6 of byte 2 set */
-	TOP_BIT_7,
+	TOP_BIT, /* bit 7 of byte 2 set */
+	CODE_9, /* the literals' code 9, above a page's own table */
 	STREAM_0_LONGER, /* stream 0 a 0 byte longer than its codes */
 	BYTE_TO_STREAM_1, /* stream 0's last byte counted in stream 1 */
 	PADDING_BIT, /* the lowest bit of stream 0's last byte set */
+	/* only for a page with its own table */
+	OWN_OVERFULL, /* a third byte with a code of 1 bit */
+	OWN_ABOVE_255, /* the second byte with a code is 256 */
+	OWN_PADDING_BIT, /* the lowest bit of the table's last byte set */
+	OWN_CUT, /* the page ends in the table */
+	DAMAGES,
 };
 
+/* in a page's own table: a run of n byte values without a code, if n > 0 */
+static void own_run(struct maker *m, struct bits *w, unsigned int n)
+{
+	unsigned int k;
+
+	if (!n)
+		return;
+	k = fls(n);
+	symbol(m, w, &m->own, SEQLZ_OWN_RUN + k);
+	put(w, n - (1U << (k - 1)), k - 1);
+}
+
 /*
- * A page of n literals lit(k, arg), coded with literal table 0, then a match
+ * A page's own table into w, in which only the bytes x and y, x < y, have a
+ * code, of 1 bit each; their codes into m->page_own
+ */
+static void own_table(struct maker *m, struct bits *w, unsigned int x,
+		      unsigned int y, enum damage damage)
+{
+	u8 len[256] = {};
+
+	own_run(m, w, x);
+	symbol(m, w, &m->own, damage == OWN_OVERFULL ? 1 : 0);
+	own_run(m, w, damage == OWN_ABOVE_255 ? 255 - x : y - x - 1);
+	symbol(m, w, &m->own, 0);
+	if (damage == OWN_OVERFULL)
+		symbol(m, w, &m->own, 0);
+	m->own_padding = 8 * bytes(w) - w->n;
+	if (damage == OWN_PADDING_BIT)
+		w->p[bytes(w) - 1] |= 1;
+	len[x] = 1;
+	len[y] = 1;
+	canonical(&m->page_own, len, 256);
+}
+
+/*
+ * A page of n literals lit(k, arg), coded with literal table 0, or with own a
+ * table of the page's own for the bytes arg & 0xff and arg >> 8, then a match
  * of offset 1 up to the end of the page: valid, as the specification has it,
  * unless damaged. *padding gets the bits after stream 0's last code.
  */
 static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 				   u8 (*lit)(unsigned int k, unsigned int arg),
-				   unsigned int arg, enum damage damage,
-				   unsigned int *padding)
+				   unsigned int arg, bool own,
+				   enum damage damage, unsigned int *padding)
 {
-	struct bits s[SEQLZ_LIT_STREAMS], w;
+	struct bits s[SEQLZ_LIT_STREAMS], w, t;
 	/* the bytes of each stream, and the sizes the header gives */
 	unsigned int size[SEQLZ_LIT_STREAMS], told[SEQLZ_LIT_STREAMS];
 	unsigned int width = 5, at, j, k, q;
+	u8 desc[64];
 
+	t = (struct bits){ .p = desc };
+	if (own)
+		own_table(m, &t, arg & 0xff, arg >> 8, damage);
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		s[j] = (struct bits){ .p = m->streams[j] };
 	for (k = 0; k < n; k++)
-		symbol(m, &s[k % SEQLZ_LIT_STREAMS], &m->lit, lit(k, arg));
+		symbol(m, &s[k % SEQLZ_LIT_STREAMS],
+		       own ? &m->page_own : &m->lit, lit(k, arg));
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		size[j] = bytes(&s[j]);
 	*padding = 8 * size[0] - s[0].n;
@@ -511,15 +574,21 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 
 	c[0] = n;
 	c[1] = 0x80 | n >> 8;
-	c[2] = (width - 5) << 3;
-	if (damage == TOP_BIT_6 || damage == TOP_BIT_7)
-		c[2] |= damage == TOP_BIT_6 ? 0x40 : 0x80;
+	c[2] = (width - 5) << SEQLZ_LIT_WIDTH_AT | (own ? SEQLZ_LIT_OWN : 0);
+	if (damage == TOP_BIT)
+		c[2] |= 0x80;
+	if (damage == CODE_9)
+		c[2] = (c[2] & ~SEQLZ_LIT_CODE_MASK) | 9;
 	/* the sizes are one number of 8 * width bits, little endian */
 	memset(c + 3, 0, width);
 	for (q = 0; q < 8 * width; q++)
 		c[3 + q / 8] |= ((told[q / width] >> (q % width)) & 1)
 				<< (q % 8);
 	at = 3 + width;
+	memcpy(c + at, desc, bytes(&t));
+	at += bytes(&t);
+	if (damage == OWN_CUT)
+		return at - 1;
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++) {
 		memcpy(c + at, m->streams[j], size[j]);
 		at += size[j];
@@ -553,21 +622,22 @@ static u8 mixed(unsigned int k, unsigned int seed)
 
 static void check_coded(struct maker *m, struct bufs *b, unsigned int n,
 			u8 (*lit)(unsigned int k, unsigned int arg),
-			unsigned int arg)
+			unsigned int arg, bool own)
 {
 	struct kunit *test = m->test;
 	unsigned int len, padding, k;
 	enum damage d;
 
-	len = coded_literals(m, b->c, n, lit, arg, GOOD, &padding);
+	len = coded_literals(m, b->c, n, lit, arg, own, GOOD, &padding);
 	KUNIT_ASSERT_EQ_MSG(test, decompress(test, b, b->c, len), 0,
 			    "n %u arg %u", n, arg);
 	for (k = 0; k < PAGE_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b->out[k], lit(min(k, n - 1), arg));
-	for (d = TOP_BIT_6; d <= PADDING_BIT; d++) {
-		if (d == PADDING_BIT && !padding)
+	for (d = TOP_BIT; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
+		if ((d == PADDING_BIT && !padding) ||
+		    (d == OWN_PADDING_BIT && !m->own_padding))
 			continue;
-		len = coded_literals(m, b->c, n, lit, arg, d, &padding);
+		len = coded_literals(m, b->c, n, lit, arg, own, d, &padding);
 		KUNIT_EXPECT_EQ_MSG(test, decompress(test, b, b->c, len),
 				    -EINVAL, "n %u arg %u damage %d", n, arg,
 				    d);
@@ -589,10 +659,35 @@ static void seqlz_test_coded_literals(struct kunit *test)
 	get_bufs(test, &b);
 	for (i = 0; i < ARRAY_SIZE(values); i++)
 		for (n = 16; n < 600; n++)
-			check_coded(m, &b, n, same, values[i]);
+			check_coded(m, &b, n, same, values[i], false);
 	for (i = 0; i < 4; i++)
 		for (n = 300; n < 600; n++)
-			check_coded(m, &b, n, mixed, i);
+			check_coded(m, &b, n, mixed, i, false);
+}
+
+/* the byte arg & 0xff or arg >> 8, by a hash of k */
+static u8 two(unsigned int k, unsigned int arg)
+{
+	return (k + 1) * 2654435761U >> 31 ? arg >> 8 : arg & 0xff;
+}
+
+/*
+ * Pages with a table of their own: two bytes with a code of 1 bit, with runs
+ * before them that the decoder takes two at a time, 3 and 1, or alone, 97 and
+ * 254, and tables that are invalid by one rule each
+ */
+static void seqlz_test_own_table(struct kunit *test)
+{
+	static const unsigned int pairs[] = { 3 | 5 << 8, 97 | 98 << 8,
+					      0 | 255 << 8 };
+	struct maker *m = get_maker(test);
+	unsigned int n, i;
+	struct bufs b;
+
+	get_bufs(test, &b);
+	for (i = 0; i < ARRAY_SIZE(pairs); i++)
+		for (n = 16; n < 200; n++)
+			check_coded(m, &b, n, two, pairs[i], true);
 }
 
 static struct kunit_case seqlz_test_cases[] = {
@@ -602,6 +697,7 @@ static struct kunit_case seqlz_test_cases[] = {
 	KUNIT_CASE(seqlz_test_damaged),
 	KUNIT_CASE(seqlz_test_one_sequence),
 	KUNIT_CASE(seqlz_test_coded_literals),
+	KUNIT_CASE(seqlz_test_own_table),
 	{}
 };
 

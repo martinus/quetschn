@@ -184,7 +184,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     if (size != SEQLZ_PAGE)
         return 0;
     i0 = instructions();
-    len = seqlz_compress(tables, &st, data, c, sizeof c, 1);
+    len = seqlz_compress(tables, &st, data, c, sizeof c, 2);
     i1 = instructions();
     if (!len)
         abort();
@@ -253,7 +253,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     while (pos < SEQLZ_PAGE)
         page[pos++] = lits[n_lit++] = (unsigned char)(rng += 0x9e37);
     n++;
-    len = seqlz_encode(tables, seq, n, lits, n_lit, c, sizeof c, 1);
+    len = seqlz_encode(tables, NULL, seq, n, lits, n_lit, c, sizeof c, 2);
     if (!len)
         abort();
     /* COST_DUMP=<file>: the compressed page this input makes, for quetschn-seqlz-worst count-streams */

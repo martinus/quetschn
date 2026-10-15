@@ -16,7 +16,7 @@ import sys
 # Never the body of an if without braces: the hook would become the body; the script fails on one.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
-    "q = decode_literals(t, s, src_len, n_lit, scratch);",
+    "q = decode_literals(t, s, src_len, n_lit, scratch, d);",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
     "d_fast = d_end - FAST_PAGE_ROOM;",
@@ -64,7 +64,7 @@ MATCH_STOPS = [
     ("u64 v_next = get_unaligned_le64(src + pos + 1);", "STEP_A"),
     ("if (!(rep_hit | cand_hit)) {", "STEP_B"),
     ("m = rep_hit ? pos - last : cand;", "STEP_B"),
-    ("len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,", "STEP_B"),
+    ("len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, end);", "STEP_B"),
     ("emit(ctx, src + anchor, pos - anchor, len, last);", "STEP_B"),
     ("table[seqlz_hash5(get_unaligned_le64(src + pos - 2))] =", "STEP_B"),
     ("emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);", "STEP_A"),

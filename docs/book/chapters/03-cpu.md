@@ -23,7 +23,7 @@ the development machine, per page, as of 5th October 2026
 | codec | instructions | cycles | instructions per cycle |
 | --- | ---: | ---: | ---: |
 | `lz4` | 11 899 | 4992 | 2.4 |
-| `seqlz-fast-lit` | 25 284 | 7609 | 3.3 |
+| `seqlz-2` | 25 284 | 7609 | 3.3 |
 
 This loop decodes every page several times, which flatters seqlz, see
 [the branches](#ch-cpu--branches). In a swap-in in the kernel, in a VM on the same CPU,
@@ -199,7 +199,7 @@ away the work done on the wrong path, about 15 to 20 cycles.
 <!-- undated: a typical cost on current cores, not this project's measurement -->
 
 ::: measured What a misprediction costs, and that the predictor learns a page
-In the kernel VM on the Ryzen 9 7950X at 4.5 GHz, `seqlz-fast-lit`'s decoder in a swap-in mispredicted
+In the kernel VM on the Ryzen 9 7950X at 4.5 GHz, `seqlz-2`'s decoder in a swap-in mispredicted
 200.9 branches per page. When the same page was decoded once right before, it mispredicted 89.5, and
 took 1867 cycles less, with the same instructions and the same L1 misses: about 17 cycles for each of
 the 111 mispredictions
@@ -429,7 +429,7 @@ the stack; they are needed only at a refill, once per {{ch03.lit_rounds}} litera
 Registers also decided a choice in the matcher. Like `lz4`, it once moved on faster and faster when it
 found no match for a while. That step needs one more value in the loop, which has no register to
 spare. Without it, the pages that compress are written 5% faster, and in the kernel VM
-`seqlz-fast-lit` writes a page 0.23 µs faster, 3%
+`seqlz-2` writes a page 0.23 µs faster, 3%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
 
 ## Byte order, and loads at any address {#ch-cpu--endian}

@@ -92,11 +92,11 @@ undone and no two inputs collide before the shift. `zstd` uses the same constant
 where 5 bytes repeat; matches of exactly 4 bytes still come from the repeat offset, which needs no
 table. When it came, on 24th September 2026, the 5-byte hash took 5% fewer cycles to compress a page
 (20 425 against 21 440, x86-64, userspace) and cost 0.6 points of memory (27.2% against 26.6% of the
-page). In the kernel it took `seqlz-fast`'s write p99 from 11 650 to 10 480 ns, twice what the cycles
+page). In the kernel it took `seqlz-1`'s write p99 from 11 650 to 10 480 ns, twice what the cycles
 say: the slowest pages have many short matches, and the 5-byte hash finds fewer of them
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
 "A hash of 5 bytes: C3 in the kernel"). With today's tables and coded literals the 4-byte hash is not
-even smaller: `seqlz-fast-lit` gets 24 bytes per page larger with it. Most likely a match of 4 bytes at
+even smaller: `seqlz-2` gets 24 bytes per page larger with it. Most likely a match of 4 bytes at
 a new offset takes more bits than the 4 coded literals it replaces, and the greedy matcher then misses
 the longer match behind it
 ([item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)).
@@ -152,14 +152,17 @@ the matcher only reads, the decoder has to care ([chapter 14](#ch-decode)).
 
 ## The callback costs no call {#ch-matcher--emit}
 
-@listing src/page_lz.h 69-74
+@listing src/page_lz.h 112-117
 
 A call through `emit_fn` once per sequence would be an indirect call, and the matcher would have to
 keep its state in memory across it. It does not happen: `seqlz_match_page()` is `__always_inline`, and
 its two callers, `seqlz_find()` and `compress_page()` in `src/seqlz_compress.c`, pass a constant
 function, `find_emit()` and `encode_emit()`, both `__always_inline` too. After inlining, the compiler
 sees which function `emit` is and inlines it as well. `gcc -O2` for x86-64 makes `seqlz_compress.o`
-without a single indirect call. So the type is for the source: one matcher with two receivers.
+without a single indirect call. So the type is for the source: one matcher with two receivers. The
+`bool lazy` of level 3 goes the same way: each caller has two calls, one with `true` and one with
+`false`, so each inlined copy of the loop sees a constant, and the one for levels 1 and 2 has no code
+of level 3 at all ([chapter 10](#ch-encoder--entry)).
 `seqlz_find()` collects the sequences into an array for tests and tools such as the table trainer,
 which trains the tables on exactly the sequences this matcher finds. The kernel's copy has only the
 encoder, and `port.py` calls `encode_emit()` by name.
@@ -174,20 +177,26 @@ x86-64, 20 000 pages of a desktop dump).
 
 ## Greedy, two candidates, every position {#ch-matcher--plan}
 
-@listing src/page_lz.h 76-97
+@listing src/page_lz.h 119-146
 
-**Greedy.** The matcher takes the first match it finds, counts how long it is and jumps over it. A **lazy**
-matcher would check whether a match one byte later is longer, a hash chain would search all earlier
-occurrences. `lz4`'s fast mode is greedy the same way.
+**Greedy.** At levels 1 and 2 the matcher takes the first match it finds, counts how long it is and
+jumps over it. A **lazy** matcher checks whether a match one byte later is longer, a hash chain
+searches all earlier occurrences. `lz4`'s fast mode is greedy the same way. Level 3 adds one lazy
+step for short matches and extends each match backwards, the paragraph of the comment that begins
+"With lazy" ([below](#ch-matcher--lazy)).
 
-::: why Lazy matching and hash chains: smaller pages, too slow
-One lazy step, taking the next position's candidate if it is longer by 2 bytes or more, took 24 808
-instead of 20 400 compress cycles per page, 21% more, and `seqlz-fast` stayed at 27.0% of the page
+::: why Lazy matching and hash chains: smaller pages, too slow, until level 3
+One lazy step at every match, taking the next position's candidate if it is longer by 2 bytes or
+more, took 24 808 instead of 20 400 compress cycles per page, 21% more, and `seqlz-1` stayed at 27.0%
+of the page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
-"A hash of 5 bytes: C3 in the kernel", September 2026). Levels 3 and 4, a hash chain priced by the
-tables' code lengths with one or two lazy steps, stored pages 3.3% smaller than level 2 for 1.8 times
-the time to write, and were not kept
+"A hash of 5 bytes: C3 in the kernel", September 2026). An earlier level 3 and 4, a hash chain priced
+by the tables' code lengths with one or two lazy steps, stored pages 3.3% smaller than level 2 for 1.8
+times the time to write, and were not kept
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)).
+The level 3 of 15th October 2026 is cheaper: no chain, the lazy step only for matches below 20 bytes,
+and it came together with a literal table of the page's own
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 :::
 
 **Two candidates.** One is the **repeat offset**, which needs no lookup and costs 0 offset bits, e.g.
@@ -201,7 +210,7 @@ every position.
 
 ::: measured Without `lz4`'s step: writes 3% faster, incompressible pages slower
 The step was `1 + (pos - anchor) >> 6`, as in `lz4`. Without it, on 30th September 2026, in the kernel
-in a VM (Ryzen 9 7950X, CPU fixed at 4.5 GHz, 40 000 zram pages of a desktop), `seqlz-fast-lit` wrote
+in a VM (Ryzen 9 7950X, CPU fixed at 4.5 GHz, 40 000 zram pages of a desktop), `seqlz-2` wrote
 a page 0.23 µs faster, 3%, at 0.4 bytes more per page, and the write p99 went from 12 300 to 11 400 ns.
 Pages that zram stores raw, because they do not compress, take 2.3 µs longer each: the whole page is
 searched. It is not faster because it visits other positions: a step that starts only after 1024
@@ -214,7 +223,7 @@ the writes gained 0.05 µs.
 
 ## The state of the loop, and why reading a candidate is always safe {#ch-matcher--state}
 
-@listing src/page_lz.h 98-124
+@listing src/page_lz.h 147-174
 
 `limit` is {{ch09.limit}}, a constant the compiler puts into the compare, and positions instead of
 pointers took 21 916 to 21 786 cycles per page
@@ -253,7 +262,7 @@ safe the same way: `last` and `pos` start at 1, after a match `last` is at most 
 
 ## One position: two candidates, one branch {#ch-matcher--position}
 
-@listing src/page_lz.h 126-151
+@listing src/page_lz.h 176-201
 
 This is the path taken most: on the phone's pages a run without a match is 4 positions long on average
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept)).
@@ -265,7 +274,7 @@ with `||` compilers often make a second branch. With a branch for each candidate
 mispredicted almost twice as often as `lz4`.
 
 ::: measured One branch for both candidates
-With three branches per position, the first `seqlz-fast` mispredicted 539 times per page. Reading both
+With three branches per position, the first `seqlz-1` mispredicted 539 times per page. Reading both
 candidates and deciding with one branch took that to 329, and the p99 of the cold compress loop from
 15.4 to 12.6 µs. With the page in the cache, the extra reads cost 7%
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-seqlz-fast),
@@ -296,7 +305,7 @@ right one with a compare was 9% slower: more instructions.
 
 ## A hit: count, emit {#ch-matcher--hit}
 
-@listing src/page_lz.h 152-164
+@listing src/page_lz.h 202-208
 
 When both candidates hit, the repeat offset wins, as its offset costs 0 bits; which gives the longer
 match is not checked. Measured offline on 40 000 zram pages of a desktop, always taking the longer of
@@ -316,19 +325,82 @@ Until October 2026 the matcher stepped back while the byte before `pos` was the 
 candidate, down to `anchor`. That made 2.4% of the matches longer, by 1 or 2 bytes, 0.03 bytes per
 match. It also stood between choosing the candidate and counting the match, so every match waited
 for two more loads and a compare. On the Mi 9T, zram in its own kernel, 19 775 pages of a phone,
-`seqlz-fast-lit` wrote a page in 11.93 instead of 12.77 µs on the Cortex-A76 and in 33.09 instead
+`seqlz-2` wrote a page in 11.93 instead of 12.77 µs on the Cortex-A76 and in 33.09 instead
 of 34.10 µs on the A55, reads the same
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-back-writes-66-faster-on-the-a76-and-1-to-2-in-the-vm-kept),
 15th October 2026). In the kernel VM it wrote 1.0% to 2.3% faster on four dumps, at 1.6 bytes less to
-3.7 bytes more per page. `seqlz-fast` loses more, up to 15 bytes per page: a byte outside a match costs
+3.7 bytes more per page. `seqlz-1` loses more, up to 15 bytes per page: a byte outside a match costs
 it a whole byte.
+:::
+
+## Level 3: one position later, and backwards {#ch-matcher--lazy}
+
+@listing src/page_lz.h 209-219
+
+At levels 1 and 2 `lazy` is a constant `false` in the inlined loop, and these lines are not compiled
+in. At level 3 a match found at `pos` gets two more chances to grow. If it is shorter than
+`SEQLZ_LAZY_LEN`, {{ch09.lazy_len}} bytes, `seqlz_lazy()` looks whether the next position has a longer
+one, and takes it. Then, whichever match it is, the `while` extends it backwards: as long as the byte
+before it equals the byte before its source, the match starts one byte earlier, takes that byte from
+the literals and keeps its offset, since `pos` and `m` move together. `pos > anchor` keeps it out of
+the sequence before, whose match ended at `anchor`, and `m > 0` keeps `src[m - 1]` in the page.
+
+@listing src/page_lz.h 69-73
+
+@listing src/page_lz.h 75-110
+
+`seqlz_lazy()` comes before the matcher in the file and is explained here, where it is called. It
+needs no new load of the next position: `v_next` and `h_next`, its 8 bytes and their hash, are what
+the loop loaded one position ahead ([below](#ch-matcher--position)). It tries the same two candidates
+as the loop, the repeat offset `last`, still the offset of the match before, and the table's entry for
+`h_next`; each must match 4 bytes before it is counted, as in the loop. The repeat offset is skipped
+where the match at `pos` has it already: the match at `pos + 1` at that offset is the same one, a
+byte shorter, and never longer. Only a strictly longer match
+wins: at the same length the match at `pos` has one literal fewer. A winner moves `pos` on by one and
+stores it in the table, as the loop would have done at that position. Both candidates are always in the
+page before `pos + 1`, for the reasons the loop's are ([above](#ch-matcher--state)). Here a branch per
+candidate is fine: `seqlz_lazy()` runs once per short match, not at every position.
+
+The example: a page of random bytes, as the second page [below](#ch-matcher--back) without its copies,
+where bytes 100 to 104 are `0x5a` and the 4 bytes at 21, and byte 199 is `0x5a` again, followed by a
+copy of bytes 21 to 51. At 199 the table finds the 5 bytes at 100. Level 2 takes them, then finds the
+rest of the copy right behind:
+
+| level | sequence | literals | match at | `ml` | offset |
+| --- | --- | --- | --- | --- | --- |
+| 2 | 0 | {{ch09.lazy.l2.0.ll}} | {{ch09.lazy.l2.0.at}} | {{ch09.lazy.l2.0.ml}} | {{ch09.lazy.l2.0.off}} |
+| 2 | 1 | {{ch09.lazy.l2.1.ll}} | {{ch09.lazy.l2.1.at}} | {{ch09.lazy.l2.1.ml}} | {{ch09.lazy.l2.1.off}} |
+| 3 | 0 | {{ch09.lazy.l3.0.ll}} | {{ch09.lazy.l3.0.at}} | {{ch09.lazy.l3.0.ml}} | {{ch09.lazy.l3.0.off}} |
+@assert ch09.lazy.l2.seqs == 3 and ch09.lazy.l3.seqs == 2 and ch09.lazy.l2[0].ml < ch09.lazy.l3[0].ml and ch09.lazy.l3[0].at == ch09.lazy.l2[0].at + 1
+
+At level 3 the 5 bytes at 199 are below {{ch09.lazy_len}}, so `seqlz_lazy()` looks at 200, where the
+table has position 21 for the same 5 bytes, and the match there is {{ch09.lazy.l3.0.ml}} bytes long.
+Byte 199 becomes a literal, and one sequence with one token and one offset does what two did. The
+step back finds `0x5a` before 200 but not before 21, and stops.
+
+The extension backwards is the step back that the measurement [above](#ch-matcher--hit) took out of
+levels 1 and 2. It cost there because it came between choosing the candidate and counting the match.
+At level 3 it comes after the count, and after the lazy step, which can move a match one position
+on and leave the byte it passed over to be taken back with the new offset. On the second page below
+it takes the 2 literals before the match found late.
+
+::: measured The lazy step from 20 bytes on, the step back kept at level 3
+On 20 000 pages each of a phone dump and two desktop samples, a lazy step for matches up to
+4 + n bytes saved more bytes the larger n was, and n = 16, the 20 of `SEQLZ_LAZY_LEN`, kept most of
+what a step at every match saves. Without the step back level 3 was 0.69% larger on ten dumps, and in
+userspace on the Mi 9T's Cortex-A76 it wrote 2.1% faster and read 3.5% slower. In the kernel VM the
+lazy step alone was on no hull; with the literal table of the page's own it was. Level 3 as a whole
+wrote a page in about 16 µs against 12 µs at level 2 on the A76, in the phone's own kernel, on 15th
+October 2026
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 :::
 
 ## One position of a match goes into the table {#ch-matcher--insert}
 
-@listing src/page_lz.h 165-182
+@listing src/page_lz.h 220-242
 
-The positions inside a match were skipped. One of them, 2 bytes before its end, goes into the table,
+`last` and `back` become the new repeat offset, and the sequence goes to `emit`, the encoder in the
+compressor. The positions inside a match were skipped. One of them, 2 bytes before its end, goes into the table,
 as `lz4`'s fast mode does: data that repeats once tends to repeat again, near the end of the last
 match. Then the one-ahead state starts again at the new `pos`; the insert comes before the load of
 `table[h]`, so a new position with the same hash as `pos - 2` finds it.
@@ -409,9 +481,11 @@ match of {{ch09.rnd.first.ml}} bytes at offset {{ch09.rnd.first.off}}, and inser
 {{ch09.rnd.399.h}} even holds {{ch09.rnd.399.cand}}, a collision. Position 400 has the bytes of 126,
 the one position inserted, and hits. `seqlz_find()` returns {{ch09.rnd.seq.ll}} literals, 398 and
 399 among them, and a match of {{ch09.rnd.seq.ml}} at offset {{ch09.rnd.seq.off}}, starting at
-{{ch09.rnd.seq.at}}. The copy started 2 bytes earlier, and those 2 bytes are literals: the matcher
-does not step back, [above](#ch-matcher--hit) says why.
-@assert ch09.rnd.seq.at == 400 and ch09.rnd.seq.ml == 12
+{{ch09.rnd.seq.at}}. The copy started 2 bytes earlier, and those 2 bytes are literals: at levels 1 and 2
+the matcher does not step back, [above](#ch-matcher--hit) says why. At level 3 it does, and
+`seqlz_find(&st, page, seq, 3)` returns {{ch09.rnd3.seq.ll}} literals and a match of
+{{ch09.rnd3.seq.ml}} at {{ch09.rnd3.seq.at}}, the whole copy.
+@assert ch09.rnd.seq.at == 400 and ch09.rnd.seq.ml == 12 and ch09.rnd3.seq.at == 398 and ch09.rnd3.seq.ml == 14
 
 ::: try The sequences of the page of pointers
 In the repository, save this as `find.c` and build it with `gcc -O2 -Isrc -o find find.c
@@ -431,7 +505,7 @@ int main(void)
 
 	for (i = 0; i < SEQLZ_PAGE / 8; i++)
 		put_unaligned_le64(0x7f1234560010ULL + 16 * i, page + 8 * i);
-	n = seqlz_find(&st, page, seq);
+	n = seqlz_find(&st, page, seq, 2);
 	printf("%u sequences\n", n);
 	for (i = 0; i < n; i++) {
 		printf("at %4u: ll %u, ml %u, offset %u\n", pos,
@@ -450,9 +524,9 @@ It prints `{{ch09.ptr.seqs}} sequences` and the sequences of the table above, th
 Fill `page` with your own bytes to see what the matcher makes of them.
 :::
 
-What the matcher misses is older places. A slot keeps only the newest position, so a longer match at
-an older place is not found. More positions per slot, a hash chain, lazy steps: each was measured, and
-each costs about as much time as it saves bytes
+What the matcher misses is older places, also at level 3. A slot keeps only the newest position, so a
+longer match at an older place is not found. More positions per slot and a hash chain were measured,
+and each cost about as much time as it saved bytes
 ([explored-designs.md, "seqlz-fast-lit: one of 8 literal tables per page"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
-`zstd` 3 searches harder, and that is part of why it stores pages smaller, at about twice the time to
-write one.
+`zstd` 3 searches harder, and that is part of why it stores pages smaller than level 2, at about twice
+the time to write one.

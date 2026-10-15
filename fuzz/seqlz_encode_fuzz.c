@@ -5,8 +5,8 @@
  * write past the two pages of dst, and a page it accepts must decode to the page its sequences make.
  * The other targets only reach seqlz_encode() with the matcher's sequences, which are always valid.
  *
- * Byte 0: bit 0 lets the last sequence's literals fill the page, bit 1 codes the literals. Then 4
- * bytes per sequence: the literals, the match, and two bytes for the offset, each taken as it is.
+ * Byte 0: bit 0 lets the last sequence's literals fill the page, bits 1 and 2 pick the level, 1 plus
+ * their value mod 3. Then 4 bytes per sequence: the literals, the match, and two bytes for the offset, each taken as it is.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -18,6 +18,8 @@
 #define DST_CAP (2U * SEQLZ_PAGE)
 
 static struct seqlz_tables* tables;
+/* the work memory of level 3 */
+static struct seqlz_state state;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
 static unsigned char literals[SEQLZ_PAGE], page[SEQLZ_PAGE];
 /* each an allocation of its own exact size, for ASan */
@@ -59,7 +61,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     unwritten(dst, DST_CAP);
     unwritten(scratch, SEQLZ_SCRATCH);
-    len = seqlz_encode(tables, seq, n, literals, n_lit, dst, DST_CAP, data[0] & 2);
+    len = seqlz_encode(tables, &state, seq, n, literals, n_lit, dst, DST_CAP, 1U + (data[0] >> 1 & 3U) % 3U);
     if (len == 0)
         return 0;
     if (len > DST_CAP || sum != SEQLZ_PAGE)

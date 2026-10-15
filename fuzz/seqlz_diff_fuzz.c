@@ -28,7 +28,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         return 0;
     if (!tables) {
         const struct seqlz_ref_tables t = {
-            seqlz_default_own.token, seqlz_default_own.ll, seqlz_default_own.ml, seqlz_lit_sets};
+            seqlz_default_own.token, seqlz_default_own.ll, seqlz_default_own.ml, seqlz_lit_sets, seqlz_own_lengths};
 
         tables = malloc(seqlz_tables_size());
         fast = malloc(SEQLZ_PAGE);

@@ -215,7 +215,7 @@ TEST_CASE("score: memory per CPU from a bench log, and added per stored page on 
                                  "compress                   11025     14000     20000     22000     25000     11700\n"
                                  "decompress cold             3300      4400      5500      6600      7700      3450\n"
                                  "\n"
-                                 "codec      seqlz-fast-lit, no level (zram ignores it for this codec)\n"
+                                 "codec      seqlz-2, no level (zram ignores it for this codec)\n"
                                  "zsmalloc cost          1873182 bytes, 23.1% of uncompressed, 946.1 bytes/page\n"
                                  "memory per CPU         16384 bytes: compression 8192, decompression 8192\n"
                                  "compress                   17820     19000     21000     22000     23000     18000\n"

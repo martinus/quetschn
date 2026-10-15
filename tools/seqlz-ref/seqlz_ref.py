@@ -27,7 +27,7 @@ def spec_hashes():
 
 
 def load_tables(page_bits):
-    """canonical codes of TOK, LL, ML and the 8 literal tables, after checking the lengths' SHA-256"""
+    """canonical codes of TOK, LL, ML, the 8 literal tables and OWN, after checking the lengths' SHA-256"""
     codec, size = REPO / "src", f"{4 if page_bits == 12 else 16}k"
     src = (codec / f"seqlz_default_tables_{size}.inc").read_text()
 
@@ -36,11 +36,13 @@ def load_tables(page_bits):
 
     tables = {"TOK": field("token"), "LL": field("ll"), "ML": field("ml")}
     lit_src = (codec / f"seqlz_lit_sets_{size}.inc").read_text()
-    lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") :].split("=", 1)[1])
+    own_at = lit_src.index("seqlz_own_lengths[SEQLZ_OWN_SYMBOLS] =")
+    lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") : own_at].split("=", 1)[1])
+    own = numbers(lit_src[own_at:].split("=", 1)[1])
     assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 12 + page_bits
-    assert len(lit) == 8 * 256
+    assert len(lit) == 8 * 256 and len(own) == 19
     hashes = spec_hashes()
-    for name, lengths in [*tables.items(), ("LIT", lit)]:
+    for name, lengths in [*tables.items(), ("LIT", lit), ("OWN", own)]:
         key = f"{name}_{size}"
         if hashlib.sha256(bytes(lengths)).hexdigest() != hashes[key]:
             raise SystemExit(f"{key}: the table is not the one docs/format.md names")
@@ -49,6 +51,7 @@ def load_tables(page_bits):
         canonical(tables["LL"], 8),
         canonical(tables["ML"], 8),
         [canonical(lit[256 * k : 256 * (k + 1)], 10) for k in range(8)],
+        canonical(own, 8),
     )
 
 
@@ -102,8 +105,29 @@ class Bits:
         return codes[(length, code)]
 
 
+def own_table(page, at, own_codes):
+    """docs/format.md's "A page's own literal table", from byte at: its codes, and its bytes d"""
+    r = Bits(page, at)
+    lengths, value, space = [0] * 256, 0, 0  # space in units of 2^-10
+    while space < 1024:
+        sym = r.symbol(own_codes)
+        if sym <= 9:
+            if value > 255:
+                raise Invalid
+            lengths[value] = sym + 1
+            space += 1024 >> (sym + 1)
+            value += 1
+        else:
+            k = sym - 9
+            value += (1 << (k - 1)) + r.read(k - 1)
+    d = (r.pos - 8 * at + 7) // 8
+    if space > 1024 or at + d > len(page) or not r.ends_here(8 * (at + d)):
+        raise Invalid
+    return canonical(lengths, 10), d
+
+
 def decode(page, tables, page_bits):
-    tok_codes, ll_codes, ml_codes, lit_codes = tables
+    tok_codes, ll_codes, ml_codes, lit_codes, own_codes = tables
     size = 1 << page_bits
     offset_bits = [0, 1, 8, page_bits, 5, 8]
     offset_scale = [1, 2, 1, 1, 8, 8]
@@ -113,11 +137,12 @@ def decode(page, tables, page_bits):
     n = h & 0x7FFF
     if h & 0x8000:
         t = page[2] if len(page) > 2 else 0
-        w = 5 + (t >> 3 & 7)
-        if len(page) < 3 + w or t >> 6 or n > size:
+        w, code = 5 + (t >> 4 & 7), t & 15
+        if len(page) < 3 + w or t >> 7 or code > 8 or n > size:
             raise Invalid
+        codes, d = own_table(page, 3 + w, own_codes) if code == 8 else (lit_codes[code], 0)
         sizes = int.from_bytes(page[3 : 3 + w], "little")
-        start = [3 + w]
+        start = [3 + w + d]
         for j in range(8):
             start.append(start[-1] + (sizes >> (j * w) & ((1 << w) - 1)))
         if start[8] > len(page):
@@ -126,7 +151,7 @@ def decode(page, tables, page_bits):
         for j in range(8):
             r = Bits(page, start[j])
             for k in range(j, n, 8):
-                lits[k] = r.symbol(lit_codes[page[2] & 7])
+                lits[k] = r.symbol(codes)
             if not r.ends_here(8 * start[j + 1]):
                 raise Invalid
         bits = Bits(page[start[8] :])

@@ -67,6 +67,49 @@ static inline unsigned int seqlz_match_len(const u8 *p, const u8 *q,
 }
 
 /*
+ * Level 3 takes a match of this many bytes or more as it is, without looking at
+ * the next position: a longer one there is rare, and looking takes time.
+ */
+#define SEQLZ_LAZY_LEN 20U
+
+/*
+ * Level 3's look at the next position, for a match of len bytes at *pos from
+ * *m: a longer match at *pos + 1, at the repeated offset last or at the hash
+ * table's entry for the 8 bytes v there, whose hash is h, replaces it, and
+ * *pos + 1 goes into the table. Returns the length of the match taken. Where
+ * the match is at the repeated offset already, the one at *pos + 1 is the same
+ * match one byte shorter, and is not counted.
+ */
+static __always_inline unsigned int
+seqlz_lazy(u16 *table, const u8 *src, unsigned int *pos, unsigned int *m,
+	   unsigned int len, unsigned int last, u64 v, unsigned int h)
+{
+	const u8 *const next = src + *pos + 1, *const end = src + SEQLZ_PAGE;
+	const unsigned int cand = table[h];
+	unsigned int best = len, l;
+
+	if (*pos - *m != last && get_unaligned_le32(next - last) == (u32)v) {
+		l = 4U + seqlz_match_len(next + 4, next - last + 4, end);
+		if (l > best) {
+			best = l;
+			*m = *pos + 1 - last;
+		}
+	}
+	if (get_unaligned_le32(src + cand) == (u32)v) {
+		l = 4U + seqlz_match_len(next + 4, src + cand + 4, end);
+		if (l > best) {
+			best = l;
+			*m = cand;
+		}
+	}
+	if (best > len) {
+		(*pos)++;
+		table[h] = (u16)*pos;
+	}
+	return best;
+}
+
+/*
  * The matcher calls this for every sequence it finds, with the literals before
  * the match, the match length (0 for the last sequence) and the offset.
  */
@@ -89,11 +132,17 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * without it, pages that compress are written faster and pages that do not
  * slower.
  *
+ * With lazy, for level 3, a match shorter than SEQLZ_LAZY_LEN is taken only
+ * if pos + 1 has none that is longer, at the repeated offset or at the table's
+ * entry; else the byte at pos becomes a literal and the longer match is taken.
+ * Then the match is extended backwards into the literals as far as the bytes
+ * before it are the same. Both make pages smaller and writes slower.
+ *
  * Each sequence goes to the encoder as soon as it is found. With the encoder
  * inlined, finding and writing the sequences is one pass over the page.
  */
 static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
-					     emit_fn emit, void *ctx)
+					     bool lazy, emit_fn emit, void *ctx)
 {
 	/*
 	 * Positions in the page, not pointers: the limit is a constant, and the
@@ -101,6 +150,7 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 	 * reads 8 bytes.
 	 */
 	const unsigned int limit = SEQLZ_PAGE - 8U;
+	const u8 *const end = src + SEQLZ_PAGE;
 	unsigned int pos = 1, anchor = 0, last = 1, h, cand;
 	/*
 	 * The repeated offset as a negative index, src + pos + back, so the
@@ -151,12 +201,22 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 		}
 		m = rep_hit ? pos - last : cand;
 		/*
-		 * The match is counted from pos, not extended backwards into the
-		 * literals: that would delay counting every match for the few it
-		 * makes longer.
+		 * The match is counted from pos. Levels 1 and 2 do not extend
+		 * it backwards into the literals: that would delay counting
+		 * every match for the few it makes longer.
 		 */
-		len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,
-					   src + SEQLZ_PAGE);
+		len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, end);
+		if (lazy) {
+			if (len < SEQLZ_LAZY_LEN)
+				len = seqlz_lazy(table, src, &pos, &m, len,
+						 last, v_next, h_next);
+			while (pos > anchor && m > 0 &&
+			       src[pos - 1] == src[m - 1]) {
+				pos--;
+				m--;
+				len++;
+			}
+		}
 		last = pos - m;
 		back = -(long)last;
 		emit(ctx, src + anchor, pos - anchor, len, last);

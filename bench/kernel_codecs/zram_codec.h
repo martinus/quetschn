@@ -79,8 +79,9 @@ extern const struct quetschn_codec quetschn_codec_lz4hc;
 extern const struct quetschn_codec quetschn_codec_lzo;
 extern const struct quetschn_codec quetschn_codec_lzo_rle;
 extern const struct quetschn_codec quetschn_codec_zstd;
-extern const struct quetschn_codec quetschn_codec_seqlz_fast;
-extern const struct quetschn_codec quetschn_codec_seqlz_fast_lit;
+extern const struct quetschn_codec quetschn_codec_seqlz_1;
+extern const struct quetschn_codec quetschn_codec_seqlz_2;
+extern const struct quetschn_codec quetschn_codec_seqlz_3;
 extern const struct quetschn_codec quetschn_codec_lz4_prefetch;
 
 /*

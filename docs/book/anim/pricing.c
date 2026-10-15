@@ -24,11 +24,11 @@ int main(void) {
     if (!t || seqlz_tables_init(t, &seqlz_default_own))
         return 1;
     slab_page(page);
-    if (!seqlz_compress(t, &st, page, raw, sizeof(raw), 0) || !seqlz_compress(t, &st, page, comp, sizeof(comp), 1))
+    if (!seqlz_compress(t, &st, page, raw, sizeof(raw), 1) || !seqlz_compress(t, &st, page, comp, sizeof(comp), 2))
         return 1;
     n_lit = get_unaligned_le16(raw);
     lit = raw + SEQLZ_HEADER;
-    lit_cost(t, lit, n_lit, even, odd);
+    lit_cost(t, lit, n_lit, even, odd, NULL);
     /* each table's lane must be the sum of the code lengths of the stream's literals */
     for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
         for (k = 0; k < SEQLZ_LIT_SETS; k++) {
