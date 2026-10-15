@@ -1709,8 +1709,25 @@ length, `own+lazy` the combination without the fused histogram, so slower to wri
 
 The hull by `quetschn-score`: `seqlz-fast-lit`, then own, then own+lazy, then `zstd` 3 on p3, p5 and
 the 24th September; on the 23rd own+lazy right after `seqlz-fast-lit`, and `zstd` 3 off the hull. From
-own+lazy to `zstd` 3 a µs saves 0.1 to 3.2 bytes per page. The lazy step alone is on no hull. The level
-3 of this PR was not measured in the VM.
+own+lazy to `zstd` 3 a µs saves 0.1 to 3.2 bytes per page. The lazy step alone is on no hull.
+
+**Kernel VM, the level 3 of this PR**, measured after the merge: `tools/zram-vm/run.sh` at `613b86a`,
+`MODE=swap`, `BOOTS=3`, the same samples, CPU 2 at 4.5 GHz, boost off, gcc 16.2.1, bytes per page /
+swap-out / cold swap-in in µs, means of 3 boots, on 15th October:
+
+| dump | `lz4` | level 1 | level 2 | level 3 | `zstd` 3 |
+| --- | --- | --- | --- | --- | --- |
+| p3 | 1408.1 / 5.99 / 3.13 | 1114.7 / 6.24 / 3.53 | 1037.5 / 6.73 / 3.84 | 993.4 / 8.74 / 4.02 | 998.4 / 13.97 / 6.32 |
+| p5 | 1366.8 / 6.61 / 3.31 | 1063.3 / 6.82 / 3.70 | 998.8 / 7.33 / 3.93 | 957.0 / 9.26 / 4.09 | 943.9 / 14.60 / 6.47 |
+| 23rd September | 1450.3 / 6.50 / 3.27 | 1119.0 / 6.88 / 3.76 | 1033.0 / 7.36 / 3.97 | 995.7 / 9.25 / 4.07 | 1012.3 / 14.62 / 6.48 |
+| 24th September | 1754.4 / 7.07 / 3.30 | 1477.6 / 7.34 / 3.88 | 1268.5 / 8.11 / 4.25 | 1211.7 / 10.54 / 4.39 | 1197.4 / 15.97 / 6.78 |
+
+The hull by `quetschn-score` is `lz4`, level 1, level 2, level 3 on all four. From level 2 to level 3 a
+µs saves 19.4 to 22.9 bytes per page. Level 3 stores 0.5% and 1.6% less than `zstd` 3 on p3 and the
+23rd September, which puts `zstd` 3 off the hull there, and 1.4% and 1.2% more on p5 and the 24th
+September, where `zstd` 3 follows at 2.1 and 2.3 bytes per µs. Its time per page written is 34% to 37%
+less than `zstd` 3's, and 1.9 to 2.5 µs more than level 2's. The p5 run had one slow boot: `lz4`'s
+swap-out was 6.14 to 6.91 µs over the 3 boots, its same-filled pages 2.53 to 3.18.
 
 **Not kept.** The own table's gate on every 4th literal, slower, and wrong on pages of 32-bit values,
 where every 4th byte is one lane of them; one pass for the histograms' sum and the entropy, no gain; the
