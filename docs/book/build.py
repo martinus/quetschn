@@ -611,6 +611,8 @@ def math_line(line, where):
     parts = CODE_SPAN.split(line)
     for k in range(0, len(parts), 2):
         parts[k] = INLINE_MATH.sub(lambda m: stash_inline(MATH.render(m.group(1), False, where)), parts[k])
+        if re.search(r"(?<!\\)\$", parts[k]):
+            sys.exit(f"{where}: a $ without its pair; a formula has to be on one line, a dollar sign is \\$")
         parts[k] = parts[k].replace("\\$", "$")
     return "".join(parts)
 

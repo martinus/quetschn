@@ -364,8 +364,8 @@ lists the bytes by bucket in `by_gain[]`, within a bucket by byte value. For the
 | `d` | {{own.enc.b.64.freq}} | {{own.enc.b.64.l0}} | {{own.enc.b.64.f2l}} | {{own.enc.b.64.ratio}} | {{own.enc.b.64.gain}} | {{own.enc.b.64.len}} |
 @assert own.enc.b["20"].l0 == 3 and own.enc.b["6c"].l0 == 4 and own.enc.b["6c"].len == 3 and own.enc.b["75"].len == 3 and own.enc.b["6e"].len == 4 and own.enc.b["6e"].gain == own.enc.b["75"].gain and own.enc.changed == 2
 
-For the space, `clz(608) - clz(4005)` is ${{own.enc.clz_space}} - {{own.enc.clz_n}} = 2$, and $608 \cdot 4 <
-4005$ makes it 3. The 13 first lengths, one of 3 bits and 12 of 4, fill {{own.enc.space0}} of the 1024
+For the space, `clz({{own.enc.b.20.freq}}) - clz({{own.enc.n_lit}})` is ${{own.enc.clz_space}} - {{own.enc.clz_n}} = 2$,
+and ${{own.enc.b.20.freq}} \cdot 4 < {{own.enc.n_lit}}$ makes it {{own.enc.b.20.l0}}. The 13 first lengths, one of 3 bits and 12 of 4, fill {{own.enc.space0}} of the 1024
 units of a 10-bit code space: {{own.enc.room0}} are left.
 
 @listing src/seqlz_compress.c 603-626

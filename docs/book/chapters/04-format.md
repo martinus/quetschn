@@ -253,6 +253,13 @@ one whether it has a code, and how long it is:
   no code, a **run**. Symbol 10 is a run of 1 with no bits after it, symbol 15 with the 5 bits `00000`
   a run of 32.
 
+A run goes out as its width in bits, `k`, and the `k - 1` bits below its top bit, which is always 1.
+That is the [Elias gamma code](https://en.wikipedia.org/wiki/Elias_gamma_coding), the same bits as
+the [Exp-Golomb code](https://en.wikipedia.org/wiki/Exponential-Golomb_coding) of order 0 for
+`run - 1`, with one change: those codes write the width as `k - 1` zeros and a 1, `OWN` as a symbol of
+its own, so the widths that occur most get the shortest codes. A run of 32 is `100000`, 6 bits wide:
+Elias gamma writes `00000100000`, 11 bits, `OWN` symbol 15 and `00000`, {{own.len.15}} + 5 bits.
+
 The list ends as soon as the codes fill the code space, when $\sum 2^{-l}$ over the lengths so far
 is exactly 1: the code is then [complete](#ch-compression--complete), and the byte values after the
 last one have no code. The bits after the last symbol, up to the end of its byte, are 0, and `d` is
