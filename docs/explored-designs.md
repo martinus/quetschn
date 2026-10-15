@@ -81,6 +81,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The matcher lazy by one position: 0.9% to 1.4% smaller, writes 7% to 15% slower, a point on the hull](#the-matcher-lazy-by-one-position-09-to-14-smaller-writes-7-to-15-slower-a-point-on-the-hull)
 - [More positions of a match into the matcher's table: up to 1.2% larger, not kept](#more-positions-of-a-match-into-the-matchers-table-up-to-12-larger-not-kept)
 - [The longer match when both candidates hit: 0.03% to 0.06% smaller, not kept](#the-longer-match-when-both-candidates-hit-003-to-006-smaller-not-kept)
+- [A level 3 without a format change: smaller than `zstd` 3 on one of three dumps, as slow to write, not built](#a-level-3-without-a-format-change-smaller-than-zstd-3-on-one-of-three-dumps-as-slow-to-write-not-built)
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
@@ -5619,6 +5620,40 @@ on the first 20 000 pages of p3 and the two desktop samples, bytes per page agai
 1204.9:* margin 0, 895.1, 962.5, 1205.7; margin 2, the best, 894.4, 961.4, 1204.5; margin 8, 894.6,
 961.6, 1204.7. Two more length counts on those positions for 0.03% to 0.06%; the repeated offset is
 nearly always the right one. A local experiment against `src/page_lz.h` of 14th October.
+
+## A level 3 without a format change: smaller than `zstd` 3 on one of three dumps, as slow to write, not built
+
+*Can the compressor alone, with the format as it is, push `zstd` 3 off the hull? Everything here only
+changes how pages are written.* zsmalloc bytes per stored page (the device's `mem_used_total` over the
+measured pages, `quetschn-bench-interleaved --no-timing`) of 20 000 pages of p3 and the desktop dumps of
+23rd and 24th September, `seqlz-fast-lit`:
+
+| | p3 | 23rd Sep | 24th Sep |
+| --- | ---: | ---: | ---: |
+| `zstd` 3 | 1009.8 | 1025.8 | 1222.9 |
+| 14th October | 1051.0 | 1043.4 | 1295.5 |
+| lazy by one position below 20 bytes | 1044.6 | 1030.3 | 1279.0 |
+| lazy after every match | 1037.9 | 1028.0 | 1281.7 |
+| and 8192 hash entries | 1042.9 | 1022.4 | 1269.1 |
+| and coded literals from 24 bytes saved, no n / 16 | 1027.0 | 1017.5 | 1262.6 |
+| a plain matcher, the repeated offset and 1 position per hash | 1026.1 | 1020.8 | 1258.2 |
+| the same with 2 positions per hash | 1028.8 | 1011.9 | 1262.6 |
+| the same with 4 positions per hash | 1024.1 | 1008.3 | 1256.2 |
+
+The plain matcher takes the longest of its candidates, the repeated offset unless another is longer by
+more than 2 bytes, lazy by one position. In compressed bytes on the first 20 000 pages of p3 and the two
+desktop samples, against 858.6, 928.0 and 1169.4 with 4 positions: a hash of 4 bytes 861.5, 930.9,
+1186.7, the extra matches of 4 bytes cost more than their literals; two lazy steps 858.1, 927.5, 1168.9;
+8 positions and 16 384 hash entries 857.5, 927.0, 1168.3; matches at offsets of 12 bits only from 5 to 7
+bytes on, within 0.2% either way. The parse is done: what `zstd` keeps ahead on the dump of 24th
+September is its literal code, adapted to each block, where seqlz has 8 fixed tables.
+
+`quick-bench.sh` on the desktop sample, x86-64 userspace, with `zstd` in the same run: the plain matcher
+with 4 positions writes in 11 740 ns, `zstd` 3 in 11 558, the code of 14th October in 4273; 23.3% of the
+page against `zstd`'s 23.5% there. As slow as `zstd` and smaller on one dump of three: not off the hull.
+A level 3 that gets there needs the format's help with the literals, e.g. a table of the page's own
+([measured on 9th October](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)),
+and a faster matcher than this one. Code: branch `lazy-match`, the compile-time switches of `SEQLZ_L3`.
 
 ## Length values in 5 plain bits again: 0.2 to 0.3% more memory, no read faster, not kept
 
