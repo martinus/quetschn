@@ -176,7 +176,7 @@ x86-64, 20 000 pages of a desktop dump).
 
 @listing src/page_lz.h 76-97
 
-**Greedy.** The matcher takes the first match it finds, extends it and jumps over it. A **lazy**
+**Greedy.** The matcher takes the first match it finds, counts how long it is and jumps over it. A **lazy**
 matcher would check whether a match one byte later is longer, a hash chain would search all earlier
 occurrences. `lz4`'s fast mode is greedy the same way.
 
@@ -294,9 +294,9 @@ commit `996248b`, 3rd October 2026). Reading the next table entry before the sto
 right one with a compare was 9% slower: more instructions.
 :::
 
-## A hit: back, forward, emit {#ch-matcher--hit}
+## A hit: count, emit {#ch-matcher--hit}
 
-@listing src/page_lz.h 152-167
+@listing src/page_lz.h 152-166
 
 When both candidates hit, the repeat offset wins, as its offset costs 0 bits; which gives the longer
 match is not checked. Measured offline on 40 000 zram pages of a desktop, always taking the longer of
@@ -305,16 +305,29 @@ bytes saved 0.5 bytes per page, for a second call of `seqlz_match_len()`
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept),
 "The longer of the two candidates").
 
-The backward extension stops at `anchor`, whose bytes are written already. A match can start before
-the position where it is found because the positions inside a match are not in the table
+The match is counted from `pos` on, the first 4 bytes are checked already. A match can start before
+the position where it is found, because the positions inside a match are not in the table
 ([below](#ch-matcher--insert)) and slots are overwritten: when a later place repeats the inside of an
-earlier match, the matcher finds it only from the one position inserted near that match's end, and
-steps back from there. [The second page below](#ch-matcher--back) shows it. The forward count starts
-4 bytes in, which the compare has checked.
+earlier match, the matcher finds it only from the one position inserted near that match's end.
+[The second page below](#ch-matcher--back) shows it. The bytes before `pos` stay literals; the
+matcher does not step back into them.
+
+::: measured Without a step back: writes 1% to 7% faster, pages up to 0.4% larger
+Until October 2026 the matcher stepped back while the byte before `pos` was the byte before the
+candidate, down to `anchor`. That made 2.4% of the matches longer, by 1 or 2 bytes, 0.03 bytes per
+match. It also stood between choosing the candidate and counting the match, so every match waited
+for two more loads and a compare. On the Mi 9T, zram in its own kernel, 19 775 pages of a phone,
+`seqlz-fast-lit` wrote a page in 11.93 instead of 12.77 µs on the Cortex-A76 and in 33.09 instead
+of 34.10 µs on the A55, reads the same
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-back-writes-66-faster-on-the-a76-and-1-to-2-in-the-vm-kept),
+15th October 2026). In the kernel VM it wrote 1.0% to 2.3% faster on four dumps, at 1.6 bytes less to
+3.7 bytes more per page. `seqlz-fast` loses more, up to 15 bytes per page: a byte outside a match costs
+it a whole byte.
+:::
 
 ## One position of a match goes into the table {#ch-matcher--insert}
 
-@listing src/page_lz.h 168-185
+@listing src/page_lz.h 167-184
 
 The positions inside a match were skipped. One of them, 2 bytes before its end, goes into the table,
 as `lz4`'s fast mode does: data that repeats once tends to repeat again, near the end of the last
@@ -380,7 +393,7 @@ sequence 14 has 2 literals, `00 01`, and a match of 6. The last sequence shows `
 loop stops at {{ch09.ptr.seq.510.at}}, and the last pointer's 8 bytes become literals, where one
 literal and a match of 7 would have done.
 
-**A match found late and extended backwards.** A page of random bytes `R`, bits 16 to 23 of the C
+**A match found late.** A page of random bytes `R`, bits 16 to 23 of the C
 library's classic linear congruential generator from seed 12345, with bytes 0 to 63 copied to 64 to
 127, and the 14 bytes at 124 to 137 copied to 398 to 411. The matcher finds the copy at 64 at once, a
 match of {{ch09.rnd.first.ml}} bytes at offset {{ch09.rnd.first.off}}, and inserts position
@@ -395,11 +408,11 @@ match of {{ch09.rnd.first.ml}} bytes at offset {{ch09.rnd.first.off}}, and inser
 
 398 and 399 miss: their 5 bytes were last at 124 and 125, inside the match, and slot
 {{ch09.rnd.399.h}} even holds {{ch09.rnd.399.cand}}, a collision. Position 400 has the bytes of 126,
-the one position inserted, and hits. Then the match steps back to 398, where `src[397]` is
-`{{ch09.rnd.b397}}` and `src[123]` is not, and `seqlz_find()` returns {{ch09.rnd.seq.ll}} literals and
-a match of {{ch09.rnd.seq.ml}} at offset {{ch09.rnd.seq.off}}, starting at {{ch09.rnd.seq.at}}.
-Without the backward extension 2 more bytes would be literals.
-@assert ch09.rnd.seq.at == 398 and ch09.rnd.seq.ml == 14 and ch09.rnd.b397 != ch09.rnd.b123
+the one position inserted, and hits. `seqlz_find()` returns {{ch09.rnd.seq.ll}} literals, 398 and
+399 among them, and a match of {{ch09.rnd.seq.ml}} at offset {{ch09.rnd.seq.off}}, starting at
+{{ch09.rnd.seq.at}}. The copy started 2 bytes earlier, and those 2 bytes are literals: the matcher
+does not step back, [above](#ch-matcher--hit) says why.
+@assert ch09.rnd.seq.at == 400 and ch09.rnd.seq.ml == 12
 
 ::: try The sequences of the page of pointers
 In the repository, save this as `find.c` and build it with `gcc -O2 -Isrc -o find find.c

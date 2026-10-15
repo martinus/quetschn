@@ -82,9 +82,9 @@ the literals up from `dst + 2` ([chapter 10](#ch-encoder--layout)), and runs `se
 {{ch16.hash_entries}} entries of hash table and starts at position 1.
 
 Up to position 13 nothing matches: neither the repeat offset 1 nor the hash table's candidate, at first
-position 0, `"TASK"`. At position {{ch16.s.0.ll}} the repeat offset hits on zeros. Byte 12 is
-`{{ch16.byte12_hex}}`, the low byte of the record size, so the match does not extend backward, and the
-zeros reach byte {{ch16.e0.zeros_to}}. The first sequence is {{ch16.s.0.ll}} literals (`TASKSLAB`,
+position 0, `"TASK"`. Byte 12 is `{{ch16.byte12_hex}}`, the low byte of the record size, so at 13 the
+repeat offset misses: the 4 bytes one before start with it. At position {{ch16.s.0.ll}} it hits on
+zeros, and the zeros reach byte {{ch16.e0.zeros_to}}. The first sequence is {{ch16.s.0.ll}} literals (`TASKSLAB`,
 `30 00 00 00`, `20 00`) and a match of {{ch16.s.0.ml}} bytes at offset {{ch16.s.0.off}}.
 @assert ch16.s[0].ll == 14 and ch16.s[0].off == 1 and ch16.byte12 == 32
 
@@ -200,7 +200,7 @@ Table {{ch16.lt.set}} wins, at {{ch16.lt.per_lit}} bits per literal. The text's 
 random, and table {{ch16.lt.set}} gives every byte above `0x7f` 10 bits. The 8 streams take
 {{ch16.lt.sizes}} bytes, {{ch16.lt.bytes}} together, and the OR of the sizes with {{ch16.lt.or_min}}
 needs {{ch16.lt.width}} bits, a header of {{ch16.lt.header}} bytes.
-@assert ch16.lit0.high_all10 == 1 and ch16.lt.n_more == 2 and ch16.lt.width == 7
+@assert ch16.lit0.high_all10 == 1 and ch16.lt.n_more == 3 and ch16.lt.width == 7
 
 The rule `coded + {{ch11.coded_min}} < n - n / 16` is `{{ch16.lt.rule_l}} < {{ch16.lt.rule_r}}`, so the
 literals get coded. The page without the text would not: its {{ch16.nt.lits}} literals take
@@ -295,11 +295,11 @@ top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `decode_lit
 ([chapter 13](#ch-literals-dec)) reads table {{ch16.lt.set}} and width {{ch16.lt.width}} from byte 2,
 prefetches the literal table, and reads the sizes, {{ch16.lt.sizes_sp}}. {{ch16.lits}} literals are
 {{ch16.d.rounds}} full rounds of 40 and a rest of {{ch16.d.rest}}: {{ch16.d.steps}} steps of all 8 streams
-and one in which streams 0 and {{ch16.d.r_last}} take their literal, while streams
+and one in which streams 0 to {{ch16.d.r_last}} take their literal, while streams
 {{ch16.d.first_quiet}} to 7 decode one into `scratch[{{ch16.d.extra_lo}}]` to
 `scratch[{{ch16.d.extra_hi}}]` and do not move on. All 8 streams end in their last byte with zero bits
 after their codes, and the bitstream starts at byte {{ch16.lt.end}}.
-@assert ch16.d.r == 2 and ch14.pf.token == 129
+@assert ch16.d.r == 3 and ch14.pf.token == 129
 
 ## The loop over the sequences {#ch-trace--loop}
 

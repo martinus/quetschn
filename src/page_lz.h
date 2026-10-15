@@ -151,13 +151,12 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 		}
 		m = rep_hit ? pos - last : cand;
 		/*
-		 * The match may have started before pos: extend it backwards
-		 * into the literals, then count how far it goes forwards.
+		 * The match may have started a byte or two before pos. It is not
+		 * extended backwards into the literals: that step stood between
+		 * choosing the candidate and counting the match, and every match
+		 * waited for it. Few matches gain from it, and the cores measured
+		 * lost more time than their bytes were worth.
 		 */
-		while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {
-			pos--;
-			m--;
-		}
 		len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,
 					   src + SEQLZ_PAGE);
 		last = pos - m;

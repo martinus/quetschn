@@ -100,6 +100,7 @@ e.g. `explore/bytelz.c` or `spike/`. It is in git history before `57fb8fb`, the 
 - [The matcher without its step: writes 1% to 3% faster, kept](#the-matcher-without-its-step-writes-1-to-3-faster-kept)
 - [The matcher without its step against the other codecs: 0.02 to 0.05 us per page less](#the-matcher-without-its-step-against-the-other-codecs-002-to-005-us-per-page-less)
 - [The matcher on an in-order core: 3.4% fewer compress cycles on the A55, same output, kept](#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)
+- [The matcher without its step back: writes 6.6% faster on the A76 and 1% to 2% in the VM, kept](#the-matcher-without-its-step-back-writes-66-faster-on-the-a76-and-1-to-2-in-the-vm-kept)
 - [The matcher's table with the bytes, its loop in assembly on arm64: 9% fewer compress cycles on the A55, not kept](#the-matchers-table-with-the-bytes-its-loop-in-assembly-on-arm64-9-fewer-compress-cycles-on-the-a55-not-kept)
 - [The compressor into a buffer of any size: the bitstream from the back, the same bytes in zram, writes 2% faster in the VM, kept](#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept)
 - [Coded literals from the matcher's table: a buffer of one page costs 0.1% to 0.5% instead of 1.6% to 2.9%, kept](#coded-literals-from-the-matchers-table-a-buffer-of-one-page-costs-01-to-05-instead-of-16-to-29-kept)
@@ -1580,6 +1581,82 @@ after the store, 9% more cycles, from more instructions; `count()` with 16 bytes
 most matches end in its first 16 bytes. Two that change the output, measured for later: `lz4`'s growing
 step without a match, 2.4% fewer cycles for 2.4 bytes more per page, and a hash of 4 bytes with a 32
 bit multiply, 2.3% fewer cycles for 1.9% more memory.
+
+## The matcher without its step back: writes 6.6% faster on the A76 and 1% to 2% in the VM, kept
+
+*In `src/page_lz.h`, `seqlz_match_page()`.* After a hit the matcher no longer steps back while the
+byte before `pos` is the byte before the candidate. On the Mi 9T's Cortex-A76, zram in its own kernel,
+`seqlz-fast-lit` writes a page 0.8 µs faster, 6.6%, and 3% on the A55; in the kernel VM 1.0% to 2.3%.
+Pages get between 1.6 bytes smaller and 3.7 bytes larger, reads stay the same. `seqlz-fast`, with raw
+literals, loses more: up to 15 bytes per page, 1.3%, because a byte that is not in a match costs it a
+whole byte.
+
+**Why it was measured.** A profile of the write on the A76 (`simpleperf` in userspace, below): a
+sequence costs about 59 cycles, 62% of a page, and a literal 6.7. The step back extends 2.4% of the
+matches, by 1 or 2 bytes, 0.03 bytes per match on average. But it stands between choosing the
+candidate and counting the match: `seqlz_match_len()` loads at `pos` and `m`, which the step can move,
+so every match waits for two more loads and a compare. A step of at most 1 byte, as a select without a
+loop, was as slow as the loop: the branch was not the cost, the wait was.
+
+**Phone**, the Mi 9T, zram in its own kernel, `tools/zram-phone/run.sh` with `BUS=1`, the 19 775 pages
+of p3, the dump the tables did not see, NDK r21e's clang 9 with the module's flags, two runs of 3 rounds
+each, means in µs:
+
+| | A76 write | A76 warm / cold read | A55 write | A55 warm / cold read |
+| --- | --- | --- | --- | --- |
+| `seqlz-fast-lit`, `main` | 12.77, 12.77 | 4.57 / 7.60, 4.50 / 7.85 | 33.99, 34.10 | 12.84 / 32.28, 12.94 / 32.26 |
+| without the step back | 11.95, 11.93 | 4.59 / 8.49, 4.61 / 8.30 | 33.14, 33.09 | 12.89 / 32.43, 12.94 / 32.20 |
+
+The decoder is the same code in both. Its cold reads on the A76 moved between 7.57 and 8.44 µs for
+`main` alone in four runs that day, the placement of the code, see
+[Less noise on the phone](#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed).
+
+**Kernel VM**, `tools/zram-vm/run.sh MODE=swap BOOTS=3`, Ryzen 9 7950X at 4.5 GHz, gcc 16.2.1, the
+20 000-page samples, `main` as a variant in the same boots, means of 3 boots, bytes per page / write /
+cold read in µs; boots of a codec differ by at most 0.13 µs:
+
+| dump | `seqlz-fast-lit`, `main` | without the step back | `seqlz-fast`, `main` | without the step back |
+| --- | --- | --- | --- | --- |
+| p3 | 1039.1 / 6.75 / 3.84 | 1037.5 / 6.63 / 3.84 | 1109.8 / 6.24 / 3.53 | 1114.7 / 6.09 / 3.52 |
+| p5 | 995.1 / 6.79 / 3.80 | 998.8 / 6.72 / 3.79 | 1050.0 / 6.30 / 3.56 | 1063.3 / 6.15 / 3.56 |
+| 23rd September | 1029.7 / 7.32 / 3.92 | 1033.0 / 7.15 / 3.91 | 1118.4 / 6.79 / 3.70 | 1119.0 / 6.64 / 3.71 |
+| 24th September | 1268.5 / 8.10 / 4.21 | 1268.5 / 8.01 / 4.22 | 1462.2 / 7.36 / 3.86 | 1477.6 / 7.13 / 3.85 |
+
+With `r = 0.34`, `seqlz-fast-lit` without the step back is smaller and faster on p3, as small and
+faster on the dump of 24th September, and has the lower score below 53 and 19 bytes per µs on p5 and
+the dump of 23rd September. `seqlz-fast` trades 0.15 to 0.23 µs for 0.6 to 15.4 bytes, the lower
+score below 4 to 89 bytes per µs. Above those rates `main` keeps the lower score.
+
+**Userspace on the A76**, a static benchmark of `src/` with the module's compiler and flags, cpu7 at
+2208 MHz, 5000 pages of p3, `simpleperf stat` per page written:
+
+| | cycles | instructions | branch misses |
+| --- | --- | --- | --- |
+| `main` | 16 169 | 35 402 | 218 |
+| without the step back | 14 503 | 32 422 | 182 |
+
+A fit of the cycles of 4000 pages to their sequences and literals ($R^2$ 0.996) gives 58.5 cycles per
+sequence for `main` and 52.3 without the step back. Of those 52, encoding the token, offset and
+lengths takes about 10, the literals' copy below 1, and the rest is the matcher: the miss of the branch
+that leaves the loop over positions without a match, and the loads after it.
+
+**Also measured on the A76, not kept.** Userspace as above, write time against `main`'s 9876 ns,
+bytes per page from the compressed lengths of p3 (`main` 843.5):
+
+| variant | write | bytes | why not |
+| --- | --- | --- | --- |
+| one byte back at most, a select | +0.6% | 844.0 | the wait stays |
+| every second position looked up, both inserted | -0.9% | 856.0 | reads 4.9% slower |
+| `lz4`'s growing step after 16 / 64 misses | +4.4% / +6.4% | 848.8 / 844.3 | more state in the loop, as in [The matcher without its step](#the-matcher-without-its-step-writes-1-to-3-faster-kept) |
+| no repeated offset in the loop without a match | -11.2% | 880.9 | 4.4% larger |
+| a table of 2048 slots, on top of no step back | -0.8% | 848.4 | 2.1 bytes for 0.8% |
+| no insert after a match, on top of no step back and the pointer below | -0.8% | 862.1 | 1.9% larger |
+| two positions per step, chosen with selects | -4.7% | 846.3 | slower than no step back alone, -8.9% |
+| the loop without a match written twice, the bound check in its branch | +3.3% on top | 846.3 | clang 9 splits the branch again |
+| the position as a pointer instead of an index | -1.3% on top | 846.3 | small, and depends on the compiler |
+
+NDK r30's clang 21 instead of clang 9 writes 2.2% faster and reads 5% faster by itself; the gain of no
+step back is the same with both.
 
 ## Memory for speed on the phone: no trade worth it, not kept
 

@@ -423,6 +423,35 @@ TEST_CASE("seqlz: the matcher finds a repeat with its whole length") {
     }
 }
 
+TEST_CASE("seqlz: the matcher does not step back into the literals") {
+    // The page of the book's chapter 9: random bytes, bytes 0 to 63 again at 64, and 124 to 137 again at
+    // 398. Of the match at 64 only position 126 goes into the table, so the copy at 398 is found at 400,
+    // and the match starts there: 398 and 399 stay literals, although they repeat 124 and 125.
+    auto page = std::vector<unsigned char>(page_size);
+    auto seed = 12345U;
+    for (auto& b : page) {
+        seed = seed * 1103515245U + 12345U;
+        b = static_cast<unsigned char>(seed >> 16);
+    }
+    std::copy_n(page.begin(), 64, page.begin() + 64);
+    std::copy_n(page.begin() + 124, 14, page.begin() + 398);
+    auto state = std::make_unique<seqlz_state>();
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    auto const n = seqlz_find(state.get(), page.data(), seq.data());
+    auto found = false;
+    for (unsigned k = 0, pos = 0; k + 1 < n; ++k) {
+        pos += seq[k].literals;
+        if (pos <= 400 && 400 < pos + seq[k].match) {
+            CHECK(pos == 400);
+            CHECK(seq[k].match == 12);
+            CHECK(seq[k].offset == 400 - 126);
+            found = true;
+        }
+        pos += seq[k].match;
+    }
+    CHECK(found);
+}
+
 TEST_CASE("seqlz: the matcher never takes a position of an earlier page") {
     // The state is shared over the pages, as zram has one per CPU. Page b repeats nothing of its own,
     // only 8 bytes of page a, so it has no match.
