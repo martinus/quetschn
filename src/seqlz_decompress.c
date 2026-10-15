@@ -349,7 +349,7 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
 /* the most bits one step of own_table() takes: a run's code and 8 bits more */
 #define OWN_STEP_MAX (2U * SEQLZ_OWN_CODE_BITS)
 static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
-	       sizeof(u16) << SEQLZ_LIT_BITS <= SEQLZ_PAGE),
+	       (sizeof(u16) << SEQLZ_LIT_BITS) + 1U <= SEQLZ_PAGE),
 	      "own_table()'s buckets fit the scratch, its table the page");
 
 /*
@@ -496,11 +496,16 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN || n_lit > SEQLZ_PAGE)
 		return NULL;
 	if ((s[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN) {
-		/* the page's own table, built in the page itself */
-		q = own_table(&t->own, q, end, (u16 *)page, out);
+		/*
+		 * the page's own table, built in the page itself, from an even
+		 * address: the caller's page may start at an odd one
+		 */
+		u16 *own = (u16 *)(page + ((unsigned long)page & 1U));
+
+		q = own_table(&t->own, q, end, own, out);
 		if (!q)
 			return NULL;
-		lt = (const u16 *)page;
+		lt = own;
 	} else {
 		lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
 		prefetch_lines(lt, sizeof(t->lit[0].decode));

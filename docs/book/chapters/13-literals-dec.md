@@ -194,8 +194,8 @@ way, and takes neither from the work memory the project counts per CPU.
 The decode table goes into the output page, `dst`: nothing writes the page before all literals are
 decoded into the scratch, and then the table is no longer needed. The buckets, one row of 256 bytes
 for each code length 1 to 10 and one row for "none", go into the scratch, which the literals overwrite
-once the table is built. The `static_assert` checks that both fit, {{own.dt.bytes|grp}} bytes in a page
-and {{own.dt.bucket_bytes|grp}} in the scratch. `OWN_STEP_MAX` is the most bits one step can take, 16,
+once the table is built. The `static_assert` checks that both fit, {{own.dt.bytes|grp}} bytes in a page,
+and one more for a page at an odd address, and {{own.dt.bucket_bytes|grp}} in the scratch. `OWN_STEP_MAX` is the most bits one step can take, 16,
 a run's code of up to 8 bits and its up to 8 bits more.
 @assert own.dec.step_max == 16 and own.dt.bytes == 2048 and own.dt.bucket_bytes == 3072
 
@@ -337,12 +337,14 @@ registers like any variable. Until 10th October 2026 they were 8 variables each,
 the noise of code placement in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
 
-@listing src/seqlz_decompress.c 494-514
+@listing src/seqlz_decompress.c 494-519
 
 Bit 7 of byte 2 and the codes 9 to 15 are reserved: a decoder that accepted them now could not tell
 old pages from new ones later. `n_lit` must fit the scratch. Code 8 builds the page's own table
 ([above](#ch-literals-dec--own)) into `page`, the output page that `seqlz_decode()` passes down for
-this, and moves `q`, the start of the streams, behind the table's description. The codes 0 to 7 are a
+this, from its first even address: the table is read as `u16`, and a caller may decode into a page at
+an odd address, which zram does not, but a test does. Then `q`, the start of the streams, moves behind
+the table's description. The codes 0 to 7 are a
 fixed table; `& (SEQLZ_LIT_SETS - 1U)` changes none of them and keeps the index inside `t->lit[]`
 whatever the value. The prefetch of the 2 KiB table goes out before the sizes are read, so its misses
 overlap with that work; the table never starts a line, so it covers {{ch13.lt.lines}} lines, the last
@@ -355,7 +357,7 @@ business.
 
 ### Full rounds: 8 streams, 5 literals each
 
-@listing src/seqlz_decompress.c 515-529
+@listing src/seqlz_decompress.c 520-534
 
 Stream `i` in step `j` of the round at `k` holds literal `k + 8 * j + i`, so the scratch gets the literals
 in page order with no shuffle. The loops have constant bounds, and the compiler unrolls them into 8
@@ -365,7 +367,7 @@ refills and 40 lookups, where each `b[i]` depends only on the `b[i]` before it: 
 
 ### The rest: the same steps for all 8 streams
 
-@listing src/seqlz_decompress.c 530-557
+@listing src/seqlz_decompress.c 535-562
 
 After one more refill, at most `steps + 1 <= 5` codes follow. In the last step,
 `(0U - (r > i)) & 63U` is 63 for the `r` streams that have a literal left and 0 for the others, which

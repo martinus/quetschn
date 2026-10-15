@@ -76,11 +76,14 @@ else
         mkdir -p "$d"
         cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$d/"
         cp "$dir/src/"seqlz*.c "$dir/src/"*.h "$dir/src/"*_4k.inc "$d/"
+        # backend_seqlz.c passes a level; a src/ from before the levels took a bool there, and would
+        # build and code the literals at every level
+        grep -q "define SEQLZ_LEVELS" "$d/seqlz.h" || { echo "variant $name: $dir/src has no levels, it is older than this run.sh" >&2; exit 1; }
         sed -i "s/^#define SZ_NAME \"seqlz-\"$/#define SZ_NAME \"$name-\"/" "$d/backend_seqlz.c"
         grep -q "^#define SZ_NAME \"$name-\"$" "$d/backend_seqlz.c" || { echo "variant $name: no backend name" >&2; exit 1; }
         # the global symbols of this build, renamed so that the builds do not clash
         for s in seqlz_compress seqlz_decode seqlz_tables_init seqlz_tables_size seqlz_all_symbols seqlz_find \
-            seqlz_encode seqlz_default_own seqlz_lit_sets $(printf 'backend_seqlz_%s ' $levels); do
+            seqlz_encode seqlz_default_own seqlz_lit_sets seqlz_own_lengths $(printf 'backend_seqlz_%s ' $levels); do
             echo "#define $s ${s}_v_$name"
         done >"$d/rename.h"
         objs="v_$name/backend_seqlz.o $(codec_objs "$d" | sed "s#\([^ ][^ ]*\)#v_$name/\1#g")"

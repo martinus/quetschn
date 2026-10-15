@@ -453,7 +453,7 @@ ${{tok.len.2098}} + 5 = {{ch07.tok.2098.DROP}}$, `LL` {{ch07.tok.2098.LL}}, `ML`
 {{ch07.tok.2098.ML}}. The decoder uses it on these lines of `seqlz_decode()`
 ([chapter 14](#ch-decode)):
 
-@listing src/seqlz_decompress.c 747-751
+@listing src/seqlz_decompress.c 752-756
 
 Say the register holds the code, then `{{ch07.reg_raw_bits}}`, then whatever follows:
 `{{ch07.reg}}`, the first bit of the stream as bit 63. The top 11 bits are `{{ch07.reg_index_bits}}`,
@@ -490,7 +490,7 @@ The escape's {{tok.len.3072}}-bit code `{{tok.code.3072}}` fills the indices {{c
 to {{ch07.tok.3072.last}} with `1U << 31 | {{tok.len.3072}} << 14 = {{ch07.tok.3072.entry}}`, the
 lower row of the diagram. The decoder handles it before everything else:
 
-@listing src/seqlz_decompress.c 729-741
+@listing src/seqlz_decompress.c 734-746
 
 Token 1797, 5 literals and a match of 20 at a class 3 offset, has no code. The encoder writes the
 escape's `{{tok.code.3072}}`, 1797 in 12 bits, `{{ch07.esc1797.bits}}`, and then the offset, say 1000,

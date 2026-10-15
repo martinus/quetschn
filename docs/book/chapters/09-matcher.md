@@ -152,7 +152,7 @@ the matcher only reads, the decoder has to care ([chapter 14](#ch-decode)).
 
 ## The callback costs no call {#ch-matcher--emit}
 
-@listing src/page_lz.h 110-115
+@listing src/page_lz.h 112-117
 
 A call through `emit_fn` once per sequence would be an indirect call, and the matcher would have to
 keep its state in memory across it. It does not happen: `seqlz_match_page()` is `__always_inline`, and
@@ -177,7 +177,7 @@ x86-64, 20 000 pages of a desktop dump).
 
 ## Greedy, two candidates, every position {#ch-matcher--plan}
 
-@listing src/page_lz.h 117-144
+@listing src/page_lz.h 119-146
 
 **Greedy.** At levels 1 and 2 the matcher takes the first match it finds, counts how long it is and
 jumps over it. A **lazy** matcher checks whether a match one byte later is longer, a hash chain
@@ -223,7 +223,7 @@ the writes gained 0.05 µs.
 
 ## The state of the loop, and why reading a candidate is always safe {#ch-matcher--state}
 
-@listing src/page_lz.h 145-172
+@listing src/page_lz.h 147-174
 
 `limit` is {{ch09.limit}}, a constant the compiler puts into the compare, and positions instead of
 pointers took 21 916 to 21 786 cycles per page
@@ -262,7 +262,7 @@ safe the same way: `last` and `pos` start at 1, after a match `last` is at most 
 
 ## One position: two candidates, one branch {#ch-matcher--position}
 
-@listing src/page_lz.h 174-199
+@listing src/page_lz.h 176-201
 
 This is the path taken most: on the phone's pages a run without a match is 4 positions long on average
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept)).
@@ -305,7 +305,7 @@ right one with a compare was 9% slower: more instructions.
 
 ## A hit: count, emit {#ch-matcher--hit}
 
-@listing src/page_lz.h 200-206
+@listing src/page_lz.h 202-208
 
 When both candidates hit, the repeat offset wins, as its offset costs 0 bits; which gives the longer
 match is not checked. Measured offline on 40 000 zram pages of a desktop, always taking the longer of
@@ -335,7 +335,7 @@ it a whole byte.
 
 ## Level 3: one position later, and backwards {#ch-matcher--lazy}
 
-@listing src/page_lz.h 207-217
+@listing src/page_lz.h 209-219
 
 At levels 1 and 2 `lazy` is a constant `false` in the inlined loop, and these lines are not compiled
 in. At level 3 a match found at `pos` gets two more chances to grow. If it is shorter than
@@ -347,13 +347,15 @@ the sequence before, whose match ended at `anchor`, and `m > 0` keeps `src[m - 1
 
 @listing src/page_lz.h 69-73
 
-@listing src/page_lz.h 75-108
+@listing src/page_lz.h 75-110
 
 `seqlz_lazy()` comes before the matcher in the file and is explained here, where it is called. It
 needs no new load of the next position: `v_next` and `h_next`, its 8 bytes and their hash, are what
 the loop loaded one position ahead ([below](#ch-matcher--position)). It tries the same two candidates
 as the loop, the repeat offset `last`, still the offset of the match before, and the table's entry for
-`h_next`; each must match 4 bytes before it is counted, as in the loop. Only a strictly longer match
+`h_next`; each must match 4 bytes before it is counted, as in the loop. The repeat offset is skipped
+where the match at `pos` has it already: the match at `pos + 1` at that offset is the same one, a
+byte shorter, and never longer. Only a strictly longer match
 wins: at the same length the match at `pos` has one literal fewer. A winner moves `pos` on by one and
 stores it in the table, as the loop would have done at that position. Both candidates are always in the
 page before `pos + 1`, for the reasons the loop's are ([above](#ch-matcher--state)). Here a branch per
@@ -395,7 +397,7 @@ October 2026
 
 ## One position of a match goes into the table {#ch-matcher--insert}
 
-@listing src/page_lz.h 218-240
+@listing src/page_lz.h 220-242
 
 `last` and `back` become the new repeat offset, and the sequence goes to `emit`, the encoder in the
 compressor. The positions inside a match were skipped. One of them, 2 bytes before its end, goes into the table,

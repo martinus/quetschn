@@ -73,20 +73,20 @@ on such a page is the kernel's part. `KARGS` adds to the kernel command line, an
 clang, as Android does. `run.sh` works on trees with zram's contexts split into compression and
 decompression (`tools/kernel-port/zcomp-split.sh` makes one from `mm-unstable`), and on trees whose zram
 reads the compressed data through a scatterlist, with `zram-prefetch-sg.patch`. `VARIANTS` puts more builds of
-seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>` and
-`<name>-lit`: variants of the codec are compared in one boot, taking turns, which a kernel per variant
-cannot do. At most 8 codecs fit into one boot, `run.sh` refuses more. 7 codecs, 3 boots and 20 000 pages take
+seqlz into the same kernel, from another checkout's `src/` or with other flags, as backends `<name>-1`
+to `<name>-3`, one per level: variants of the codec are compared in one boot, taking turns, which a kernel
+per variant cannot do. A `src/` from before the levels is refused. At most 8 codecs fit into one boot, `run.sh` refuses more. 7 codecs, 3 boots and 20 000 pages take
 about 5 minutes per kernel. `PORT=1` builds the kernel copy as
 `tools/kernel-port/port.py` writes it instead of `src/` with the VM's backend, `ALGOS=lz4,seqlz:2`:
 the code the kernel would get, with its tables in one global; it is what to measure a change of
 `port.py` or of `static` and inlining with.
 
 ```sh
-ALGOS=lz4,lzo-rle,zstd,seqlz-lit tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
-VARIANTS="o2=.:-O2 same=." ALGOS=seqlz,seqlz-lit,o2,o2-lit,same,same-lit BOOTS=3 MODE=swap \
+ALGOS=lz4,lzo-rle,zstd,seqlz-2 tools/zram-vm/run.sh <linux tree> corpus/first >reads.log
+VARIANTS="o2=.:-O2 same=." ALGOS=seqlz-1,seqlz-2,o2-1,o2-2,same-1,same-2 BOOTS=3 MODE=swap \
     tools/zram-vm/run.sh <linux tree> corpus/first >variants.log
-tools/zram-vm/variants.py variants.log    # each variant against seqlz or seqlz-lit, in us and %
-KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-lit \
+tools/zram-vm/variants.py variants.log    # each variant <name>-<level> against seqlz-<level>, in us and %
+KARGS=zram.zram_prefetch=8 MODE=swap ALGOS=lz4,lzo-rle,zstd,seqlz-2 \
     tools/zram-vm/run.sh <linux tree> corpus/first >swap.log
 ```
 
@@ -225,7 +225,7 @@ For zram in the phone's own kernel, `tools/zram-phone/` builds the codec as a mo
 Linux 4.14 and runs `zramphone` on it, each codec alone in its own process, in turns:
 
 ```sh
-tools/zram-phone/build.sh a <src copy A> out/a     # out/a/quetschn_a.ko: seqlz-a and seqlz-a-lit
+tools/zram-phone/build.sh a <src copy A> out/a     # out/a/quetschn_a.ko: seqlz-a-1 to seqlz-a-3
 tools/zram-phone/build.sh b <src copy B> out/b
 BUS=1 tools/zram-phone/run.sh corpus/phone.pages out/run out/a/quetschn_a.ko out/b/quetschn_b.ko
 ```

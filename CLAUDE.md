@@ -181,7 +181,7 @@ Commands: `docs/measuring.md`.
   excludes 0. One VM boot can be off by 18%.
 - Judges between codecs: kernel VM and the phone's kernel. Userspace = trying out.
 - A/B of a branch in the VM: from the branch's worktree, `VARIANTS="main=<worktree of main> same=."
-  ALGOS=lz4,seqlz,seqlz-lit,main,main-lit,same,same-lit BOOTS=3 MODE=swap tools/zram-vm/run.sh`, then
+  ALGOS=lz4,seqlz-1,seqlz-2,main-1,main-2,same-1,same-2 BOOTS=3 MODE=swap tools/zram-vm/run.sh`, then
   `tools/zram-vm/variants.py <log>`; `same` = control copy, a difference inside its spread is noise.
 - Two sizes: summed compressed bytes per page (a page stored raw = 4096) are not zsmalloc memory;
   zsmalloc memory = mean of column `cost` of quick-bench's `<out>/sizes/<codec>.tsv`. Offline layout

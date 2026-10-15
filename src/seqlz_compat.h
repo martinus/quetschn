@@ -4,7 +4,7 @@
 
 /*
  * The kernel's names for what the codec needs: types, attributes, unaligned
- * access, min(), sizeof_field(), static_assert(), prefetch() and
+ * access, min(), div_u64(), sizeof_field(), static_assert(), prefetch() and
  * L1_CACHE_BYTES. In a kernel build they come from the kernel's headers.
  * Everywhere else (the tests, the benchmarks, the fuzzers and the tools) the
  * same names are defined here, from the compiler's freestanding headers, as
@@ -18,6 +18,7 @@
 #include <linux/cache.h>
 #include <linux/compiler.h>
 #include <linux/errno.h>
+#include <linux/math64.h>
 /* min(), in linux/kernel.h before 5.10 */
 #if __has_include(<linux/minmax.h>)
 #include <linux/minmax.h>
@@ -120,6 +121,15 @@ static __always_inline void prefetch(const void *p)
 static inline unsigned int min(unsigned int a, unsigned int b)
 {
 	return a < b ? a : b;
+}
+
+/*
+ * A u64 divided by a u32: a function of its own in the kernel, because 32-bit
+ * CPUs have no such division and the kernel has no library call for it
+ */
+static inline u64 div_u64(u64 dividend, u32 divisor)
+{
+	return dividend / divisor;
 }
 
 /*

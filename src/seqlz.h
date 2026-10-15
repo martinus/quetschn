@@ -451,7 +451,7 @@ struct seqlz_state {
  * For tests and tools. The last sequence has no match; the literals are the
  * bytes of the page no match covers.
  *
- * Return: the number of sequences.
+ * Return: the number of sequences, or 0 if @level is not one.
  */
 unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 			struct seqlz_sequence *seq, unsigned int level);

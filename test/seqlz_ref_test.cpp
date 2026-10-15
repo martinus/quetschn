@@ -280,7 +280,7 @@ TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike
     auto rng = std::mt19937_64(43);
     for (int round = 0; round < 1000; ++round) {
         CAPTURE(round);
-        auto const page = compress(t.get(), make_page(rng, round), 1U + round % 3U);
+        auto const page = compress(t.get(), make_page(rng, round), 1U + static_cast<unsigned>(round) % 3U);
         // each damage on its own copy of the page
         auto c = page;
         for (int f = 0; f < 1 + round % 3; ++f) { // bits flipped
@@ -356,7 +356,7 @@ TEST_CASE("seqlz_ref: a page ends where its bits end, the rest of the last byte 
     // the compressor's pages, raw and coded, with one byte more, of either value
     auto rng = std::mt19937_64(126);
     for (int round = 0; round < 20; ++round) {
-        auto const c = compress(t.get(), make_page(rng, round % 6), 1U + round % 3U);
+        auto const c = compress(t.get(), make_page(rng, round % 6), 1U + static_cast<unsigned>(round) % 3U);
         REQUIRE(!check_same(t.get(), r.get(), c).empty());
         for (unsigned char const extra : {static_cast<unsigned char>(0x00), static_cast<unsigned char>(0xff)}) {
             auto bad = c;
@@ -491,7 +491,7 @@ TEST_CASE("seqlz_ref: pages with a literal table of their own, and tables invali
     auto const t = fast_tables();
     auto const r = make_ref();
     auto out = std::vector<unsigned char>(SEQLZ_PAGE);
-    for (auto const [x, y] : {std::pair{3U, 5U}, std::pair{97U, 98U}, std::pair{0U, 255U}}) {
+    for (auto const& [x, y] : {std::pair{3U, 5U}, std::pair{97U, 98U}, std::pair{0U, 255U}}) {
         CAPTURE(x);
         // x gets code 0, y code 1
         auto code = seqlz_ref_code{};

@@ -76,7 +76,9 @@ static inline unsigned int seqlz_match_len(const u8 *p, const u8 *q,
  * Level 3's look at the next position, for a match of len bytes at *pos from
  * *m: a longer match at *pos + 1, at the repeated offset last or at the hash
  * table's entry for the 8 bytes v there, whose hash is h, replaces it, and
- * *pos + 1 goes into the table. Returns the length of the match taken.
+ * *pos + 1 goes into the table. Returns the length of the match taken. Where
+ * the match is at the repeated offset already, the one at *pos + 1 is the same
+ * match one byte shorter, and is not counted.
  */
 static __always_inline unsigned int
 seqlz_lazy(u16 *table, const u8 *src, unsigned int *pos, unsigned int *m,
@@ -86,7 +88,7 @@ seqlz_lazy(u16 *table, const u8 *src, unsigned int *pos, unsigned int *m,
 	const unsigned int cand = table[h];
 	unsigned int best = len, l;
 
-	if (get_unaligned_le32(next - last) == (u32)v) {
+	if (*pos - *m != last && get_unaligned_le32(next - last) == (u32)v) {
 		l = 4U + seqlz_match_len(next + 4, next - last + 4, end);
 		if (l > best) {
 			best = l;

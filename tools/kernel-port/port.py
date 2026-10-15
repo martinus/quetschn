@@ -373,7 +373,8 @@ def port_internal():
 INCLUDES = {
     "codes": ["linux/build_bug.h", "linux/errno.h", "linux/init.h", "linux/module.h", "linux/seqlz.h",
               "linux/string.h"],
-    "compress": ["linux/errno.h", "linux/export.h", "linux/seqlz.h", "linux/string.h", "linux/unaligned.h"],
+    "compress": ["linux/errno.h", "linux/export.h", "linux/math64.h", "linux/seqlz.h", "linux/string.h",
+                 "linux/unaligned.h"],
     "decompress": ["linux/cache.h", "linux/errno.h", "linux/export.h", "linux/prefetch.h", "linux/seqlz.h",
                    "linux/unaligned.h"],
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """seqlz-2 against zstd at every level: memory against time, from logs of tools/zram-vm/run.sh with
-MODE=swap and zstd's levels as zram's algorithm_params, e.g. ALGOS=lz4,seqlz-lit,zstd:-1,zstd:3.
+MODE=swap and zstd's levels as zram's algorithm_params, e.g. ALGOS=lz4,seqlz-2,zstd:-1,zstd:3.
 
 One row per corpus, from one or more logs of it; a codec in several logs gets the mean of them. Three
 panels: the swap-out with one page per call, the swap-in with the compressed data cold, and the time per
@@ -9,7 +9,7 @@ page written of the score, docs/plan.md §1.1, all means per page. zstd's levels
 order of the levels. The numbers come from quetschn-score, so they are the score's: the corpus's pages
 without the same-filled ones the swap mode adds. Lower left is better.
 
-    ALGOS=lz4,seqlz-lit,zstd:-5,zstd:-1,zstd:1,zstd:3 MODE=swap KARGS=zram.zram_prefetch=8 \\
+    ALGOS=lz4,seqlz-2,zstd:-5,zstd:-1,zstd:1,zstd:3 MODE=swap KARGS=zram.zram_prefetch=8 \\
         tools/zram-vm/run.sh <linux tree> <corpus> >a.log
     tools/plot-zstd-levels.py --row "Desktop=a.log,b.log" --out zstd-levels.svg
 

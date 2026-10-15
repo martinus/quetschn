@@ -534,6 +534,8 @@ TEST_CASE("seqlz: only levels 1 to 3 compress") {
     for (unsigned level : {0U, SEQLZ_LEVELS + 1}) {
         CAPTURE(level);
         CHECK(seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, level) == 0);
+        auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+        CHECK(seqlz_find(st.get(), page.data(), seq.data(), level) == 0);
         auto const lits = std::vector<unsigned char>(page.begin(), page.end());
         auto const one = seqlz_sequence{static_cast<unsigned short>(page_size), 0, 0};
         CHECK(seqlz_encode(t.get(), st.get(), &one, 1, lits.data(), page_size, c.data(), 2 * page_size, level) == 0);
@@ -1371,15 +1373,15 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             for (auto& b : c) {
                 b = static_cast<unsigned char>(rng());
             }
-            // any byte 2, also with the bits that must be 0
+            // any byte 2, also with the bit that must be 0 and the codes above SEQLZ_LIT_OWN
             auto const b2 = static_cast<unsigned char>(rng());
-            auto const width = SEQLZ_SIZE_BITS_MIN + ((b2 >> 3U) & 7U);
+            auto const width = SEQLZ_SIZE_BITS_MIN + ((b2 >> SEQLZ_LIT_WIDTH_AT) & 7U);
             if (c.size() >= SEQLZ_LIT_HEADER(width)) {
                 auto const n_lit = static_cast<unsigned>(rng() % (page_size + 1));
                 auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER(width));
                 c[0] = static_cast<unsigned char>(n_lit);
                 c[1] = static_cast<unsigned char>((SEQLZ_LIT_CODED | n_lit) >> 8);
-                c[2] = rng() % 4 == 0 ? b2 : static_cast<unsigned char>(b2 & 0x3fU);
+                c[2] = rng() % 4 == 0 ? b2 : static_cast<unsigned char>(b2 & 0x7fU);
                 for (unsigned k = 0; k < 8; ++k) {
                     auto const size = static_cast<unsigned>(rng() % (rest / 8 + 2));
                     set_stream_size(c, k, size);
@@ -1526,6 +1528,10 @@ TEST_CASE("seqlz: level 3 gives a page a literal table of its own where that sav
             own += level == 3 && code == SEQLZ_LIT_OWN;
             REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
             CHECK(out == page);
+            // into a page at an odd address, where the decoder builds the own table at the next one
+            auto odd = std::vector<unsigned char>(page_size + 1);
+            REQUIRE(seqlz_decode(t.get(), c.data(), len, odd.data() + 1, scratch.data()) == 0);
+            CHECK(std::equal(page.begin(), page.end(), odd.begin() + 1));
         }
         CHECK(sizes[3] < sizes[2]);
     }

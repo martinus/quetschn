@@ -7,7 +7,7 @@ One row per log, e.g. one per zram dump, and four panels per row: cold reads, wa
 with the codecs that have the lowest score for some exchange rate. The logs have only sizes and
 timings, no page content.
 
-    ALGOS=lz4,lzo-rle,zstd,seqlz-lit \\
+    ALGOS=lz4,lzo-rle,zstd,seqlz-2 \\
         tools/zram-vm/run.sh <linux tree> <corpus> >first.log
     tools/plot-codecs.py --run "zram dump of 23 Sep=first.log" --run "zram dump of 24 Sep=second.log" \\
         --out codecs.png --out codecs.svg

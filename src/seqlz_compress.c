@@ -32,6 +32,8 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 {
 	struct find_ctx f = { .seq = seq };
 
+	if (level < 1 || level > SEQLZ_LEVELS)
+		return 0;
 	if (level >= SEQLZ_LEVEL_OWN)
 		seqlz_match_page(st->table, src, true, find_emit, &f);
 	else
@@ -575,7 +577,7 @@ static void own_lengths(struct own_work *w, unsigned int n,
 			unsigned int n_literals)
 {
 	/* 2^40 / n_literals: freq * 2^l * inv >> 36 is 16 times freq * 2^l / n */
-	const u64 inv = (1ULL << 40) / n_literals;
+	const u64 inv = div_u64(1ULL << 40, n_literals);
 	const unsigned int full = 1U << SEQLZ_LIT_BITS;
 	unsigned int k, space = 0, at[17] = { 0 };
 
