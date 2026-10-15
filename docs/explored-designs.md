@@ -84,6 +84,7 @@ The levels got numbers on 15th October 2026: `seqlz-fast` is `seqlz-1` since, `s
 - [The format written down: one set of tables, and stream sizes that hold](#the-format-written-down-one-set-of-tables-and-stream-sizes-that-hold)
 - [The tables trained again: 4% less on one desktop dump, the phone the same](#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same)
 - [Stream sizes in as many bits as the largest needs, kept](#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)
+- [Stream sizes as differences to the first: 0.5 bytes per page, counted offline, not pursued](#stream-sizes-as-differences-to-the-first-05-bytes-per-page-counted-offline-not-pursued)
 - [Length values in 5 plain bits instead of their tables: 3 bytes per page more, not kept](#length-values-in-5-plain-bits-instead-of-their-tables-3-bytes-per-page-more-not-kept)
 - [The sequences' bitstream most significant bit first: the token table's codes in one range on every CPU, kept](#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)
 - [Offset classes from a histogram: today's are close, two more give 0.1 points at most](#offset-classes-from-a-histogram-todays-are-close-two-more-give-01-points-at-most)
@@ -2547,6 +2548,34 @@ and the difference was gone; all numbers above are from those builds.
 `tools/seqlz-ref/seqlz_ref.py` agreed with `seqlz_decode()` on 12 690 inputs, 9803 valid with the same page, the
 pages of the roundtrip target and damaged copies with bytes replaced, cut short, another width and a
 header bit flipped, and on 3200 inputs with 16 KiB pages.
+
+## Stream sizes as differences to the first: 0.5 bytes per page, counted offline, not pursued
+
+*The 8 streams' sizes are `w` bits each, `w` the width of the largest. The streams get every 8th
+literal and one table, so their sizes are close, and the idea was to send one size and the other 7 as
+differences, the way a run of a page's own table is sent: a width, then the bits. It saves 0.5 bytes
+per page at level 3, about 0.05% of a page. Not pursued: a second variable-length structure in the
+header, read before the decoder knows where streams 1 to 7 start, for that.*
+Code: none in `src/`; the count was a tool on the codec of `613b86a`, not committed.
+
+Offline, on the ten 20 000-page samples, at level 3, bytes per page over all pages, the mean over the
+samples. The first size stays in `w` bits; the 7 differences are zigzag numbers, as in the column, the
+whole rounded up to bytes per page; the last row is the entropy of the differences, a code trained on
+the same pages, without the rounding:
+
+| the sizes | bytes per page | saved |
+| --- | ---: | ---: |
+| `w` bits each, now | 2.52 | |
+| differences to the first, Exp-Golomb order 0 | 2.23 | 0.29 |
+| differences to the first, Exp-Golomb order 1 | 2.09 | 0.43 |
+| differences to the first, Exp-Golomb order 2 | 2.03 | 0.49 |
+| differences to the size before, Exp-Golomb order 2 | 2.06 | 0.46 |
+| differences to the first, their entropy | 1.80 | 0.72 |
+
+The mean difference to the first size is 2.4 to 14.3 bytes on the samples, the largest 519 to 569.
+Order 2 saves 0.18 bytes per page on the phone dump of 3rd October and 1.33 on the desktop dump of
+28th September, where 62% of the pages have coded literals. At level 2 it is 0.47 of 2.22 bytes, the
+entropy 0.68. All the sizes together are 2.52 bytes of level 3's 940.5 per page, 0.27%.
 
 ## Length values in 5 plain bits instead of their tables: 3 bytes per page more, not kept
 
