@@ -223,7 +223,10 @@ adb push build-android/quetschn-bench-interleaved corpus/test.pages corpus/test.
 ```
 
 On arm64 the harness counts cycles with `perf_event_open`, which needs root or
-`setprop security.perf_harden 0`. Fix the clock of the cluster first, e.g. for cpu2 of a Snapdragon 730
+`setprop security.perf_harden 0`. A kernel that opens the counter and never runs it, the Pixel 9a's,
+gets `steady_clock` instead, 24.576 MHz there, which the header's `timer` line shows as a step of 40 ns.
+`tools/phone-cores.sh` runs the codecs on several cores of a phone without root, each alone in its own
+process, and `tools/plot-cores.py` draws them. Fix the clock of the cluster first, e.g. for cpu2 of a Snapdragon 730
 at 1804.8 MHz, as root:
 
 ```sh

@@ -257,4 +257,5 @@ Commands: `docs/measuring.md`.
 - Subagents editing one worktree: one at a time (shared git index). Big doc rewrites: one commit and
   push per chapter, so a stopped run resumes from `git log`.
 - Hardware: Xiaomi Mi 9T (rooted, A76 + A55, kernel 4.14) = test phone. Pixel 9a: static binary over
-  `adb` in `/data/local/tmp` only, never root/flash/unlock, clean up after.
+  `adb` in `/data/local/tmp` only, never root/flash/unlock, clean up after; its cycle counter does not
+  run, the harness uses `steady_clock`; `tools/phone-cores.sh` runs the codecs per core.
