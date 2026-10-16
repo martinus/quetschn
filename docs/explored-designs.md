@@ -42,7 +42,8 @@ are measured") is about 90 KB.
 - An entry that revisits or supersedes older ones: update their `Status:` line (`Now:`) and their
   catalog line in the same commit.
 - Say which bytes: zsmalloc cost of the bench's model, zram's `mem_used` in the VM or phone, or
-  compressed bytes (a raw page = 4096). On the same pages they differ by 3% to 5%.
+  compressed bytes (a raw page = 4096). On a 20 000-page sample the cost is 2.2% to 2.6% above the
+  bytes and a new device 3% to 9% above the cost ([bytes against cost](#compressed-bytes-against-zsmallocs-cost-22-to-26-more-for-every-codec-a-difference-between-codecs-moves-by-04-points-at-most-the-model-stays)).
 
 ## Current state, 16 October 2026
 
@@ -206,6 +207,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **The score**
 
+- 2026-10-16 **measurement** [Compressed bytes against zsmalloc's cost](#compressed-bytes-against-zsmallocs-cost-22-to-26-more-for-every-codec-a-difference-between-codecs-moves-by-04-points-at-most-the-model-stays): ten 20 000-page samples, six codecs: cost 2.2% to 2.6% above compressed bytes (raw page = 4096), 24 to 30 bytes per page, nearly the same for every codec; a codec's difference to lz4 moves by 0.4 points at most per sample, seqlz-3 against zstd 3 by 0.04; no codec changes place. Summed bytes miss work memory per CPU and fragmentation, not the classes. Code: bench/zsmalloc_cost.cpp, quetschn-bench-interleaved --no-timing. Now: current. Untried: whole dumps, 16 KiB pages.
 - 2026-10-16 **measurement** [Swap-in bursts on a Pixel 9a](#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again): 15 minutes in use, 10 ms samples: 0.732 reads per write; single swap-ins 0.0% of the pages, 92% in bursts of 1024 pages or more, 61% in bursts of 8192 or more, the largest 72 621. The mean time per page is the right measure. Code: tools/swap-bursts/. Now: current. Untried: an hour or a day of use; which core; burst durations.
 - 2026-10-16 **measurement** [Reads per write on phones](#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it): Pixel 9a in daily use, 7.1 days: pswpin/pswpout 0.73 (refaults, not readahead); the desktop had 0.34, the Mi 9T 0.16 idle and 0.45 to 0.61 in scripted sessions. The score's r is 0.73 since (quetschn-score, tools/plot-*.py); lz4 then ahead of lzo-rle, the levels unchanged. Code: bench/score.h. Now: current; 15 minutes of use gave 0.732 again ([bursts](#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)). Untried: other phones and users.
 - 2026-10-16 **measurement** [VM numbers of 16 October, the README's chart](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart): kernel VM MODE=swap, 3 boots, mean of the four VM samples: r = 0.73: lz4 36.5% memory / 8.77 µs per page written, lzo-rle 34.9% / 8.91, zstd 3 25.3% / 19.38, seqlz-1 29.1% / 9.28, seqlz-2 26.5% / 10.03, seqlz-3 25.4% / 12.16; hull lz4, seqlz-1, seqlz-2, seqlz-3, zstd 3 (at 0.34 lzo-rle instead of lz4). Code: tools/plot-readme.py, docs/plots/levels-vm.svg. Now: current.
@@ -360,7 +362,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 - 2026-10-10 **method** [App launch test: which numbers separate codecs](#the-app-tests-spread-zrams-memory-moves-by-2-to-3-between-runs-cold-launches-by-51-to-173): 5 series, 64 runs, Mi 9T: zram's memory spreads 2.3% to 3.3% and separates codecs in every series; launch times spread 3% to 11%, need 6 runs per codec; cold launches spread 51% to 173%, use only as one-day series sums. Code: tools/phone-apps/analyze.py, run.sh (repeats spoiled runs); #130. Now: current. Untried: Why the night series spread less; effect of BBC News and The Verge changing daily; only one phone, Android 11, 25 apps.
 - 2026-10-08 **method** [Phone noise: one codec per process, BUS=1](#less-noise-on-the-phone-one-codec-per-process-and-the-memorys-clocks-fixed): Mi 9T, one codec per zramphone process: write spread over 3 rounds at most 0.56 µs (A55), 0.19 µs (A76); with BUS=1 0.11 and 0.06. BUS=1 also changes A55 times (lz4 cold 25.5 vs 43.5 µs): for choosing variants only. STOP=1 not kept. Code: tools/zram-phone/run.sh, summary.py (BUS, STOP, COOL, COUNTS); #130, #129. Now: current; later phone runs use BUS=1 and COOL=45 (e.g. "The matcher without its step back").
-- 2026-10-08 **kept** [zram's mem_used_total against the zsmalloc model](#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it): stress.sh: after writing a dump to a new device, mem_used_total equals the model's new-device bytes to the byte for lz4 and both seqlz levels. Σ zsmalloc cost is 0.35% to 0.46% below on the whole second phone dump, 4.5% to 6.0% on 20 000 pages. Code: zsmalloc_model::fresh_pool_bytes() in bench/zsmalloc_cost.cpp; tools/kernel-port/stress.sh. Now: current. Untried: Fragmentation under churn, which a model of sizes cannot predict.
+- 2026-10-08 **kept** [zram's mem_used_total against the zsmalloc model](#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it): stress.sh: after writing a dump to a new device, mem_used_total equals the model's new-device bytes to the byte for lz4 and both seqlz levels. Σ zsmalloc cost is 0.35% to 0.46% below on the whole second phone dump, 4.5% to 6.0% on 20 000 pages. Code: zsmalloc_model::fresh_pool_bytes() in bench/zsmalloc_cost.cpp; tools/kernel-port/stress.sh. Now: current; compressed bytes against this model's cost, 16 Oct: 2.2% to 2.6%, codec differences move by 0.4 points at most ([bytes against cost](#compressed-bytes-against-zsmallocs-cost-22-to-26-more-for-every-codec-a-difference-between-codecs-moves-by-04-points-at-most-the-model-stays)). Untried: Fragmentation under churn, which a model of sizes cannot predict.
 - 2026-10-05 **method** [PC harness times depend on the run's other codecs](#the-harness-on-the-pc-a-codecs-times-depend-on-the-other-codecs-in-the-run-not-found-why): Ryzen 9 7950X, CPU 2 at 4.5 GHz: lz4 writes 2.64 µs alone, 3.65 with all five codecs; seqlz-1 2.73 alone, 4.21 with all five. Five harness changes moved nothing. Harness kept for sizes and same-codec A/B only. Code: quetschn-bench-interleaved (bench/). Now: "The compressor into a buffer of any size" (8 Oct) saw the same effect in one zramphone process, up to 1 µs, gone with one codec per process; rule in docs/measuring.md. Untried: Cause not found; branch predictors suspected, not measured.
 - 2026-09-23 **method** [Benchmark rules: quick bench, full run, fixed clock](#how-the-numbers-are-measured): quick-bench: 91s, exact zsmalloc cost, latency of 20 000 sampled pages in 5 processes; full run below about 300 ns. Interleave, reverse order below 200 ns, kernel-like alignment, idle machine, CPU 2 at 4.5 GHz boost off (runs within 10 to 80 ns). Code: tools/quick-bench.sh, quetschn-bench-interleaved, run_interleaved, cmake/kernel_codecs.cmake. Now: Codecs are now judged in the kernel VM and on the phone (docs/measuring.md); 'The harness on the PC: a codec's times depend' and 'Less noise on the phone' add later rules.
 
@@ -1219,9 +1221,70 @@ spec decoder, the same bytes on the endian test, 60 s of fuzzing per target with
 mutations fail the tests under the sanitizers: the alternation not reset after the slow path, no
 refill at all, and the fast path without its input bound.
 
+## Compressed bytes against zsmalloc's cost: 2.2% to 2.6% more for every codec, a difference between codecs moves by 0.4 points at most, the model stays
+
+Status: measurement, 2026-10-16. Now: current.
+
+*Does the zsmalloc model change a comparison between codecs, or would summed compressed bytes give the
+same answer? Almost the same. On the samples of all ten dumps, zsmalloc's cost per page is 2.2% to 2.6%
+above the compressed bytes per page (a page stored raw counted as 4096), 24 to 30 bytes, nearly the same
+for every codec. A codec's difference to `lz4` moves by 0.4 points at most per sample, e.g. `seqlz-2` is
+28.36% smaller than `lz4` by bytes and 28.16% by cost; `seqlz-3` against `zstd` 3 moves by 0.04 points at
+most. No codec changes its place on any sample. The model stays: it costs nothing to run and is exact
+for a new device ([zram's memory against the model](#zrams-memory-against-the-model-exact-on-a-new-device-σ-zsmalloc-cost-035-to-047-below-it)),
+but the size classes and the cliff at `huge_class_size` are not why codecs rank as they do. What summed
+bytes miss is the work memory per CPU and fragmentation.* Code: `zsmalloc_model` in
+`bench/zsmalloc_cost.cpp`, `quetschn-bench-interleaved --no-timing`.
+
+Release build of `main` at `0bfe2cb`, tables of 13th October (token tables of 14th), the 20 000-page
+samples of `phone-dump/p1` to `p5`, `phone-mi9t-2026-10-03`, `phone-mi9t-2026-10-04`, `zram0`,
+`zram0-2026-09-24`, `zram0-2026-09-28`, same-filled pages skipped (19 584 to 19 910 measured per
+sample). Bytes = the mean of `comp_len` with a page at or above `huge_class_size` (3625) counted as 4096;
+`lz4` reports 4114 for such a page, which moves its uncapped mean by 3 bytes. Cost = the mean of `cost`.
+The mean over the ten samples, bytes per page:
+
+| codec | compressed bytes | zsmalloc cost | cost above bytes | per sample |
+| --- | ---: | ---: | ---: | ---: |
+| `lz4` | 1337.5 | 1367.9 | 2.27% | 2.15% to 2.50% |
+| `lzo-rle` | 1277.6 | 1306.1 | 2.23% | 2.08% to 2.56% |
+| `seqlz-1` | 1048.9 | 1074.3 | 2.42% | 2.17% to 2.92% |
+| `seqlz-2` | 960.1 | 984.5 | 2.54% | 2.21% to 3.02% |
+| `seqlz-3` | 916.5 | 940.4 | 2.61% | 2.26% to 3.17% |
+| `zstd` 3 | 912.2 | 936.1 | 2.62% | 2.25% to 3.13% |
+
+Smaller codecs pay a slightly larger share: they pay fewer bytes, 21 to 26 per page against `lz4`'s 26
+to 37, but of fewer stored bytes; the step between classes is about 17 bytes below 1 KiB
+([plan.md §3.1](plan.md#31-zram-does-not-pay-for-bytes-it-pays-for-zsmalloc-size-classes)). Against `lz4`, mean of the samples, and the cost difference minus the bytes
+difference per sample, in points:
+
+| codec | by bytes | by cost | cost minus bytes, per sample |
+| --- | ---: | ---: | ---: |
+| `lzo-rle` | -4.49% | -4.53% | -0.11 to +0.05 |
+| `seqlz-1` | -22.09% | -21.97% | -0.01 to +0.29 |
+| `seqlz-2` | -28.36% | -28.16% | +0.02 to +0.34 |
+| `seqlz-3` | -31.61% | -31.37% | +0.06 to +0.41 |
+| `zstd` 3 | -31.84% | -31.59% | +0.05 to +0.40 |
+
+The same runs print `zsmalloc new device`, the model's `mem_used_total` of a new device with these pages:
+3.1% to 9.2% above the summed cost, the partly filled last zspage of each class, about the same in bytes for
+every codec and so a larger share for the smaller ones. On a whole dump it is below 0.5% (entry above).
+
+Not measured: whole dumps (the cost per page is the same on a sample, the share of the partly filled
+zspages is not); 16 KiB pages; zram's `mem_used_total` after churn, where fragmentation decides.
+
+```sh
+for n in phone-dump/p1 phone-dump/p2 phone-dump/p3 phone-dump/p4 phone-dump/p5 phone-mi9t-2026-10-03 \
+         phone-mi9t-2026-10-04 zram0 zram0-2026-09-24 zram0-2026-09-28; do
+    o=$S/zsm/${n//\//_}; mkdir -p $o
+    $B/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 \
+        --corpus ~/quetschn-corpus/$n-sample20000 --no-timing --out $o >$o/summary.txt
+done
+# then per <codec>.tsv: mean of comp_len (4096 where huge = 1) against the mean of cost
+```
+
 ## zram's memory against the model: exact on a new device, Σ zsmalloc cost 0.35 to 0.47% below it
 
-Status: kept, 2026-10-08. Now: current.
+Status: kept, 2026-10-08. Now: current; compressed bytes against the cost of this model on ten samples, 16 Oct: 2.2% to 2.6%, codec differences move by 0.4 points at most ([bytes against cost](#compressed-bytes-against-zsmallocs-cost-22-to-26-more-for-every-codec-a-difference-between-codecs-moves-by-04-points-at-most-the-model-stays)).
 
 *The gate of [plan.md Phase 5](plan.md#phase-5-kernel-port-and-validation-in-a-vm-16-weeks) asks
 whether `mm_stat` in the VM confirms the userspace prediction within 2%. It does: after writing all
