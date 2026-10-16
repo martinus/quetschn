@@ -79,7 +79,9 @@ per variant cannot do. A `src/` from before the levels is refused. At most 8 cod
 about 5 minutes per kernel. `PORT=1` builds the kernel copy as
 `tools/kernel-port/port.py` writes it instead of `src/` with the VM's backend, `ALGOS=lz4,seqlz:2`:
 the code the kernel would get, with its tables in one global; it is what to measure a change of
-`port.py` or of `static` and inlining with.
+`port.py` or of `static` and inlining with. `wkdm` in `ALGOS` adds WKdm, the page compressor of Wilson
+and Kaplan, in Apple's C version: `run.sh` downloads it from xnu, checks its SHA-256 and builds it as
+backend `wkdm`; Apple's code is not in this repository.
 
 ```sh
 ALGOS=lz4,lzo-rle,zstd,seqlz-2 tools/zram-vm/run.sh <linux tree> corpus/first >reads.log

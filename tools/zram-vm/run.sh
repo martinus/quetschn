@@ -16,6 +16,8 @@
 # -O3, e.g. VARIANTS="o2=.:-O2 le16=../other": variants compared within one boot, the codecs taking turns.
 # PORT=1 builds seqlz as tools/kernel-port/port.py writes it into the tree, the kernel's own copy, with
 # its backend seqlz and the level as zram's parameter, e.g. ALGOS=lz4,seqlz:2.
+# ALGOS with wkdm adds WKdm, the page compressor of Wilson and Kaplan, Apple's C version downloaded from
+# xnu, see backend_wkdm.c.
 # The kernel gets ../kernel-port/x86-prefetcht0.patch, which the series has: without it a clang build
 # drops prefetch() on x86-64.
 
@@ -107,6 +109,32 @@ else
         done
         echo "KERNEL zcomp with separate compression and decompression contexts"
     fi
+fi
+# WKdm, the page compressor of Wilson and Kaplan, as backend wkdm when ALGOS names it: Apple's C version
+# from xnu (APSL 2.0), downloaded and checked here, never in this repository; see backend_wkdm.c
+if [[ ,${ALGOS:-}, == *,wkdm[,:]* ]]; then
+    z="$work/src/drivers/block/zram"
+    xnu=https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-2050.48.11
+    while read -r sum path; do
+        curl -sSfL "$xnu/$path" -o "$z/${path##*/}"
+        echo "$sum  $z/${path##*/}" | sha256sum -c --quiet
+    done <<'EOF'
+2bb2ac0b3e40042330f955c08a8854670ca6d91d426ef01badbf87ebd7712319 libkern/libkern/WKdm.h
+1bfc569fc2a44884d2f6b8e55bd6b464767ef14df5353d90f5376876b34bbdff libkern/kxld/WKdmCompress.c
+3cd96ce8394229db2e33740f26c59f7cdf53ee6c4f8244aac16827d3f75af5c1 libkern/kxld/WKdmDecompress.c
+EOF
+    # the work arrays off the stack, 7200 bytes each in the compressor and the decompressor
+    sed -i 's/^\([[:space:]]*\)\(WK_word temp[A-Za-z]*Array\[\)/\1static \2/' "$z/WKdmCompress.c" "$z/WKdmDecompress.c"
+    [[ $(grep -c 'static WK_word temp' "$z/WKdmCompress.c" "$z/WKdmDecompress.c" | grep -c ':3$') -eq 2 ]] ||
+        { echo "WKdm: work arrays not found" >&2; exit 1; }
+    # sys/cdefs.h gave __unused
+    sed -i 's/^#include <sys\/cdefs.h>$/#define __unused __maybe_unused/' "$z/WKdmDecompress.c"
+    cp "$here/backend_wkdm.c" "$here/backend_wkdm.h" "$z/"
+    sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_wkdm.h"|; s|^\tNULL$|\t\&backend_wkdm,\n\tNULL|' "$z/zcomp.c"
+    printf 'zram-y += backend_wkdm.o WKdmCompress.o WKdmDecompress.o\n' >>"$z/Makefile"
+    printf 'CFLAGS_%s += -O3 -Wno-missing-prototypes\n' WKdmCompress.o WKdmDecompress.o >>"$z/Makefile"
+    grep -q 'struct zcomp_cstrm' "$z/zcomp.h" && printf 'CFLAGS_backend_wkdm.o += -DZCOMP_RW_SPLIT\n' >>"$z/Makefile"
+    echo "KERNEL wkdm from xnu-2050.48.11, libkern/kxld"
 fi
 "${kmake[@]}" -C "$work/src" O="$work/build" defconfig >/dev/null
 "$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZSMALLOC --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_LZO --enable ZRAM_BACKEND_ZSTD --enable ZRAM_BACKEND_LZ4HC \

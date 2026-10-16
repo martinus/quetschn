@@ -71,6 +71,9 @@ are measured") is about 90 KB.
 - zram's recompression with `seqlz-3` gives level 3's memory at level 1's write time for 7.8 to 10.1 µs
   per idle page, worth it where idle CPU time weighs less than about 0.3
   ([recompression](#recompression-with-level-3-78-to-101-µs-per-page-level-3s-memory-at-level-1s-write-time-on-the-hull-where-idle-time-weighs-less-than-03)).
+- WKdm (Apple's C version) in a VM run with the six codecs of the README: 50.1% of the page at 8.18 µs per page written, against
+  `lz4`'s 36.5% at 9.21; on the hull in `lz4`'s place, to `seqlz-1` at 580 bytes per µs
+  ([WKdm](#wkdm-in-the-kernel-vm-818-µs-per-page-written-against-lz4s-921-at-501-of-the-page-against-365-not-pursued)).
 - Known open costs: a cold swap-in of `seqlz-2` takes 0.62 to 0.95 µs more than `lz4`'s in the VM
   run above, mostly branch mispredictions that a decode of the same page before hides
   ([found](#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides));
@@ -339,6 +342,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **Other codecs, baselines, other designs**
 
+- 2026-10-16 **not pursued** [WKdm in the kernel VM](#wkdm-in-the-kernel-vm-818-µs-per-page-written-against-lz4s-921-at-501-of-the-page-against-365-not-pursued): Apple's C WKdm (xnu-2050.48.11) as zram backend `wkdm`, one run with the six codecs of the README, mean of the four VM samples, r = 0.73: 50.1% of the page / 8.18 µs per page written against lz4 36.5% / 9.21, seqlz-1 29.1% / 9.66; writes 1.5 µs faster than lz4, reads 0.67 slower, cold p99 1.3 to 1.6 µs above lz4. On the hull at the fast end in lz4's place, wkdm to seqlz-1 at 580 bytes per µs; the levels' rates unchanged. Decoder trusts its header (C6). Code: tools/zram-vm/backend_wkdm.c, run.sh (downloads Apple's code, not in the repo). Now: current. Untried: the phones, Apple's assembly versions, WK4x4, 16 KiB pages.
 - 2026-10-08 **measurement** [lz4 in hardware what-if: seqlz-2 stays on hull](#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211): quetschn-score --what-if on VM swap logs: with lz4's codec time at 0, seqlz-2 keeps the lowest score from 3.1 to 73 and 10.3 to 72 bytes per µs (was 155 and 211); Mi 9T 0.9 to 25 (A76), 0.2 to 7.1 (A55). No hardware measured. Code: quetschn-score --what-if, bench/score.cpp what_if(). Now: current. Untried: Whether qpace-lz4 stores software lz4's bytes; swap times of a phone with the engine; DMA and polling cost.
 - 2026-10-07 **measurement** [zstd at every level against seqlz-2 in a swap-in](#zstd-at-every-level-in-a-swap-in-no-level-stores-less-in-less-time-than-seqlz-fast-lit): Kernel VM MODE=swap, zstd -5 to 19: every level storing less than seqlz-2 takes at least 6.6 µs more per page written; negative levels store more and are slower (zstd -1: 111 and 75 bytes, 3.3 and 3.0 µs more). Code: tools/zram-vm/init.c (zstd:<level>), tools/plot-zstd-levels.py, docs/plots/zstd-levels.svg. Now: Tables of 7 October since replaced ('The tables trained again without the last sequences', 'Offset 2 in 1 bit'); seqlz-3 (kept 15 Oct) is compared with zstd 3 in 'Level 3, a lazy matcher'. Untried: zstd's levels in the phone's own kernel; levels above 19.
 - 2026-09-30 **not built** [Word model plus run path, bound only](#the-word-model-with-a-path-for-runs-not-even-lz4s-memory-not-built): Offline bound, desktop dumps of 23, 24, 28 Sep: with every repeat of 8 bytes and more for 3 bytes, 1673.0, 2237.4, 2203.3 bytes per page against lz4 1411.8, 1737.3, 1619.2 and seqlz-2 993.0, 1287.9, 1277.5. Lacks short matches and entropy coding. Code: throwaway, not in repo; model of spike/wk64.h. Now: current.
@@ -347,7 +351,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 - 2026-09-23 **not kept** [memlz, Chameleon on 8-byte words](#memlz): Σ zsmalloc cost 63.6%, 1.5 MB per CPU, cold p50 / p99 9710 / 10 190 ns, compress 12.8 / 13.4 µs: nearly all is the 768 KiB table reset per page; no partial matches, worse than the word model's 55.7%. Code: explore/zram_memlz.c (removed 7 Oct), QUETSCHN_MEMLZ_DIR, rrrlasse/memlz 3b28cc5. Now: current.
 - 2026-09-23 **not kept** [Base + delta per 64-byte block (BDI)](#base--delta-per-64-byte-block-bdi): Σ zsmalloc cost 70.5%, 162 920 pages raw. Fastest decoder measured, 960 ns faster than lz4 at cold p99 on compressed pages; cheaper than lz4 on only 9163 pages, adds nothing to a per-page choice (32.1%). Code: explore/bdelta.c (removed 7 Oct). Now: Per-page choice against seqlz-2 in "The ideas of #29 and #31": 0.04 and 0.18 points.
 - 2026-09-23 **not kept** [Byte shuffle then lz4](#byte-shuffle--lz4): First desktop dump: shuffle-lz4 Σ zsmalloc cost 40.9% against lz4 34.5%; cheaper on 111 871 pages, a quarter; cheaper of both per page 32.1%, lzo-rle's level. Decode 270 to 420 ns slower than lz4 at cold p99. Code: explore/shuffle.c, explore/zram_explore.c (removed 7 Oct). Now: Shuffle as per-page choice before seqlz-2 in "The ideas of #29 and #31": 0.6 and 0.7 points, no cheap rule picks the pages, not built. Untried: A per-page mode.
-- 2026-09-23 **not kept** [Word model: WKdm-style 64-bit words](#word-model-wkdm-style-64-bit-words): 2-bit tag per 64-bit word, 16-entry table: Σ zsmalloc cost 55.7%, 110 284 pages raw; spike-slots cold p99 350 ns faster than lz4 in the full run. Kept only as decoder lesson: short dependency chain per word, branchless slower. Code: spike/ (removed 7 Oct, in git before 57fb8fb); PR #14; plan.md Phase 2b. Now: Bound with a path for runs: "The word model with a path for runs" (30 Sep), not even lz4's memory. Per-page choice in "The ideas of #29 and #31": no gain.
+- 2026-09-23 **not kept** [Word model: WKdm-style 64-bit words](#word-model-wkdm-style-64-bit-words): 2-bit tag per 64-bit word, 16-entry table: Σ zsmalloc cost 55.7%, 110 284 pages raw; spike-slots cold p99 350 ns faster than lz4 in the full run. Kept only as decoder lesson: short dependency chain per word, branchless slower. Code: spike/ (removed 7 Oct, in git before 57fb8fb); PR #14; plan.md Phase 2b. Now: Bound with a path for runs: "The word model with a path for runs" (30 Sep), not even lz4's memory. Per-page choice in "The ideas of #29 and #31": no gain. Apple's 32-bit WKdm in the kernel VM, 16 Oct: 50.1% of the page ([WKdm in the kernel VM](#wkdm-in-the-kernel-vm-818-µs-per-page-written-against-lz4s-921-at-501-of-the-page-against-365-not-pursued)).
 - 2026-09-23 **measurement** [Where zstd's ratio comes from: sequence coding](#where-the-ratio-of-zstd-comes-from): Σ zsmalloc cost, first desktop dump (455 239 pages): lz4 34.5%, lz4hc 9 30.7%, zstd -1 26.9%, zstd 1 23.9%. The same lz4hc 9 matches with entropy coded sequences and raw literals: 25.8% (optimistic estimate). The gap is sequence coding, not matching or literals. Code: bench/lz_analysis_main.cpp (quetschn-lz-analysis); explore/zstd_nolit.c (removed in 57fb8fb); bench/kernel_codecs/zram_lz4hc.c. Now: Built as seqlz in the next section ("seqlz: `lz4`'s matches, Huffman coded sequences"). zstd 3's size reached by "Level 3, a lazy matcher and a literal table of the page's own". Untried: What in zstd -1's decoder costs the time: not measured.
 - 2026-09-23 **measurement** [Baselines: lz4, lzo-rle, zstd -1 on first zram dump](#baselines): All 455 239 pages, first zram dump, Ryzen 9 7950X: Σ zsmalloc cost lz4 34.5%, lzo-rle 32.4%, zstd -1 26.9%; cold p99 over all pages 2350, 2330, 3850 ns. Target gap: zstd -1 17% less memory than lzo-rle, 60% more cold p99 than lz4. Now: Cold p99 is a guard now, the score judges ("The designs by the score"); reference is zstd 3, not -1. Co-run codecs move harness times ("The harness on the PC").
 - 2026-09-23 **measurement** [Kernel codecs with and without dictionaries, Phases 0-2](#the-first-runs-with-dictionaries-phases-0-to-2): Ryzen 9 7950X, first zram dump, Σ zsmalloc cost: lz4 34.5%, lz4 + dict 33.7%, lzo-rle 32.4%, zstd -1 26.9%, zstd 3 23.6%. zstd -1 needs 16.9% less than lzo-rle (gate proxy holds); a resident-page dictionary saves lz4 2.3%, makes zstd 3 worse. Code: bench/zsmalloc_cost.cpp; dictionary parse bug reported as lz4/lz4#1805. Now: powersave governor, unfixed frequency, one run. Summary in "`lz4` with a dictionary"; seqlz tables per device via zram's dictionary rejected in "The format written down". Untried: Not the gate: one machine, one dump, no confidence intervals, dictionary trained on another page population.
@@ -8243,9 +8247,97 @@ cc -O2 -Isrc -o seqsrep tools/seqlz-bound/seqsrep.c src/seqlz_{codes,compress,de
 cd tools/seqlz-bound && python3 reps.py <the seven .seq files>
 ```
 
+## WKdm in the kernel VM: 8.18 µs per page written against `lz4`'s 9.21, at 50.1% of the page against 36.5%, not pursued
+
+Status: not pursued, 2026-10-16. Now: current.
+
+*Is WKdm, the classic page compressor (Wilson and Kaplan, 1997; Apple's macOS and iOS compress memory
+with descendants of it), a better answer than seqlz? Apple's C version as a zram backend, in one kernel
+VM run with the six codecs of the README, the mean over the four VM samples at `r = 0.73`: `wkdm` stores
+50.1% of the page, `lz4` 36.5%, `seqlz-1` 29.1%, and takes 8.18 µs per page written, `lz4` 9.21, `seqlz-1`
+9.66. It writes 1.5 µs faster than `lz4` and reads 0.67 µs slower. It is on the hull at the fast end,
+in place of `lz4`: `wkdm` to `seqlz-1` at 580 bytes per µs (526 at `r = 0.34`); whoever values a µs per page
+at less than that loses memory with it. The levels and their exchange rates stay as they were. Not
+pursued: zram's users already chose `lzo-rle` and `lz4` over a codec of half the page, and its decoder
+trusts the offsets in its header (C6).* Code: `tools/zram-vm/backend_wkdm.c`, the `wkdm` part of
+`tools/zram-vm/run.sh`.
+
+WKdm reads a page as 1024 32-bit words, each against a 16-entry dictionary of recent words picked by a
+hash of bits 10 to 17: a 2-bit tag for zero, exact match, match of the upper 22 bits (4-bit index and the
+10 low bits) or miss (the whole word). Tags, indices and low bits go into packed areas after a 16-byte
+header; tags take 256 bytes on every page. No matches of byte strings, no entropy coding, 32-bit words
+on pages of 64-bit pointers. Our 64-bit variant of 23 Sep ([word model](#word-model-wkdm-style-64-bit-words))
+was 55.7% of the page in userspace.
+
+Setup: `WKdm.h` (`libkern/libkern/`), `WKdmCompress.c` and `WKdmDecompress.c` (`libkern/kxld/`) of
+xnu-2050.48.11, downloaded by `run.sh` and checked by SHA-256; APSL 2.0, not in this repository. The
+`.c` files of xnu-12377.1.9 (Oct 2025) differ only in whitespace and `register`. Changed in the copy:
+the three work arrays, 7200 bytes on the stack in each of compress and decompress, are `static` (one CPU,
+one zram stream in the VM; a kernel backend would hold them per CPU, 8192 bytes as `kmalloc()` rounds
+7200); `__unused` defined as `__maybe_unused`. Built with `-O3` as `lz4` is. Not measured: Apple's
+current versions, hand-written assembly for arm64 and x86-64 (`osfmk/arm64/WKdmCompress_4k.s`,
+`osfmk/x86_64/WKdmCompress_new.s`), another format.
+
+`tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, `BOOTS=3`, `KARGS=zram.zram_prefetch=8` (only
+seqlz's backend reads it), CPU 2 of the Ryzen 9 7950X at 4.5 GHz, boost off, gcc 16.2.1, the code of
+`8125132`. Bytes per page from `mm_stat`, swap-out and cold swap-in in µs, means of 3 boots from
+`quetschn-score`, then the mean over p3, p5, 23rd and 24th September. Every page came back equal:
+
+| codec | bytes per page | % of 4 KiB | swap-out | swap-in | per page written, `r = 0.34` | `r = 0.73` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `wkdm` | 2051.7 | 50.1 | 5.26 | 4.00 | 6.62 | 8.18 |
+| `lz4` | 1494.9 | 36.5 | 6.78 | 3.33 | 7.91 | 9.21 |
+| `lzo-rle` | 1427.6 | 34.9 | 6.56 | 3.81 | 7.86 | 9.34 |
+| `seqlz-1` | 1193.7 | 29.1 | 7.03 | 3.60 | 8.25 | 9.66 |
+| `seqlz-2` | 1084.5 | 26.5 | 7.63 | 3.88 | 8.95 | 10.46 |
+| `seqlz-3` | 1039.5 | 25.4 | 9.68 | 4.03 | 11.04 | 12.62 |
+| `zstd` 3 | 1038.0 | 25.3 | 15.05 | 6.58 | 17.29 | 19.85 |
+
+The bytes of the six other codecs equal those of 16 Oct ([16th
+October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)); every one
+of them takes 0.38 to 0.47 µs more per page written than in that run. Hull of the means at
+`r = 0.73`: `wkdm`, `seqlz-1`, `seqlz-2`, `seqlz-3`, `zstd` 3 at 580, 136, 21 and 0.2 bytes per µs. Per
+sample `wkdm` is first on the hull on all four, followed by `lzo-rle` (p3, 853 bytes per µs), `seqlz-1`
+(p5, 598) or `lz4` (23rd and 24th September, 636 and 500). With memory per CPU (`--per-cpu`, `wkdm` 8192) at 8 or 32
+CPUs and 64 MiB or 1 GiB `wkdm` stays first on the hull of every sample; `zstd` 3 drops off as in [work
+memory per CPU](#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu),
+and `lz4` on 24th September at 32 CPUs and 64 MiB.
+
+Per sample, p3 / p5 / 23rd / 24th September:
+
+| | p3 | p5 | 23rd Sep | 24th Sep |
+| --- | ---: | ---: | ---: | ---: |
+| `wkdm` bytes per page | 1747.5 | 1663.9 | 2107.3 | 2687.9 |
+| `lz4` bytes per page | 1408.1 | 1367.3 | 1450.3 | 1754.4 |
+| pages stored raw (`huge_pages`), `wkdm` | 1751 | 1318 | 4615 | 8065 |
+| the same, `lz4` | 910 | 538 | 472 | 852 |
+| the same, `seqlz-2` | 349 | 344 | 360 | 558 |
+| swap-out p99, `wkdm` / `lz4`, µs | 7.84 / 10.78 | 7.98 / 10.42 | 7.70 / 10.96 | 8.53 / 11.97 |
+| cold swap-in p99, `wkdm` / `lz4`, µs | 7.05 / 5.45 | 6.92 / 5.34 | 6.95 / 5.64 | 7.13 / 5.64 |
+
+- Part of `wkdm`'s speed is pages it does not compress: on the desktop dumps about 23% and 40% of the
+  pages stay raw, which zram writes and reads with a copy. On the phone samples, about 7% and 9%, it
+  still writes 1.3 µs faster than `lz4` (4.99 and 5.01 against 6.25 and 6.29).
+- Its swap-ins are slower than `lz4`'s on all four, by 0.92, 0.88, 0.62 and 0.23 µs; least on 24th
+  September, where 40% of its pages are raw. Its cold p99 is the highest of the four codecs above on all
+  four, 1.3 to 1.6 µs above `lz4`'s.
+- The decoder reads three word offsets from the header and unpacks between them into arrays of 300 and
+  1200 words without a check: a damaged page writes past them. A checked decoder needs three
+  comparisons; their cost is not measured.
+
+Not measured: the phones (in-order A55 and A520, where its 32-bit word loop may do better or worse), WK4x4,
+16 KiB pages, Apple's assembly versions.
+
+```sh
+ALGOS=lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3,wkdm BOOTS=3 MODE=swap KARGS=zram.zram_prefetch=8 \
+    tools/zram-vm/run.sh <linux tree> ~/quetschn-corpus/phone-dump/p3-sample20000 >p3.log    # and p5, zram0, zram0-2026-09-24
+./build/quetschn-score p3.log                       # --reads-per-write 0.34 for the desktop's r
+./build/quetschn-score --per-cpu wkdm:8192 --per-cpu lz4:20512 ... p3.log
+```
+
 ## Word model: WKdm-style 64-bit words
 
-Status: not kept, 2026-09-23. Now: Bound with a path for runs: "The word model with a path for runs" (30 Sep), not even lz4's memory. Per-page choice in "The ideas of #29 and #31": no gain.
+Status: not kept, 2026-09-23. Now: Bound with a path for runs: "The word model with a path for runs" (30 Sep), not even lz4's memory. Per-page choice in "The ideas of #29 and #31": no gain. Apple's 32-bit WKdm in the kernel VM, 16 Oct: 50.1% of the page, the fastest per page written ([WKdm in the kernel VM](#wkdm-in-the-kernel-vm-818-µs-per-page-written-against-lz4s-921-at-501-of-the-page-against-365-not-pursued)).
 
 *Kept as a direction for the decoder, not as a format.* Code: `spike/`, `plan.md` Phase 2b.
 
