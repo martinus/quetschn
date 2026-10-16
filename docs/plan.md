@@ -87,9 +87,13 @@ by a score instead:
   pathological pages (C6), not a target.
 - **score**: `bytes + lambda * time`, lower is better, with lambda in bytes per µs.
 
-`r` is the number of reads per write. On a desktop with zram as its only swap it was 0.34: 3 146 179
-pages swapped in against 9 210 320 swapped out in 27.5 days (`pswpin` and `pswpout` of
-`/proc/vmstat`). That is one machine; a phone swaps differently and needs its own number. `b` weighs
+`r` is the number of reads per write, `pswpin / pswpout` of `/proc/vmstat`. **`r = 0.73`**, a phone's:
+the Pixel 9a in daily use swapped in 78 335 824 pages against 106 938 781 out in 7.1 days, and
+`workingset_refault_anon` was the same number, so they were refaults and not readahead. zram is for
+phones, so the score uses that. A desktop with zram as its only swap had 0.34, 3 146 179 in against
+9 210 320 out in 27.5 days; the Mi 9T 0.45 to 0.61 in scripted sessions and 0.16 idle on a desk
+([explored-designs.md](explored-designs.md#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it)).
+`quetschn-score --reads-per-write 0.34` gives the desktop's score. `b` weighs
 the time of recompression, which zram runs on idle pages when told to, against the time of reads and
 writes, which a task waits for or kswapd spends. `b = 1` counts every µs the same. A recompression on
 an otherwise idle CPU costs energy and not latency, which would argue for less. The choice of `b`
@@ -100,17 +104,19 @@ lambda is not fixed. `quetschn-score` reads the logs of `tools/zram-vm/run.sh` o
 convex hull of (time, bytes), with the exchange rate between neighbours: the lambda at which the
 faster one starts to win. A design is worth keeping if it is on the hull at a lambda that matters.
 
-**`seqlz-2` has the lowest score for any lambda from 3.1 to 155 bytes per µs on the first
-desktop dump and from 10.3 to 211 on the second**, with the times of a swap-out and a swap-in in the VM
-of Phase 5, `r = 0.34`, `b = 1`, the tables of 7 October
-([explored-designs.md, "The score with the swap times"](explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
-The hull is `lzo-rle`, `seqlz-1`, `seqlz-2` and `zstd` 3, with `lz4` next to `lzo-rle` within
-the noise. From `seqlz-2` to `zstd` 3 it is 3.1 and 10.3 bytes per µs, from `seqlz-1` to
-`seqlz-2` 155 and 211. Whoever runs `lz4` or `lzo-rle` instead of `zstd` says that lambda is above
-3 to 10 for them. With the times of zram's read benchmark, which decodes every page several times, the
-range went up to 200 and 279
-([explored-designs.md, "The designs by the score"](explored-designs.md#the-designs-by-the-score) has the
-older tables). Recompression is not pursued:
+**From the fastest to the smallest, `lz4`, `seqlz-1`, `seqlz-2`, `seqlz-3` and `zstd` 3 have the
+lowest score for some lambda**, the mean over the four VM samples, the times of a swap-out and a
+swap-in in the VM of Phase 5, `r = 0.73`, `b = 1`, 16th October 2026: from `lz4` to `seqlz-1` 597
+bytes per µs, to `seqlz-2` 145, to `seqlz-3` 21, to `zstd` 3 0.2 ([explored-designs.md, "The numbers
+again on 16th
+October"](explored-designs.md#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
+Per sample `seqlz-2` has the lowest score from 19 to 23 bytes per µs up to 98 to 202, and `zstd` 3
+is on the hull only on two of the four. Whoever runs `lz4` instead of `zstd` 3 values a µs at more
+than 43 bytes, (1494.9 - 1038.0) / (19.38 - 8.77). With `r = 0.34` the hull is the same, but
+`lzo-rle` takes the place of `lz4`, whose swap-ins are faster; with the times of zram's read
+benchmark, which decodes every page several times, the ranges are higher ([explored-designs.md, "The
+designs by the score"](explored-designs.md#the-designs-by-the-score)).
+Recompression is not pursued:
 with `zstd` it pays only where the CPU time of an idle machine counts for less, and it makes each read
 of a recompressed page 2.3 µs slower. `seqlz-opt` is removed
 ([explored-designs.md, "Recompression, measured, not pursued"](explored-designs.md#recompression-measured-not-pursued)).
@@ -170,7 +176,7 @@ Every limit next to the score is one of the kinds of §1:
 | C5, work memory per CPU | cost | in the bytes, for a named machine |
 | C6, a safe and bounded decoder | hard limit | an unsafe decoder is not a trade-off |
 | recompression | cost | the weight `b` prices it like any other design. It was measured and is not on the hull, see above; there is no rule against it of its own |
-| `r = 0.34` | a weight of the score | 27.5 days of one desktop, a phone not measured; every result states it |
+| `r = 0.73` | a weight of the score | 7.1 days of one phone in daily use; a desktop had 0.34; every result states it |
 | the global tables, 43 280 B once per kernel (§3.3) | reported | the code and tables of `lz4` and `zstd` are not counted either; counting them would need every codec's size in the kernel |
 
 ---

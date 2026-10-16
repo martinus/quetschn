@@ -451,7 +451,7 @@ misses in flight, that is several µs.
 ::: measured 51 bytes instead of 19, on the Mi 9T and on the PC
 Before 5th October 2026 the minimum was 19 bytes. In the Mi 9T's own kernel, 20 000 of the phone's
 zram pages, clocks fixed, a minimum of 51 coded 24.9% instead of 38.8% of the pages. Pages
-got 7.9 bytes larger on average, and the time per page written ($\text{write} + 0.34 \times \text{cold read}$) got 2.7 µs
+got 7.9 bytes larger on average, and the time per page written ($\text{write} + 0.34 \times \text{cold read}$, the reads per write of then) got 2.7 µs
 shorter on the Cortex-A55 and 1.1 µs shorter on the Cortex-A76. $\frac{2}{16}$ of the literals instead of $\frac{1}{16}$
 coded about as few pages, for 12.3 bytes and less time saved. On desktop pages 51 costs 9 bytes per
 page, for 0.1 µs in the kernel VM on a Ryzen 9 7950X, within what two boots of the same build
@@ -466,7 +466,7 @@ choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.m
 
 The rule does not count the header of `3 + w` bytes, on purpose. When the sizes shrank from 2 bytes to
 `w` bits, counting the smaller header would have coded 64.7% instead of 56.3% of a desktop's pages, and
-on the phone's pages saved 2 bytes per page for 251 ns more per page written on the A55
+on the phone's pages saved 2 bytes per page for 251 ns more per page written on the A55, with 0.34 reads per write
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
 So the rule kept the old 19 bytes as its constant, which today's {{ch11.coded_min}} replaced.
 
@@ -757,7 +757,7 @@ compression slower, because the literals of most raw pages come close to paying
 ([item 8 of "Six choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#8-coded-literals-on-the-a55-78-instructions-per-literal-at-one-per-cycle)).
 This is where `seqlz-1`, which never calls `code_literals()`, gains on the phone: in an earlier
 measurement on the Mi 9T's little core, `seqlz-2` stored 55 bytes per page less and took
-4.2 µs more per page written
+4.2 µs more per page written, with 0.34 reads per write
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-second-phone-dump-after-12-hours-of-use-seqlz-fast-reads-faster-than-lzo-rle-at-p99)).
 Which of the two a phone should use depends on how it values a byte against a µs, and that is not
 settled.

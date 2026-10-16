@@ -6,7 +6,7 @@ panel per core.
     tools/plot-levels.py <tools/zram-phone/run.sh output> <sizes> <out.svg> [<out.png>]
 
 The times are the means over the rounds that tools/zram-phone/run.sh prints, zram in the phone's own
-kernel; time per page written is write + 0.34 * cold read, as docs/plan.md §1.1. <sizes> is the output
+kernel; time per page written is write + 0.73 * cold read, a phone's reads per write, as docs/plan.md §1.1. <sizes> is the output
 of quetschn-bench-interleaved --no-timing on the same pages: the zsmalloc cost per page, as % of 4 KiB.
 A module's codecs seqlz-<build>-<level> are seqlz-<level> on the chart; with several builds, the last
 one in the run's table wins.
@@ -28,7 +28,7 @@ spec = importlib.util.spec_from_file_location("plot_codecs", Path(__file__).reso
 plot_codecs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plot_codecs)
 
-R = 0.34
+R = 0.73
 # the chart's codecs: label, where the label goes in fractions of the axes; colour and marker of plot-codecs.py
 CODECS = {
     "lz4": ("lz4", (0.30, 0.95)),

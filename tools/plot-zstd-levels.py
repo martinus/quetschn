@@ -86,7 +86,7 @@ def main():
                     help="a row: its title and the logs of one corpus")
     ap.add_argument("--out", action="append", required=True, help="output file, .png or .svg, can be given more than once")
     ap.add_argument("--score", default=str(HERE.parent / "build" / "quetschn-score"), help="the quetschn-score binary")
-    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (docs/plan.md §1.1)")
+    ap.add_argument("--reads-per-write", type=float, default=0.73, help="r of the score, default 0.73, a phone's (docs/plan.md §1.1)")
     ap.add_argument("--max-us", type=float, default=60,
                     help="where the time axes of swap-out and score end; slower levels are arrows at the edge")
     ap.add_argument("--clock", default="4.5 GHz", help="the fixed clock of the CPU the VM ran on, for the footer")

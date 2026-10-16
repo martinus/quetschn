@@ -63,7 +63,7 @@ def main():
     ap.add_argument(
         "--out", action="append", required=True, help="output file, .png or .svg, can be given more than once"
     )
-    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (docs/plan.md §1.1)")
+    ap.add_argument("--reads-per-write", type=float, default=0.73, help="r of the score, default 0.73, a phone's (docs/plan.md §1.1)")
     ap.add_argument("--note", default="", help="the footer's lines about what was measured, \\n between lines")
     args = ap.parse_args()
 

@@ -10,25 +10,26 @@ speed and the size of `zstd` at level 3, zram's default level for it.
 
 The numbers behind the chart: zram as swap in a Linux VM on a Ryzen 9 7950X, the means over four zram
 dumps, two of a phone and two of a desktop. Memory is what zsmalloc holds per page, the time per page
-written is a swap-out plus 0.34 swap-ins, the reads per write measured on a desktop
-([plan.md §1.1](docs/plan.md#11-the-score-memory-against-time-not-bars)):
+written is a swap-out plus 0.73 swap-ins, the reads per write of a phone in daily use; a desktop had
+0.34 ([plan.md §1.1](docs/plan.md#11-the-score-memory-against-time-not-bars)):
 
 | codec | memory per page | swap-out | swap-in, cold | time per page written |
 | --- | ---: | ---: | ---: | ---: |
-| `lz4` | 36.5% | 6.41 µs | 3.23 µs | 7.51 µs |
-| `lzo-rle` | 34.9% | 6.22 µs | 3.69 µs | 7.48 µs |
-| `zstd` 3 | 25.3% | 14.64 µs | 6.49 µs | 16.85 µs |
-| **`seqlz-1`** | **29.1%** | **6.70 µs** | **3.53 µs** | **7.89 µs** |
-| **`seqlz-2`** | **26.5%** | **7.26 µs** | **3.79 µs** | **8.55 µs** |
-| **`seqlz-3`** | **25.4%** | **9.29 µs** | **3.94 µs** | **10.63 µs** |
+| `lz4` | 36.5% | 6.41 µs | 3.23 µs | 8.77 µs |
+| `lzo-rle` | 34.9% | 6.22 µs | 3.69 µs | 8.91 µs |
+| `zstd` 3 | 25.3% | 14.64 µs | 6.49 µs | 19.38 µs |
+| **`seqlz-1`** | **29.1%** | **6.70 µs** | **3.53 µs** | **9.28 µs** |
+| **`seqlz-2`** | **26.5%** | **7.26 µs** | **3.79 µs** | **10.03 µs** |
+| **`seqlz-3`** | **25.4%** | **9.29 µs** | **3.94 µs** | **12.16 µs** |
 
-- `seqlz-1` stores 20% less than `lz4` for 5% more time per page written.
+- `seqlz-1` stores 20% less than `lz4` for 6% more time per page written.
 - `seqlz-2`, zram's default level, stores 27% less for 14% more.
 - `seqlz-3` stores as little as `zstd` 3, in 63% of its time per page written, and a swap-in takes 39%
   less time than with `zstd` 3.
-- In these means, from the fastest to the smallest, `lzo-rle`, `seqlz-1`, `seqlz-2`, `seqlz-3` and `zstd` 3 each have
-  the lowest score for some exchange rate of bytes against µs, `zstd` 3 only where a µs is worth less
-  than 0.24 bytes. `lz4` has none: `lzo-rle` is as fast and stores less.
+- In these means, from the fastest to the smallest, `lz4`, `seqlz-1`, `seqlz-2`, `seqlz-3` and `zstd` 3
+  each have the lowest score for some exchange rate of bytes against µs, `zstd` 3 only where a µs is
+  worth less than 0.2 bytes. `lzo-rle` has none: it stores 4.5% less than `lz4`, but its slower
+  swap-ins make it 1.7% slower per page written.
 
 All three swap in 9% to 22% slower than `lz4`, so the case for seqlz is memory, at a cost in time. The
 work memory is 8 KiB per CPU for `seqlz-1` and 16 KiB for the other two, against 20 KiB for `lz4`, as
@@ -48,15 +49,16 @@ How they work, and why, is in [seqlz in short](docs/seqlz.md) and in the book be
 ## On a phone
 
 A Xiaomi Mi 9T, zram in the phone's own kernel (Linux 4.14, so no `lzo-rle`), 19 775 pages from a
-session on the phone, the time per page written as above, on 15th October 2026:
+session on the phone, the time per page written as above, write + 0.73 × cold read, on 15th October
+2026:
 
 | codec | memory per page | big core, A76 | little core, A55 |
 | --- | ---: | ---: | ---: |
-| `lz4` | 33.3% | 12.2 µs | 33.5 µs |
-| `zstd` 3 | 23.2% | 43.7 µs | 137.7 µs |
-| **`seqlz-1`** | **26.1%** | **13.1 µs** | **38.9 µs** |
-| **`seqlz-2`** | **24.3%** | **14.6 µs** | **43.6 µs** |
-| **`seqlz-3`** | **23.2%** | **19.0 µs** | **54.1 µs** |
+| `lz4` | 33.3% | 14.6 µs | 42.8 µs |
+| `zstd` 3 | 23.2% | 52.0 µs | 164.6 µs |
+| **`seqlz-1`** | **26.1%** | **15.8 µs** | **50.3 µs** |
+| **`seqlz-2`** | **24.3%** | **17.6 µs** | **55.9 µs** |
+| **`seqlz-3`** | **23.2%** | **22.2 µs** | **67.6 µs** |
 
 On the phone `seqlz-3` takes less than half of `zstd` 3's time for the same memory. The gap to `lz4` is
 larger than on the PC, most of all on the little core, and cold reads there cost `seqlz-2` 34% more

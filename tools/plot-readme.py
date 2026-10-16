@@ -9,7 +9,8 @@ time per page written, the mean over several zram dumps.
     tools/plot-readme.py --title "..." --note "..." --out docs/plots/levels-vm.svg p3.score p5.score ...
 
 The inputs are the output of quetschn-score, one per dump: bytes per page and µs per page written,
-write + 0.34 * read as docs/plan.md §1.1, here a swap-out and a cold swap-in. The chart shows the mean
+write + r * read as docs/plan.md §1.1, here a swap-out and a cold swap-in, r as quetschn-score's header
+says, all inputs with the same r. The chart shows the mean
 over the dumps of both, memory as % of a 4 KiB page. Needs matplotlib and the Noto Sans font.
 """
 
@@ -34,13 +35,18 @@ LEVELS = ["seqlz-1", "seqlz-2", "seqlz-3"]
 
 
 def parse(path):
-    """codec: (bytes per page, µs per page written) of a quetschn-score output"""
-    rows = {}
+    """codec: (bytes per page, µs per page written) of a quetschn-score output, and its r"""
+    rows, r = {}, None
     for line in open(path):
+        m = re.match(r"time per page written = write \+ ([\d.]+) \* cold read", line)
+        if m:
+            r = float(m[1])
         m = re.match(r"(\S+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s", line)
         if m and m[1] in CODECS:
             rows[m[1]] = (float(m[2]), float(m[6]))
-    return rows
+    if r is None:
+        raise SystemExit(f"{path}: no line 'time per page written = write + r * cold read'")
+    return rows, r
 
 
 def main():
@@ -50,7 +56,11 @@ def main():
     ap.add_argument("--out", action="append", required=True)
     ap.add_argument("scores", nargs="+")
     a = ap.parse_args()
-    runs = [parse(p) for p in a.scores]
+    parsed = [parse(p) for p in a.scores]
+    runs, rs = [p[0] for p in parsed], {p[1] for p in parsed}
+    if len(rs) != 1:
+        raise SystemExit(f"the scores have different r: {sorted(rs)}")
+    r = rs.pop()
     mean = {}
     for c in CODECS:
         got = [r[c] for r in runs if c in r]
@@ -70,7 +80,7 @@ def main():
     ymax = max(y for _, y in mean.values()) * 1.25
     ax.set_xlim(0, xmax)
     ax.set_ylim(0, ymax)
-    ax.set_xlabel("time per page written, µs: swap-out + 0.34 × swap-in")
+    ax.set_xlabel(f"time per page written, µs: swap-out + {r:g} × swap-in")
     ax.set_ylabel("memory, % of a 4 KiB page")
     ax.set_title(a.title, fontsize=12, loc="left")
     ax.grid(True, color="#e6e6e6", lw=0.8)

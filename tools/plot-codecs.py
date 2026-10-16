@@ -160,7 +160,7 @@ def main():
     ap.add_argument("--run", action="append", required=True, metavar="TITLE=LOG",
                     help="a row: its title and the log of tools/zram-vm/run.sh")
     ap.add_argument("--out", action="append", required=True, help="output file, .png or .svg, can be given more than once")
-    ap.add_argument("--reads-per-write", type=float, default=0.34, help="r of the score, default 0.34 (docs/plan.md §1.1)")
+    ap.add_argument("--reads-per-write", type=float, default=0.73, help="r of the score, default 0.73, a phone's (docs/plan.md §1.1)")
     ap.add_argument("--clock", default="4.5 GHz", help="the fixed clock of the CPU the VM ran on, for the footer")
     ap.add_argument("--source", default=None, help="what was measured, for the footer; default git describe")
     ap.add_argument("--skip", default="", help="zram's names of codecs to leave out, comma separated, e.g. seqlz")

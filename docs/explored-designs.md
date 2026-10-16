@@ -23,7 +23,7 @@ are measured") is about 90 KB.
   for the bytes; a time is stale after a change on the hot path. Compare codecs only within one run, one
   boot can be off by 18% (CLAUDE.md, Measuring).
 - Current truth is elsewhere: format = `docs/format.md` (Status), code = `src/`, current numbers =
-  [Current state](#current-state-15-october-2026) and the newest catalog lines.
+  [Current state](#current-state-16-october-2026) and the newest catalog lines.
 - Removed code is named by its old path (`explore/bytelz.c`, `spike/`): in git before `57fb8fb`, the
   commit of 7 Oct 2026 that removed it: `git show 57fb8fb^:explore/bytelz.c`. `src/seqlz.c` was split
   on 10 Oct 2026 into `src/seqlz_compress.c`, `src/seqlz_decompress.c`, `src/seqlz_codes.c`,
@@ -44,20 +44,24 @@ are measured") is about 90 KB.
 - Say which bytes: zsmalloc cost of the bench's model, zram's `mem_used` in the VM or phone, or
   compressed bytes (a raw page = 4096). On the same pages they differ by 3% to 5%.
 
-## Current state, 15 October 2026
+## Current state, 16 October 2026
 
 - Levels, one format: `seqlz-1` raw literals; `seqlz-2` one of 8 fixed literal tables per page, zram's
   default; `seqlz-3` the matcher of levels 1 and 2 with one lazy step and the step back, and a literal table of
   the page's own where it saves 16 bytes, from 512 literals. Format: `docs/format.md` of 15 Oct 2026; tables
   trained on `train-mix-1012` (13 Oct), token tables again for the offset classes of 14 Oct.
-- Kernel VM, `MODE=swap`, 3 boots, `613b86a`, 20 000-page samples p3 / p5 / zram0 / zram0-2026-09-24,
-  bytes per page: `lz4` 1408.1 / 1366.8 / 1450.3 / 1754.4, `seqlz-2` 1037.5 / 998.8 / 1033.0 / 1268.5,
-  `seqlz-3` 993.4 / 957.0 / 995.7 / 1211.7, `zstd` 3 998.4 / 943.9 / 1012.3 / 1197.4. Hull `lz4`,
-  `seqlz-1`, `seqlz-2`, `seqlz-3` on all four; `zstd` 3 on it after `seqlz-3` only on p5 and 24 Sep
-  (2.1 and 2.3 bytes per µs). `seqlz-3` writes 34% to 37% less time per page than `zstd` 3. Source:
-  [Level 3](#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept).
-- Mi 9T, zram in its own kernel, p3, `write + 0.34 * cold read` in µs, A76 / A55: `lz4` 12.22 / 33.53,
-  `seqlz-1` 13.07 / 38.94, `seqlz-2` 14.58 / 43.55, `seqlz-3` 19.00 / 54.14, `zstd` 3 43.68 / 137.70.
+- The score's `r` is 0.73 since 16 Oct 2026, a phone in daily use (Pixel 9a); every entry before uses the
+  desktop's 0.34 and says so ([reads per write](#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it)).
+  At 0.73 `lz4`'s faster swap-ins put it ahead of `lzo-rle`; the order of the levels does not change.
+- Kernel VM, `MODE=swap`, 3 boots, 16 Oct, the mean over p3 / p5 / zram0 / zram0-2026-09-24, memory as %
+  of 4 KiB and µs per page written at `r = 0.73`: `lz4` 36.5% 8.77, `lzo-rle` 34.9% 8.91, `seqlz-1`
+  29.1% 9.28, `seqlz-2` 26.5% 10.03, `seqlz-3` 25.4% 12.16, `zstd` 3 25.3% 19.38. Hull `lz4`, `seqlz-1`,
+  `seqlz-2`, `seqlz-3`, `zstd` 3 at 597, 145, 21 and 0.2 bytes per µs. Source:
+  [16th October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart).
+- Mi 9T, zram in its own kernel, p3, `write + 0.73 * cold read` in µs, A76 / A55: `lz4` 14.58 / 42.77,
+  `seqlz-1` 15.79 / 50.28, `seqlz-2` 17.61 / 55.91, `seqlz-3` 22.24 / 67.63, `zstd` 3 52.03 / 164.62
+  ([Level 3](#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)
+  has the write and read times).
 - Why the ratio: the gap from `lz4` to `zstd` is mostly how the sequences are coded
   ([Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from)); `zstd` 3's remaining
   lead over `seqlz-2` was its literal table per page, which `seqlz-3` now has.
@@ -155,7 +159,8 @@ table in 10 bits again" are 24 and 28 Sep. "desktop 2" in "Levels 3 and 4" is 28
   with and without it do not compare), `COOL=45`. Cold on the phone = after 2 MiB of other data.
 - Userspace harness (`quetschn-bench-interleaved`): a codec's times depend on the other codecs in the
   run; the first codec compresses up to 1.5 µs slower. Use it for sizes and same-codec A/B only.
-- Score (`docs/plan.md` §1.1): time per page written = write + 0.34 × read (+ b × recompression), µs;
+- Score (`docs/plan.md` §1.1): time per page written = write + r × read (+ b × recompression), µs, r =
+  0.73 since 16 Oct 2026 (a phone), 0.34 before (a desktop);
   memory = zsmalloc bytes per page (+ work memory per CPU × CPUs / pages in zram since 14 Oct). Exchange
   rate = bytes per µs between neighbours on the lower-left hull; "on the hull from x to y" = the range of
   rates at which the codec has the lowest score. `Σ zsmalloc cost` in % = of the page bytes.
@@ -198,7 +203,8 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **The score**
 
-- 2026-10-16 **measurement** [VM numbers of 16 October, the README's chart](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart): kernel VM MODE=swap, 3 boots, mean of the four VM samples: lz4 36.5% memory / 7.51 µs per page written, lzo-rle 34.9% / 7.48, zstd 3 25.3% / 16.85, seqlz-1 29.1% / 7.89, seqlz-2 26.5% / 8.55, seqlz-3 25.4% / 10.63; hull lzo-rle, seqlz-1, seqlz-2, seqlz-3, zstd 3. Code: tools/plot-readme.py, docs/plots/levels-vm.svg. Now: current.
+- 2026-10-16 **measurement** [Reads per write on phones](#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it): Pixel 9a in daily use, 7.1 days: pswpin/pswpout 0.73 (refaults, not readahead); the desktop had 0.34, the Mi 9T 0.16 idle and 0.45 to 0.61 in scripted sessions. The score's r is 0.73 since (quetschn-score, tools/plot-*.py); lz4 then ahead of lzo-rle, the levels unchanged. Code: bench/score.h. Now: current. Untried: other phones and users.
+- 2026-10-16 **measurement** [VM numbers of 16 October, the README's chart](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart): kernel VM MODE=swap, 3 boots, mean of the four VM samples: r = 0.73: lz4 36.5% memory / 8.77 µs per page written, lzo-rle 34.9% / 8.91, zstd 3 25.3% / 19.38, seqlz-1 29.1% / 9.28, seqlz-2 26.5% / 10.03, seqlz-3 25.4% / 12.16; hull lz4, seqlz-1, seqlz-2, seqlz-3, zstd 3 (at 0.34 lzo-rle instead of lz4). Code: tools/plot-readme.py, docs/plots/levels-vm.svg. Now: current.
 - 2026-10-14 **measurement** [VM and hot loop numbers of 14 October](#the-numbers-again-on-14th-october-05-and-47-smaller-than-on-5th-october-writes-03-µs-faster): Kernel VM, 3 boots, first/second desktop dump: seqlz-2 1029.7/1268.5 bytes per page, write 6.13/6.82 µs, cold 2.80/2.97; seqlz-1 1118.4/1462.3. Hull: seqlz-1 to seqlz-2 189/258 bytes per µs, seqlz-2 to zstd 3 2.1/8.3. Code: tools/zram-vm/run.sh, quetschn-score, tools/plot-codecs.py (mean over boots). Now: Predates 15 Oct: "Level 3, a lazy matcher" added seqlz-3, "The matcher without its step back" made writes 1% to 2% faster in the VM; all three levels with lzo-rle on 16 Oct ([16th October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
 - 2026-10-14 **method** [Work memory per CPU priced in the score](#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu): Bytes per CPU x CPUs / pages in zram added (lz4 20 512, zstd 3 192 544, seqlz-2 16 384). zstd 3 leaves the hull below 27 and 7.9 MiB in zram per CPU; other steps move 5% at most with 8 CPUs. Code: quetschn-score --per-cpu --device, bench/score.cpp; bench/kernel_codecs/alloc.c; #203. Now: current. Untried: How much a phone keeps in zram, and for how long.
 - 2026-10-07 **measurement** [Score with swap-out and swap-in times](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279): Kernel VM MODE=swap, tables of 7 October: seqlz-2 lowest score from 3.1 to 155 bytes per µs (first dump) and 10.3 to 211 (second), not 200 and 279. It swaps in 0.52 and 0.72 µs slower than lz4, 0.12 and 0.27 in the read benchmark. Code: quetschn-score reads MODE=swap logs (bench/score.cpp); tools/zram-vm/run.sh. Now: 'Work memory per CPU in the score' adds C5 to these numbers; 'The numbers again on 14th October' has newer bytes; seqlz-3 (kept 15 Oct) now sits between seqlz-2 and zstd 3. Untried: The phone's swap times in the score, and r on a phone.
@@ -499,6 +505,56 @@ The other designs in this file have no codec in the harness any more, only the s
 their own loops: the word model, BΔI, the shuffle, XOR, FSST, BPC, the pair matcher. None of them was
 dropped for a p99 alone; they were larger than a codec that was also faster, which the score does not
 change.
+
+## Reads per write on phones: 0.73 on a Pixel 9a in daily use, the score uses it
+
+Status: measurement, 2026-10-16. Now: current.
+
+*The score weighs a read by `r`, the reads per write, and took 0.34 from 27.5 days of the development
+machine. A phone is what zram is for, so how often does one read a page back? The Pixel 9a in daily use,
+7.1 days since boot: `pswpin` 78 335 824 against `pswpout` 106 938 781, **0.73**, more than twice the
+desktop's. `workingset_refault_anon` is 78 332 612, the same within 0.004%, so the swap-ins are pages
+that a task faulted on again, not readahead. The score uses 0.73 since: `quetschn-score`'s default and
+the plots' are 0.73, `--reads-per-write 0.34` gives the desktop's.* Code: `bench/score.h`, the
+`--reads-per-write` of `quetschn-score` and of `tools/plot-*.py`.
+
+`/proc/vmstat` as `adb shell` reads it, without root, Android 17, kernel 6.1.162. The phone has 7.4 GiB
+of RAM and 3.7 GiB of zram swap, which was 89% full; 174 pages were swapped out per second on average,
+57 GiB a day. The other counts there are, with the source:
+
+| where | `pswpin` / `pswpout` |
+| --- | ---: |
+| Pixel 9a, daily use, 7.1 days | 0.73 |
+| the development machine, a desktop with zram only, 27.5 days (plan.md §1.1 until now) | 0.34 |
+| Mi 9T, idle on a desk for 3.06 days after a boot | 0.16 |
+| Mi 9T, the scripted sessions p2 to p5 of 12th and 13th October, `hog` holding 1 to 2 GiB | 0.45 to 0.57 |
+| Mi 9T, session p1, MIUI's own killer, apps killed instead of swapped | 0.33 |
+| Mi 9T, the app test of 5th October, 25 apps | 0.53 to 0.61 |
+| Android 13 and 15 emulators, `emuapps.sh`, 3 rounds | 0.57 to 0.63 |
+
+The Mi 9T and the desktop have `vm.page-cluster` 3, so their `pswpin` may count readahead too; the
+Pixel's refaults show that its count is pages a task waited for.
+
+**What it changes.** The VM run of [16th October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart),
+the mean over the four samples, µs per page written:
+
+| codec | `r = 0.34` | `r = 0.73` |
+| --- | ---: | ---: |
+| `lz4` | 7.51 | 8.77 |
+| `lzo-rle` | 7.48 | 8.91 |
+| `seqlz-1` | 7.90 | 9.28 |
+| `seqlz-2` | 8.55 | 10.03 |
+| `seqlz-3` | 10.63 | 12.16 |
+| `zstd` 3 | 16.85 | 19.38 |
+
+`lz4` takes the place of `lzo-rle` at the fast end of the hull, as `lzo-rle`'s swap-ins are 0.46 µs
+slower. The levels stay where they are: from `seqlz-1` to `seqlz-2` the exchange rate falls by 12% to
+14% per sample, from `seqlz-2` to `seqlz-3` by 2% to 3%. `zstd` 3 loses most, its reads take twice as
+long. One person's phone in one week, the only number of a phone in daily use here.
+
+```sh
+adb shell 'grep -E "^(pswpin|pswpout|workingset_refault_anon) " /proc/vmstat; cat /proc/uptime'
+```
 
 ## The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279
 
@@ -1820,7 +1876,7 @@ bit multiply, 2.3% fewer cycles for 1.9% more memory.
 
 ## Level 3, a lazy matcher and a literal table of the page's own: zstd 3's memory in less than half its time on the phone, kept
 
-Status: kept, 2026-10-15. Now: current; three small changes to its matcher 16 Oct, none faster ([level 3 matcher](#level-3s-matcher-three-small-changes-none-faster-at-the-same-bytes-not-kept)); recompression with it ([recompression with level 3](#recompression-with-level-3-78-to-101-µs-per-page-level-3s-memory-at-level-1s-write-time-on-the-hull-where-idle-time-weighs-less-than-03)).
+Status: kept, 2026-10-15. Now: current; three small changes to its matcher 16 Oct, none faster ([level 3 matcher](#level-3s-matcher-three-small-changes-none-faster-at-the-same-bytes-not-kept)); recompression with it ([recompression with level 3](#recompression-with-level-3-78-to-101-µs-per-page-level-3s-memory-at-level-1s-write-time-on-the-hull-where-idle-time-weighs-less-than-03)); its chart levels-phone.svg is drawn with r = 0.73 since 16 Oct, the table below has the times for either.
 
 *`seqlz_compress()` at level 3, `seqlz-3` in the harness: the matcher of levels 1 and 2 with one lazy
 step and the step back, and the literals coded with a table of the page's own where that saves 16 bytes
@@ -3462,26 +3518,26 @@ short.
 Status: measurement, 2026-10-16. Now: current.
 
 *The README's chart and table: `lz4`, `lzo-rle`, `zstd` 3 and the three levels in one kernel VM run,
-the mean over the four VM samples. From the fastest to the smallest `lzo-rle`, `seqlz-1`, `seqlz-2`,
-`seqlz-3` and `zstd` 3 are on the hull of the means, at 570, 165, 22 and 0.24 bytes per µs; `lz4` is
-not, `lzo-rle` is as fast and stores 4.5% less.* Code: `tools/plot-readme.py`, `docs/plots/levels-vm.svg`.
+the mean over the four VM samples. With the phone's `r = 0.73`, which the chart has, `lz4`, `seqlz-1`,
+`seqlz-2`, `seqlz-3` and `zstd` 3 are on the hull of the means, at 597, 145, 21 and 0.2 bytes per µs;
+with the desktop's 0.34 `lzo-rle` instead of `lz4`, at 570, 165, 22 and 0.24.* Code: `tools/plot-readme.py`, `docs/plots/levels-vm.svg`.
 
 `tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, `BOOTS=3`, `KARGS=zram.zram_prefetch=8`, CPU 2 of
 the Ryzen 9 7950X at 4.5 GHz, boost off, gcc 16.2.1, the code of `e94514e`. Bytes per page from
-`mm_stat`, swap-out and cold swap-in in µs, time per page written = swap-out + 0.34 × swap-in, means
+`mm_stat`, swap-out and cold swap-in in µs, time per page written = swap-out + r × swap-in, means
 of 3 boots from `quetschn-score`, then the mean over p3, p5, 23rd and 24th September:
 
-| codec | bytes per page | % of 4 KiB | swap-out | swap-in | time per page written |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `lz4` | 1494.9 | 36.5 | 6.41 | 3.23 | 7.51 |
-| `lzo-rle` | 1427.6 | 34.9 | 6.22 | 3.69 | 7.48 |
-| `zstd` 3 | 1038.0 | 25.3 | 14.64 | 6.49 | 16.85 |
-| `seqlz-1` | 1193.7 | 29.1 | 6.70 | 3.53 | 7.89 |
-| `seqlz-2` | 1084.5 | 26.5 | 7.26 | 3.79 | 8.55 |
-| `seqlz-3` | 1039.5 | 25.4 | 9.29 | 3.94 | 10.63 |
+| codec | bytes per page | % of 4 KiB | swap-out | swap-in | per page written, `r = 0.34` | `r = 0.73` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1494.9 | 36.5 | 6.41 | 3.23 | 7.51 | 8.77 |
+| `lzo-rle` | 1427.6 | 34.9 | 6.22 | 3.69 | 7.48 | 8.91 |
+| `zstd` 3 | 1038.0 | 25.3 | 14.64 | 6.49 | 16.85 | 19.38 |
+| `seqlz-1` | 1193.7 | 29.1 | 6.70 | 3.53 | 7.89 | 9.28 |
+| `seqlz-2` | 1084.5 | 26.5 | 7.26 | 3.79 | 8.55 | 10.03 |
+| `seqlz-3` | 1039.5 | 25.4 | 9.29 | 3.94 | 10.63 | 12.16 |
 
-Per dump `zstd` 3 is on the hull only on p5 and 24th September, after `seqlz-3`, and `lz4` only on
-24th September, where `lzo-rle` is slower. `seqlz-2`'s and `seqlz-3`'s swap-ins are 18% and 22% slower
+At `r = 0.34` per dump `zstd` 3 is on the hull only on p5 and 24th September, after `seqlz-3`, and `lz4`
+only on 24th September, where `lzo-rle` is slower. `seqlz-2`'s and `seqlz-3`'s swap-ins are 18% and 22% slower
 than `lz4`'s, as in "Level 3, a lazy matcher".
 
 ```sh
