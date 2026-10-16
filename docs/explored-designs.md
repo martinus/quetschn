@@ -182,7 +182,8 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **Level 3 and a literal table of the page's own**
 
-- 2026-10-15 **kept** [Own literal table described in byte order](#a-pages-own-literal-table-in-the-order-of-the-bytes-decoded-two-lengths-at-a-time-05-smaller-than-by-code-length-reads-29-slower-on-the-a76-kept): Byte order saves 4.9, 2.6, 2.7 bytes per page vs Exp-Golomb order 1 (p3, 23rd, 24th September). Table build V9 1689 to 1740 ns on A76 vs V1 2543 to 2677. Level 3 reads 2.9% slower on A76: 34 bytes per µs. Code: own_code() (src/seqlz_compress.c), own_table() (src/seqlz_decompress.c), build_own(), struct own_table; `own` line of bench/seqlz_counts_4k.txt. Now: current. Untried: V11 (10-bit lookup, 4 KiB table) 5% to 6% faster warm; its cold-read cost (64 more cache lines) not measured.
+- 2026-10-16 **not built** [OWN chosen by the symbol before](#own-chosen-by-the-symbol-before-54-bytes-per-description-11-bytes-per-page-counted-offline-not-built): offline, level 3's descriptions on ten 20 000-page samples, codes trained on train-mix: 12 codes by the symbol before take 58.67 instead of 64.08 bytes per description (-9.1%), 6 codes by the length before 59.46; 1.11 and 0.94 bytes per page, 0.12% and 0.10% of the compressed bytes. Not worth 12 code tables in the format and a context in own_table(). Code: tools/seqlz-bound/owndump.c, own_context.py. Now: current. Untried: any time; more pages with a table of their own from a cheaper description.
+- 2026-10-15 **kept** [Own literal table described in byte order](#a-pages-own-literal-table-in-the-order-of-the-bytes-decoded-two-lengths-at-a-time-05-smaller-than-by-code-length-reads-29-slower-on-the-a76-kept): Byte order saves 4.9, 2.6, 2.7 bytes per page vs Exp-Golomb order 1 (p3, 23rd, 24th September). Table build V9 1689 to 1740 ns on A76 vs V1 2543 to 2677. Level 3 reads 2.9% slower on A76: 34 bytes per µs. Code: own_code() (src/seqlz_compress.c), own_table() (src/seqlz_decompress.c), build_own(), struct own_table; `own` line of bench/seqlz_counts_4k.txt. Now: current; a code by the symbol before counted 16 Oct, not built ([OWN chosen by the symbol before](#own-chosen-by-the-symbol-before-54-bytes-per-description-11-bytes-per-page-counted-offline-not-built)). Untried: V11 (10-bit lookup, 4 KiB table) 5% to 6% faster warm; its cold-read cost (64 more cache lines) not measured.
 - 2026-10-15 **kept** [Level 3: lazy matcher plus page's own literal table](#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept): Ten 20 000-page samples: 0.30% more than zstd 3 on average, 4.5% less than level 2. Mi 9T zram, p3, write + 0.34 × cold read: A76 19.00 µs vs zstd 3 43.68, level 2 14.58; A55 54.14 vs 137.70. Kept on Martin's request. Code: seqlz_lazy(), lazy branch of seqlz_match_page() (src/page_lz.h); own_code(), own_lengths(), code_literals() (src/seqlz_compress.c); own_table() (src/seqlz_decompress.c); build_own() (src/seqlz_codes.c); PR #214. Now: current. Untried: Own table in level 2 from 2048 literals not built.
 - 2026-10-09 **not kept** [Own literal table per page at hash-chain levels](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept): Kernel VM: hash-chain level 3 with a Huffman table of the page's own stores 2.5% to 3.4% less, below zstd 3 on two dumps, equal on one; 2.4 to 2.6 µs more per swap-out. Not kept: second literal path, untrusted-input parser, about 900 lines. Code: branch seqlz-own-lit: own_code(), own_lengths(), code_literals(), own_table() in its src/seqlz.c; issue #139. Now: Taken on 15 Oct for seqlz-3 in 'Level 3, a lazy matcher and a literal table'; description now in byte order ('A page's own literal table in the order of the bytes'). Untried: The encoder with the entropy check measured on the PC only; level 2 with own tables not run in the VM or on the phone.
 - 2026-10-09 **not kept** [Levels 3 and 4: hash chain priced by tables](#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept): Level 3 2.7% to 4.3% below level 2, writes 1.8 to 1.9 times its time, 23% to 31% under zstd 3. Kernel VM: on the hull at 4.2 and 8.3 bytes per µs on two of four dumps. Pays below 4 to 8; 850 lines. Code: branch seqlz-hc, #143 closed unmerged: seqlz_compress_hc(), hc_match_page(); issue #139. Now: Today's seqlz-3 (kept 15 Oct) is another design: lazy step on the level 1-2 matcher plus own literal table, no hash chain; see 'Level 3, a lazy matcher'. Tables changed since. Untried: Level 3 with 16 KiB pages (chain needs 48 KiB per CPU); three repeated offsets as in zstd, estimated only.
@@ -1953,7 +1954,7 @@ description in Exp-Golomb codes, see below; the lazy step as a level of its own.
 
 ## A page's own literal table in the order of the bytes, decoded two lengths at a time: 0.5% smaller than by code length, reads 2.9% slower on the A76, kept
 
-Status: kept, 2026-10-15. Now: current.
+Status: kept, 2026-10-15. Now: current. A code chosen by the symbol before would save 5.4 bytes per description, 1.1 per page, counted offline, not built ([OWN chosen by the symbol before](#own-chosen-by-the-symbol-before-54-bytes-per-description-11-bytes-per-page-counted-offline-not-built)).
 
 *The description of a page's own table in [format.md](format.md#a-pages-own-literal-table): the code
 length of every byte with a code, in the order of the bytes, with runs of the bytes without one, as
@@ -2021,6 +2022,62 @@ Level 3 with V9 in userspace, p3, ns per page, the description by length against
 
 4.6 bytes for 0.13 µs on the A76, 34 bytes per µs, and 4.3 bytes for 0.31 µs on the A55, 14 bytes per
 µs; with V1 it was 18 and 8.
+
+## OWN chosen by the symbol before: 5.4 bytes per description, 1.1 bytes per page, counted offline, not built
+
+Status: not built, 2026-10-16. Now: current.
+
+*`OWN` codes each length and run of a page's own literal table with one fixed code. Neighbouring byte
+values tend to have similar lengths, so a code chosen by the symbol before should be shorter. It is:
+with 12 codes, one per symbol before (start, length 1 to 10, a run), a description takes 58.67 instead
+of 64.08 bytes, 9.1% less; with 6 codes (the length before 6 or less, 7, 8, 9, 10, or a run or the
+start) 59.46, 7.7% less. Per page that is 1.11 and 0.94 bytes, 0.12% and 0.10% of the compressed
+bytes, as only 20.2% of the pages have a table of their own. Not built: 12 code tables in the format
+and a context in `own_table()` for 0.12%.* Code: `tools/seqlz-bound/owndump.c`,
+`tools/seqlz-bound/own_context.py`.
+
+Counted offline on the code of `25317e6`. `owndump` compresses every page at level 3 with the real
+encoder and keeps the pages with a table of their own; `own_context.py` parses each description with
+`OWN` (its length checked against the reference decoder's), then prices the same symbols with codes
+trained on `train-mix` (210 160 descriptions, the pages `OWN` was counted on), at most 8 bits per code
+like `OWN`. A code trained the same way without a context gives `OWN`'s lengths exactly, so the
+pricing matches the format. A run never follows a run, and a run of 256 to 511 is never valid, so the
+context codes give neither a code. Bytes per description, the byte padding included, on the
+20 000-page samples (p1, p2, p4 and some pages of the 28th September are in `train-mix`):
+
+| model | p1 | p2 | p3 | p4 | p5 | 23rd Sep | 24th Sep | 28th Sep | phone 3rd Oct | phone 4th Oct | mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `OWN` as it is | 70.58 | 72.55 | 72.72 | 70.95 | 72.89 | 51.77 | 40.50 | 38.64 | 76.57 | 73.63 | 64.08 |
+| after a run or not, 2 codes | 69.92 | 71.97 | 72.21 | 70.43 | 72.23 | 51.02 | 39.73 | 37.88 | 75.81 | 72.97 | 63.42 |
+| the length before, 6 codes | 66.27 | 67.65 | 67.08 | 65.76 | 68.61 | 47.08 | 35.89 | 34.04 | 72.73 | 69.53 | 59.46 |
+| the symbol before, 12 codes | 65.49 | 67.02 | 66.50 | 65.07 | 67.86 | 46.36 | 34.55 | 33.05 | 72.00 | 68.85 | 58.67 |
+| descriptions | 2571 | 3861 | 3675 | 3542 | 3533 | 3954 | 7640 | 6552 | 2230 | 2781 | |
+
+* **The gain holds on pages not trained on.** On the six samples outside `train-mix` the 12 codes save
+  5.33 bytes per description, on all ten 5.41.
+* **Per page it is small.** 11.2% to 38.2% of the pages have a table of their own, so the 12 codes save
+  0.51 to 2.27 bytes per page, 1.11 on average, 0.078% to 0.202% of the compressed bytes (a page stored
+  raw counted as 4096), 0.118% on average. The 6 codes 0.94 bytes, 0.10%. A cheaper description would
+  also give a few more pages a table of their own (it needs to save 16 bytes); not counted.
+* **"After a run" alone is 0.66 bytes per description**: after a run only a length can come, and `OWN`
+  keeps code space for runs there.
+* **A context does what a delta did not.** Sending the changes of the length in one code saved 0.1
+  bytes per description on average ("A page's own literal table in the order of the bytes"): the correlation is
+  there, a single code cannot use it.
+
+What it would cost, not built: 12 (or 6) code tables of 19 lengths in the format, their SHA-256 rows,
+both reference decoders; the encoder picks the code by the symbol before; `own_table()` decodes two
+lengths per lookup today, which needs a table per context or one symbol per lookup. At the score's
+exchange rate from level 2 to level 3 in the kernel VM, 19.4 to 22.9 bytes per µs, 1.11 bytes per page
+is worth about 0.05 µs per page written, so the whole change, writes and reads, would have to cost less
+than that. Not measured: any time.
+
+```sh
+gcc -O2 -Isrc -o owndump tools/seqlz-bound/owndump.c src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
+./owndump ~/quetschn-corpus/phone-dump/train-mix.pages train.bin       # 8 s
+./owndump ~/quetschn-corpus/phone-dump/p3-sample20000.pages p3.bin    # and the other samples
+python3 tools/seqlz-bound/own_context.py train.bin p3.bin ...          # 2 min
+```
 
 ## The matcher without its step back: writes 6.6% faster on the A76 and 1% to 2% in the VM, kept
 
