@@ -203,7 +203,10 @@ Commands: `docs/measuring.md`.
 - Corpus (`corpus/`, `*.pages`) holds keys/passwords: never commit, publish or paste contents; delete
   copies on phones after use.
 - Every measured design: entry in `docs/explored-designs.md` in the same PR as the code (what, numbers,
-  code location, kept or not and why) + Index at top. Read the file before proposing a design.
+  code location, kept or not and why), its `Status:` line, its Catalog line; older entries it revisits
+  get their `Status:`/Catalog `Now:` updated (format: the file's "Adding or changing an entry"). Before
+  proposing a design: read its top (up to `## How the numbers are measured`), then the entries the
+  Catalog names. Agents are its only readers.
 
 ## Editing docs: invariants that break silently
 
