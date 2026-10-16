@@ -253,14 +253,59 @@ one whether it has a code, and how long it is:
   no code, a **run**. Symbol 10 is a run of 1 with no bits after it, symbol 15 with the 5 bits `00000`
   a run of 32.
 
-A run goes out as its width in bits, `k`, and the `k - 1` bits below its top bit, which is always 1.
-That is the [Elias gamma code](https://en.wikipedia.org/wiki/Elias_gamma_coding), the same bits as
-the [Exp-Golomb code](https://en.wikipedia.org/wiki/Exponential-Golomb_coding) of order 0 for
-`run - 1`, with one change: Elias gamma writes the width as `k - 1` zeros and a 1, `OWN` as one of its
-symbols, in the same code as the lengths. So one symbol says that a run comes and how wide it is, and
-how long its code is follows from how often that width came on the pages `OWN` was counted on. A run of
-32 is `100000`, 6 bits wide: Elias gamma writes `00000100000`, 11 bits, and would still need a bit to
-tell it from a length; `OWN` writes symbol 15 and `00000`, {{own.len.15}} + 5 bits.
+A run is a count of byte values in a row that have no code. Small runs are common, a table skips
+one or two byte values here and there, and long ones are rare, e.g. the 32 control characters below
+the space in a text page. So the code for a run has to be short for small counts and still work for
+large ones. `OWN` writes a run in two parts: first how many bits the count has in binary, its
+**width** `k`, as the symbol `9 + k`; then the bits of the count below its first 1:
+
+| run | in binary | width `k` | symbol `9 + k` | bits after the symbol |
+| ---: | --- | ---: | ---: | --- |
+| 1 | `1` | 1 | 10 | none |
+| 2 | `10` | 2 | 11 | `0` |
+| 3 | `11` | 2 | 11 | `1` |
+| 4 | `100` | 3 | 12 | `00` |
+| 5 | `101` | 3 | 12 | `01` |
+| 7 | `111` | 3 | 12 | `11` |
+| 32 | `100000` | 6 | 15 | `00000` |
+| 100 | `1100100` | 7 | 16 | `100100` |
+
+The first bit of a number in binary is always a 1, else the number would have one bit less. So once the
+decoder knows the width, it knows that bit too, and only the `k - 1` bits below it are in the
+bitstream. To decode, it puts the 1 back in front: symbol 12 means width 3, `read(2)` gives `01`, and a
+1 in front of `01` is `101`, a run of 5. The rule above, $2^{k-1} + x$, says the same with numbers
+instead of bits: $2^{k-1}$ is the 1 in front, 4 for `k = 3`, and `x` is the number the bits after the
+symbol make, 1 for `01`.
+
+Writing a number as its width and then its bits is an old idea. Its textbook form is the
+[Elias gamma code](https://en.wikipedia.org/wiki/Elias_gamma_coding): `k - 1` zeros, then all `k`
+bits of the number, the 1 in front included. The decoder counts zeros until it reads a 1; that 1 is
+the number's first bit, and as many bits follow as it counted zeros. A run of 5 is `00` and `101`,
+`00101`, and a run of 32 is `00000100000`, 11 bits. The
+[Exp-Golomb code](https://en.wikipedia.org/wiki/Exponential-Golomb_coding) of order 0 is the same code
+for numbers that start at 0: it writes `n` as Elias gamma writes `n + 1`, so a run as `run - 1`
+gives the same bits. [Chapter 17](#ch-decisions--level3) has its other orders.
+
+`OWN` does not write the zeros: the width is one of its symbols, in the same prefix code as the
+lengths. This does two things. One symbol says that a run comes and how wide it is; with Elias gamma
+each symbol would need one more bit in front, to tell a run from a length. And like every
+[Huffman code](#ch-compression--huffman), `OWN` gives a symbol the shorter a code the more often it came
+on the pages `OWN` was counted on, lengths and runs together. On those pages the lengths came more
+often than the runs, so the lengths of 9 and 10 bits got codes of {{own.len.8}} bits, 7 and 8 bits
+codes of {{own.len.6}} bits, and a run costs more than in Elias gamma (the whole code is in the table
+below):
+
+| run | bits in `OWN`: the symbol and the bits after it | bits in Elias gamma, and 1 for run or length |
+| --- | ---: | ---: |
+| 1 | {{own.len.10}} | 1 + 1 |
+| 2 or 3 | {{own.len.11}} + 1 | 3 + 1 |
+| 4 to 7 | {{own.len.12}} + 2 | 5 + 1 |
+| 32 to 63 | {{own.len.15}} + 5 | 11 + 1 |
+@assert own.len[10] > 2 and own.len[11] + 1 > 4 and own.len[12] + 2 > 6 and own.len[15] + 5 > 12 and own.len[8] == own.len[9] == 2 and own.len[6] == own.len[7] == 3
+
+The bits go where a page's table spends them: every byte value with a code costs one length, and a
+run comes only between them. In the example below, {{own.text.with_code}} of the {{own.text.rows}}
+symbols are lengths.
 
 The list ends as soon as the codes fill the code space, when $\sum 2^{-l}$ over the lengths so far
 is exactly 1: the code is then [complete](#ch-compression--complete), and the byte values after the
