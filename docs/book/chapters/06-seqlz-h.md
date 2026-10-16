@@ -74,7 +74,7 @@ their own, more take the escape and a second lookup, and pages get larger. It wa
 ([chapter 14](#ch-decode)), so 10 bits meant 64 cache lines less to load on every core
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-token-table-in-10-bits-again-the-a55s-cold-reads-13-µs-faster-x86-64-2-to-4-slower-not-kept)).
 Pages were 3.5 bytes larger on average. On the Mi 9T's A55, the little in-order core, cold reads of
-pages with coded literals were 1.3 µs faster, about 0.4 µs less per page written. On the A76, the big
+pages with coded literals were 1.3 µs faster, about 0.9 µs less per page written with 0.73 reads per write. On the A76, the big
 out-of-order core, the cold reads did not change and the warm reads were 0.16 µs slower; in the kernel
 VM on x86-64 swap-ins were 2% to 4% slower. On 5th October 10 bits had read cold 2.0 to 2.7 µs faster
 on the A76 too

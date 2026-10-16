@@ -209,5 +209,5 @@ sense given here.
   classes; summed over pages, often as a share of their size. [Chapter 1](#ch-zram--size-classes)
 - **swap-in fault, `MODE=swap`**: the kernel VM's benchmark that swaps each page out and in once, so the
   branch predictor has not seen it. [Chapter 17](#ch-decisions--score)
-- **time per page written**: the mean time to write a page plus 0.34 times the mean time to read one, the
-  reads per write of one desktop over 27.5 days. [Chapter 1](#ch-zram--score)
+- **time per page written**: the mean time to write a page plus 0.73 times the mean time to read one, the
+  reads per write of a phone in daily use over 7.1 days; a desktop had 0.34. [Chapter 1](#ch-zram--score)

@@ -371,9 +371,11 @@ judged by a **score**
 while faults in many pages one after the other and waits for the sum. The 99th percentile, p99, stays
 a guard: a p99 that gets clearly worse means some pages are pathological, and they are looked for.
 
-**$r = 0.34$** is how many reads come per write. On the project's desktop with zram as its only swap,
-`pswpin` and `pswpout` in `/proc/vmstat` counted 3 146 179 pages swapped in against 9 210 320 swapped
-out in 27.5 days. A page written is read back at most once, often never, because it is freed first.
+**$r = 0.73$** is how many reads come per write, on a phone. On the project's Pixel 9a in daily use,
+`pswpin` and `pswpout` in `/proc/vmstat` counted 78 335 824 pages swapped in against 106 938 781
+swapped out in 7.1 days, 16th October 2026; zram is for phones, so the score uses that. The project's
+desktop, with zram as its only swap, had 0.34 in 27.5 days. A page written is read back at most once,
+often never, because it is freed first.
 
 **lambda** is an exchange rate: how many bytes of stored size one µs per page is worth to you. On a
 phone short of RAM a byte is worth more than on a server with memory to spare, so the project does not
@@ -383,42 +385,43 @@ rate at which the faster one starts to win. `quetschn-score` computes it from th
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 360" role="img" aria-label="Stored bytes per page against time per page written for lz4, lzo-rle, seqlz-2 and zstd 3, means over the pages of a desktop's zram, with the lower left hull from lzo-rle through seqlz-2 to zstd 3.">
+<svg viewBox="0 0 720 360" role="img" aria-label="Stored bytes per page against time per page written for lz4, lzo-rle, seqlz-2 and zstd 3, means over the pages of a desktop's zram, with the lower left hull from lz4 through lzo-rle and seqlz-2 to zstd 3.">
   <g fill="none" stroke="currentColor" stroke-width="1">
     <line x1="70" y1="320" x2="690" y2="320"/><line x1="70" y1="320" x2="70" y2="30"/>
   </g>
   <g class="mut" fill="none" stroke="currentColor" stroke-width="0.6">
-    <line x1="215.9" y1="320" x2="215.9" y2="30"/><line x1="361.8" y1="320" x2="361.8" y2="30"/>
-    <line x1="507.6" y1="320" x2="507.6" y2="30"/><line x1="653.5" y1="320" x2="653.5" y2="30"/>
+    <line x1="194" y1="320" x2="194" y2="30"/><line x1="318" y1="320" x2="318" y2="30"/>
+    <line x1="442" y1="320" x2="442" y2="30"/><line x1="566" y1="320" x2="566" y2="30"/>
+    <line x1="690" y1="320" x2="690" y2="30"/>
     <line x1="70" y1="247.5" x2="690" y2="247.5"/><line x1="70" y1="175" x2="690" y2="175"/>
     <line x1="70" y1="102.5" x2="690" y2="102.5"/><line x1="70" y1="30" x2="690" y2="30"/>
   </g>
   <g font-size="11">
-    <text x="70" y="336" text-anchor="middle">0</text><text x="215.9" y="336" text-anchor="middle">4</text>
-    <text x="361.8" y="336" text-anchor="middle">8</text><text x="507.6" y="336" text-anchor="middle">12</text>
-    <text x="653.5" y="336" text-anchor="middle">16</text>
+    <text x="70" y="336" text-anchor="middle">0</text><text x="194" y="336" text-anchor="middle">4</text>
+    <text x="318" y="336" text-anchor="middle">8</text><text x="442" y="336" text-anchor="middle">12</text>
+    <text x="566" y="336" text-anchor="middle">16</text><text x="690" y="336" text-anchor="middle">20</text>
     <text x="64" y="324" text-anchor="end">0</text><text x="64" y="251.5" text-anchor="end">500</text>
     <text x="64" y="179" text-anchor="end">1000</text><text x="64" y="106.5" text-anchor="end">1500</text>
     <text x="64" y="34" text-anchor="end">2000</text>
-    <text x="380" y="354" text-anchor="middle">time per page written, write + 0.34 × cold read, µs</text>
+    <text x="380" y="354" text-anchor="middle">time per page written, write + 0.73 × cold read, µs</text>
     <text x="70" y="20">stored bytes per page</text>
   </g>
   <g class="acc" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4">
-    <path d="M303.0,99.6 L341.9,153.4 L648.4,159.8"/>
+    <path d="M301.0,87.7 L303.4,99.6 L336.3,153.4 L629.2,159.8"/>
   </g>
   <g fill="currentColor">
-    <circle cx="303.9" cy="87.6" r="4.5"/>
-    <circle cx="303.0" cy="99.6" r="4.5"/>
-    <circle cx="648.4" cy="159.8" r="4.5"/>
+    <circle cx="301.0" cy="87.7" r="4.5"/>
+    <circle cx="303.4" cy="99.6" r="4.5"/>
+    <circle cx="629.2" cy="159.8" r="4.5"/>
   </g>
-  <g class="acc"><circle cx="341.9" cy="153.4" r="5.5" fill="currentColor"/></g>
+  <g class="acc"><circle cx="336.3" cy="153.4" r="5.5" fill="currentColor"/></g>
   <g font-size="11" class="halo">
-    <text x="311" y="84">lz4, 6.42 µs, 1602 B</text>
-    <text x="293" y="117" text-anchor="end">lzo-rle, 6.39 µs, 1520 B</text>
-    <text x="350" y="175">seqlz-2, 7.46 µs, 1149 B</text>
-    <text x="690" y="146" text-anchor="end">zstd 3, 15.86 µs, 1105 B</text>
-    <text x="330" y="122" class="acc">348 B/µs</text>
-    <text x="460" y="150" class="acc">5.3 B/µs</text>
+    <text x="309" y="84">lz4, 7.45 µs, 1602 B</text>
+    <text x="294" y="117" text-anchor="end">lzo-rle, 7.53 µs, 1520 B</text>
+    <text x="345" y="175">seqlz-2, 8.59 µs, 1149 B</text>
+    <text x="690" y="146" text-anchor="end">zstd 3, 18.04 µs, 1105 B</text>
+    <text x="324" y="128" class="acc">350 B/µs</text>
+    <text x="460" y="150" class="acc">4.7 B/µs</text>
   </g>
 </svg>
 </div>
@@ -426,20 +429,19 @@ rate at which the faster one starts to win. `quetschn-score` computes it from th
 </figure>
 
 Read the figure from the right, with the numbers of the table in the next section, measured on 14th
-October 2026. Going from `zstd` 3 to `seqlz-2` saves 8.41 µs per page written and costs 44
-bytes, 5.3 bytes per µs: whoever values a µs at less should run `zstd`. Going from `seqlz-2` to
-`lzo-rle` saves 1.07 µs and costs 371 bytes, 348 bytes per µs: whoever values a µs at more should run
-`lzo-rle`. In between,
-`seqlz-2` has the lowest score. `lz4` is not on the hull, `lzo-rle` is faster and smaller in
-these runs.
+October 2026. Going from `zstd` 3 to `seqlz-2` saves 9.45 µs per page written and costs 44
+bytes, 4.7 bytes per µs: whoever values a µs at less should run `zstd`. Going from `seqlz-2` to
+`lzo-rle` saves 1.06 µs and costs 371 bytes, 350 bytes per µs: whoever values a µs at more should run
+`lzo-rle`, or above 1025 bytes per µs `lz4`, 0.08 µs faster for 82 bytes more. In between,
+`seqlz-2` has the lowest score.
 
-With the times of a real swap-out and swap-in in the virtual machine, measured later with the tables
-of 7th October, `seqlz-2` has the lowest score for any lambda from 6.7 to 183 bytes per µs, the
-means over the desktop dumps. The hull is then `lzo-rle`, `seqlz-1`, `seqlz-2` and `zstd`
-3, with `lz4` next to `lzo-rle` within the noise
-([explored-designs.md, "The score with the swap times"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279)).
-Whoever runs `lz4` or `lzo-rle` instead of `zstd` says, by that choice, that a µs is worth more than
-about 7 bytes to them.
+With the times of a real swap-out and swap-in in the virtual machine, all three levels in the same
+boots, the means over four zram dumps of a phone and a desktop, 16th October 2026, the hull is `lz4`,
+`seqlz-1`, `seqlz-2`, `seqlz-3` and `zstd` 3, at 597, 145, 21 and 0.2 bytes per µs: `seqlz-2` has the
+lowest score from 21 to 145 bytes per µs. `lzo-rle` is not on it, its swap-ins are slower than `lz4`'s
+([explored-designs.md, "The numbers again on 16th October"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
+Whoever runs `lz4` instead of `zstd` 3 says, by that choice, that a µs is worth more than about 43
+bytes to them, 457 bytes per page for 10.6 µs.
 
 ## The codecs zram has, and where seqlz sits {#ch-zram--codecs}
 
@@ -457,10 +459,10 @@ flushed from the CPU caches first. Means over the pages and over 3 boots, 14th O
 
 | codec | stored bytes per page | write, µs | cold read, µs | time per page written, µs |
 | --- | --- | --- | --- | --- |
-| `lz4` | 1602 | 5.52 | 2.64 | 6.42 |
-| `lzo-rle` | 1520 | 5.41 | 2.91 | 6.39 |
-| **`seqlz-2`** | **1149** | **6.48** | **2.89** | **7.46** |
-| `zstd` 3 | 1105 | 13.96 | 5.59 | 15.86 |
+| `lz4` | 1602 | 5.52 | 2.64 | 7.45 |
+| `lzo-rle` | 1520 | 5.41 | 2.91 | 7.53 |
+| **`seqlz-2`** | **1149** | **6.48** | **2.89** | **8.59** |
+| `zstd` 3 | 1105 | 13.96 | 5.59 | 18.04 |
 
 In these runs of 14th October 2026, `seqlz-2` stores pages 24% smaller than `lzo-rle` and 28%
 smaller than `lz4`, 4% larger than `zstd` 3, for 17% more time than `lz4` to write a page.
@@ -508,8 +510,8 @@ cost in time, not a faster read.
 measured that with `zstd` 3 and with an optimal parser for seqlz's format, and did not pursue it
 ([chapter 17](#ch-decisions--not-kept)). Every design in this book compresses a page once.
 
-$r = 0.34$ is one desktop's. A phone's $r$ is not measured, and neither is how large the bursts of
-swap-ins are, which decides how much a slower read hurts a user. With 16 KiB pages, which Android is moving to and which the project
+$r = 0.73$ is one phone's, in one week of one person's use. How large the bursts of swap-ins are,
+which decides how much a slower read hurts a user, is not measured. With 16 KiB pages, which Android is moving to and which the project
 has only from the Android 17 emulator, seqlz needs more work memory than `lz4` once the streams are
 split, which the score counts as a cost.
 @assert k16.size.state + k16.const.SCRATCH > 16416 and k16.size.state <= 16416

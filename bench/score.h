@@ -55,7 +55,9 @@ struct zram_device {
 
 // docs/plan.md §1.1. All times per page written to zram.
 struct score_weights {
-    double reads_per_write = 0.34; // pswpin / pswpout, 27.5 days of a desktop
+    // pswpin / pswpout: 0.73 in 7.1 days of a phone in daily use, the default, as zram is for
+    // phones; 0.34 in 27.5 days of a desktop
+    double reads_per_write = 0.73;
     double recompress_weight = 1.0;
 };
 

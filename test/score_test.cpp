@@ -91,6 +91,8 @@ TEST_CASE("score: the devices of a run of tools/zram-vm, memory after recompress
     CHECK(c[1].recompress_ns == 242842.0);
     // 8 + 0.5 * 3.4 + 0.25 * 242.842
     CHECK(us_per_page(c[1], score_weights{0.5, 0.25}) == doctest::Approx(70.4105));
+    // the default: a phone's 0.73 reads per write, 6.2 + 0.73 * 2.6
+    CHECK(us_per_page(c[0], score_weights{}) == doctest::Approx(8.098));
 }
 
 TEST_CASE("score: a log from before the means is rejected, not scored with 0") {

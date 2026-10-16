@@ -14,9 +14,10 @@ Goal: near `lz4` speed and `zstd` level 3 (zram's default level for it) ratio. J
 much closer it gets, not by whether it arrives.
 
 - Score (`docs/plan.md` §1.1): memory per stored page vs mean time per page written,
-  `write + 0.34 * read + b * recompression`. Memory = zsmalloc bytes + work memory per CPU (what
-  `kmalloc()`/`vmalloc()` hand out) × CPUs / pages in zram, for a named machine (default 8 and 32 CPUs,
-  64 MiB and 1 GiB). Lower left wins. `quetschn-score` computes the hull.
+  `write + r * read + b * recompression`, r = 0.73 (a phone in daily use, the default; a desktop 0.34).
+  Memory = zsmalloc bytes + work memory per CPU (what `kmalloc()`/`vmalloc()` hand out) × CPUs / pages
+  in zram, for a named machine (default 8 and 32 CPUs, 64 MiB and 1 GiB). Lower left wins.
+  `quetschn-score` computes the hull.
 - Kinds of limit (`docs/plan.md` §1, §1.1): hard limit = C6 only, decoder safe and bounded for any
   input. Cost in the score = C5 work memory per CPU (no limit since #203; 16 416 bytes is `lz4`'s, a
   cover-letter number), recompression (`b`). Guard + reported = C2/C3. Reported = C1, C4, global tables.
