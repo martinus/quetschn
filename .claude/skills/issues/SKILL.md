@@ -114,8 +114,8 @@ Decide everything else yourself and say what you decided.
   to be neutral compares the machine code first, function by function,
   `tools/samecode/samecode.sh <linux tree> origin/main`, and is measured where the code differs.
   Restructuring alone has cost 0.2 to 0.8 µs through code generation.
-- **Every measured design** gets its entry in docs/explored-designs.md, and a line in its Index, in
-  the same PR.
+- **Every measured design** gets its entry in docs/explored-designs.md, with its `Status:` line and a
+  line in its Catalog, in the same PR; entries it revisits get their `Now:` updated.
 - **An agent that does an issue gets the issue's list in its prompt, and its result is checked
   against that list.** "Done" from an agent is a claim, not a result.
 
