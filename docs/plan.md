@@ -162,10 +162,11 @@ same for every codec, which moves no exchange rate. The read benchmark decodes e
 times, which trains the branch predictor on it: in a fault `seqlz-2` mispredicts about 110
 branches per page more, and cold caches add 0.12 µs ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 
-Not measured yet: how large the bursts of swap-ins are, and `r` on a phone. `quetschn-swap-bursts`
-samples `pswpin` every 10 ms and groups the swap-ins into bursts. 9 minutes on the development machine
-saw 1 swap-in: with 56 GB free it does not swap. It needs a machine under memory pressure, a phone
-best.
+**Swap-ins come in bursts.** `quetschn-swap-bursts` samples `pswpin` every 10 ms and groups the
+swap-ins into bursts. On the Pixel 9a in use, 15 minutes: single swap-ins were 0.0% of the pages, 92%
+came in bursts of 1024 pages and more, 61% in bursts of 8192 and more, and the reads per write were 0.732
+([explored-designs.md](explored-designs.md#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)). A task waits for the sum of a burst, which is what the
+mean measures. 9 minutes on the development machine saw 1 swap-in: with 56 GB free it does not swap.
 
 Every limit next to the score is one of the kinds of §1:
 

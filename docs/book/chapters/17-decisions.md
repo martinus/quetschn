@@ -856,7 +856,8 @@ same list.)
   11 and Linux 4.14, plus the Android 17 emulator, and the tables are trained on pages of the same desktop
   and phone. On another machine the tables may fit less well.
 - **The exchange rate and `r`.** The 0.73 reads per write is one phone in one week of one person's use; a
-  desktop had 0.34. The size of the bursts of swap-ins is not measured.
+  desktop had 0.34. Its swap-ins come in bursts, 92% of the pages in bursts of 1024 and more in 15
+  minutes of use ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)); how long a burst takes is not measured.
 - **arm64.** Most times are x86-64. In the phone's own kernel, on its own pages, with the tables of 7th
   October 2026, `seqlz-2` stores 28% less than `lz4` and swaps in 13% slower warm and 25% slower
   cold on the A76, 11% and 17% on the A55

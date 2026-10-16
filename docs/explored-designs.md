@@ -203,7 +203,8 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **The score**
 
-- 2026-10-16 **measurement** [Reads per write on phones](#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it): Pixel 9a in daily use, 7.1 days: pswpin/pswpout 0.73 (refaults, not readahead); the desktop had 0.34, the Mi 9T 0.16 idle and 0.45 to 0.61 in scripted sessions. The score's r is 0.73 since (quetschn-score, tools/plot-*.py); lz4 then ahead of lzo-rle, the levels unchanged. Code: bench/score.h. Now: current. Untried: other phones and users.
+- 2026-10-16 **measurement** [Swap-in bursts on a Pixel 9a](#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again): 15 minutes in use, 10 ms samples: 0.732 reads per write; single swap-ins 0.0% of the pages, 92% in bursts of 1024 pages or more, 61% in bursts of 8192 or more, the largest 72 621. The mean time per page is the right measure. Code: tools/swap-bursts/. Now: current. Untried: an hour or a day of use; which core; burst durations.
+- 2026-10-16 **measurement** [Reads per write on phones](#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it): Pixel 9a in daily use, 7.1 days: pswpin/pswpout 0.73 (refaults, not readahead); the desktop had 0.34, the Mi 9T 0.16 idle and 0.45 to 0.61 in scripted sessions. The score's r is 0.73 since (quetschn-score, tools/plot-*.py); lz4 then ahead of lzo-rle, the levels unchanged. Code: bench/score.h. Now: current; 15 minutes of use gave 0.732 again ([bursts](#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)). Untried: other phones and users.
 - 2026-10-16 **measurement** [VM numbers of 16 October, the README's chart](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart): kernel VM MODE=swap, 3 boots, mean of the four VM samples: r = 0.73: lz4 36.5% memory / 8.77 µs per page written, lzo-rle 34.9% / 8.91, zstd 3 25.3% / 19.38, seqlz-1 29.1% / 9.28, seqlz-2 26.5% / 10.03, seqlz-3 25.4% / 12.16; hull lz4, seqlz-1, seqlz-2, seqlz-3, zstd 3 (at 0.34 lzo-rle instead of lz4). Code: tools/plot-readme.py, docs/plots/levels-vm.svg. Now: current.
 - 2026-10-14 **measurement** [VM and hot loop numbers of 14 October](#the-numbers-again-on-14th-october-05-and-47-smaller-than-on-5th-october-writes-03-µs-faster): Kernel VM, 3 boots, first/second desktop dump: seqlz-2 1029.7/1268.5 bytes per page, write 6.13/6.82 µs, cold 2.80/2.97; seqlz-1 1118.4/1462.3. Hull: seqlz-1 to seqlz-2 189/258 bytes per µs, seqlz-2 to zstd 3 2.1/8.3. Code: tools/zram-vm/run.sh, quetschn-score, tools/plot-codecs.py (mean over boots). Now: Predates 15 Oct: "Level 3, a lazy matcher" added seqlz-3, "The matcher without its step back" made writes 1% to 2% faster in the VM; all three levels with lzo-rle on 16 Oct ([16th October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
 - 2026-10-14 **method** [Work memory per CPU priced in the score](#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu): Bytes per CPU x CPUs / pages in zram added (lz4 20 512, zstd 3 192 544, seqlz-2 16 384). zstd 3 leaves the hull below 27 and 7.9 MiB in zram per CPU; other steps move 5% at most with 8 CPUs. Code: quetschn-score --per-cpu --device, bench/score.cpp; bench/kernel_codecs/alloc.c; #203. Now: current. Untried: How much a phone keeps in zram, and for how long.
@@ -509,7 +510,7 @@ change.
 
 ## Reads per write on phones: 0.73 on a Pixel 9a in daily use, the score uses it
 
-Status: measurement, 2026-10-16. Now: current.
+Status: measurement, 2026-10-16. Now: current; 15 minutes of use on 16 Oct gave 0.732 again, and the bursts ([swap-in bursts](#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)).
 
 *The score weighs a read by `r`, the reads per write, and took 0.34 from 27.5 days of the development
 machine. A phone is what zram is for, so how often does one read a page back? The Pixel 9a in daily use,
@@ -555,6 +556,44 @@ long. One person's phone in one week, the only number of a phone in daily use he
 
 ```sh
 adb shell 'grep -E "^(pswpin|pswpout|workingset_refault_anon) " /proc/vmstat; cat /proc/uptime'
+```
+
+## Swap-ins on a Pixel 9a in use: 92% of the pages in bursts of 1024 or more, 0.73 reads per write again
+
+Status: measurement, 2026-10-16. Now: current.
+
+*The score takes the mean time per page and not p99, because a task that swaps in many pages waits
+for all of them. Is that how a phone swaps? `quetschn-swap-bursts` on the Pixel 9a, 15 minutes, about
+the second half of them in use, switching between apps: 366 241 pages swapped in and 500 491 out, 0.732
+reads per write, the 0.73 of its 7.1 days. Single swap-ins are 114 pages, 0.0% of them; 92% of the pages
+came in bursts of 1024 pages and more, 61% in 11 bursts of 8192 and more, the largest 72 621 pages,
+284 MiB. A swap-in mostly waits for thousands of decompressions, so the mean is the right measure here.*
+Code: `tools/swap-bursts/swap-bursts.c`, an NDK build of `quetschn-swap-bursts`.
+
+`quetschn-swap-bursts` reads `pswpin` and `pswpout` of `/proc/vmstat` every 10 ms, which `adb shell`
+can without root, and counts a run of intervals with swap-ins, with gaps of at most 5 intervals, 50 ms,
+as one burst:
+
+| burst of pages | bursts | swap-ins | share |
+| --- | ---: | ---: | ---: |
+| 1 | 114 | 114 | 0.0% |
+| 2 to 63 | 379 | 4 687 | 1.3% |
+| 64 to 1023 | 91 | 24 916 | 6.8% |
+| 1024 to 8191 | 41 | 111 575 | 30.5% |
+| 8192 to 16383 | 8 | 100 673 | 27.5% |
+| 16384 and more | 3 | 124 276 | 33.9% |
+
+What a burst of 8192 pages costs `seqlz-2` against `lz4`, with the reads of pages seen once of "A current
+phone, the Pixel 9a": 0.21 µs more per page on the X4, 1.7 ms per burst; 0.44 µs on the A720, 3.6 ms;
+2.16 µs on the A520, 17.7 ms. Not known: which core the swap-ins ran on, how long a burst took (one of
+72 621 pages is seconds of reclaim and faults, several waves rather than one launch), and how much of
+it is readahead; over the 7.1 days `workingset_refault_anon` equalled `pswpin`, so mostly none. One
+window of 15 minutes on one phone.
+
+```sh
+cmake --build build-android --target quetschn-swap-bursts
+adb push build-android/quetschn-swap-bursts /data/local/tmp/
+adb shell /data/local/tmp/quetschn-swap-bursts --interval-ms 10 --gap 5 --seconds 900
 ```
 
 ## The score with the swap times: seqlz-fast-lit's range ends at 155 and 211 bytes per µs instead of 200 and 279

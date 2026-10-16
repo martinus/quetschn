@@ -510,8 +510,11 @@ cost in time, not a faster read.
 measured that with `zstd` 3 and with an optimal parser for seqlz's format, and did not pursue it
 ([chapter 17](#ch-decisions--not-kept)). Every design in this book compresses a page once.
 
-$r = 0.73$ is one phone's, in one week of one person's use. How large the bursts of swap-ins are,
-which decides how much a slower read hurts a user, is not measured. With 16 KiB pages, which Android is moving to and which the project
+$r = 0.73$ is one phone's, in one week of one person's use. Its swap-ins come in bursts: in 15 minutes
+of use on 16th October 2026, 92% of the pages came in bursts of 1024 pages and more, and 114 of 366 241
+came alone ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)). So a slower read costs a user thousands of times
+the difference per page, which is what the mean counts; how long a burst takes, and on which core, is not
+measured. With 16 KiB pages, which Android is moving to and which the project
 has only from the Android 17 emulator, seqlz needs more work memory than `lz4` once the streams are
 split, which the score counts as a cost.
 @assert k16.size.state + k16.const.SCRATCH > 16416 and k16.size.state <= 16416
