@@ -672,8 +672,24 @@ samples
 | in byte order, the lengths and runs in `OWN` (level 3) | 53.1 |
 | in byte order, the changes of the length and runs | 53.0 |
 
-An Exp-Golomb code of order `j` needs no table: a number's width in unary, then its bits, the `j`
-lowest always. On 9th October the description was the fourth way, the distance's width in a fixed code
+An Exp-Golomb code needs no table. Order 0 is the code of a run in [chapter 4](#ch-format--own):
+the number's width as zeros, then its bits, only shifted by one so that 0 has a code too. Order `j`
+sends the `j` lowest bits of the number as they are, and what is left above them in order 0. A higher
+order makes the small numbers longer and the large ones shorter:
+
+| number | order 0 | order 1 | order 2 |
+| ---: | --- | --- | --- |
+| 0 | `1` | `10` | `100` |
+| 1 | `010` | `11` | `101` |
+| 2 | `011` | `0100` | `110` |
+| 3 | `00100` | `0101` | `111` |
+| 5 | `00110` | `0111` | `01001` |
+| 8 | `0001001` | `001010` | `01100` |
+| 20 | `000010101` | `00010110` | `0011000` |
+
+E.g. 5 in order 1: its lowest bit is `1`, what is left above it is `10` in binary, 2, and 2 in order 0
+is `011`; together `0111`. Order 1 fit the distances between the byte values best of the three, 61.3
+bytes per table against 68.8 and 62.7. On 9th October the description was the fourth way, the distance's width in a fixed code
 of 10 symbols. Exp-Golomb order 1 replaced it first: tables built 12% faster on the PC, for 2.0 bytes
 more per table. Byte order then saved 6.2 bytes against the fourth way: the byte values cost no bits,
 only the lengths and the runs between them, and a run is coded like the fourth way's distances, its
