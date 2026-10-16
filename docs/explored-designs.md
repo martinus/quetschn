@@ -198,7 +198,8 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **The score**
 
-- 2026-10-14 **measurement** [VM and hot loop numbers of 14 October](#the-numbers-again-on-14th-october-05-and-47-smaller-than-on-5th-october-writes-03-µs-faster): Kernel VM, 3 boots, first/second desktop dump: seqlz-2 1029.7/1268.5 bytes per page, write 6.13/6.82 µs, cold 2.80/2.97; seqlz-1 1118.4/1462.3. Hull: seqlz-1 to seqlz-2 189/258 bytes per µs, seqlz-2 to zstd 3 2.1/8.3. Code: tools/zram-vm/run.sh, quetschn-score, tools/plot-codecs.py (mean over boots). Now: Predates 15 Oct: "Level 3, a lazy matcher" added seqlz-3, "The matcher without its step back" made writes 1% to 2% faster in the VM.
+- 2026-10-16 **measurement** [VM numbers of 16 October, the README's chart](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart): kernel VM MODE=swap, 3 boots, mean of the four VM samples: lz4 36.5% memory / 7.51 µs per page written, lzo-rle 34.9% / 7.48, zstd 3 25.3% / 16.85, seqlz-1 29.1% / 7.89, seqlz-2 26.5% / 8.55, seqlz-3 25.4% / 10.63; hull lzo-rle, seqlz-1, seqlz-2, seqlz-3, zstd 3. Code: tools/plot-readme.py, docs/plots/levels-vm.svg. Now: current.
+- 2026-10-14 **measurement** [VM and hot loop numbers of 14 October](#the-numbers-again-on-14th-october-05-and-47-smaller-than-on-5th-october-writes-03-µs-faster): Kernel VM, 3 boots, first/second desktop dump: seqlz-2 1029.7/1268.5 bytes per page, write 6.13/6.82 µs, cold 2.80/2.97; seqlz-1 1118.4/1462.3. Hull: seqlz-1 to seqlz-2 189/258 bytes per µs, seqlz-2 to zstd 3 2.1/8.3. Code: tools/zram-vm/run.sh, quetschn-score, tools/plot-codecs.py (mean over boots). Now: Predates 15 Oct: "Level 3, a lazy matcher" added seqlz-3, "The matcher without its step back" made writes 1% to 2% faster in the VM; all three levels with lzo-rle on 16 Oct ([16th October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
 - 2026-10-14 **method** [Work memory per CPU priced in the score](#work-memory-per-cpu-in-the-score-zstd-3-drops-off-the-hull-below-27-and-79-mib-in-zram-per-cpu): Bytes per CPU x CPUs / pages in zram added (lz4 20 512, zstd 3 192 544, seqlz-2 16 384). zstd 3 leaves the hull below 27 and 7.9 MiB in zram per CPU; other steps move 5% at most with 8 CPUs. Code: quetschn-score --per-cpu --device, bench/score.cpp; bench/kernel_codecs/alloc.c; #203. Now: current. Untried: How much a phone keeps in zram, and for how long.
 - 2026-10-07 **measurement** [Score with swap-out and swap-in times](#the-score-with-the-swap-times-seqlz-fast-lits-range-ends-at-155-and-211-bytes-per-µs-instead-of-200-and-279): Kernel VM MODE=swap, tables of 7 October: seqlz-2 lowest score from 3.1 to 155 bytes per µs (first dump) and 10.3 to 211 (second), not 200 and 279. It swaps in 0.52 and 0.72 µs slower than lz4, 0.12 and 0.27 in the read benchmark. Code: quetschn-score reads MODE=swap logs (bench/score.cpp); tools/zram-vm/run.sh. Now: 'Work memory per CPU in the score' adds C5 to these numbers; 'The numbers again on 14th October' has newer bytes; seqlz-3 (kept 15 Oct) now sits between seqlz-2 and zstd 3. Untried: The phone's swap times in the score, and r on a phone.
 - 2026-10-05 **measurement** [VM, hot loop and phone numbers of 5 October](#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september): Kernel VM, first/second desktop dump: seqlz-2 1034.9/1330.6 bytes per page, write 6.44/7.13 µs, cold read 2.70/2.88 µs, 0.29/0.35 µs faster than 29 Sep. Mi 9T kernel, first desktop dump: seqlz-2 25.2% memory, lz4 36.0%, zstd 3 24.6%. Code: after #69, #71, #72; tools/plot-speed.py, tools/plot-devices.py, docs/plots/devices-2026-10-05.svg; ~/opt/mi9t-kernel/mkvar.sh. Now: Replaced by "The numbers again, with the bit order" (6 Oct) and "The numbers again on 14th October". Its phone numbers lack the compressed-data prefetch (item 7 of "Six choices"). Untried: Why the PC harness gave seqlz-2 faster writes than seqlz-1: not looked into here, see "The harness on the PC".
@@ -3456,9 +3457,43 @@ the tests and the bit by bit page read most significant bit first now; `seqlz_re
 `seqlz_decode()` on 1800 pages from two dumps, 1040 valid and the others with a flipped bit or cut
 short.
 
+## The numbers again on 16th October, all three levels with lzo-rle: the README's chart
+
+Status: measurement, 2026-10-16. Now: current.
+
+*The README's chart and table: `lz4`, `lzo-rle`, `zstd` 3 and the three levels in one kernel VM run,
+the mean over the four VM samples. From the fastest to the smallest `lzo-rle`, `seqlz-1`, `seqlz-2`,
+`seqlz-3` and `zstd` 3 are on the hull of the means, at 570, 165, 22 and 0.24 bytes per µs; `lz4` is
+not, `lzo-rle` is as fast and stores 4.5% less.* Code: `tools/plot-readme.py`, `docs/plots/levels-vm.svg`.
+
+`tools/zram-vm/run.sh` at `986c24e0fe44`, `MODE=swap`, `BOOTS=3`, `KARGS=zram.zram_prefetch=8`, CPU 2 of
+the Ryzen 9 7950X at 4.5 GHz, boost off, gcc 16.2.1, the code of `e94514e`. Bytes per page from
+`mm_stat`, swap-out and cold swap-in in µs, time per page written = swap-out + 0.34 × swap-in, means
+of 3 boots from `quetschn-score`, then the mean over p3, p5, 23rd and 24th September:
+
+| codec | bytes per page | % of 4 KiB | swap-out | swap-in | time per page written |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1494.9 | 36.5 | 6.41 | 3.23 | 7.51 |
+| `lzo-rle` | 1427.6 | 34.9 | 6.22 | 3.69 | 7.48 |
+| `zstd` 3 | 1038.0 | 25.3 | 14.64 | 6.49 | 16.85 |
+| `seqlz-1` | 1193.7 | 29.1 | 6.70 | 3.53 | 7.89 |
+| `seqlz-2` | 1084.5 | 26.5 | 7.26 | 3.79 | 8.55 |
+| `seqlz-3` | 1039.5 | 25.4 | 9.29 | 3.94 | 10.63 |
+
+Per dump `zstd` 3 is on the hull only on p5 and 24th September, after `seqlz-3`, and `lz4` only on
+24th September, where `lzo-rle` is slower. `seqlz-2`'s and `seqlz-3`'s swap-ins are 18% and 22% slower
+than `lz4`'s, as in "Level 3, a lazy matcher".
+
+```sh
+ALGOS=lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 BOOTS=3 MODE=swap KARGS=zram.zram_prefetch=8 \
+    tools/zram-vm/run.sh <linux tree> ~/quetschn-corpus/phone-dump/p3-sample20000 >p3.log    # and p5, zram0, zram0-2026-09-24
+./build/quetschn-score p3.log >p3.score
+tools/plot-readme.py --title "..." --note "..." --out docs/plots/levels-vm.svg p3.score p5.score zram0.score zram0-2026-09-24.score
+```
+
 ## The numbers again on 14th October: 0.5% and 4.7% smaller than on 5th October, writes 0.3 µs faster
 
-Status: measurement, 2026-10-14. Now: Predates 15 Oct: "Level 3, a lazy matcher" added seqlz-3, "The matcher without its step back" made writes 1% to 2% faster in the VM.
+Status: measurement, 2026-10-14. Now: Predates 15 Oct: "Level 3, a lazy matcher" added seqlz-3, "The matcher without its step back" made writes 1% to 2% faster in the VM; all three levels with lzo-rle in one run on 16 Oct ([16th October](#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
 
 *The kernel VM and the hot loop with the code and the tables of 14th October, for the two charts of
 docs/seqlz.md.* Kernel VM of `tools/zram-vm/run.sh`, 20 000 pages per dump, 3 boots per dump with all
