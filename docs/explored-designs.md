@@ -317,8 +317,9 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 - 2026-09-26 **fixed** [Clang kernel dropped decoder prefetches on x86-64](#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs): x86-64 kernel builds with -mno-sse; clang then drops __builtin_prefetch: 0 prefetcht0 in seqlz.o vs 36 with gcc, seqlz-2 cold p99 22% and 26% above gcc's. Inline-asm prefetcht0 put clang's p99 within 40 to 91 ns of gcc's. arm64 unaffected. Code: PAGE_LZ_PREFETCH in src/page_lz.h; test kernel_seqlz_prefetch. Now: Inline asm replaced by the kernel's prefetch() plus tools/kernel-port/x86-prefetcht0.patch ("The kernel's prefetch() on x86-64", "The kernel copy's choices", #151); PAGE_LZ_PREFETCH no longer in src/.
 - 2026-09-23 **kept** [Prefetch compressed data before decompression, kernel VM](#zram-prefetch-the-compressed-data-before-decompression): Kernel VM x86-64, cold compressed data: prefetching all its lines took lz4 read p99 from 5600 to 3891 ns; destination prefetch no help. In seqlz-1's backend: p99 5400 to 4440 ns. Also kept: decoder fast path, 5-byte hash, refill below 23 bits. Code: tools/zram-vm/ (run.sh, zram-prefetch.patch, backend_seqlz.c, init.c); now src/zram_seqlz.c, prefetch_lines() in src/seqlz_decompress.c, quetschn_prefetch_page() in bench/kernel_codecs/zram_codec.h; bench/harness.cpp. Now: clang kernels dropped the prefetches: "A kernel built with clang dropped the decoder's prefetches", "The kernel's prefetch() on x86-64". Literal codes now 10 bits, 5 per refill (SEQLZ_LIT_ROUNDS), 8 streams. Lazy step is level 3. Untried: How often compressed data is cold at a real fault; arm64 little cores; lz4's backend prefetch (4 line change); offsets as a byte stream.
 
-**Phone, Mi 9T**
+**Phones: Mi 9T, Pixel 9a**
 
+- 2026-10-16 **measurement** [Pixel 9a, Tensor G4, userspace](#a-current-phone-the-pixel-9a-seqlz-1-as-fast-as-lz4-on-the-big-cores-seqlz-1-and-seqlz-2-14-and-17-times-lz4s-time-on-the-little-one): codecs on the X4, A720 and A520 without root, the Mi 9T's p3 pages; time per page written seqlz-1 4.82 / 5.62 / 21.55 µs against lz4 5.06 / 5.24 / 14.99, seqlz-2 5.54 / 6.56 / 25.23; seqlz-3 at zstd 3's memory in 49% to 54% of its time; hull lzo-rle, seqlz-1, seqlz-2, seqlz-3, zstd 3 on every core. The cycle counter does not run there, the harness uses steady_clock. Code: tools/phone-cores.sh, tools/plot-cores.py, bench/harness.cpp. Now: current. Untried: zram in its kernel, its own pages.
 - 2026-10-06 **not kept** [A55 write profile and decoder code prefetch](#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept): A55 compress cycles per page: lz4 30 032, seqlz-1 42 298, seqlz-2 47 776; pointer index in code_literals() same cycles. Prefetching the decoder's code: A55 cold -1.66 µs [-4.09, +0.51], warm reads +0.09 to +0.37 µs, A76 only slower. Not kept. Code: code_literals(); prefetch of seqlz_decode/decode_literals code (variants, not merged). Now: "The matcher without its step back" (15 Oct) removed the backward step at levels 1 and 2, part of the 9.6% the profile counted after a hit. Untried: Section says nothing new to try in C for the write; most of the 10.6 µs cold-read gap to lz4 stays unexplained.
 - 2026-10-06 **measurement** [Numbers with bit order and per-core token prefetch](#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster): Mi 9T, three modules: MSB-first plus token prefetch on in-order cores reads cold 3.0 µs faster on the A76 (13.49 to 10.43), 6.2 µs at p99; compressed-data prefetch makes A55 warm reads 2.2 µs faster. VM: seqlz-2 1055.3 bytes per page. Code: tools/plot-devices.py, docs/plots/devices.svg. Now: VM numbers replaced by "The numbers again on 14th October". Per-core prefetch replaced (#152). Phone runs since 8 Oct use one codec per process and BUS=1 ("Less noise on the phone").
 - 2026-10-06 **kept** [Phone module prefetches the compressed data](#7-the-phones-module-did-not-prefetch-the-compressed-data-23-µs-faster-warm-reads-on-the-a55): Prefetching the compressed data in the Mi 9T module: A55 warm reads 2.3 µs faster (15%), cold p99 4.5 µs; page prefetch costs the A76 2 µs cold. Same prefetch gives lz4 nothing (A76 6.77 vs 6.80 µs). Every earlier phone number lacks it. Code: src/zram_seqlz.c (PC backend); ~/opt/mi9t-kernel/quetschn-mod/quetschn_crypto_glue.c (phone module). Now: Phone module prefetches the compressed data since ("The numbers again, with the bit order"). Its per-core token prefetch replaced by prefetch on every core (#152).
@@ -2257,6 +2258,101 @@ bytes per page from the compressed lengths of p3 (`main` 843.5):
 
 NDK r30's clang 21 instead of clang 9 writes 2.2% faster and reads 5% faster by itself; the gain of no
 step back is the same with both.
+
+## A current phone, the Pixel 9a: seqlz-1 as fast as lz4 on the big cores, seqlz-1 and seqlz-2 1.4 and 1.7 times lz4's time on the little one
+
+Status: measurement, 2026-10-16. Now: current.
+
+*The phones measured so far were a Mi 9T of 2019. The Pixel 9a, Tensor G4, has a Cortex-X4, three
+A720 and four A520, and can only be measured in userspace, without root. On the same pages as the Mi 9T's
+numbers, time per page written, write + 0.73 × cold read: `seqlz-1` 4.82 µs on the X4 against 5.06 for
+`lz4`, `seqlz-2` 5.54; on the A720 5.62, 5.24 and 6.56; on the A520 21.55, 14.99 and 25.23. `seqlz-3`
+stores what `zstd` 3 stores in 49%, 50% and 54% of its time. The hull is the same on all three cores,
+`lzo-rle`, `seqlz-1`, `seqlz-2`, `seqlz-3`, `zstd` 3; `seqlz-2` has the lowest score from 24 to 104 bytes
+per µs on the X4, 17 to 79 on the A720, 4.9 to 20 on the A520.* Code: `tools/phone-cores.sh`,
+`tools/plot-cores.py`, `docs/plots/pixel-cores.svg`; the harness's clock without the cycle counter in
+`bench/harness.cpp`.
+
+**The setup.** `tools/phone-cores.sh` pushes an NDK r30 build of `quetschn-bench-interleaved` and the
+20 000-page sample of p3 (19 775 pages after the same-filled ones) to `/data/local/tmp`, runs each codec
+alone in its own process pinned to one core, 3 rounds with the order rotated, on cpu7 (X4), cpu4 (A720)
+and cpu0 (A520), and deletes the pages again. The pages are the Mi 9T's, not the Pixel's own: without
+root its zram cannot be read. The clocks cannot be fixed either; every run ended at the core's highest
+clock, 3105, 2600 and 1849 MHz (the A520's table says 1950), the rounds of one codec differ by at most
+2%, the battery was at 27 to 28 C. The kernel opens the cycle counter, `perf_event_open` with
+`security.perf_harden` 0, but never runs it: the count stays 0. The harness then times with
+`steady_clock`, `cntvct_el0` at 24.576 MHz, a step of 39 to 40 ns, which the median of 5 runs per page
+and the mean over 19 775 pages average out.
+
+Means of the 3 rounds, µs per page, bytes per page in the zsmalloc model:
+
+| codec | bytes per page | X4 write / cold read | A720 write / cold read | A520 write / cold read |
+| --- | ---: | --- | --- | --- |
+| `lz4` | 1364.0 | 3.50 / 2.14 | 4.10 / 1.56 | 12.16 / 3.88 |
+| `lzo-rle` | 1312.7 | 3.05 / 2.03 | 3.79 / 1.57 | 11.29 / 4.38 |
+| `zstd` 3 | 951.4 | 10.75 / 5.90 | 14.40 / 5.57 | 50.94 / 17.15 |
+| `seqlz-1` | 1071.1 | 3.33 / 2.04 | 4.45 / 1.61 | 18.01 / 4.85 |
+| `seqlz-2` | 997.0 | 3.88 / 2.27 | 5.16 / 1.91 | 20.81 / 6.04 |
+| `seqlz-3` | 952.0 | 5.68 / 2.32 | 7.69 / 2.12 | 29.52 / 6.64 |
+
+* **The big cores have no gap to close for `seqlz-1`.** On the X4 it writes in 3.33 µs where `lz4` takes
+  3.50, and reads cold in 2.04 against 2.14. `seqlz-2` costs 0.48 µs per page written more than `lz4`
+  for 367 bytes less, 761 bytes per µs.
+* **The A520 is the weak spot**, as the Mi 9T's A55 was: `seqlz-1` writes 1.48 times `lz4`'s time,
+  `seqlz-2` 1.71 times. From `lz4` to `seqlz-2` there it is 36 bytes per µs.
+* **Cold reads on the X4 are slower than on the A720**, 2.14 against 1.56 µs for `lz4`, for every codec.
+  Not looked into; the cache flush before a cold read or the X4's path to memory are guesses.
+* **What it means for the phone.** Its zram held 3.28 GiB of pages: at the sizes above 1.09 GiB with
+  `lz4`, 0.80 GiB with `seqlz-2`, 0.29 GiB less. It swapped out 174 pages per second on average over 7.1
+  days; with all of them on the A520, `seqlz-2` would cost 174 × 10.2 µs, 1.8 ms of a little core per
+  second, against `lz4`. A swap-in of 3000 pages, about what an app launch took on the Mi 9T, waits 6.5
+  ms more on the A520 and 0.4 ms more on the X4. Estimates from the pages of another phone.
+
+**Pages seen once.** The harness compresses and decodes each page 5 times, with 15 other pages in
+between, which may train the branch predictor on the page ("The decoder in a fault, found"). With
+`ONCE=1`, `tools/phone-cores.sh` times each page once per pass over all 19 775 pages (`--decode-loop 3`,
+the median of 3 passes, after 2 s of a busy loop on the core so that its clock is up), same-filled pages
+taken out of the corpus first, 3 rounds, the battery at 31 to 34 C. Means in µs, against the harness
+above:
+
+| codec | X4 write once (harness) | X4 cold read once (harness) | A720 write once | A720 cold read once | A520 write once | A520 cold read once |
+| --- | --- | --- | --- | --- | --- | --- |
+| `lz4` | 4.47 (3.50) | 1.50 (2.14) | 4.95 (4.10) | 1.79 (1.56) | 12.20 (12.16) | 3.70 (3.88) |
+| `lzo-rle` | 4.12 (3.05) | 1.72 (2.03) | 4.55 (3.79) | 2.10 (1.57) | 11.33 (11.29) | 4.58 (4.38) |
+| `zstd` 3 | 13.10 (10.75) | 5.09 (5.90) | 14.84 (14.40) | 5.87 (5.57) | 52.26 (50.94) | 16.07 (17.15) |
+| `seqlz-1` | 4.38 (3.33) | 1.52 (2.04) | 5.05 (4.45) | 2.00 (1.61) | 17.88 (18.01) | 4.71 (4.85) |
+| `seqlz-2` | 4.99 (3.88) | 1.71 (2.27) | 5.78 (5.16) | 2.23 (1.91) | 20.69 (20.81) | 5.86 (6.04) |
+| `seqlz-3` | 7.10 (5.68) | 1.88 (2.32) | 8.45 (7.69) | 2.53 (2.12) | 29.39 (29.52) | 6.12 (6.64) |
+
+* **Writes of a page seen once take 1.0 to 1.4 µs more on the X4 (`zstd` 3 2.4), 0.4 to 0.9 µs on the
+  A720, and no more on the in-order A520.** The harness's writes are too fast on the big cores, but for
+  every codec about alike: `seqlz-2` against `lz4` is +1.11 against +0.97 µs on the X4.
+* **The reads hardly move against each other.** On the A720 a page seen once reads 0.22 µs slower for
+  `lz4` and 0.32 for `seqlz-2`, 0.1 µs more for seqlz, where the x86-64 VM found 0.28. On the A520
+  nothing moves beyond the rounds' spread.
+* **The X4's cold reads in the harness are too slow**, for every codec: seen once they are 0.3 to 0.8 µs
+  faster, below the A720's, so the harness's cold read on the X4 has a cost of its own, not found which.
+* Time per page written, write + 0.73 × cold read, seen once: `lz4` 5.56 / 6.25 / 14.90 µs on X4 / A720
+  / A520, `seqlz-1` 5.49 / 6.51 / 21.31, `seqlz-2` 6.25 / 7.41 / 24.97, `seqlz-3` 8.47 / 10.30 / 33.85,
+  `zstd` 3 16.82 / 19.13 / 63.99: the same order, `seqlz-2` 12%, 19% and 68% above `lz4` instead of 10%,
+  25% and 68%.
+* `--cold`, 2 MiB of other data read before each decode, spread by up to 63% between rounds on the X4
+  and the A520, too much to use.
+* The README's chart, `docs/plots/pixel-cores.svg`, shows these numbers, pages seen once, with the sizes
+  of the harness (`tools/plot-cores.py --sizes`).
+
+Not measured: zram in the Pixel's kernel, its own pages, which core kswapd and the swap-ins run on.
+
+```sh
+ONCE=1 tools/phone-cores.sh build-android ~/quetschn-corpus/phone-dump/p3-sample20000-nosame "7 4 0" >once.log
+cmake -S . -B build-android -G Ninja -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-30 -DANDROID_STL=c++_static -DQUETSCHN_KERNEL_TREE=<linux tree>
+cmake --build build-android --target quetschn-bench-interleaved
+tools/phone-cores.sh build-android ~/quetschn-corpus/phone-dump/p3-sample20000 "7 4 0" >cores.log
+tools/plot-cores.py --title "Pixel 9a (Tensor G4)" --pages "19 775 pages of a Mi 9T zram session" \
+    --cpu "7=Cortex-X4, cpu7" --cpu "4=Cortex-A720, cpu4" --cpu "0=Cortex-A520, cpu0" --sizes cores.log \
+    --out docs/plots/pixel-cores.svg once.log
+```
 
 ## Memory for speed on the phone: no trade worth it, not kept
 

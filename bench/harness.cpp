@@ -83,12 +83,32 @@ int cycle_counter() {
     return fd;
 }
 
-std::uint64_t ticks() {
+std::uint64_t read_cycle_counter() {
     auto v = std::uint64_t{};
     if (::read(cycle_counter(), &v, sizeof(v)) != static_cast<ssize_t>(sizeof(v))) {
         throw std::system_error(errno, std::generic_category(), "reading the cycle counter");
     }
     return v;
+}
+
+// Some kernels open the event and never run it, the Pixel 9a's of October 2026 without root: the count
+// stays 0. Then steady_clock, which reads cntvct_el0, 24.576 MHz there, a step of 41 ns.
+bool cycle_counter_runs() {
+    static bool const runs = [] {
+        auto const c0 = read_cycle_counter();
+        for (unsigned i = 0; i < 10'000'000; ++i) {
+            asm volatile("" ::: "memory");
+        }
+        return read_cycle_counter() != c0;
+    }();
+    return runs;
+}
+
+std::uint64_t ticks() {
+    if (!cycle_counter_runs()) {
+        return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+    return read_cycle_counter();
 }
 
 void flush(void const* p, std::size_t size) {

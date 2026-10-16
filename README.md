@@ -65,6 +65,19 @@ larger than on the PC, most of all on the little core, and cold reads there cost
 than `lz4`. Chart and details:
 [seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time).
 
+On a current phone, a Pixel 9a with Google's Tensor G4, the codecs in userspace on each of its three
+kinds of core, the same pages, each page timed once per pass over all of them, as a swap-in sees it:
+
+<img src="docs/plots/pixel-cores.svg" alt="Memory against the time to write and to read a page on the Cortex-X4, A720 and A520 of a Pixel 9a, for lz4, lzo-rle, zstd 3 and seqlz levels 1 to 3.">
+
+On the big cores `seqlz-1` writes and reads about as fast as `lz4`, 5.49 against 5.56 µs per page
+written on the X4, and `seqlz-2` takes 12% and 19% more time than `lz4` on the X4 and the A720. The
+little A520 is where seqlz costs: `seqlz-2` takes 1.7 times `lz4`'s time per page written there, and a
+cold read 5.86 instead of 3.70 µs. `seqlz-3` stores as little as `zstd` 3 in about half its time on every
+core. These are the codec's times in a harness, not zram in the phone's kernel, with clocks that could
+not be fixed without root; they stayed at their maximum in every run
+([explored-designs.md](docs/explored-designs.md#a-current-phone-the-pixel-9a-seqlz-1-as-fast-as-lz4-on-the-big-cores-seqlz-1-and-seqlz-2-14-and-17-times-lz4s-time-on-the-little-one)).
+
 ## Where it stands
 
 As of 16th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
