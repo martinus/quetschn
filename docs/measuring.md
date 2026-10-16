@@ -192,6 +192,7 @@ adb shell 'grep -E "^(pswpin|pswpout|workingset_refault_anon) " /proc/vmstat; ca
 ./build/quetschn-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
     --per-cpu seqlz-1:8192 --per-cpu seqlz-2:16384 --per-cpu seqlz-3:16384 --device 8:256 swap.log
 ./build/quetschn-swap-bursts --seconds 3600
+adb shell /data/local/tmp/quetschn-swap-bursts --seconds 900    # an NDK build, on a phone in use, no root
 ```
 
 **Dictionaries and levels.** `--level` is zram's `algorithm_params` level, `--dict` a dictionary as
