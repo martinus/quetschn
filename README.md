@@ -2,49 +2,78 @@
 
 [![CI](https://github.com/martinus/quetschn/actions/workflows/ci.yml/badge.svg)](https://github.com/martinus/quetschn/actions/workflows/ci.yml)
 
-Compression for memory pages, built for Linux zram. The goal is to get as close as possible to `lz4`'s
-speed and to `zstd`'s size, with no more work memory than `lz4` and without recompression.
+A compression codec for Linux zram, the compressed swap in RAM that Android phones and many desktops
+use. The codec is `seqlz`: one format, one decoder, three levels of the compressor. The goal is `lz4`'s
+speed and the size of `zstd` at level 3, zram's default level for it.
 
-The codec is `seqlz`, with three levels of the compressor and one format. `seqlz-2`, zram's default
-level: LZ sequences from a greedy matcher, Huffman coded with static tables, and one of 8 literal tables
-per page. `seqlz-1` keeps the literals as they are, `seqlz-3` looks one position further for matches and
-gives a page a literal table of its own where that saves, which stores pages as small as `zstd` 3 in
-less than half its time ([seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time)).
-On a Xiaomi Mi 9T, in the phone's own kernel, with 20 000 pages from the phone's zram, the whole page
-fault per page with `seqlz-2`:
+<img src="docs/plots/levels-vm.svg" alt="Memory per page against the time per page written for lz4, lzo-rle, zstd 3 and seqlz levels 1 to 3. seqlz-1 to seqlz-3 lie between lz4 and zstd 3, seqlz-3 at zstd 3's memory in less time.">
 
-| codec | bytes per page | swap-in warm, A76 / A55 | swap-out, A76 / A55 |
+The numbers behind the chart: zram as swap in a Linux VM on a Ryzen 9 7950X, the means over four zram
+dumps, two of a phone and two of a desktop. Memory is what zsmalloc holds per page, the time per page
+written is a swap-out plus 0.34 swap-ins, the reads per write measured on a desktop
+([plan.md §1.1](docs/plan.md#11-the-score-memory-against-time-not-bars)):
+
+| codec | memory per page | swap-out | swap-in, cold | time per page written |
+| --- | ---: | ---: | ---: | ---: |
+| `lz4` | 36.5% | 6.41 µs | 3.23 µs | 7.51 µs |
+| `lzo-rle` | 34.9% | 6.22 µs | 3.69 µs | 7.48 µs |
+| `zstd` 3 | 25.3% | 14.64 µs | 6.49 µs | 16.85 µs |
+| **`seqlz-1`** | **29.1%** | **6.70 µs** | **3.53 µs** | **7.89 µs** |
+| **`seqlz-2`** | **26.5%** | **7.26 µs** | **3.79 µs** | **8.55 µs** |
+| **`seqlz-3`** | **25.4%** | **9.29 µs** | **3.94 µs** | **10.63 µs** |
+
+- `seqlz-1` stores 20% less than `lz4` for 5% more time per page written.
+- `seqlz-2`, zram's default level, stores 27% less for 14% more.
+- `seqlz-3` stores as little as `zstd` 3, in 63% of its time per page written, and a swap-in takes 39%
+  less time than with `zstd` 3.
+- In these means, from the fastest to the smallest, `lzo-rle`, `seqlz-1`, `seqlz-2`, `seqlz-3` and `zstd` 3 each have
+  the lowest score for some exchange rate of bytes against µs, `zstd` 3 only where a µs is worth less
+  than 0.24 bytes. `lz4` has none: `lzo-rle` is as fast and stores less.
+
+All three swap in 9% to 22% slower than `lz4`, so the case for seqlz is memory, at a cost in time. The
+work memory is 8 KiB per CPU for `seqlz-1` and 16 KiB for the other two, against 20 KiB for `lz4`, as
+`kmalloc()` hands them out.
+
+## The levels
+
+- **`seqlz-1`**: LZ sequences from a greedy matcher, coded with static Huffman tables that are part of
+  the format; the literals as they are.
+- **`seqlz-2`**: the same, and the literals coded with the best of 8 fixed literal tables for the page.
+- **`seqlz-3`**: the matcher looks one position further for a longer match, and a page gets a literal
+  table of its own where that saves 16 bytes.
+
+One decoder reads all three: the format is the same, and a page does not say which level wrote it.
+How they work, and why, is in [seqlz in short](docs/seqlz.md) and in the book below.
+
+## On a phone
+
+A Xiaomi Mi 9T, zram in the phone's own kernel (Linux 4.14, so no `lzo-rle`), 19 775 pages from a
+session on the phone, the time per page written as above, on 15th October 2026:
+
+| codec | memory per page | big core, A76 | little core, A55 |
 | --- | ---: | ---: | ---: |
-| `lz4` | 1300 | 5.3 / 16.2 µs | 10.3 / 31.2 µs |
-| `lzo` | 1216 | 6.4 / 17.4 µs | 11.2 / 33.9 µs |
-| `zstd` 3 | 898 | 16.9 / 47.5 µs | 34.7 / 133 µs |
-| **`seqlz-2`** | **935** | **6.0 / 17.9 µs** | **12.4 / 38.8 µs** |
+| `lz4` | 33.3% | 12.2 µs | 33.5 µs |
+| `zstd` 3 | 23.2% | 43.7 µs | 137.7 µs |
+| **`seqlz-1`** | **26.1%** | **13.1 µs** | **38.9 µs** |
+| **`seqlz-2`** | **24.3%** | **14.6 µs** | **43.6 µs** |
+| **`seqlz-3`** | **23.2%** | **19.0 µs** | **54.1 µs** |
 
-So `seqlz-2` stores a page in 28% fewer bytes than `lz4` and 4% more than `zstd`. It swaps in
-13% slower than `lz4` on the big core and 11% slower on the little one, and 25% and 17% slower cold,
-with 2 MiB of other data read before each fault. Swap-out is all pages of a mapping in one `madvise()`
-call, and there it is 20% and 24% slower. In the mean it is slower than `lz4` in every column, so the
-case for it is memory, at a small cost in time.
-
-<details>
-<summary>The same on the PC and on the phone, memory against time</summary>
-
-Lower left is better. Time is the whole fault, the grey part is the kernel's, which is the same for
-every codec. How it was measured is in
-[explored-designs.md, "The whole page fault"](docs/explored-designs.md#the-whole-page-fault-the-kernels-part-is-the-same-for-every-codec-the-gap-to-lz4-about-halves).
-
-<img src="docs/plots/swap-fault-2026-10-07.svg" alt="Memory per page against the time of a page fault, for lz4, lzo, zstd and seqlz-2, on the PC and on both cores of the phone">
-
-</details>
+On the phone `seqlz-3` takes less than half of `zstd` 3's time for the same memory. The gap to `lz4` is
+larger than on the PC, most of all on the little core, and cold reads there cost `seqlz-2` 34% more
+than `lz4`. Chart and details:
+[seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time).
 
 ## Where it stands
 
-As of 9th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
+As of 16th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
 
 - [x] Benchmark harness, page collectors, zram dumps of a desktop and of a phone
-- [x] The codec, [`seqlz-2`](docs/seqlz.md), and every alternative that was measured
+- [x] The codec, three levels of [`seqlz`](docs/seqlz.md), and every alternative that was measured
 - [x] [The format](docs/format.md), two reference decoders written from it, fuzzing, the worst case measured
 - [x] Measured in a kernel: a VM on x86-64, and the Mi 9T's own kernel on arm64
+- [x] The tables on pages they were not trained on, Chrome, Firefox, Android 13 and 15, the phone 12
+  days later: tables of their own would gain 1.2% at `seqlz-2` and 0.7% at `seqlz-3`
+  ([explored-designs.md](docs/explored-designs.md#the-tables-on-five-new-page-populations-tables-of-their-own-12-smaller-at-level-2-07-at-level-3-kept-as-they-are))
 - [x] Ask the zram maintainers whether they want a new backend at all, and in which form: [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), no answer yet
 - [x] 16 KiB pages: tables trained on the pages of the Android 17 emulator
 - [ ] 16 KiB pages: work memory within `lz4`'s, and a phone with 16 KiB pages
