@@ -57,7 +57,8 @@ docs/           plan.md, format.md (spec), seqlz.md (overview), measuring.md (al
                 explored-designs.md (every measured design), plots/*.svg; book/ = "seqlz, line by
                 line", every line of src/ explained, built by docs/book/build.py (its README)
 cmake/          kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)
-.claude/skills/ issues/: "do the issues", order for working the owner's issues to merged PRs
+.claude/skills/ issues/: "do the issues", order for working the owner's issues to merged PRs;
+                research/: bounds, gaps and surprises before designs, for research questions
 ```
 
 Code removed 7 Oct 2026 (`explore/*`, `spike/`): in git before `57fb8fb`
