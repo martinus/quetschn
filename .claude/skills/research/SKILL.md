@@ -33,6 +33,11 @@ done.
 - **Sizes and ideal code lengths first, time last.** A size or a bit count is exact and costs
   seconds; a timing needs a quiet machine and a phone. Time a candidate only when its size result
   survived.
+- **Time a decoder the way zram calls it.** A userspace loop over a sample streams megabytes of
+  compressed pages; prefetch each page's compressed bytes first, as zram's glue does
+  (`quetschn_prefetch_page()`), and use the kernel's compile flags. On 19 Oct a loop without the
+  prefetch had seqlz-1 at 11.5 µs per page on the A55 instead of 7.35, and two rounds of research
+  chased a read gap that zram does not have.
 - **Compare against the hull, not a neighbour.** A new point is judged against the line between
   its two neighbours on the current hull (`quetschn-score`), not against one design. On 19 Oct a
   per-page step choice was estimated 25 bytes per page below the line from step 4 to step 1, and
@@ -147,5 +152,17 @@ docs). Check the entry before quoting.
 - Another page of the same dump as reference: `zstd` 3 34% smaller; exact copies of an earlier page
   11.6% of pages; 1024 references from another boot 4% to 7% net (17 to 19 Oct, not in
   explored-designs.md, logs in the session's scratchpad only).
+- Decode, p3, userspace loop with the input prefetched, kernel flags, µs per page, A55 / A76 (19 Oct):
+  seqlz-1 7.35 / 2.84, `lz4` 6.60 / 2.63, seqlz's parse in `lz4`'s byte format 5.95 / 2.44. The
+  entropy coding of tokens and offsets buys 266 bytes per page for 1.4 µs on the A55, 0.4 on the A76.
+  Trained byte tokens (one-byte index into 255 triples) save 172 of them at 1.0 µs on the A55: no
+  better.
+- Which core runs zram (zramlog records of 17 Oct, Mi 9T, scripted sessions): 96% of the writes on the
+  A76 cores, almost all from `kswapd`, and 65% to 69% of the reads. A55 write times count little
+  there; weigh a per-core result by this mix before chasing an A55-only gap. The Pixel 9a is not
+  known.
+- Write time, harness, p3, µs per page, A55 / A76 (19 Oct): `lz4` 16.9 / 7.6, seqlz-1 23.4 / 8.2,
+  seqlz-2 27.2 / 8.5, seqlz-3 38.6 / 13.7. Level 1's matcher alone is `lz4`'s whole compress on the
+  A55 and faster on the A76; the gap is the encoder's arithmetic per sequence (about 65 instructions).
 - File data (Android 17 emulator image, 19 Oct): seqlz-3 0.9 points behind `zstd` 3 on 4 KiB blocks
   at 2.2 times `lz4`'s decode cycles on the A55; coded literals are most of seqlz's decode time there.
