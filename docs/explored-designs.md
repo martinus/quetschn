@@ -32,7 +32,7 @@ are measured") is about 90 KB.
 ### Adding or changing an entry
 
 - Heading: `## <what>: <result with its number>, <kept | not kept | not built | not pursued>`. Never
-  rename an existing heading: `docs/book/`, `docs/*.md`, scripts and CLAUDE.md link to the anchors
+  rename an existing heading: `docs/book/`, `docs/*.md`, scripts, CLAUDE.md and `.claude/` link to the anchors
   (`tools/check-links.py`).
 - Then `Status: <verdict>, <YYYY-MM-DD>. Now: current.`, then an italic paragraph: the question, the
   answer with numbers, the verdict and why. Then `Code:` (function and path, branch, commit, PR,

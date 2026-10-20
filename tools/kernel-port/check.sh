@@ -45,8 +45,8 @@ ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz
 calls=$(nm -u "$work/build"/lib/seqlz/*.o | grep -E '__aeabi_l(div|mod)|__aeabi_uldivmod|__(u?div|u?mod)di3' || true)
 [[ -z $calls ]] || { echo "lib/seqlz/ calls a 64-bit division of the libgcc: $calls" >&2; exit 1; }
 # the codec's deepest stack frames, from -fstack-usage: gcc writes file:line:column:function, clang
-# file:line:function. They stay below 1024 bytes, the 32-bit FRAME_WARN of older kernels; CLAUDE.md has
-# them with KASAN and UBSan too
+# file:line:function. They stay below 1024 bytes, the 32-bit FRAME_WARN of older kernels;
+# .claude/rules/kernel-copy.md has them with KASAN and UBSan too
 frames=$(cat "$work/build"/lib/seqlz/*.su | awk -F'\t' '{ n = split($1, f, ":"); print $2, f[n] }' | sort -n -r)
 echo "stack: $(head -3 <<<"$frames" | awk '{ printf "%s%s %s", (NR > 1 ? ", " : ""), $2, $1 }')"
 deepest=$(head -1 <<<"$frames" | cut -d' ' -f1)
