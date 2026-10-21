@@ -28,7 +28,7 @@ their own, scripts are at the top. The commands are in [docs/measuring.md](../do
 | [`plot-swap-fault.py`](plot-swap-fault.py) | the same for the whole page fault, from `zram-vm/run.sh` with `MODE=swap` and from `swap-fault/` |
 | [`phone-cores.sh`](phone-cores.sh) | the codecs on the cores of a phone over `adb`, in userspace and without root: each codec alone in its own process, pinned to one core, in rounds; cleans up the phone after |
 | [`plot-cores.py`](plot-cores.py) | memory against the time to write and to read cold, one panel per core and direction, from the log of `phone-cores.sh` |
-| [`plot-readme.py`](plot-readme.py) | the README's chart: the three levels against `lz4`, `lzo-rle` and `zstd` 3, the mean over several `quetschn-score` outputs of `zram-vm/run.sh` logs |
+| [`plot-readme.py`](plot-readme.py) | the README's chart: the three levels against `lz4`, `lzo-rle` and `zstd` 3 and the hull of them, the mean over several `quetschn-score` outputs of `zram-vm/run.sh` logs |
 | [`plot-zstd-levels.py`](plot-zstd-levels.py) | `seqlz-2` against `zstd` at each level, from `zram-vm/run.sh` logs with `MODE=swap` and `zstd:<level>` codecs |
 | [`plot-devices.py`](plot-devices.py) | memory against time on several CPUs, one row per CPU |
 | [`plot-speed.py`](plot-speed.py) | the first chart of [docs/seqlz.md](../docs/seqlz.md#the-result-lz4s-time-zstds-size-almost): cycles in a hot loop, and write, cold read and memory in the kernel VM |
