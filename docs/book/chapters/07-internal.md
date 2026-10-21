@@ -205,27 +205,27 @@ the mask `0x00ff00ff00ff00ff` and starts again, every 200 literals of the page.
 These asserts tie the constants of `seqlz.h` to byte 2 of a page with coded literals
 ([chapter 4](#ch-format--layout)): the 8 fixed tables are the codes 0 to 7, the page's own table the
 code after them, 8, and all of them fit the 4 bits below the width; 3 bits hold the 8 widths 5 to 12,
-and the width field ends where the XOR bit, bit 7, starts. The first assert would fail for a 9th fixed
+and the width field ends where the delta bit, bit 7, starts. The first assert would fail for a 9th fixed
 table, which would collide with `SEQLZ_LIT_OWN`, and the decoder's `s[2] & (SEQLZ_LIT_SETS - 1U)` would
 no longer pick the table.
 
 @listing src/seqlz_internal.h 78-85
 
-`SEQLZ_XOR_LAST` XORs a literal with the byte as far back as the offset of the sequence before
-([chapter 6](#ch-header--literals)), and the encoder's `xor_literals()` and the decoder's
-`unxor_literals()` and `unxor_fast()` both need that distance, so it is here, in the header both
+`SEQLZ_DELTA_LAST` stores a literal as its delta to the byte as far back as the offset of the sequence
+before ([chapter 6](#ch-header--literals)), and the encoder's `delta_literals()` and the decoder's
+`undelta_literals()` and `undelta_fast()` both need that distance, so it is here, in the header both
 include. An offset of 4 or more is the distance as it is; below 4 it is the smallest multiple of the
 offset that is at least 4:
 
 | `last` | 1 | 2 | 3 | 4 | 5 | 8 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `seqlz_xor_last(last)` | {{xor.last.1}} | {{xor.last.2}} | {{xor.last.3}} | {{xor.last.4}} | {{xor.last.5}} | {{xor.last.8}} |
-@assert xor.last[1] == xor.last[2] == xor.last[4] == 4 and xor.last[3] == 6 and xor.last[8] == 8
+| `seqlz_delta_last(last)` | {{delta.last.1}} | {{delta.last.2}} | {{delta.last.3}} | {{delta.last.4}} | {{delta.last.5}} | {{delta.last.8}} |
+@assert delta.last[1] == delta.last[2] == delta.last[4] == 4 and delta.last[3] == 6 and delta.last[8] == 8
 
 A match with offset 3 repeats a pattern of 3 bytes, so the byte 6 back is the byte 3 back, the one the
 match would have copied next; with offset 1 or 2, the byte 4 back is. The decoder relies on the
-distance being at least 4: it undoes the XOR 4 bytes at a time, and each of the 4 bytes it XORs with
-must already be the page's own, so none of them may lie in the word it writes.
+distance being at least 4: it adds the bytes back 4 at a time, and each of the 4 bytes it adds must
+already be the page's own, so none of them may lie in the word it writes.
 
 @listing src/seqlz_internal.h 87-93
 
@@ -475,7 +475,7 @@ ${{tok.len.2098}} + 5 = {{ch07.tok.2098.DROP}}$, `LL` {{ch07.tok.2098.LL}}, `ML`
 {{ch07.tok.2098.ML}}. The decoder uses it on these lines of `decode_page()`, the body of `seqlz_decode()`
 ([chapter 14](#ch-decode)):
 
-@listing src/seqlz_decompress.c 845-849
+@listing src/seqlz_decompress.c 853-857
 
 Say the register holds the code, then `{{ch07.reg_raw_bits}}`, then whatever follows:
 `{{ch07.reg}}`, the first bit of the stream as bit 63. The top 11 bits are `{{ch07.reg_index_bits}}`,
@@ -512,7 +512,7 @@ The escape's {{tok.len.3072}}-bit code `{{tok.code.3072}}` fills the indices {{c
 to {{ch07.tok.3072.last}} with `1U << 31 | {{tok.len.3072}} << 14 = {{ch07.tok.3072.entry}}`, the
 lower row of the diagram. The decoder handles it before everything else:
 
-@listing src/seqlz_decompress.c 827-839
+@listing src/seqlz_decompress.c 835-847
 
 Token 1797, 5 literals and a match of 20 at a class 3 offset, has no code. The encoder writes the
 escape's `{{tok.code.3072}}`, 1797 in 12 bits, `{{ch07.esc1797.bits}}`, and then the offset, say 1000,

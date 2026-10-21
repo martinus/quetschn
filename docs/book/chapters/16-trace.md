@@ -640,4 +640,4 @@ matcher's lazy step and the extension backwards ([chapter 9](#ch-matcher--lazy))
 the literals keep table {{ch16.lt.set}}, as a table of the page's own would not save
 {{own.enc.saves_min}} bytes on them, and they are not XORed, so the text's last sentence holds for this
 page at both levels.
-@assert slab.l3.own == 0 and slab.l3.xor == 0 and slab.l3.len < slab.coded.len
+@assert slab.l3.own == 0 and slab.l3.delta == 0 and slab.l3.len < slab.coded.len

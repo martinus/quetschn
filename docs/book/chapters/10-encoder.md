@@ -8,8 +8,8 @@ whole. That is a problem, because the bitstream starts after all literals, and h
 known only after the last sequence. The encoder writes from both ends of its output buffer: the
 literals from the front, the bitstream backwards from the back, and at the end it copies the
 bitstream, turned around, to right after the literals. This chapter is lines 1 to 320 of the file,
-`encode_raw()` and the functions at its end; lines 322 to 474 pick level 3's XOR of the literals, and
-lines 530 to 1145 code the literals, both in [chapter 11](#ch-literals-enc).
+`encode_raw()` and the functions at its end; lines 322 to 486 pick level 3's deltas of the literals,
+and lines 542 to 1157 code the literals, both in [chapter 11](#ch-literals-enc).
 
 ## The file's head, and seqlz_find() {#ch-encoder--find}
 
@@ -152,19 +152,19 @@ page, which the encoder does not need for anything else.
 
 @listing src/seqlz_compress.c 94-102
 
-Level 3 XORs the literals with earlier bytes of the page ([chapter 6](#ch-header--literals)), one
-choice for the whole page, and which one is cheapest is known only when all literals are there. To
-XOR a literal, the encoder needs where it is in the page and the offset of the sequence before it,
+Level 3 stores the literals as deltas to earlier bytes of the page ([chapter 6](#ch-header--literals)),
+one choice for the whole page, and which one is cheapest is known only when all literals are there.
+For a literal's delta, the encoder needs where it is in the page and the offset of the sequence before it,
 and neither is in the literals. So at level 3 the encoder writes that next to them, a record of
-{{xor.rec}} bytes in front of each sequence's literals, and `xor_literals()` reads the records once
-the page is matched ([chapter 11](#ch-literals-enc--xor)). `dst` is where the room is: the matcher's
+{{delta.rec}} bytes in front of each sequence's literals, and `delta_literals()` reads the records once
+the page is matched ([chapter 11](#ch-literals-enc--deltas)). `dst` is where the room is: the matcher's
 state is its hash table until the last sequence, and the literals' copy goes there only afterwards.
 Each field fits a `u16`, as a page of 16 KiB has positions, lengths and offsets below $2^{16}$. The
 cost is room in `dst`: on the page of pointers of [chapter 9](#ch-matcher--back), level 3 finds
-{{xor.ptr.n_lit}} literals in {{xor.ptr.recs}} sequences, and with the records they take
-{{xor.ptr.with_rec|grp}} bytes. A page that does not fit with its records is matched a second time
-without them, and stored without a XOR ([below](#ch-encoder--entry)).
-@assert xor.ptr.with_rec == xor.ptr.n_lit + xor.rec * xor.ptr.recs
+{{delta.ptr.n_lit}} literals in {{delta.ptr.recs}} sequences, and with the records they take
+{{delta.ptr.with_rec|grp}} bytes. A page that does not fit with its records is matched a second time
+without them, and stored without deltas ([below](#ch-encoder--entry)).
+@assert delta.ptr.with_rec == delta.ptr.n_lit + delta.rec * delta.ptr.recs
 
 ## Bits into a 64-bit accumulator {#ch-encoder--put}
 
@@ -251,10 +251,10 @@ it in a plain loop.
 
 @listing src/seqlz_compress.c 172-194
 
-`n_rec` is the record's size, {{xor.rec}} bytes, or 0. Three things have to hold for a record: `rec`,
+`n_rec` is the record's size, {{delta.rec}} bytes, or 0. Three things have to hold for a record: `rec`,
 a constant at every call, so that the copy of the matcher's loop for levels 1 and 2 has none of this
 code; `e->rec`, which is false in the second pass without records; and `ll` not 0, because a sequence
-without literals has nothing to XOR. The room check counts the record too. The cast to `size_t` makes
+without literals has no deltas. The room check counts the record too. The cast to `size_t` makes
 the compare unsigned; `p` never goes below `lit`, because both callers
 reject a `dst_cap` below {{ch10.dst_min}}. A failed check sets `p` to `lit`, and that sticks: the
 room is 0, every later sequence fails the same check, and `encoder_finish()` sees `p == lit`. The
@@ -271,12 +271,12 @@ records, where nobody reads it. The first two records of the page of pointers, a
 
 | record | bytes | `pos` | `ll` | `last` |
 | --- | --- | --- | --- | --- |
-| 0 | `{{xor.ptr.rec.0.hex}}` | {{xor.ptr.rec.0.pos}} | {{xor.ptr.rec.0.ll}} | {{xor.ptr.rec.0.last}} |
-| 1 | `{{xor.ptr.rec.1.hex}}` | {{xor.ptr.rec.1.pos}} | {{xor.ptr.rec.1.ll}} | {{xor.ptr.rec.1.last}} |
+| 0 | `{{delta.ptr.rec.0.hex}}` | {{delta.ptr.rec.0.pos}} | {{delta.ptr.rec.0.ll}} | {{delta.ptr.rec.0.last}} |
+| 1 | `{{delta.ptr.rec.1.hex}}` | {{delta.ptr.rec.1.pos}} | {{delta.ptr.rec.1.ll}} | {{delta.ptr.rec.1.last}} |
 
 The first sequence takes the first pointer and the low byte of the second as literals, and copies 7
-bytes from 8 back, so the second starts at {{xor.ptr.rec.1.pos}} with `last` 8.
-@assert xor.ptr.rec[0].pos == 0 and xor.ptr.rec[0].last == 1 and xor.ptr.rec[1].pos == xor.ptr.rec[0].ll + 7 and xor.ptr.rec[1].last == 8
+bytes from 8 back, so the second starts at {{delta.ptr.rec.1.pos}} with `last` 8.
+@assert delta.ptr.rec[0].pos == 0 and delta.ptr.rec[0].last == 1 and delta.ptr.rec[1].pos == delta.ptr.rec[0].ll + 7 and delta.ptr.rec[1].last == 8
 
 @listing src/seqlz_compress.c 203-223
 
@@ -329,12 +329,12 @@ per constant; `compress_page()` passes `encode_emit()` to the greedy matcher, `c
 copy of the loop.
 
 ::: why Level 3's records in a copy of the loop of their own
-The first version checked `e->rec` for every sequence in the loop all levels share, and the decoder
-the XOR the same way. Levels 1 and 2 then wrote pages about 6% slower on the Mi 9T's Cortex-A76 and
+The first version, with the XOR that came before the deltas, checked `e->rec` for every sequence in
+the loop all levels share, and the decoder its XOR the same way. Levels 1 and 2 then wrote pages about 6% slower on the Mi 9T's Cortex-A76 and
 read them slower too, userspace, 21st October 2026
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
-With the records only in the lazy matcher's copy, and the decoder's loop copied for XORed pages
-([chapter 14](#ch-decode--xored)), levels 1 and 2 write and read as fast as before, within the
+With the records only in the lazy matcher's copy, and the decoder's loop copied for pages with deltas
+([chapter 14](#ch-decode--deltas)), levels 1 and 2 write and read as fast as before, within the
 run's spread.
 :::
 
@@ -375,7 +375,7 @@ does all of this for chapter 16's page, whose smallest `dst` takes that path.
 
 ## encode_raw(): sequences from outside, checked first {#ch-encoder--raw}
 
-@listing src/seqlz_compress.c 476-509
+@listing src/seqlz_compress.c 488-521
 
 `seqlz_encode()` writes a page from sequences the caller made, for tests and tools. A `dst` below
 {{ch10.dst_min}} bytes would start `p` below `lit + 32`, or below `lit`, where the room check's cast
@@ -393,75 +393,75 @@ fuzzers had found it, because each reached `seqlz_encode()` with valid sequences
 encoder. `seqlz_compress()` was never affected: its matcher makes only valid sequences.
 :::
 
-@listing src/seqlz_compress.c 510-528
+@listing src/seqlz_compress.c 522-540
 
 `src_end` is the end of the caller's literals, so the 16-byte copies never read past them, and the
 last sequence gets `ml` 0 whatever its `match` field says. With a `page`, level 3, the encoder writes
 the records as `compress_own()` does: `encode_seq()` is called with `rec` the constant `true`, and
 `e.rec` decides; speed does not matter here. If the page does not fit with its records, the loop
 starts over with `encoder_init()`, which clears `e.rec`, and the second pass ends the loop either way.
-`xor_literals()` then takes the records out again and writes the XORed literals to `xored`, the
-matcher's state that `seqlz_encode()` passes; `*xor` is the XOR it picked, or 0.
+`delta_literals()` then takes the records out again and writes the literals' deltas to `deltas`, the
+matcher's state that `seqlz_encode()` passes; `*delta` is the delta it picked, or 0.
 
 ## The entry points {#ch-encoder--entry}
 
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
 here because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 1148-1152
+@listing src/seqlz_compress.c 1160-1164
 
 For a table of the page's own, `code_literals()` needs `struct own_work`, {{own.enc.work_size|grp}}
 bytes of counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)),
 and `own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `st->work` counts in
 `u64`, so `OWN_LITERALS_MAX / 8U` is that byte. `code_own()`, which comes next in the file, is level
-3's call of `code_literals()`, first with the XORed literals; it is in
+3's call of `code_literals()`, first with the deltas; it is in
 [chapter 11](#ch-literals-enc--code-own).
 
-@listing src/seqlz_compress.c 1173-1192
+@listing src/seqlz_compress.c 1185-1204
 
 `code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
 also with a table of the page's own, and returns the new length or `len` unchanged. Level 2 gets the
 caller's literals as the raw copy it reads while it writes the coded ones over the raw ones in `dst`.
-At level 3, `encode_raw()` gets the page and the matcher's state, writes the XORed literals there, and
+At level 3, `encode_raw()` gets the page and the matcher's state, writes the literals' deltas there, and
 `code_own()` codes them. The level is checked before anything is written, so a level outside 1 to
 `SEQLZ_LEVELS`, or level 3 without the state, returns 0 as the header's kernel-doc says
 ([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 1194-1205
+@listing src/seqlz_compress.c 1206-1217
 
 `compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
 construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop of
 levels 1 and 2 once inlined, the greedy matcher with `lazy` the constant `false`.
 
-@listing src/seqlz_compress.c 1207-1234
+@listing src/seqlz_compress.c 1219-1246
 
 `compress_own()` is the same for level 3: the lazy matcher, with `encode_emit_rec`, so the records go
 in front of the literals. If the page does not fit, `e.p == e.lit`, the loop calls `encoder_init()`
 again, which clears `e.rec`, and matches the page once more, now without records; the second pass ends
-the loop whether it fits or not. With the records still on, `xor_literals()` picks the XOR, moves the
-literals down over the records and writes the XORed ones to `st->literals`, and `encoder_finish()`
+the loop whether it fits or not. With the records still on, `delta_literals()` picks the delta, moves the
+literals down over the records and writes their deltas to `st->literals`, and `encoder_finish()`
 then finds `dst` as it would without records. It is `noinline`: inlined into `seqlz_compress()` next
 to `compress_page()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
 of its own.
 
-@listing src/seqlz_compress.c 1236-1252
+@listing src/seqlz_compress.c 1248-1264
 
 `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)), with the level of the device:
 `seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_page()`. Level 2
 passes `st->literals`, the matcher's 8 KiB table as bytes through the union in `struct seqlz_state`,
 for the copy of the raw literals; the matcher is done with it, so `code_literals()` needs no memory of
-its own ([chapter 11](#ch-literals-enc--in-place)). Level 3 hands the XOR that `compress_own()` picked
+its own ([chapter 11](#ch-literals-enc--in-place)). Level 3 hands the delta that `compress_own()` picked
 to `code_own()`, which also uses `own_work(st)`, the upper half of the same 8 KiB. The text page of
 [chapter 4](#ch-format--own) shows what the levels do to one page: {{words.len}} bytes at level 1,
-{{words.coded.len}} at level 2 and {{words.l3.len}} at level 3, without a XOR; the page of pointers
-{{pointers.len}} bytes at level 1, {{xor.ptr.l2.len}} at level 2 and {{xor.ptr.l3.len}} at level 3,
-with one.
-@assert words.l3.xor == 0 and pointers.l3.xor == 1
+{{words.coded.len}} at level 2 and {{words.l3.len}} at level 3, without deltas; the page of pointers
+{{pointers.len}} bytes at level 1, {{delta.ptr.l2.len}} at level 2 and {{delta.ptr.l3.len}} at level 3,
+with them.
+@assert words.l3.delta == 0 and pointers.l3.delta == 1
 The kernel's copy keeps `compress_page()`, `compress_own()`, `code_own()` and
 `seqlz_compress()`, renamed to `seqlz_compress_page()`, as the kernel's interface function is called
 `seqlz_compress()`, and drops the `!t->all_symbols` tests, because the kernel's tables are checked when
 they are generated ([chapter 15](#ch-zram-glue--init)).
-@assert pointers.len == xor.ptr.l2.len
+@assert pointers.len == delta.ptr.l2.len
 
 ## The page of ab, bit by bit {#ch-encoder--example}
 

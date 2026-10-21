@@ -167,7 +167,7 @@ the one for levels 1 and 2 has no code of level 3 at all ([chapter 10](#ch-encod
 `seqlz_find()` collects the sequences into an array for tests and tools such as the table trainer,
 which trains the tables on exactly the sequences this matcher finds. The kernel's copy has only the
 encoder: `port.py` makes the matcher call `encode_seq()` by name, with `lazy` as its last argument,
-so the lazy copy, level 3's, is also the one that writes the records for the XOR
+so the lazy copy, level 3's, is also the one that writes the records for the deltas
 ([chapter 10](#ch-encoder--records)).
 
 ::: why One pass, not two

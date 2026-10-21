@@ -22,7 +22,7 @@ the whole page, and `n > PAGE` makes the page invalid.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 238" role="img" aria-label="The two layouts of a compressed page: a 2-byte header, the literals, then the bitstream; with coded literals the header also has byte 2, the stream sizes, with XORed literals the XOR's byte, with code 8 the page's own table, and 8 streams" font-size="12">
+<svg viewBox="0 0 720 238" role="img" aria-label="The two layouts of a compressed page: a 2-byte header, the literals, then the bitstream; with coded literals the header also has byte 2, the stream sizes, with literals as deltas the byte that says which delta, with code 8 the page's own table, and 8 streams" font-size="12">
   <text x="20" y="24" text-anchor="start" font-weight="bold">raw literals: h &amp; 0x8000 is 0</text>
   <rect x="20" y="34" width="90" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="65.0" y="56" text-anchor="middle">h = n</text>
@@ -46,7 +46,7 @@ the whole page, and `n > PAGE` makes the page invalid.
   <rect x="140" y="134" width="100" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="190.0" y="156" text-anchor="middle">s[0] to s[7]</text>
   <rect x="240" y="134" width="26" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
-  <text x="253.0" y="156" text-anchor="middle">xr</text>
+  <text x="253.0" y="156" text-anchor="middle">dt</text>
   <rect x="266" y="134" width="50" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
   <text x="291.0" y="156" text-anchor="middle">own</text>
   <rect x="316" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
@@ -84,10 +84,10 @@ the whole page, and `n > PAGE` makes the page invalid.
   <line x1="700" y1="168" x2="700" y2="176" stroke="currentColor"/>
   <text x="700" y="190" text-anchor="middle" class="mut">len</text>
   <text x="448" y="210" text-anchor="middle">stream 0 to 7, s[j] bytes each, literal k in stream k mod 8</text>
-  <text x="20" y="228" text-anchor="start" class="mut">xr: e bytes, 1 if the literals are XORed, else 0; own: d bytes, with code 8 only</text>
+  <text x="20" y="228" text-anchor="start" class="mut">dt: e bytes, 1 if the literals are deltas, else 0; own: d bytes, with code 8 only</text>
 </svg>
 </div>
-<figcaption>The two layouts. The offsets below each box are byte offsets in the compressed page of <code>len</code> bytes; the dashed boxes are there only with XORed literals, <code>e</code> = 1, and with code 8, the page's own literal table, else <code>e</code> and <code>d</code> are 0.</figcaption>
+<figcaption>The two layouts. The offsets below each box are byte offsets in the compressed page of <code>len</code> bytes; the dashed boxes are there only with literals as deltas, <code>e</code> = 1, and with code 8, the page's own literal table, else <code>e</code> and <code>d</code> are 0.</figcaption>
 </figure>
 
 **Raw literals.** With the top bit clear, the `n` literals follow as they are, in page order, and
@@ -101,7 +101,7 @@ tables or with a table that the page brings, and more fields come first. Byte 2,
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 134" role="img" aria-label="Byte 2 of a page with coded literals, {{ch04.text.t}}: the XOR bit, w minus 5 in bits 4 to 6, the literals' code in bits 0 to 3" font-size="12">
+<svg viewBox="0 0 720 134" role="img" aria-label="Byte 2 of a page with coded literals, {{ch04.text.t}}: the delta bit, w minus 5 in bits 4 to 6, the literals' code in bits 0 to 3" font-size="12">
   <text x="222.0" y="30" text-anchor="middle" class="mut">bit 7</text>
   <rect x="200" y="40" width="44" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="222.0" y="60" text-anchor="middle" font-weight="bold">{{ch04.text.t_bit.7}}</text>
@@ -145,13 +145,13 @@ tables or with a table that the page brings, and more fields come first. Byte 2,
   (`SEQLZ_LIT_OWN`) a table of the page's own ([below](#ch-format--own)), and 9 to 15 make the page
   invalid.
 - `w = 5 + ((t >> 4) & 7)` is the number of bits of each stream size, 5 to 12.
-- `e = t >> 7` says whether the literals are XORed with earlier bytes of the page
-  ([below](#ch-format--xor)), which only `seqlz-3` writes. The codes 9 to 15 are free for a later format
+- `e = t >> 7` says whether the literals are stored as deltas to earlier bytes of the page
+  ([below](#ch-format--deltas)), which only `seqlz-3` writes. The codes 9 to 15 are free for a later format
   ([no version in the page](#ch-format--version)).
 
 The next `w` bytes, from byte 3 on, are one little-endian number `S` of `8 * w` bits with the 8 stream
 sizes, `w` bits each, the lowest first: `s[j] = (S >> (j * w)) & ((1 << w) - 1)`. With `e = 1` one
-byte follows, `xr`, which says how the literals are XORed. With code 8 the page's own table follows,
+byte follows, `dt`, which says which earlier byte each delta is to. With code 8 the page's own table follows,
 `d` bytes; with the codes 0 to 7, `d` is 0. Then come the 8 streams, `s[j]`
 bytes each, and after the last one `B`. The literals are dealt out to the streams like cards: stream
 $j$ holds literals $j$, $j + 8$, $j + 16$ and so on, each as a code of the table that `code` names,
@@ -177,7 +177,7 @@ followed by a space. `seqlz-1` stores it in {{ch04.text.raw}} bytes, `seqlz-2` i
   `{{ch04.text.s0_hex}} = {{ch04.text.s.0}}`, are the size of stream 0; the 8 sizes are
   {{ch04.text.s.0}}, {{ch04.text.s.1}}, {{ch04.text.s.2}}, {{ch04.text.s.3}}, {{ch04.text.s.4}},
   {{ch04.text.s.5}}, {{ch04.text.s.6}} and {{ch04.text.s.7}} bytes, {{ch04.text.sum}} together.
-- No XOR and no own table, `e = 0` and `d = 0`: the streams start at byte
+- No deltas and no own table, `e = 0` and `d = 0`: the streams start at byte
   $3 + w = {{ch04.text.streams_at}}$, `B` at
   ${{ch04.text.streams_at}} + {{ch04.text.sum}} = {{ch04.text.b_at}}$, and takes the last
   {{ch04.text.b_bytes}} bytes of the page.
@@ -250,7 +250,7 @@ many of the decoder's cache lines a page needs ([chapter 3](#ch-cpu--msb-first))
 
 ## A page's own literal table, in byte order {#ch-format--own}
 
-With code 8 the page brings its own literal table, right after the stream sizes and the XOR's byte, at
+With code 8 the page brings its own literal table, right after the stream sizes and `dt`, at
 byte $3 + w + e$. It is
 read most significant bit first, like `B`. It is not a list of 256 code lengths: it is a list of
 symbols of one more fixed table, `OWN`, which goes through the byte values from 0 up and says for each
@@ -388,33 +388,38 @@ fills the code space still ends there, and the last of those checks rejects it. 
 table is in [chapter 11](#ch-literals-enc--own); how the decoder builds a decode table from them
 without any memory of its own, in [chapter 13](#ch-literals-dec--own).
 
-## XORed literals {#ch-format--xor}
+## Literals as deltas {#ch-format--deltas}
 
-With `e = 1` each literal was XORed with an earlier byte of the page before it was coded, and the
-decoder XORs it with the same byte again as it appends it, which gives the literal back. The byte
-`xr`, right after the stream sizes, says which byte. For the `i`-th literal of a sequence, counted from
-0, which goes to byte `p = |out|` of the page:
+With `e = 1` each literal was stored as its **delta** to an earlier byte of the page before it was
+coded: the literal minus that byte, modulo 256. The decoder adds the same byte back as it appends the
+literal, modulo 256 again, which gives the literal back. The byte `dt`, right after the stream sizes,
+says which byte. For the `i`-th literal of a sequence, counted from 0, which goes to byte `p = |out|`
+of the page:
 
-| `xr` | XORed with | literals as they are |
+| `dt` | the literal is `(lits[used + i] + out[p - x]) mod 256` with | literals as they are |
 | --- | --- | --- |
-| 1 | `out[p - 4]` | `i < 4`, the first 4 of each sequence |
-| 2 | `out[p - 8]` | `i < 8` |
-| 3 | `out[p - x]`, `x = last`, the offset of the sequence before, 1 for the first; with `last` 1 or 2, `x = 4`, with `last` 3, `x = 6` | `p < x`, near the page's start |
+| 1 | `x = 4` | `i < 4`, the first 4 of each sequence |
+| 2 | `x = 8` | `i < 8` |
+| 3 | `x = last`, the offset of the sequence before, 1 for the first; with `last` 1 or 2, `x = 4`, with `last` 3, `x = 6` | `p < x`, near the page's start |
 
 `out[p - x]` is a byte the decoder has already written, a byte of a match or an earlier literal of
-the same sequence, as it is in the page; the last sequence is XORed like the others. Any other `xr`
-makes the page invalid. Memory pages are full of 4- and 8-byte fields, whose bytes are often those of
-the field before, and the byte after a match often differs in a few bits only from the byte the match
-would have copied next. XORed, such literals become a few small values, which a literal table codes in
-fewer bits ([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#xored-literals)).
+the same sequence, as it is in the page; the last sequence is no different. Any other `dt` makes the
+page invalid. Memory pages are full of 4- and 8-byte fields, whose bytes are often those of the field
+before or differ from them by a little, as counters, sizes and addresses of objects in a row do, and
+the byte after a match often differs only a little from the byte the match would have copied next. As
+deltas, such literals become a few small values, which a literal table codes in fewer bits
+([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#literals-as-deltas)).
+A delta, not a XOR: a field that grows by 1 from `0x0f` to `0x10` has a delta of 1, but `0x0f` XOR
+`0x10` is `0x1f`, every bit the carry flipped. The branch that brought `e` first XORed the literals;
+the subtraction replaced the XOR on 21st October 2026, before it was merged ([chapter 17](#ch-decisions)).
 
 The page of 512 pointers of [chapter 9](#ch-matcher--back) at level 3 begins with
-`{{xor.ptr.l3.head}}`: `h` says {{xor.ptr.l3.n}} coded literals, `t = {{xor.ptr.l3.t}}` is code
-{{xor.ptr.l3.code}} with `w = {{xor.ptr.l3.w}}` and `e = 1`, 5 bytes of sizes follow, and byte
-{{xor.ptr.l3.xr_at}} is `xr = {{xor.ptr.l3.xr}}`. Its second sequence is 1 literal at byte
-{{xor.ptr.rec.1.pos}} after a match at offset 8, so `x = 8`, and the decoded literal `0x10` is XORed
-with `out[8] = 0x20`, the low byte of the pointer before, to `0x30`.
-@assert xor.ptr.l3.w == 5 and xor.ptr.l3.xr == 3 and xor.ptr.rec[1].last == 8 and xor.ptr.rec[1].pos == 16 and xor.ptr.fast.before[:2] == "10" and xor.ptr.fast.ref[:2] == "20" and xor.ptr.fast.after[:2] == "30"
+`{{delta.ptr.l3.head}}`: `h` says {{delta.ptr.l3.n}} coded literals, `t = {{delta.ptr.l3.t}}` is code
+{{delta.ptr.l3.code}} with `w = {{delta.ptr.l3.w}}` and `e = 1`, 5 bytes of sizes follow, and byte
+{{delta.ptr.l3.dt_at}} is `dt = {{delta.ptr.l3.dt}}`. Its second sequence is 1 literal at byte
+{{delta.ptr.rec.1.pos}} after a match at offset 8, so `x = 8`, and the decoded delta `0x10` is added
+to `out[8] = 0x20`, the low byte of the pointer before, which gives `0x30`.
+@assert delta.ptr.l3.w == 5 and delta.ptr.l3.dt == 3 and delta.ptr.rec[1].last == 8 and delta.ptr.rec[1].pos == 16 and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.ref[:2] == "20" and delta.ptr.fast.after[:2] == "30"
 
 ## One sequence: the token {#ch-format--token}
 
@@ -639,7 +644,7 @@ A page is valid for a page size and its tables if all of these hold:
 2. `n <= PAGE`.
 3. Raw literals: `2 + n <= len`.
 4. Coded literals: `len >= 3 + w + e`.
-5. Coded literals: `code = t & 15` is at most 8, and with `e = 1`, `xr` is 1, 2 or 3.
+5. Coded literals: `code = t & 15` is at most 8, and with `e = 1`, `dt` is 1, 2 or 3.
 6. Code 8: the page's own table is valid ([above](#ch-format--own)), and `3 + w + e + d <= len`.
 7. Coded literals: `3 + w + e + d + s[0] + ... + s[7] <= len`, with `d = 0` for the codes 0 to 7.
 8. Every literal stream's codes take at most `8 * s[j]` bits and fewer than 8 bits less, and its bits
@@ -662,8 +667,8 @@ decodes to.
 
 `lits` are the `n` literals, decoded first if they are coded, `used` is how many of them are copied,
 `out` is the page being written, `last` is 1. `copy(k)` appends the next `k` literals to `out` and adds
-`k` to `used`: as they are, or with `e = 1` each XORed with the byte of `out` that
-[XORed literals](#ch-format--xor) names.
+`k` to `used`: as they are, or with `e = 1` each plus the byte of `out` that
+[literals as deltas](#ch-format--deltas) names, modulo 256.
 
 ```text
 loop:
@@ -801,8 +806,8 @@ while the kernel that wrote them runs, also the ones it wrote back to a backing 
 ever meets a newer decoder, and a change of the format needs a new kernel, not a new algorithm name in zram. Two things
 would change that: another user of the codec that keeps pages longer, or zram's pages kept across a
 `kexec` by live update, which zram does not do in 2026. For that case the codes 9 to 15 and the values
-of `xr` other than 1 to 3 are invalid today, so a later format can tell itself apart. The top bit of
-byte 2 was such a free bit too, until the XOR took it on 21st October 2026. And the format is not frozen yet: until seqlz
+of `dt` other than 1 to 3 are invalid today, so a later format can tell itself apart. The top bit of
+byte 2 was such a free bit too, until the deltas took it on 21st October 2026. And the format is not frozen yet: until seqlz
 is in a kernel, the tables and the rules may change, together with `docs/format.md`'s hashes, its
 example and both reference decoders.
 

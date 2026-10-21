@@ -16,7 +16,7 @@ import sys
 # Never the body of an if without braces: the hook would become the body; the script fails on one.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
-    "q = decode_literals(t, s, src_len, n_lit, scratch, d, &xor);",
+    "q = decode_literals(t, s, src_len, n_lit, scratch, d, &delta);",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
     "d_fast = d_end - FAST_PAGE_ROOM;",

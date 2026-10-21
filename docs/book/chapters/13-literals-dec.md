@@ -407,14 +407,14 @@ undone. So the loop over the sequences undoes each sequence's literals right aft
 before the match after them ([chapter 14](#ch-decode--xored)), with the helpers that follow
 `decode_literals()` in the file.
 
-@listing src/seqlz_decompress.c 573-586
+@listing src/seqlz_decompress.c 573-592
 
 `xor4()` and `xor8()` XOR a word of the page with the word `dist` bytes before it, a load, a load, a
 XOR and a store, `put_unaligned_le32()` being the store of [chapter 5](#ch-compat). The two loads can
 overlap: with `dist` 4, `xor8()` would read 4 bytes it is about to change, and the bytes it wrote would
 be wrong. That is why the callers use `xor8()` only for a distance of 8 or more.
 
-@listing src/seqlz_decompress.c 588-618
+@listing src/seqlz_decompress.c 594-625
 
 `unxor_literals()` undoes the XOR of the `nl` literals at `d`, `at` bytes into the page. `dist` is the
 XOR's distance, 4, 8, or the offset of the sequence before as `seqlz_xor_last()` makes it, at least 4
@@ -428,14 +428,14 @@ loop goes forward. That is the reason for the format's rule that an offset below
 The code works with the index `k` and not a pointer: for a short sequence near the page's end,
 `d + dist` would be past the end of the page, and C does not allow even forming such a pointer.
 
-The first sequence of the page of pointers is {{xor.ptr.rec.0.ll}} literals at the page's start, with
+The first sequence of the page of pointers is {{delta.ptr.rec.0.ll}} literals at the page's start, with
 `last` 1, so `dist` is 4 and `k` starts at 4. As in [chapter 11](#ch-literals-enc--xor) they arrive as
-`{{xor.ptr.xored}}` (the first 9 of these bytes). One `xor4()` restores bytes 4 to 7, `02 7f 56 34` XOR
+`{{delta.ptr.deltas}}` (the first 9 of these bytes). One `xor4()` restores bytes 4 to 7, `02 7f 56 34` XOR
 `10 00 56 34` = `12 7f 00 00`, and the byte loop byte 8, `32 ^ 12 = 20`: the first pointer and the
-low byte of the second, `{{xor.ptr.plain}}`.
-@assert xor.ptr.rec[0].ll == 9 and xor.ptr.rec[0].dist == 4 and xor.ptr.plain == "10 00 56 34 12 7f 00 00 20 30 40 50" and xor.ptr.xored == "10 00 56 34 02 7f 56 34 32 10 70 10"
+low byte of the second, `{{delta.ptr.plain}}`.
+@assert delta.ptr.rec[0].ll == 9 and delta.ptr.rec[0].dist == 4 and delta.ptr.plain == "10 00 56 34 12 7f 00 00 20 30 40 50" and delta.ptr.deltas == "10 00 56 34 02 7f 56 34 32 10 70 10"
 
-@listing src/seqlz_decompress.c 620-648
+@listing src/seqlz_decompress.c 627-656
 
 The fast path of the loop copies 16 bytes of literals whatever `nl` is, at most 14
 ([chapter 14](#ch-decode--fast)), and `unxor_fast()` undoes the XOR on all 16, with no loop and no
@@ -444,15 +444,15 @@ two `xor8()` or four `xor4()`, each word's source before it. The bytes past `nl`
 as they were after `copy16()` already; the match after the literals writes over them before anything
 reads them. Only near the page's start, where `d - dst < dist`, does `SEQLZ_XOR_LAST` need the rule of
 the first bytes, and there it calls `unxor_literals()`. The second sequence of the page of pointers,
-1 literal at byte {{xor.ptr.rec.1.pos}} with `last` 8, as the fast path would see it:
+1 literal at byte {{delta.ptr.rec.1.pos}} with `last` 8, as the fast path would see it:
 
 | bytes at `d` | XOR with the 8 bytes at `d - 8` | after the first `xor8()` |
 | --- | --- | --- |
-| `{{xor.ptr.fast.before}}` | `{{xor.ptr.fast.ref}}` | `{{xor.ptr.fast.after}}` |
+| `{{delta.ptr.fast.before}}` | `{{delta.ptr.fast.ref}}` | `{{delta.ptr.fast.after}}` |
 
 The first byte is the low byte of the third pointer again, `10 ^ 20 = 30`; the other 7, and the 8 of
 the second `xor8()`, are written over by the 7 bytes of the match and by the sequences after it.
-@assert xor.ptr.rec[1].ll == 1 and xor.ptr.rec[1].dist == 8 and xor.ptr.fast.before[:2] == "10" and xor.ptr.fast.after[:2] == "30"
+@assert delta.ptr.rec[1].ll == 1 and delta.ptr.rec[1].dist == 8 and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.after[:2] == "30"
 
 ## Why nothing reads or writes outside its buffer {#ch-literals-dec--safety}
 

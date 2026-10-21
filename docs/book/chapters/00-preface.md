@@ -12,10 +12,10 @@ pays: on the Mi 9T's Cortex-A76, in the phone's own kernel on 15th October 2026,
 952.0 bytes of zsmalloc memory against 951.4 for `zstd` 3, and wrote one in about 16 µs against
 `zstd` 3's 36 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
-Since 21st October 2026 level 3 also XORs the literals with earlier bytes of the page before it codes
-them: 3.8% fewer bytes on ten samples of 20 000 pages, for about 28% more time to write a page on the
-A76, in userspace
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
+Since 21st October 2026 level 3 also stores each literal as its delta to an earlier byte of the page,
+the literal minus that byte, before it codes them: 873.6 instead of 915.6 bytes per page on ten samples
+of 20 000 pages, 4.6% fewer, for about 4 µs more to write a page on the Mi 9T's A76, in userspace
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept)).
 
 All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code
 lengths in four `.inc` files, two for each page size.
@@ -75,7 +75,7 @@ flowchart TB
     CP --> M["seqlz_match_page()<br/>page_lz.h, the matcher"]
     CO --> M
     M -->|"each sequence<br/>as it is found"| E["encode_seq()<br/>token, offset,<br/>length values"]
-    CO --> X["xor_literals()<br/>level 3: the XOR<br/>of the literals"]
+    CO --> X["delta_literals()<br/>level 3: the literals<br/>as deltas"]
     CP --> F["encoder_finish()<br/>bitstream behind<br/>the literals"]
     CO --> F
     C --> L["code_literals()<br/>Huffman codes<br/>the literals<br/>if that saves enough"]

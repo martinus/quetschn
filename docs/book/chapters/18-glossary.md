@@ -72,7 +72,7 @@ sense given here.
   `seqlz-opt`, removed. [Chapter 17](#ch-decisions--not-kept)
 - **prefix code**: codes of which none is the start of another, so a decoder knows where each ends.
   [Chapter 2](#ch-compression--prefix-codes)
-- **record**: at level 3, the {{xor.rec}} bytes the encoder writes in front of a sequence's literals, its position,
+- **record**: at level 3, the {{delta.rec}} bytes the encoder writes in front of a sequence's literals, its position,
   `ll` and the offset before, for `xor_literals()`. [Chapter 10](#ch-encoder--records)
 - **repeat offset**: the offset of the match before, used again for 0 bits; 1 at the start of a page.
   [Chapter 4](#ch-format--offsets)
