@@ -291,7 +291,7 @@ one, {{ch16.zs.lower}}.
 
 The backend calls `seqlz_decode(t, src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of
 {{const.SCRATCH}} bytes ([chapter 14](#ch-decode)). Bit 7 of byte 2 is 0, so it runs the copy of
-`decode_page()` without the XOR. That prefetches the token and length tables, finds the
+`decode_page()` without deltas. That prefetches the token and length tables, finds the
 top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `decode_literals()`
 ([chapter 13](#ch-literals-dec)) reads table {{ch16.lt.set}} and width {{ch16.lt.width}} from byte 2,
 prefetches the literal table, and reads the sizes, {{ch16.lt.sizes_sp}}. {{ch16.lits}} literals are
@@ -638,6 +638,6 @@ Without the text, this page gains nothing.
 At level 3, `seqlz-3`, the same page is {{slab.l3.len}} bytes, {{slab.coded.len}} at level 2. The
 matcher's lazy step and the extension backwards ([chapter 9](#ch-matcher--lazy)) make the difference;
 the literals keep table {{ch16.lt.set}}, as a table of the page's own would not save
-{{own.enc.saves_min}} bytes on them, and they are not XORed, so the text's last sentence holds for this
+{{own.enc.saves_min}} bytes on them, and they are not stored as deltas, so the text's last sentence holds for this
 page at both levels.
 @assert slab.l3.own == 0 and slab.l3.delta == 0 and slab.l3.len < slab.coded.len

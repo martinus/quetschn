@@ -22,6 +22,10 @@ sense given here.
 - **decoder, encoder, matcher**: the matcher finds the matches of a page (`src/page_lz.h`), the encoder
   writes them in the format, the decoder turns a compressed page back into the page.
   [Chapters 9 to 14](#ch-matcher)
+- **delta, `dt`**: at level 3, a literal stored as the literal minus an earlier byte of the page,
+  modulo 256, before it is coded, one of three ways per page, which the byte `dt` after the stream
+  sizes names: the byte 4 or 8 before, or the byte at the offset of the sequence before; bit 7 of
+  byte 2 says the page has deltas. The decoder adds the byte back. [Chapter 4](#ch-format--deltas)
 - **dictionary**: data compressor and decoder share before the first byte; zram can pass one, seqlz's
   kernel backend refuses it. [Chapter 15](#ch-zram-glue--head)
 - **entropy**: the fewest bits per symbol any code can reach for given frequencies,
@@ -36,7 +40,7 @@ sense given here.
 - **hash table**: the matcher's {{ch17.hash_slots}} slots of 2 bytes, cleared for each page, the newest
   position per hash of 5 bytes. [Chapter 9](#ch-matcher--hash)
 - **header**: the u16 with the literal count and a flag, and with coded literals byte 2 and the stream
-  sizes, $3 + w$ bytes, and with XORed literals one byte more. [Chapter 6](#ch-header--literals)
+  sizes, $3 + w$ bytes, and with deltas one byte more. [Chapter 6](#ch-header--literals)
 - **Huffman code**: the prefix code with the fewest bits for given frequencies; seqlz's are limited to
   {{ch18.bits.token}}, {{ch18.bits.lit}} and {{ch18.bits.len}} bits. [Chapter 2](#ch-compression--huffman)
 - **k-means**: the trainer's clustering for the literal tables: each page goes to the table that codes it
@@ -73,7 +77,7 @@ sense given here.
 - **prefix code**: codes of which none is the start of another, so a decoder knows where each ends.
   [Chapter 2](#ch-compression--prefix-codes)
 - **record**: at level 3, the {{delta.rec}} bytes the encoder writes in front of a sequence's literals, its position,
-  `ll` and the offset before, for `xor_literals()`. [Chapter 10](#ch-encoder--records)
+  `ll` and the offset before, for `delta_literals()`. [Chapter 10](#ch-encoder--records)
 - **repeat offset**: the offset of the match before, used again for 0 bits; 1 at the start of a page.
   [Chapter 4](#ch-format--offsets)
 - **scratch**: the per-CPU buffer the decoder decodes coded literals into, a page plus 16 bytes.
@@ -97,10 +101,6 @@ sense given here.
   next sequence. [Chapter 3](#ch-cpu--wild-copy)
 - **work memory**: the codec's buffers per CPU, the hash table to compress and the scratch to decompress;
   not the tables, which all CPUs share. [Chapter 1](#ch-zram--work-memory)
-- **XORed literals, `xr`**: at level 3, each literal XORed with an earlier byte of the page before it is
-  coded, one of three ways per page, which the byte `xr` after the stream sizes names: the byte 4 or 8
-  before, or the byte at the offset of the sequence before; bit 7 of byte 2 says the page has it.
-  [Chapter 4](#ch-format--xor)
 
 ## The kernel {#glossary--kernel}
 
@@ -189,7 +189,7 @@ sense given here.
 - **quetschn, seqlz**: quetschn is the project, its binaries and options; seqlz the codec, one format
   with three levels of the compressor and one decoder. [Preface](#preface)
 - **`seqlz-1`, `seqlz-2`, `seqlz-3`**: seqlz at levels 1 to 3: raw literals; coded literals where they
-  pay; and also a lazy step, a table of the page's own and XORed literals. [Chapter 10](#ch-encoder),
+  pay; and also a lazy step, a table of the page's own and literals as deltas. [Chapter 10](#ch-encoder),
   [chapter 11](#ch-literals-enc)
 - **`seqlz-opt`**: an optimal parser for the same format, for zram's recompression, removed.
   [Chapter 17](#ch-decisions--not-kept)
