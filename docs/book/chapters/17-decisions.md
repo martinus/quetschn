@@ -284,8 +284,8 @@ Since 11th October the last sequence has no token: the decoder knows it from the
 per page, 0.12% of zsmalloc memory, at no time the VM or the phone could measure
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 zram's pages never outlive the kernel that wrote them, so a new format needs a new kernel, not a version
-byte, and the values of byte 2 with its top bits set stay free for a format that has to tell itself
-apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
+byte, and the codes 9 to 15 in byte 2 and the values of the XOR's byte other than 1 to 3 stay free for
+a format that has to tell itself apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
 
 
 ## The literals {#ch-decisions--literals}
@@ -632,8 +632,8 @@ kernel copy is for 4 KiB pages only
 
 ## Level 3: a lazy step and a literal table of the page's own {#ch-decisions--level3}
 
-Level 3 is for a device that values memory more than level 2 does. On 15th October 2026, in the Mi
-9T's own kernel, with 19 775 pages of a phone session in zram (`tools/zram-phone/run.sh`), means of 3
+Level 3 is for a device that values memory more than level 2 does. On 15th October 2026, before its
+literals were XORed ([below](#ch-decisions--xor)), in the Mi 9T's own kernel, with 19 775 pages of a phone session in zram (`tools/zram-phone/run.sh`), means of 3
 rounds in µs:
 
 | codec, Mi 9T, 15th October 2026 | zsmalloc bytes per page | A76 write | A76 warm / cold read | A55 write | A55 warm / cold read |
@@ -707,6 +707,31 @@ changed the decision: `zstd` 3's memory, one end of the project's goal
 The cost is in the code: `own_code()`, `own_lengths()` and their helpers in the encoder, `build_own()`,
 and `own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
 the reference decoders cover it like the rest.
+
+## Level 3 XORs its literals with an earlier byte {#ch-decisions--xor}
+
+Since 21st October 2026 level 3 XORs each literal with the byte 4 or 8 before it, or with the byte at
+the offset of the sequence before, one choice per page, before the literal tables code it
+([chapter 4](#ch-format--xor)). On ten samples of 20 000 pages it stores 881.0 bytes per page instead
+of 915.6, 3.8% less; levels 1 and 2 write the same bytes as before. On the Mi 9T, in userspace with
+the kernel's compile flags, the mean of two phone dumps, a level 3 page takes about 3.6 µs (+28%)
+longer to write on the Cortex-A76 and 7.4 µs on the A55, and 0.37 µs longer to read on the A76 and 1.0
+µs on the A55; levels 1 and 2 write and read as fast as before, within the run's spread
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
+
+| decision | instead of | why |
+| --- | --- | --- |
+| one XOR per page, in a byte after the sizes | a XOR per literal lane, with a literal table per lane ("format 3", 8 streams of lanes) | the lanes gave less, 896.5 bytes per page on the same ten samples against 880.7, both as stored after a recompression from `seqlz-1`, for more code; the size came from the XOR, not from the lanes |
+| priced with the fixed tables' sums of `lit_cost`, every 5th literal | every literal | every literal made pages almost no smaller and the encoder slower ([chapter 11](#ch-literals-enc--xor)) |
+| every 5th literal | every 4th | every 4th is the same byte of each 4- or 8-byte field, and made pages 1.0 byte larger |
+| the records and the XOR in copies of the loops for level 3 | a test for every sequence in the loops all levels share | the test made levels 1 and 2 about 6% slower to write on the A76, and slower to read ([chapter 10](#ch-encoder--wrappers), [chapter 14](#ch-decode--xored)) |
+| records in `dst` | a second buffer | no byte of work memory; the matcher's state is its hash table until the page is matched ([chapter 10](#ch-encoder--records)) |
+| an offset below 4 as 4 or 6 | the offset as it is | the decoder XORs 4 or 8 bytes at a time ([chapter 7](#ch-internal--byte2)) |
+
+The cost is in the code as much as in the time: a second copy of the decoder's loop, `unxor_literals()`
+and `unxor_fast()`, one more field of untrusted input, and in the encoder the records, `xor_literals()`
+and a second matching pass for a page that does not fit with its records. The times are userspace
+only: the kernel VM and zram in the phone's kernel have not measured the XOR yet.
 
 ## Tried and not kept {#ch-decisions--not-kept}
 
@@ -833,7 +858,8 @@ cost on all pages of the desktop's and the phone's zram
    first time it was measured, mostly on pages whose literals fit the 8 tables badly
    ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
    Level 3 has one, and with it and a lazy step it stores pages as small as `zstd` 3 on the Mi 9T, in
-   less than half its time to write ([above](#ch-decisions--level3)).
+   less than half its time to write ([above](#ch-decisions--level3)); since 21st October it also XORs
+   its literals, 3.8% fewer bytes on ten samples ([above](#ch-decisions--xor)).
 3. **Adaptive sequence coding.** `zstd` codes `ll`, `ml` and the offset with three tables it can build for
    the data, three lookups per sequence; seqlz's one fixed token table keeps its decoder fast. The offsets
    are the clearest loss: as plain bits they cost 18 bytes per page, 2%, above their entropy

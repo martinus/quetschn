@@ -501,7 +501,10 @@ static void ch06_facts(void) {
     fact_num("ch06.SIZE_BITS_MIN", SEQLZ_SIZE_BITS_MIN);
     fact_num("ch06.SIZE_BITS_MAX", SEQLZ_SIZE_BITS_MAX);
     fact_num("ch06.LIT_WIDTH_AT", SEQLZ_LIT_WIDTH_AT);
-    fact_num("ch06.LIT_ZERO_AT", SEQLZ_LIT_ZERO_AT);
+    fact_num("ch06.LIT_XOR_AT", SEQLZ_LIT_XOR_AT);
+    fact_num("ch06.XOR_4", SEQLZ_XOR_4);
+    fact_num("ch06.XOR_8", SEQLZ_XOR_8);
+    fact_num("ch06.XOR_LAST", SEQLZ_XOR_LAST);
     fact_num("ch06.sequence", sizeof(struct seqlz_sequence));
     fact_num("ch06.esc_len", seqlz_default_own.token[SEQLZ_ESCAPE]);
     fact_num("ch06.esc_pair", seqlz_default_own.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS + SEQLZ_RAW_BITS(3));

@@ -12,6 +12,10 @@ pays: on the Mi 9T's Cortex-A76, in the phone's own kernel on 15th October 2026,
 952.0 bytes of zsmalloc memory against 951.4 for `zstd` 3, and wrote one in about 16 µs against
 `zstd` 3's 36 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
+Since 21st October 2026 level 3 also XORs the literals with earlier bytes of the page before it codes
+them: 3.8% fewer bytes on ten samples of 20 000 pages, for about 28% more time to write a page on the
+A76, in userspace
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
 
 All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code
 lengths in four `.inc` files, two for each page size.
@@ -66,16 +70,20 @@ How the pieces call each other, the compressor on the left and the decompressor 
 <pre class="mermaid">
 flowchart TB
     Z["zram: a page to store"] --> C["seqlz_compress()"]
-    C --> CP["compress_page()"]
+    C --> CP["compress_page()<br/>levels 1 and 2"]
+    C --> CO["compress_own()<br/>level 3"]
     CP --> M["seqlz_match_page()<br/>page_lz.h, the matcher"]
-    M -->|"each sequence<br/>as it is found"| E["encode_emit()<br/>token, offset,<br/>length values"]
+    CO --> M
+    M -->|"each sequence<br/>as it is found"| E["encode_seq()<br/>token, offset,<br/>length values"]
+    CO --> X["xor_literals()<br/>level 3: the XOR<br/>of the literals"]
     CP --> F["encoder_finish()<br/>bitstream behind<br/>the literals"]
+    CO --> F
     C --> L["code_literals()<br/>Huffman codes<br/>the literals<br/>if that saves enough"]
     L --> OC["own_code()<br/>level 3: a table<br/>of the page's own"]
     R["zram: a page to read"] --> D["seqlz_decode()"]
     D --> DL["decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
     DL --> OT["own_table()<br/>builds a page's own<br/>table in the page"]
-    D --> LOOP["the loop over<br/>the sequences,<br/>one table lookup each"]
+    D --> LOOP["decode_page(): the loop<br/>over the sequences,<br/>one table lookup each"]
     T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C
     T -.->|"read only"| D
 </pre>

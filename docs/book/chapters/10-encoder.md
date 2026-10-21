@@ -7,8 +7,9 @@ as one loop, so the encoder gets each sequence the moment it is found and never 
 whole. That is a problem, because the bitstream starts after all literals, and how many there are is
 known only after the last sequence. The encoder writes from both ends of its output buffer: the
 literals from the front, the bitstream backwards from the back, and at the end it copies the
-bitstream, turned around, to right after the literals. This chapter is lines 1 to 324 of the file and
-the four functions at its end; lines 326 to 933 code the literals, [chapter 11](#ch-literals-enc).
+bitstream, turned around, to right after the literals. This chapter is lines 1 to 320 of the file,
+`encode_raw()` and the functions at its end; lines 322 to 474 pick level 3's XOR of the literals, and
+lines 530 to 1145 code the literals, both in [chapter 11](#ch-literals-enc).
 
 ## The file's head, and seqlz_find() {#ch-encoder--find}
 
@@ -135,19 +136,39 @@ bits again, so it gets a flush of its own.
 
 ## The encoder's state {#ch-encoder--state}
 
-@listing src/seqlz_compress.c 81-89
+@listing src/seqlz_compress.c 81-92
 
 `cnt` bits of `acc` count, the newest lowest; bits above may be old ones already written, and are
 shifted out before they matter. `src_end` is how far the 16-byte literal copies may read: the end of
 the page in the compressor, the end of the caller's literals in `seqlz_encode()`. `last` is the repeat
 offset as the encoder sees it, the matcher's `last` again, both starting at 1. The matcher's loop and
-all of `encode_emit()` are inlined into `compress_page()`, and the matcher leaves the encoder no
+all of `encode_seq()` are inlined into `compress_page()`, and the matcher leaves the encoder no
 registers, so this struct lives on the stack
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
+`rec` and `pos` are level 3's, for the records below; `pos` is where the next sequence starts in the
+page, which the encoder does not need for anything else.
+
+## Level 3: a record in front of each sequence's literals {#ch-encoder--records}
+
+@listing src/seqlz_compress.c 94-102
+
+Level 3 XORs the literals with earlier bytes of the page ([chapter 6](#ch-header--literals)), one
+choice for the whole page, and which one is cheapest is known only when all literals are there. To
+XOR a literal, the encoder needs where it is in the page and the offset of the sequence before it,
+and neither is in the literals. So at level 3 the encoder writes that next to them, a record of
+{{xor.rec}} bytes in front of each sequence's literals, and `xor_literals()` reads the records once
+the page is matched ([chapter 11](#ch-literals-enc--xor)). `dst` is where the room is: the matcher's
+state is its hash table until the last sequence, and the literals' copy goes there only afterwards.
+Each field fits a `u16`, as a page of 16 KiB has positions, lengths and offsets below $2^{16}$. The
+cost is room in `dst`: on the page of pointers of [chapter 9](#ch-matcher--back), level 3 finds
+{{xor.ptr.n_lit}} literals in {{xor.ptr.recs}} sequences, and with the records they take
+{{xor.ptr.with_rec|grp}} bytes. A page that does not fit with its records is matched a second time
+without them, and stored without a XOR ([below](#ch-encoder--entry)).
+@assert xor.ptr.with_rec == xor.ptr.n_lit + xor.rec * xor.ptr.recs
 
 ## Bits into a 64-bit accumulator {#ch-encoder--put}
 
-@listing src/seqlz_compress.c 91-114
+@listing src/seqlz_compress.c 104-127
 
 `v` must have no bits above `n`, and the comment's `n < 64 - cnt` keeps bits from falling out of the
 top. The masks `& 63U` and `& 31U` change no value the encoder uses; they let the compiler drop the
@@ -171,7 +192,7 @@ The top bit of 4059, the 2048, is not sent: the symbol says it.
 
 ## enc_flush(): whole bytes go below p {#ch-encoder--flush}
 
-@listing src/seqlz_compress.c 116-128
+@listing src/seqlz_compress.c 129-141
 
 The shift puts the `cnt` bits that count at the top of the word, the oldest in bit 63. A little-endian
 store writes the top byte last, at `p - 1`, so the oldest bit lands in bit 7 of the byte right below
@@ -205,7 +226,7 @@ bitstream went forwards and the flush swapped the bytes of each word; now the sw
 
 ## Codes for length values and tokens {#ch-encoder--codes}
 
-@listing src/seqlz_compress.c 130-157
+@listing src/seqlz_compress.c 143-170
 
 `put_len_value()` masks the symbol to the 32 entries of `enc[]`, for UBSan again, and passes `v`
 whole, since `enc_put_code()` masks it to its extra bits. `token_code()` tests for the common case
@@ -222,20 +243,42 @@ and a match of 4 bytes at the repeat offset, has none:
 | `*len` | {{ch10.esc.len}} + 12 = {{ch10.esc10.len}} |
 | returned | <code>{{ch10.esc.codehex}} &lt;&lt; 12 &#124; 10</code> = `{{ch10.esc10.ret}}`: `{{ch10.esc10.bits}}` |
 
-## encode_emit(), one sequence {#ch-encoder--emit}
+## encode_seq(), one sequence {#ch-encoder--emit}
 
-`encode_emit()` is the receiver the compressor uses, inlined into the matcher's loop, and called in a
-plain loop by `encode_raw()` below.
+`encode_seq()` writes one sequence. The matcher calls it through `encode_emit()` or
+`encode_emit_rec()` ([below](#ch-encoder--wrappers)), inlined into its loop, and `encode_raw()` calls
+it in a plain loop.
 
-@listing src/seqlz_compress.c 159-179
+@listing src/seqlz_compress.c 172-194
 
-The cast to `size_t` makes the compare unsigned; `p` never goes below `lit`, because both callers
+`n_rec` is the record's size, {{xor.rec}} bytes, or 0. Three things have to hold for a record: `rec`,
+a constant at every call, so that the copy of the matcher's loop for levels 1 and 2 has none of this
+code; `e->rec`, which is false in the second pass without records; and `ll` not 0, because a sequence
+without literals has nothing to XOR. The room check counts the record too. The cast to `size_t` makes
+the compare unsigned; `p` never goes below `lit`, because both callers
 reject a `dst_cap` below {{ch10.dst_min}}. A failed check sets `p` to `lit`, and that sticks: the
 room is 0, every later sequence fails the same check, and `encoder_finish()` sees `p == lit`. The
 matcher runs to the end of the page anyway, which costs nothing with zram's two pages, where it never
 happens.
 
-@listing src/seqlz_compress.c 180-200
+@listing src/seqlz_compress.c 195-202
+
+The record is the position of the sequence's first literal, `e->pos`, the number of literals, and
+`e->last`, the offset of the sequence before, which the end of this function sets to `off` only after
+the record is written. Then `lit` moves on, so the literals come right after their record. `pos` moves
+on by the whole sequence, literals and match, whenever `rec` is the constant `true`, also without
+records, where nobody reads it. The first two records of the page of pointers, as the bytes in `dst`:
+
+| record | bytes | `pos` | `ll` | `last` |
+| --- | --- | --- | --- | --- |
+| 0 | `{{xor.ptr.rec.0.hex}}` | {{xor.ptr.rec.0.pos}} | {{xor.ptr.rec.0.ll}} | {{xor.ptr.rec.0.last}} |
+| 1 | `{{xor.ptr.rec.1.hex}}` | {{xor.ptr.rec.1.pos}} | {{xor.ptr.rec.1.ll}} | {{xor.ptr.rec.1.last}} |
+
+The first sequence takes the first pointer and the low byte of the second as literals, and copies 7
+bytes from 8 back, so the second starts at {{xor.ptr.rec.1.pos}} with `last` 8.
+@assert xor.ptr.rec[0].pos == 0 and xor.ptr.rec[0].last == 1 and xor.ptr.rec[1].pos == xor.ptr.rec[0].ll + 7 and xor.ptr.rec[1].last == 8
+
+@listing src/seqlz_compress.c 203-223
 
 Most sequences have few literals, 1 in the page of pointers, so the first 16 bytes are one fixed copy
 without a loop, whose exit branch would depend on `ll` and could mispredict. The bytes past `ll` fit
@@ -245,7 +288,7 @@ inlined, also with `CONFIG_FORTIFY_SOURCE` ([chapter 6](#ch-header--summary)). T
 0, has only its literals and no bits; until 11th October 2026 it had a token and possibly an `ll`
 value, about 9 bits per page ([chapter 4](#ch-format--end)).
 
-@listing src/seqlz_compress.c 201-220
+@listing src/seqlz_compress.c 224-243
 
 The first sequence of the page of `ab` is {{ch10.ab.s1.ll}} literals and a match at offset
 {{ch10.ab.s1.off}}, with `last` 1: class {{ch10.ab.s1.cls}}, {{ch10.ab.s1.raw}} bit, token
@@ -275,16 +318,38 @@ the budget holds at every put:
 Without the flush between them, an `ll` and an `ml` value after a long escaped token could reach
 $7 + 31 + 20 + 20 = 78$ bits.
 
+## Two receivers for one encoder {#ch-encoder--wrappers}
+
+@listing src/seqlz_compress.c 245-258
+
+The matcher calls its receiver with the signature of `emit_fn` ([chapter 9](#ch-matcher--emit)): a
+`void *` and the sequence. `rec` has to be a constant at the call, so there are two receivers, one
+per constant; `compress_page()` passes `encode_emit()` to the greedy matcher, `compress_own()` passes
+`encode_emit_rec()` to the lazy one. Once inlined, the code of the records exists only in level 3's
+copy of the loop.
+
+::: why Level 3's records in a copy of the loop of their own
+The first version checked `e->rec` for every sequence in the loop all levels share, and the decoder
+the XOR the same way. Levels 1 and 2 then wrote pages about 6% slower on the Mi 9T's Cortex-A76 and
+read them slower too, userspace, 21st October 2026
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
+With the records only in the lazy matcher's copy, and the decoder's loop copied for XORed pages
+([chapter 14](#ch-decode--xored)), levels 1 and 2 write and read as fast as before, within the
+run's spread.
+:::
+
 ## encoder_init() {#ch-encoder--init}
 
-@listing src/seqlz_compress.c 222-232
+@listing src/seqlz_compress.c 260-270
 
-The compound literal zeroes every field it does not name, so `acc` and `cnt` start at 0. `p` starts at
-the end of `dst`, `lit` after the 2 bytes of the u16, which is written last.
+The compound literal zeroes every field it does not name, so `acc` and `cnt` start at 0, `rec` is
+false and `pos` 0. `p` starts at the end of `dst`, `lit` after the 2 bytes of the u16, which is
+written last. Level 3 sets `rec` after the call; a second `encoder_init()` for a page that did not fit
+with its records clears it again.
 
 ## encoder_finish(): the bitstream turned around {#ch-encoder--finish}
 
-@listing src/seqlz_compress.c 234-258
+@listing src/seqlz_compress.c 272-296
 
 `p == lit` only after a failed room check, since a successful one leaves at least 16 bytes between
 them. The bits left over, at most 7, are in memory already: the sequence's last flush wrote them on
@@ -296,7 +361,7 @@ pages of `test/seqlz_endian.c` and on both desktop dumps (commit `c9db4e5`,
 {{pointers.lits}} literals, `{{ch10.ptr.u16}}`, with `SEQLZ_LIT_CODED` 0; `code_literals()` rewrites it
 if the literals get coded.
 
-@listing src/seqlz_compress.c 259-282
+@listing src/seqlz_compress.c 297-320
 
 Byte `k` of the bitstream is at `end - 1 - k`. A little-endian load of the 8 bytes at `end - 8 - k`
 puts the byte at the highest address on top, and a big-endian store writes the top byte to the lowest
@@ -310,7 +375,7 @@ does all of this for chapter 16's page, whose smallest `dst` takes that path.
 
 ## encode_raw(): sequences from outside, checked first {#ch-encoder--raw}
 
-@listing src/seqlz_compress.c 284-316
+@listing src/seqlz_compress.c 476-509
 
 `seqlz_encode()` writes a page from sequences the caller made, for tests and tools. A `dst` below
 {{ch10.dst_min}} bytes would start `p` below `lit + 32`, or below `lit`, where the room check's cast
@@ -328,43 +393,75 @@ fuzzers had found it, because each reached `seqlz_encode()` with valid sequences
 encoder. `seqlz_compress()` was never affected: its matcher makes only valid sequences.
 :::
 
-@listing src/seqlz_compress.c 317-326
+@listing src/seqlz_compress.c 510-528
 
 `src_end` is the end of the caller's literals, so the 16-byte copies never read past them, and the
-last sequence gets `ml` 0 whatever its `match` field says.
+last sequence gets `ml` 0 whatever its `match` field says. With a `page`, level 3, the encoder writes
+the records as `compress_own()` does: `encode_seq()` is called with `rec` the constant `true`, and
+`e.rec` decides; speed does not matter here. If the page does not fit with its records, the loop
+starts over with `encoder_init()`, which clears `e.rec`, and the second pass ends the loop either way.
+`xor_literals()` then takes the records out again and writes the XORed literals to `xored`, the
+matcher's state that `seqlz_encode()` passes; `*xor` is the XOR it picked, or 0.
 
-## The three entry points {#ch-encoder--entry}
+## The entry points {#ch-encoder--entry}
 
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
 here because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 935-957
+@listing src/seqlz_compress.c 1148-1152
+
+For a table of the page's own, `code_literals()` needs `struct own_work`, {{own.enc.work_size|grp}}
+bytes of counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)),
+and `own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `st->work` counts in
+`u64`, so `OWN_LITERALS_MAX / 8U` is that byte. `code_own()`, which comes next in the file, is level
+3's call of `code_literals()`, first with the XORed literals; it is in
+[chapter 11](#ch-literals-enc--code-own).
+
+@listing src/seqlz_compress.c 1173-1192
 
 `code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
-also with a table of the page's own, and returns the new length or `len` unchanged. It gets the
+also with a table of the page's own, and returns the new length or `len` unchanged. Level 2 gets the
 caller's literals as the raw copy it reads while it writes the coded ones over the raw ones in `dst`.
-For the own table it needs `struct own_work`, {{own.enc.work_size|grp}} bytes of counts, lengths, codes and the table's
-description ([chapter 11](#ch-literals-enc--own)), and `own_work()` puts it into the matcher's state at
-byte {{own.enc.work_at}}: `st->work` counts in `u64`, so `OWN_LITERALS_MAX / 8U` is that byte. The
-level is checked before anything is written, so a level outside 1 to `SEQLZ_LEVELS`, or level 3
-without the state, returns 0 as the header's kernel-doc says ([chapter 6](#ch-header--compressor)).
+At level 3, `encode_raw()` gets the page and the matcher's state, writes the XORed literals there, and
+`code_own()` codes them. The level is checked before anything is written, so a level outside 1 to
+`SEQLZ_LEVELS`, or level 3 without the state, returns 0 as the header's kernel-doc says
+([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 959-989
+@listing src/seqlz_compress.c 1194-1205
 
 `compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
-construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop
-once inlined, twice, as in `seqlz_find()`: with `lazy` true for level 3 and false for the others.
+construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop of
+levels 1 and 2 once inlined, the greedy matcher with `lazy` the constant `false`.
+
+@listing src/seqlz_compress.c 1207-1234
+
+`compress_own()` is the same for level 3: the lazy matcher, with `encode_emit_rec`, so the records go
+in front of the literals. If the page does not fit, `e.p == e.lit`, the loop calls `encoder_init()`
+again, which clears `e.rec`, and matches the page once more, now without records; the second pass ends
+the loop whether it fits or not. With the records still on, `xor_literals()` picks the XOR, moves the
+literals down over the records and writes the XORed ones to `st->literals`, and `encoder_finish()`
+then finds `dst` as it would without records. It is `noinline`: inlined into `seqlz_compress()` next
+to `compress_page()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
+of its own.
+
+@listing src/seqlz_compress.c 1236-1252
+
 `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)), with the level of the device:
-`seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_page()`. From level 2
-on it passes `st->literals`, the matcher's 8 KiB table as bytes through the union in `struct
-seqlz_state`, for the copy of the raw literals, and at level 3 `own_work(st)`, the upper half of the
-same 8 KiB; the matcher is done with it, so `code_literals()` needs no memory of its own
-([chapter 11](#ch-literals-enc--in-place)). The text page of [chapter 4](#ch-format--own) shows what
-the levels do to one page: {{words.len}} bytes at level 1, {{words.coded.len}} at level 2 and
-{{words.l3.len}} at level 3. The kernel's copy keeps only `compress_page()` and
+`seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_page()`. Level 2
+passes `st->literals`, the matcher's 8 KiB table as bytes through the union in `struct seqlz_state`,
+for the copy of the raw literals; the matcher is done with it, so `code_literals()` needs no memory of
+its own ([chapter 11](#ch-literals-enc--in-place)). Level 3 hands the XOR that `compress_own()` picked
+to `code_own()`, which also uses `own_work(st)`, the upper half of the same 8 KiB. The text page of
+[chapter 4](#ch-format--own) shows what the levels do to one page: {{words.len}} bytes at level 1,
+{{words.coded.len}} at level 2 and {{words.l3.len}} at level 3, without a XOR; the page of pointers
+{{pointers.len}} bytes at level 1, {{xor.ptr.l2.len}} at level 2 and {{xor.ptr.l3.len}} at level 3,
+with one.
+@assert words.l3.xor == 0 and pointers.l3.xor == 1
+The kernel's copy keeps `compress_page()`, `compress_own()`, `code_own()` and
 `seqlz_compress()`, renamed to `seqlz_compress_page()`, as the kernel's interface function is called
-`seqlz_compress()`, and drops the `!t->all_symbols` test, because the kernel's tables are checked when
+`seqlz_compress()`, and drops the `!t->all_symbols` tests, because the kernel's tables are checked when
 they are generated ([chapter 15](#ch-zram-glue--init)).
+@assert pointers.len == xor.ptr.l2.len
 
 ## The page of ab, bit by bit {#ch-encoder--example}
 

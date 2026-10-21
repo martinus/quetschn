@@ -13,18 +13,23 @@ check. On 7th October 2026, with the tables and offset classes of then, 178.5 of
 average desktop zram page took the fast path
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)).
 
+The loop is in `decode_page()`, and `seqlz_decode()` calls it with `xored` the constant `true` or
+`false`: two inlined copies, one of which undoes level 3's XOR of the literals after each copy of them
+([below](#ch-decode--xored)). The rest of this chapter is about `decode_page()`, which is
+`seqlz_decode()` for every page that is not XORed.
+
 <pre class="mermaid">
 flowchart TB
-    S["seqlz_decode():<br/>prefetch tables, header,<br/>literals raw or decoded"] --> N0["tok = next_token()"]
+    S["decode_page():<br/>prefetch tables, header,<br/>literals raw or decoded"] --> N0["tok = next_token()"]
     N0 --> E{"escape?"}
     E -->|yes| X["refill, read 12 bits,<br/>tok = token_entry(idx, 0)"]
     E -->|no| O
     X --> O["offset from the entry,<br/>drop code and offset bits"]
     O --> C{"no length value,<br/>d &lt;= d_fast,<br/>lit &lt;= lit_fast,<br/>br.p &lt;= in_fast?"}
     C -->|"yes: fast path"| F["next_token_fast():<br/>next token first,<br/>refill every second time"]
-    F --> FC["copy16() literals,<br/>check off,<br/>copy_match_fast()"]
+    F --> FC["copy16() literals,<br/>unxor_fast() if XORed,<br/>check off,<br/>copy_match_fast()"]
     FC --> E
-    C -->|"no: slow path"| L["ll value if any,<br/>check nl, copy_literals()"]
+    C -->|"no: slow path"| L["ll value if any,<br/>check nl, copy_literals(),<br/>unxor_literals() if XORed"]
     L --> M["ml value if any,<br/>check off and len,<br/>copy_match()"]
     M --> D{"literals left =<br/>bytes left?"}
     D -->|yes| END["last sequence:<br/>copy_literals() the literals left,<br/>then the end checks"]
@@ -38,7 +43,7 @@ next token, and the room the fast path needs. The slow path's helpers are in
 
 ## copy_match_fast(): the match without loops {#ch-decode--copy-match-fast}
 
-@listing src/seqlz_decompress.c 564-587
+@listing src/seqlz_decompress.c 650-673
 
 On the fast path a match has at most {{ch14.fast_len}} bytes, since the token's longest `ml` means that a
 length value follows. The caller guarantees {{ch14.cmf.room}} bytes of room at `d`. From offset 8 on the
@@ -60,7 +65,7 @@ wrote
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)).
 :::
 
-@listing src/seqlz_decompress.c 588-604
+@listing src/seqlz_decompress.c 674-690
 
 Below offset 8, the pattern register of `repeat_pattern()` ([chapter 12](#ch-dec-basics--pattern)) is
 stored 5 times without a loop. The smallest step is {{ch14.cmf.min_step}}, for
@@ -78,7 +83,7 @@ clang
 
 ## The next token: refill only when the bits might run out {#ch-decode--next-token}
 
-@listing src/seqlz_decompress.c 606-619
+@listing src/seqlz_decompress.c 692-705
 
 The slow path and the first sequence get their token here. It refills only below an 11-bit code plus the
 longest offset, {{ch14.need}} bits with 4 KiB pages and {{k16.ch14.need}} with 16 KiB pages. The index
@@ -99,7 +104,7 @@ The format of then had other tables and another bit order.
 
 ### next_token_fast(): the next token before the copies
 
-@listing src/seqlz_decompress.c 621-649
+@listing src/seqlz_decompress.c 707-735
 
 **The next token before the copies.** No length value follows on the fast path, so the next token's code
 starts right after the offset bits, and its entry can be loaded before the copies. An out-of-order core
@@ -144,7 +149,7 @@ slower and kept a loop of its own until 10th October 2026, when every core got t
 
 ## The fast path's three rooms {#ch-decode--rooms}
 
-@listing src/seqlz_decompress.c 651-658
+@listing src/seqlz_decompress.c 737-744
 
 A fast sequence writes the 16 bytes of `copy16()` at `d`, moves on by at most {{ch14.fast_nl}}
 literals and writes at most {{ch14.cmf.room}} bytes of match, {{ch14.cmf.max_write}} bytes in all, below
@@ -190,16 +195,47 @@ the {{ch14.room.page}} of `FAST_PAGE_ROOM`. One `copy16()` reads 16 bytes of lit
 <figcaption>Where the fast path may start: at least 64 bytes before the end of the page, of which it writes at most 54; at least 16 readable bytes of literals; at least 8 bytes of bitstream.</figcaption>
 </figure>
 
+## Two copies of the loop: decode_page() {#ch-decode--xored}
+
+@listing src/seqlz_decompress.c 746-755
+
+`decode_page()` is the whole decoder, with one parameter more than `seqlz_decode()`: `xored`, whether
+the page's literals are XORed ([chapter 6](#ch-header--literals)). `seqlz_decode()` comes last in the
+file, and is the only caller:
+
+@listing src/seqlz_decompress.c 937-948
+
+It reads byte 2 only for a page with coded literals, and only if there is a byte 2, `src_len > 2`; a
+page with raw literals is never XORed, and bit 7 of its byte 2 is a literal. Each call passes a
+constant, and `decode_page()` is `__always_inline`, so the compiler makes two copies of the loop: in
+the one with `false` the `if (xored)` lines are gone, and a page without a XOR runs the loop as it was
+before the XOR existed. In the one with `true` the loop undoes the XOR right after each sequence's
+literals are copied, with `unxor_fast()` on the fast path and `unxor_literals()` on the slow path and
+for the last sequence ([chapter 13](#ch-literals-dec--unxor)): the next match may copy from those
+literals, so they have to be the page's own before it. `seqlz_decode()` checks only which copy to run;
+`decode_literals()` reads and checks the XOR's byte.
+
+::: why A second copy of the loop, not a test per sequence
+A check of the XOR for every sequence in the one loop, and of the records in the encoder's, made levels
+1 and 2 slower to read and about 6% slower to write on the Mi 9T's Cortex-A76, userspace, 21st October
+2026. With the two copies they read as fast as before, within the run's spread, and level 3 reads
+0.37 µs slower per page on the A76 and 1.0 µs on the A55 than without the XOR, the mean of two phone
+dumps
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
+The cost is code size: the loop is in the decoder twice.
+:::
+
 ## Setup: the header, the tables, and where the literals are {#ch-decode--setup}
 
-@listing src/seqlz_decompress.c 660-674
+@listing src/seqlz_decompress.c 756-767
 
 The parameters and the return values, 0 or `-EINVAL`, are those of `seqlz.h`
-([chapter 6](#ch-header--encode-decode)). `lit_bound` is one past the last byte that may be read where
+([chapter 6](#ch-header--encode-decode)). `xor` is the page's XOR, which `decode_literals()` sets for a
+page with coded literals and which stays 0 for raw ones. `lit_bound` is one past the last byte that may be read where
 the literals are, which is more than `lit_end`. `last`, the repeat offset, starts at 1, as the format
 says ([chapter 4](#ch-format--offsets)), and `skip = 0` has the first fast sequence refill.
 
-@listing src/seqlz_decompress.c 675-682
+@listing src/seqlz_decompress.c 768-775
 
 The tables are prefetched before the header is read, {{ch14.pf.token}} prefetches for the token table
 and {{ch14.pf.len}} for each length table ([chapter 12](#ch-dec-basics--prefetch)), so that the header
@@ -207,13 +243,13 @@ and the literals run while the lines are on their way. `get_unaligned_le16()` re
 seqlz's own on 10th October 2026, within the noise in the kernel VM and on the phone
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
 
-@listing src/seqlz_decompress.c 683-705
+@listing src/seqlz_decompress.c 776-798
 
 `SEQLZ_LIT_CODED` picks the layout ([chapter 4](#ch-format--layout)). A page with coded literals needs a
 scratch; zram at level 1 writes only raw literals and may call the decoder without one
 ([chapter 15](#ch-zram-glue)). `decode_literals()` also gets `d`, the output page, where a page with a
 table of its own has that table built before the loop below writes the page
-([chapter 13](#ch-literals-dec--own)). Its literals end at `lit_end` in the scratch, and `lit_bound` is
+([chapter 13](#ch-literals-dec--own)), and `&xor` for the XOR's byte. Its literals end at `lit_end` in the scratch, and `lit_bound` is
 the end of the scratch, 16 bytes more, for the 16-byte copies. Raw literals are right after the header, and
 `lit_bound` is the end of the input: behind the literals is the bitstream, which may be read though it
 is not literals. The `u64` sum cannot wrap; with 15 bits of `n_lit` neither could a 32-bit one, but then
@@ -222,7 +258,7 @@ the reader would have to know that.
 A raw page with more than `SEQLZ_PAGE` literals is not rejected here. It needs no check: its literals left
 are always more than the bytes left, the loop never finds its end, and a check of room rejects it.
 
-@listing src/seqlz_decompress.c 707-730
+@listing src/seqlz_decompress.c 800-823
 
 `lit_fast` and `in_fast` are numbers because with a short input `lit_bound - 16` would be a pointer
 before the buffer, which C does not allow even unused; `unsigned long` has the size of a pointer on every
@@ -239,7 +275,7 @@ it can be smaller than a page. The first `next_token()` finds `count = 0` and re
 
 ## The loop: escape, then the offset without a branch {#ch-decode--offset}
 
-@listing src/seqlz_decompress.c 731-746
+@listing src/seqlz_decompress.c 824-839
 
 The loop ends with the `break` when the literals left fill the page, or with `return -EINVAL`. Only
 {{ch14.tokens_coded}} of the {{const.TOKEN_SYMBOLS}} tokens have a code of their own in the 4 KiB tables;
@@ -254,7 +290,7 @@ like any other. E.g. token 513, {{ch14.t513.ll}} literal and a match of {{ch14.t
 {{ch14.t513.raw_bits}} offset bit; `token_entry(513, 0)` is `{{ch14.t513.entry}}`.
 @assert tok.len[513] == 0 and ch14.t513.N == 0
 
-@listing src/seqlz_decompress.c 747-758
+@listing src/seqlz_decompress.c 840-851
 
 This is what [chapter 7](#ch-internal--token-entry) built the entry for: the offset in three shifts and a
 select. `<< TOK_N` shifts the code out, `>> back`, with `back = 64 - raw_bits`, brings the offset bits to
@@ -286,7 +322,7 @@ flag in bit 30 to 15 129
 
 ## The fast path {#ch-decode--fast}
 
-@listing src/seqlz_decompress.c 759-788
+@listing src/seqlz_decompress.c 852-883
 
 Each part of the condition lets the body skip a check. Bit 30 of the entry, `TOK_VALUE_AT`, says that no
 length value follows, so `nl` is at most 14 and `len` at most 34; one test instead of two compares, and
@@ -302,6 +338,9 @@ match moves them apart by its length, they never meet again, and a check of room
 The offset check is one unsigned compare for `1 <= off <= d - dst`: `off = 0` wraps to the largest
 `unsigned int`. With 24 bytes written, `off = 24` gives `23 >= 24`, false, a valid offset; `off = 25`
 gives `24 >= 24`, invalid.
+
+With `xored`, `unxor_fast()` undoes the XOR on the 16 bytes `copy16()` wrote, before `last` becomes
+this sequence's offset: the XOR of `SEQLZ_XOR_LAST` is by the offset of the sequence before.
 
 `nl` is not checked against the literals left, which saved 3 instructions per sequence on 3rd October
 2026 (commit `5c769f5`). A page whose tokens claim more literals than its header has moves `lit` past
@@ -320,17 +359,19 @@ it, AddressSanitizer reported a heap overflow in that test
 
 ## The slow path: length values, and every check {#ch-decode--slow}
 
-@listing src/seqlz_decompress.c 789-798
+@listing src/seqlz_decompress.c 884-895
 
 An `ll` of 15 means a literal length value follows the offset bits
 ([chapter 4](#ch-format--length-values)); the refill makes sure of the 20 or 22 bits `seqlz_br_value()`
 may take. `lit > lit_end` has to come first: with `lit` past `lit_end`, the cast of `lit_end - lit` would
 let every `nl` pass. `copy_literals()` may read up to `lit_bound` ([chapter 12](#ch-dec-basics--literals)).
+With `xored`, `unxor_literals()` undoes the XOR on exactly the `nl` literals, again before `last`
+changes.
 Until 11th October 2026 the last sequence had a token too, with a match of nothing, and the decoder checked
 for it here; it said what the decoder knew already and cost about 1.2 bytes per page
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 
-@listing src/seqlz_decompress.c 799-820
+@listing src/seqlz_decompress.c 896-917
 
 With 4 KiB pages a match length value is at most {{ch14.max_value}}, so `len` can be {{ch14.max_len}},
 more than a page, which the check of room catches. `last` is set before the checks; if they fail, it does
@@ -340,10 +381,13 @@ left.
 
 ## The end: a page must end where its bits end {#ch-decode--end}
 
-@listing src/seqlz_decompress.c 821-833
+@listing src/seqlz_decompress.c 918-935
 
 When the loop is left, the literals left are exactly the bytes the page still needs, so the copy fills the
-page and uses every literal. A `memcpy()` here, a call instead of a second inlined copy loop, made the
+page and uses every literal. The XORed page undoes the XOR on them as on any sequence's literals, the
+last sequence being no different in the format. Its two guards, `lit <= lit_end` and the `min()` with
+the room left, change nothing on the way the loop gets here, where `lit` is at most `lit_end` and the
+two counts are equal; they keep `unxor_literals()` inside the page without that argument. A `memcpy()` here, a call instead of a second inlined copy loop, made the
 swap-in 0.02 µs slower in the kernel VM, at the edge of what the boots differ by
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 The checks then make sure the input has nothing else to say:
@@ -375,6 +419,9 @@ For any bytes and any `src_len`:
   14; the slow path checks `lit` and `nl` first, and `copy_literals()` stays below `lit_bound`.
 - **The tables.** 11 bits index 2048 token entries, 8 bits 256 length entries; an escaped token's number
   is checked before `token_entry()`, which reads no table.
+- **The XOR.** `unxor_literals()` and `unxor_fast()` write only the literals just copied, or the
+  16 bytes of the fast path, and read only bytes of the page before them
+  ([chapter 13](#ch-literals-dec--safety)).
 - **The page, for matches.** `1 <= off <= d - dst` before each match. `repeat_pattern()` reads up to
   `d + 6`, and its bytes at `d` and after are masked away.
 - **Writes.** The fast path writes at most {{ch14.cmf.max_write}} bytes from at least
@@ -400,10 +447,11 @@ nothing found
 
 ## The example page, sequence by sequence {#ch-decode--example}
 
-`seqlz_decode()` on two pages, one statement at a time: the format's example of
+`decode_page()` on two pages, one statement at a time: the format's example of
 [chapter 4](#ch-format--example), and the page of [chapter 16](#ch-trace), which has coded literals and
-takes the fast path most of the time. It is this chapter's function, recorded while it decoded the pages
-when the book was built, with each sequence's cost in bits against `lz4`'s format. Step with the buttons
+takes the fast path most of the time. It is this chapter's function, recorded while `seqlz_decode()`
+decoded the pages when the book was built, in the copy with `xored` false, as neither page is XORed,
+so the `if (xored)` lines never take a step. Each sequence comes with its cost in bits against `lz4`'s format. Step with the buttons
 or the arrow keys, with shift from one sequence to the next.
 
 @stepper decode

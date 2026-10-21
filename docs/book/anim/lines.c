@@ -45,7 +45,7 @@ int main(void) {
     static unsigned int idx[SEQLZ_PAGE], len[SEQLZ_PAGE];
     static struct seqlz_state st;
     struct seqlz_tables* t = malloc(seqlz_tables_size());
-    unsigned int n, n_lit, matched = 0, seqs = 0, i;
+    unsigned int n, n_lit, matched = 0, seqs = 0, i, xr = 0;
     unsigned long pos = 0;
     const u8* q;
 
@@ -63,8 +63,12 @@ int main(void) {
         return 1;
     }
     n_lit &= SEQLZ_LIT_CODED - 1U;
-    /* where the bitstream starts, as seqlz_decode() gets it */
-    q = decode_literals(t, comp, n, n_lit, scratch, out);
+    /* where the bitstream starts, as seqlz_decode() gets it; level 2 writes no XOR */
+    q = decode_literals(t, comp, n, n_lit, scratch, out, &xr);
+    if (q && xr) {
+        fprintf(stderr, "lines.c: the page has XORed literals\n");
+        return 1;
+    }
     if (!q)
         return 1;
     g_q = q;

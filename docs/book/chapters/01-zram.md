@@ -237,8 +237,9 @@ struct zcomp_ops {
 - `setup_params()` runs once per zram device. `struct zcomp_params` has the compression **level**,
   an optional **dictionary** and `drv_data` for the backend's data that all CPUs share. seqlz has three
   levels: 1 stores the literals of a page as they are (`seqlz-1`), 2 codes them with one of 8 fixed
-  tables (`seqlz-2`, the default), 3 also searches a little longer for matches and may give a page a
-  literal table of its own (`seqlz-3`). Its tables are fixed and part of the format, so the kernel
+  tables (`seqlz-2`, the default), 3 also searches a little longer for matches, may give a page a
+  literal table of its own and XORs the literals with earlier bytes of the page where that pays
+  (`seqlz-3`). Its tables are fixed and part of the format, so the kernel
   backend refuses a dictionary with `-EOPNOTSUPP` ([chapter 15](#ch-zram-glue)).
 - `create_ctx()` runs once per CPU and allocates the codec's work memory, `void *context`, never
   while a page is compressed.

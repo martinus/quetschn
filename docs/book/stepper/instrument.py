@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A copy of src/seqlz_decompress.c whose seqlz_decode() records each step, for the step-through of
+"""A copy of src/seqlz_decompress.c whose decode_page(), the body of seqlz_decode(), records each step, for the step-through of
 chapter 14, or of src/page_lz.h whose seqlz_match_page() does, for chapter 9. A hook goes in front
 of the statements below, on the same line, so __LINE__ is the line in src/. build.py compiles the copy
 with -ftrivial-auto-var-init=zero, so that a step before a variable's first assignment records 0 and
@@ -11,12 +11,12 @@ instrument.py match <src/page_lz.h> <out.h>
 """
 import sys
 
-# seqlz_decode(): statements a step stops in front of, as their line starts after the indentation.
+# decode_page(): statements a step stops in front of, as their line starts after the indentation.
 # The hook is STEP_IN() inside the loop over the sequences, where its variables exist, else STEP_OUT().
 # Never the body of an if without braces: the hook would become the body; the script fails on one.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
-    "q = decode_literals(t, s, src_len, n_lit, scratch, d);",
+    "q = decode_literals(t, s, src_len, n_lit, scratch, d, &xor);",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
     "d_fast = d_end - FAST_PAGE_ROOM;",
@@ -71,7 +71,7 @@ MATCH_STOPS = [
 ]
 
 # the function and its last line: the first "}" at the start of a line after it
-FUNCTIONS = {"decode": "int seqlz_decode(", "match": "static __always_inline void seqlz_match_page("}
+FUNCTIONS = {"decode": "static __always_inline int decode_page(", "match": "static __always_inline void seqlz_match_page("}
 
 
 

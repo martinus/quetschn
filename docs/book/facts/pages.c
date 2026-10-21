@@ -12,6 +12,7 @@
  *   P.coded.len    with coded literals, the compressed page's bytes (= P.len if coding does not pay)
  *   P.l3.len       the compressed page's bytes at level 3, SEQLZ_LEVEL_OWN
  *   P.l3.own       1 if it has a literal table of its own there
+ *   P.l3.xor       1 if its literals are XORed there
  */
 #include "facts.h"
 
@@ -81,6 +82,7 @@ static void page_facts(const char* name, void (*make)(u8*)) {
         fact_hex(K("coded.hex"), dst, coded);
     fact_num(K("l3.len"), fact_compress_level(page, dst, SEQLZ_LEVEL_OWN));
     fact_num(K("l3.own"), (dst[1] & 0x80U) && (dst[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN);
+    fact_num(K("l3.xor"), (dst[1] & 0x80U) && (dst[2] >> SEQLZ_LIT_XOR_AT));
 #undef K
 }
 

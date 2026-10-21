@@ -200,14 +200,36 @@ the mask `0x00ff00ff00ff00ff` and starts again, every 200 literals of the page.
 
 ## Byte 2 and the largest stream {#ch-internal--byte2}
 
-@listing src/seqlz_internal.h 71-84
+@listing src/seqlz_internal.h 71-77
 
 These asserts tie the constants of `seqlz.h` to byte 2 of a page with coded literals
 ([chapter 4](#ch-format--layout)): the 8 fixed tables are the codes 0 to 7, the page's own table the
 code after them, 8, and all of them fit the 4 bits below the width; 3 bits hold the 8 widths 5 to 12,
-and the width field ends where the zero bit starts. The first assert would fail for a 9th fixed table,
-which would collide with `SEQLZ_LIT_OWN`, and the decoder's `s[2] & (SEQLZ_LIT_SETS - 1U)` would no
-longer pick the table. `LIT_STREAM_MAX` is the largest stream, every 8th
+and the width field ends where the XOR bit, bit 7, starts. The first assert would fail for a 9th fixed
+table, which would collide with `SEQLZ_LIT_OWN`, and the decoder's `s[2] & (SEQLZ_LIT_SETS - 1U)` would
+no longer pick the table.
+
+@listing src/seqlz_internal.h 78-85
+
+`SEQLZ_XOR_LAST` XORs a literal with the byte as far back as the offset of the sequence before
+([chapter 6](#ch-header--literals)), and the encoder's `xor_literals()` and the decoder's
+`unxor_literals()` and `unxor_fast()` both need that distance, so it is here, in the header both
+include. An offset of 4 or more is the distance as it is; below 4 it is the smallest multiple of the
+offset that is at least 4:
+
+| `last` | 1 | 2 | 3 | 4 | 5 | 8 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `seqlz_xor_last(last)` | {{xor.last.1}} | {{xor.last.2}} | {{xor.last.3}} | {{xor.last.4}} | {{xor.last.5}} | {{xor.last.8}} |
+@assert xor.last[1] == xor.last[2] == xor.last[4] == 4 and xor.last[3] == 6 and xor.last[8] == 8
+
+A match with offset 3 repeats a pattern of 3 bytes, so the byte 6 back is the byte 3 back, the one the
+match would have copied next; with offset 1 or 2, the byte 4 back is. The decoder relies on the
+distance being at least 4: it undoes the XOR 4 bytes at a time, and each of the 4 bytes it XORs with
+must already be the page's own, so none of them may lie in the word it writes.
+
+@listing src/seqlz_internal.h 87-93
+
+`LIT_STREAM_MAX` is the largest stream, every 8th
 literal with a code of 10 bits, $(512 \cdot 10 + 7) / 8 = {{ch07.lit_stream_max}}$ bytes on 4 KiB
 pages and {{k16.ch07.lit_stream_max}} on 16 KiB pages, and the assert proves that a size of 12 bits
 holds it, so the encoder can write the sizes whatever the literals are. The last assert guards code,
@@ -216,7 +238,7 @@ not the format: the encoder's `lit_streams()` and the decoder's `decode_literals
 
 ## The code of a page's own table, and two lengths per lookup {#ch-internal--own}
 
-@listing src/seqlz_internal.h 86-110
+@listing src/seqlz_internal.h 95-119
 
 `OWN`, the fixed code that describes a page's own literal table ([chapter 4](#ch-format--own)), gets
 three arrays. `enc` is the encoder's, the code in the low byte and its length above it, the other way
@@ -254,7 +276,7 @@ one by one. [Chapter 8](#ch-codes--own) builds the three arrays.
 
 ## struct seqlz_tables: {{size.tables|grp}} bytes, once {#ch-internal--tables}
 
-@listing src/seqlz_internal.h 112-119
+@listing src/seqlz_internal.h 121-128
 
 The layout on x86-64, from `sizeof` and `offsetof`; arm64 aligns a `u64` the same way:
 
@@ -287,7 +309,7 @@ zram device.
 
 ## The fields of a token entry {#ch-internal--token-entry}
 
-@listing src/seqlz_internal.h 121-130
+@listing src/seqlz_internal.h 130-139
 
 The asserts check the fields of the entry described next. The 5 bits of `DROP` hold up to 31, and the
 most a token with a code of its own moves the bitstream is an 11-bit code plus class 3's offset bits,
@@ -296,7 +318,7 @@ $11 + 12 = 23$, 25 on 16 KiB pages. `ll` has 4 bits, `ml` 6 bits for at most 35,
 here instead of being cut to 0. Class 5's offsets must stay inside the page, and 12 bits must hold
 every token.
 
-@listing src/seqlz_internal.h 131-147
+@listing src/seqlz_internal.h 140-156
 
 Every field is something the decoder would otherwise compute from the token's number for every
 sequence: split off `ll`, `ml` and the class, look up the class's offset bits and shift, add 4 to
@@ -386,7 +408,7 @@ with its {{tok.len.3072}}-bit code:
 <figcaption>A token table entry: bits 0 to 18 tell the decoder how to cut the offset out of the bitstream, bits 19 to 28 are the lengths, the top bits flags.</figcaption>
 </figure>
 
-@listing src/seqlz_internal.h 148-161
+@listing src/seqlz_internal.h 157-170
 
 The macros shift a field down and mask it to its width; bits 30 and 31 the decoder tests directly,
 and bit 29 is free. `TOK_N()` and `TOK_BACK()` are shift counts for the decoder's 64-bit bit
@@ -395,7 +417,7 @@ register, and their mask of 63 is again a proof for the compiler that the shift 
 
 ## token_entry(): the fields from a token's number {#ch-internal--token-entry-code}
 
-@listing src/seqlz_internal.h 163-178
+@listing src/seqlz_internal.h 172-187
 
 `token_entry(s, n)` is the entry for token `s` with a code of `n` bits. It is in the header because
 two files call it: `build_token()` ([chapter 8](#ch-codes--build-token)) fills the table with it, and
@@ -450,10 +472,10 @@ It prints
 and the entry is `{{ch07.tok.2098.entry}}`, the upper row of the diagram: `N` {{ch07.tok.2098.N}},
 `BACK` `(64 - 5) & 63` = {{ch07.tok.2098.BACK}}, `SHIFT` {{ch07.tok.2098.SHIFT}}, `DROP`
 ${{tok.len.2098}} + 5 = {{ch07.tok.2098.DROP}}$, `LL` {{ch07.tok.2098.LL}}, `ML`
-{{ch07.tok.2098.ML}}. The decoder uses it on these lines of `seqlz_decode()`
+{{ch07.tok.2098.ML}}. The decoder uses it on these lines of `decode_page()`, the body of `seqlz_decode()`
 ([chapter 14](#ch-decode)):
 
-@listing src/seqlz_decompress.c 752-756
+@listing src/seqlz_decompress.c 845-849
 
 Say the register holds the code, then `{{ch07.reg_raw_bits}}`, then whatever follows:
 `{{ch07.reg}}`, the first bit of the stream as bit 63. The top 11 bits are `{{ch07.reg_index_bits}}`,
@@ -490,7 +512,7 @@ The escape's {{tok.len.3072}}-bit code `{{tok.code.3072}}` fills the indices {{c
 to {{ch07.tok.3072.last}} with `1U << 31 | {{tok.len.3072}} << 14 = {{ch07.tok.3072.entry}}`, the
 lower row of the diagram. The decoder handles it before everything else:
 
-@listing src/seqlz_decompress.c 734-746
+@listing src/seqlz_decompress.c 827-839
 
 Token 1797, 5 literals and a match of 20 at a class 3 offset, has no code. The encoder writes the
 escape's `{{tok.code.3072}}`, 1797 in 12 bits, `{{ch07.esc1797.bits}}`, and then the offset, say 1000,
