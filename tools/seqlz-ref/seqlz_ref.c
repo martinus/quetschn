@@ -158,6 +158,25 @@ own_table(const struct seqlz_ref* r, const unsigned char* src, size_t len, size_
     return make_code(c, lengths, 256U);
 }
 
+/*
+ * "XORed literals": the literal v, the i-th of its sequence, from 0, as it goes to out[p], with the XOR xr and
+ * the offset last of the sequence before
+ */
+static unsigned char
+unxor(unsigned int xr, unsigned char v, const unsigned char* out, unsigned int p, unsigned int i, unsigned int last) {
+    unsigned int x;
+
+    if (xr == 1U)
+        return i >= 4U ? (unsigned char)(v ^ out[p - 4U]) : v;
+    if (xr == 2U)
+        return i >= 8U ? (unsigned char)(v ^ out[p - 8U]) : v;
+    if (xr == 3U) {
+        x = last <= 2U ? 4U : last == 3U ? 6U : last;
+        return p >= x ? (unsigned char)(v ^ out[p - x]) : v;
+    }
+    return v;
+}
+
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out) {
     unsigned char lits[1U << 14];
     const unsigned int P = r->page_bits, page = 1U << P;
@@ -165,7 +184,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
     const unsigned int class_bits[6] = {0, 1, 8, P, 5, 8};
     const unsigned int class_scale[6] = {0, 2, 1, 1, 8, 8};
     struct bits b;
-    unsigned int h, n, used = 0, size = 0, last = 1;
+    unsigned int h, n, used = 0, size = 0, last = 1, xr = 0, k;
 
     /* "Layout of a compressed page" */
     if (len < 2U)
@@ -182,18 +201,24 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
     } else {
         struct seqlz_ref_code page_own;
         const struct seqlz_ref_code* code;
-        unsigned int t, w, j, k;
+        unsigned int t, w, e, j;
         size_t sizes[8], start, total = 0, d = 0;
 
         if (len < 3U)
             return -1;
         t = src[2];
         w = 5U + ((t >> 4) & 7U);
-        if (len < 3U + w || t >> 7 || (t & 15U) > 8U)
+        e = t >> 7;
+        if (len < 3U + w + e || (t & 15U) > 8U)
             return -1;
+        if (e) {
+            xr = src[3U + w];
+            if (xr < 1U || xr > 3U)
+                return -1;
+        }
         code = &r->lit[t & 7U];
         if ((t & 15U) == 8U) {
-            if (own_table(r, src, len, 3U + w, &page_own, &d))
+            if (own_table(r, src, len, 3U + w + e, &page_own, &d))
                 return -1;
             code = &page_own;
         }
@@ -210,10 +235,10 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
             sizes[j] = x;
             total += x;
         }
-        if (3U + w + d + total > len)
+        if (3U + w + e + d + total > len)
             return -1;
         /* "Coded literals": stream j holds the literals j, j + 8, ..., their codes within s[j] bytes */
-        start = 3U + w + d;
+        start = 3U + w + e + d;
         for (j = 0; j < 8U; j++) {
             struct bits s = {src + start, 8U * sizes[j], 0};
 
@@ -233,7 +258,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
 
     /* "Decoding": until the literals left fill the rest of the page */
     while (n - used != page - size) {
-        unsigned int tk, ll, mlf, c, x, off, ml, k;
+        unsigned int tk, ll, mlf, c, x, off, ml;
 
         /* "Tokens" */
         if (symbol(&b, &r->tok, &tk))
@@ -253,8 +278,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         }
         if (ll > n - used || ll > page - size)
             return -1;
-        for (k = 0; k < ll; k++)
-            out[size++] = lits[used++];
+        for (k = 0; k < ll; k++, size++)
+            out[size] = unxor(xr, lits[used++], out, size, k, last);
         ml = mlf + 4U;
         if (mlf == 31U) {
             if (value(&b, &r->ml, &x))
@@ -269,7 +294,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
             out[size] = out[size - off];
     }
     /* the last sequence, the literals left; B ends here, that no bit after B was used, every read checked */
-    while (used < n)
-        out[size++] = lits[used++];
+    for (k = 0; used < n; k++, size++)
+        out[size] = unxor(xr, lits[used++], out, size, k, last);
     return ends_here(&b) == 0 ? 0 : -1;
 }

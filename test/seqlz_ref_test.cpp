@@ -252,6 +252,65 @@ TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders,
     CHECK(coded > 30);
 }
 
+// Pages whose literals level 3 XORs: fields of 4 bytes whose 3 high bytes every second field repeats from
+// the one before (SEQLZ_XOR_4 or SEQLZ_XOR_LAST), or records of 16 bytes, each the one before with a bit
+// flipped here and there, which leaves literals next to matches 16 bytes back (SEQLZ_XOR_LAST).
+std::vector<unsigned char> xored_page(std::mt19937_64& rng, int kind) {
+    auto p = std::vector<unsigned char>(SEQLZ_PAGE);
+    if (kind % 2 == 0) {
+        auto high = std::array<unsigned char, 3>{};
+        for (std::size_t k = 0; k < p.size(); k += 4) {
+            if (k % 8 == 0) {
+                for (auto& b : high) {
+                    b = static_cast<unsigned char>(rng());
+                }
+            }
+            p[k] = static_cast<unsigned char>(rng());
+            std::copy(high.begin(), high.end(), p.begin() + static_cast<std::ptrdiff_t>(k) + 1);
+        }
+        return p;
+    }
+    for (std::size_t k = 0; k < p.size(); ++k) {
+        p[k] = k < 16 ? static_cast<unsigned char>(rng()) : p[k - 16];
+        if (k >= 16 && rng() % 12 == 0) {
+            p[k] = static_cast<unsigned char>(p[k] ^ 1U << rng() % 8);
+        }
+    }
+    return p;
+}
+
+TEST_CASE("seqlz_ref: XORed literals decode the same with both decoders, and damaged XORs alike") {
+    // The XOR byte and byte 2 with each bit flipped: other XORs, invalid ones, a page without the XOR whose
+    // byte is then read as the first one after the sizes.
+    auto const t = fast_tables();
+    auto const r = make_ref();
+    auto rng = std::mt19937_64(53);
+    auto xors = std::array<int, 4>{};
+    for (int round = 0; round < 40; ++round) {
+        CAPTURE(round);
+        auto const page = xored_page(rng, round);
+        auto const c = compress(t.get(), page, 3);
+        REQUIRE(check_same(t.get(), r.get(), c) == page);
+        auto const at = SEQLZ_LIT_HEADER(size_width(c));
+        auto const xored = (c[1] & 0x80) != 0 && (c[2] >> SEQLZ_LIT_XOR_AT) != 0;
+        ++xors[xored ? c[at] & 3U : 0U];
+        if (!xored) {
+            continue;
+        }
+        for (auto q = 0U; q < 8U; ++q) {
+            auto bad = c;
+            bad[at] = static_cast<unsigned char>(bad[at] ^ (1U << q));
+            check_same(t.get(), r.get(), bad);
+            bad = c;
+            bad[2] = static_cast<unsigned char>(bad[2] ^ (1U << q));
+            check_same(t.get(), r.get(), bad);
+        }
+    }
+    // both kinds of pages are XORed, with SEQLZ_XOR_4 and with SEQLZ_XOR_LAST
+    CHECK(xors[SEQLZ_XOR_4] > 5);
+    CHECK(xors[SEQLZ_XOR_LAST] > 5);
+}
+
 TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid or invalid for both decoders alike") {
     // Every bit of the table and the first bytes after it, one at a time: lengths that overfill the code
     // space or leave it short, runs past byte value 255, bits after the table's end, two runs in a row.

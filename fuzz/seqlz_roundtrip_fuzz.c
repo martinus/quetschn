@@ -56,7 +56,8 @@ static void roundtrip(const unsigned char* page, unsigned int level) {
     if (level == 1 && !decodes_to(page, len, 0))
         abort();
     unwritten(again, DST_CAP);
-    if (seqlz_encode(tables, &state, seq, n, literals, n_lit, again, DST_CAP, level) != len || memcmp(again, dst, len) != 0)
+    if (seqlz_encode(tables, &state, seq, n, literals, n_lit, page, again, DST_CAP, level) != len ||
+        memcmp(again, dst, len) != 0)
         abort();
 }
 

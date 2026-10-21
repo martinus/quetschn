@@ -11,7 +11,8 @@ in the book [seqlz, line by line](https://martin.ankerl.com/quetschn/), the resu
 
 `seqlz-1`, `seqlz-2` and `seqlz-3`, the levels of `seqlz_compress()`, are the same format: level 1
 always stores the literals as they are, level 2 codes them with one of 8 fixed tables where that pays,
-level 3 also with a table of the page's own. A decoder for one decodes all of them.
+level 3 also with a table of the page's own, and XORs them with earlier bytes of the page first where
+that pays. A decoder for one decodes all of them.
 
 `tools/seqlz-ref/seqlz_ref.py` and `tools/seqlz-ref/seqlz_ref.c` are decoders written from this
 file, slow on purpose, and checked against `seqlz_decode()`, see
@@ -27,7 +28,8 @@ bytes, so that a decoder can be written from it alone, and it says which compres
 Sentences marked *Why:* explain a choice and are not part of the format.
 
 At level 1 the compressor stores the literals as they are, at level 2 it codes them with one of 8 fixed
-tables where that pays, at level 3 also with a table of the page's own. It is one format, and the
+tables where that pays, at level 3 also with a table of the page's own, and XORs them with earlier
+bytes of the page first where that pays. It is one format, and the
 decoder decodes all of them.
 -->
 
@@ -35,7 +37,7 @@ decoder decodes all of them.
 ## Status
 
 > [!IMPORTANT]
-> This is the format of 15th October 2026 for 4 KiB pages, and nobody uses it yet. Until seqlz has users
+> This is the format of 21st October 2026 for 4 KiB pages, and nobody uses it yet. Until seqlz has users
 > it may still change, the tables included, and such a change updates this file: its rules, the hashes
 > of the tables and the example. Once seqlz is in a kernel, zram's pages still live only as long as the
 > kernel that wrote them, so a change needs no new name in zram, see
@@ -110,11 +112,12 @@ layouts.
 | offset | size | content |
 | --- | --- | --- |
 | 0 | 2 | `h`, which is `0x8000 + n` |
-| 2 | 1 | `t`: `code = t & 15` is how the literals are coded, `w = 5 + ((t >> 4) & 7)` the bits of each stream size, `t >> 7` is 0 |
+| 2 | 1 | `t`: `code = t & 15` is how the literals are coded, `w = 5 + ((t >> 4) & 7)` the bits of each stream size, `e = t >> 7` whether they are XORed |
 | 3 | `w` | `s[0]` to `s[7]`, the size of each literal stream, `w` bits each |
-| `3 + w` | `d` | with `code = 8` the page's own literal table, see [A page's own literal table](#a-pages-own-literal-table), else nothing, `d = 0` |
-| `3 + w + d` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
-| `3 + w + d + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
+| `3 + w` | `e` | with `e = 1` the byte `xr`, the XOR of the literals, see [XORed literals](#xored-literals), else nothing |
+| `3 + w + e` | `d` | with `code = 8` the page's own literal table, see [A page's own literal table](#a-pages-own-literal-table), else nothing, `d = 0` |
+| `3 + w + e + d` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
+| `3 + w + e + d + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
 
 `code` 0 to 7 is one of the 8 fixed literal tables, `code` 8 a table of the page's own, and 9 to 15
 are invalid.
@@ -123,20 +126,19 @@ The `w` bytes from byte 3 on are one number `S` of `8 * w` bits, little endian, 
 `s[j] = (S >> (j * w)) & ((1 << w) - 1)`: 8 sizes of `w` bits fill exactly `w` bytes; `w` is 5 to 12.
 *Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most 640 bytes in a 4 KiB
 page and 2560 in a 16 KiB page; the largest stream of most pages is below 128 bytes, so 7 bits each
-do, and 2 bytes each made pages about 5 bytes larger on average. The top bit of `t` and the codes 9 to
-15 are kept for later.
+do, and 2 bytes each made pages about 5 bytes larger on average. The codes 9 to 15 are kept for later.
 
 The coded literals are split into 8 **streams**: literal 0 goes to stream 0, literal 1 to stream 1, ...,
-literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + d + s[0] + ... + s[j-1]`,
-so `start[0] = 3 + w + d`. *Why:* in one stream each literal's code can only be found once the one before is
+literal 8 to stream 0 again. Stream `j` starts at byte `start[j] = 3 + w + e + d + s[0] + ... + s[j-1]`,
+so `start[0] = 3 + w + e + d`. *Why:* in one stream each literal's code can only be found once the one before is
 decoded, a chain of table lookups; 8 streams are 8 chains, which a CPU works on side by side.
 
 A page is invalid if
 
 - `len < 2`, or `n > PAGE`;
 - with raw literals `2 + n > len`;
-- with coded literals `len < 3 + w`, `t >> 7` is not 0, `code > 8`, the page's own table is invalid,
-  or `3 + w + d + s[0] + ... + s[7] > len`.
+- with coded literals `len < 3 + w + e`, `xr` is not 1, 2 or 3, `code > 8`, the page's own table is
+  invalid, or `3 + w + e + d + s[0] + ... + s[7] > len`.
 
 ## Prefix codes
 
@@ -340,19 +342,21 @@ makes the page invalid.
 
 `lits` are the `n` literals from the layout (with coded literals: decoded as in
 [Coded literals](#coded-literals)), `used` is the number of them already copied, `out` is the page
-being written, `last` is 1.
+being written, `last` is 1. `copy(k)` appends the next `k` literals, `lits[used]` to
+`lits[used + k - 1]`, to `out`, one after the other, with raw literals and with `e = 0` as they are,
+with `e = 1` as [XORed literals](#xored-literals) says, and adds `k` to `used`.
 
 ```text
 loop:
     if n - used == PAGE - |out|:                the last sequence
-        append lits[used] to lits[n - 1] to out
+        copy(n - used)
         stop
     token: ll, mlf, c
     x = read(offset bits of class c)
     off = (c == 0) ? last : x as the offset of class c
     if ll == 15: ll = 15 + value(LL)
     if ll > n - used or ll > PAGE - |out|: invalid
-    append lits[used] to lits[used + ll - 1] to out; used = used + ll
+    copy(ll)
     ml = mlf + 4
     if mlf == 31: ml = 35 + value(ML)
     last = off
@@ -388,11 +392,29 @@ The codes of stream `j`'s literals must end in its last byte: they take at most 
 fewer than 8 less, and the bits after the last code are 0. A stream without literals has `s[j] = 0`.
 Else the page is invalid. A decoder may read past the end of a stream, as long as it checks this.
 
+## XORed literals
+
+With `e = 1` each literal was XORed with an earlier byte of the page before it was coded, and `copy()`
+undoes that: the `i`-th literal of a sequence, from 0, which goes to the page's byte `p = |out|`, is
+`lits[used + i]` XOR `out[p - x]` with
+
+- `xr = 1`: `x = 4`, for `i >= 4`; the literals with `i < 4` are as they are;
+- `xr = 2`: `x = 8`, for `i >= 8`; the literals with `i < 8` are as they are;
+- `xr = 3`: `x = last`, the offset of the sequence before, 1 for the first; with `last` 1 or 2, `x = 4`,
+  with `last = 3`, `x = 6`; for `p >= x`, the literals with `p < x` are as they are.
+
+`out[p - x]` is a byte already written, a literal of the same sequence included, as it is in the page.
+The last sequence is no different. *Why:* memory pages are full of 4- and 8-byte fields, whose bytes are
+often those of the field before, and a literal after a match often differs from the byte the match
+would have copied in a few bits only. XORed, such literals are many zeros and few other values, which
+the literal tables code in fewer bits. With `last` below 4, a multiple of it from 4 on refers to the same
+repeated bytes, and a decoder can XOR 4 bytes at a time.
+
 ## A page's own literal table
 
-With `code = 8` the literals are coded with a table that the page brings. It starts at byte `3 + w`,
-right after the sizes, and is read most significant bit first, as a literal stream: bit `i` of it is
-bit `7 - (i mod 8)` of byte `3 + w + i div 8`. It is a list of symbols of the table `OWN`, which say
+With `code = 8` the literals are coded with a table that the page brings. It starts at byte `3 + w + e`,
+right after the sizes and the XOR, and is read most significant bit first, as a literal stream: bit `i`
+of it is bit `7 - (i mod 8)` of byte `3 + w + e + i div 8`. It is a list of symbols of the table `OWN`, which say
 the code length of each byte value with a code, in the order of the byte values, from 0 on:
 
 - symbol `l - 1`, for `l` from 1 to 10: the next byte value has a code of `l` bits;
@@ -405,7 +427,7 @@ with its last bit, the bits after that one in it are 0, and `d` is its number of
 follow from the lengths as in [Prefix codes](#prefix-codes), the byte value being the symbol.
 
 The page is invalid if the sum goes above 1, a byte value with a code is above 255, a bit after the
-last symbol in its byte is not 0, or `3 + w + d > len`. *Why:* the description is in the order of the
+last symbol in its byte is not 0, or `3 + w + e + d > len`. *Why:* the description is in the order of the
 byte values, so a byte value takes no bits of its own, and the long lengths, which most bytes of a
 page's own table have, get the shortest codes in `OWN`. A table takes 0.4 to 0.5 bytes per byte value
 with a code, 40 to 100 bytes on most pages that have one.
@@ -445,7 +467,10 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
   its literals;
 - at level 3, for pages with 512 literals or more, a table of the page's own where that and its
   description take at least 16 bytes less than the best fixed table. Its code lengths are close to a
-  Huffman code's, at most 10 bits.
+  Huffman code's, at most 10 bits;
+- at level 3, XORed literals, with the `xr` whose literals take the fewest bits in the best fixed
+  table, 8 bits added for `xr`, counted for every 5th literal of the page, where that is not `e = 0`
+  and the XORed literals get coded; else the literals as they are.
 
 The compressed page fits the buffer the compressor is given, or the compressor fails. zram gives it two
 pages, which every page fits, and stores a page that does not compress well enough as it is, so that
@@ -458,8 +483,8 @@ code, also the ones it wrote back to a backing device, and no page meets a newer
 the format needs a new kernel, not a new algorithm name in zram, which would be visible to users in
 `comp_algorithm` and in the Kconfig default. Two things would change that: another user of the codec
 that keeps pages longer, or zram's pages kept across a kexec by live update (`kernel/liveupdate/`),
-which zram does not do in 2026. The values of byte 2 with its top bit set or a code above 8 are invalid
-now and free for a format that has to tell itself apart.
+which zram does not do in 2026. The values of byte 2 with a code above 8, and the values of `xr` other
+than 1 to 3, are invalid now and free for a format that has to tell itself apart.
 
 <!-- not in the kernel's copy -->
 ## How this file was checked
@@ -475,8 +500,8 @@ on 6 October, 10 AFL++ instances for 2 hours, 1.7 billion inputs, found no diffe
 with the encoder and decoder of `5342a9b`, 12 instances for 2 hours, 1.94 billion inputs on this target,
 found none either.
 `test/seqlz_ref_test.cpp` checks the example above, the compressor's pages at every level, damaged
-pages, and pages made by hand for the rules that damage rarely reaches: the top bit of `t` and the codes
-above 8, a literal code outside its stream, a page of literals only, a last sequence with a token, which
+pages, and pages made by hand for the rules that damage rarely reaches: the codes above 8 and the values of `xr`
+other than 1 to 3, a literal code outside its stream, a page of literals only, a last sequence with a token, which
 is invalid, and pages' own tables that overfill the code space, name a byte value above 255 or have
 bits after their end.
 <!-- end -->

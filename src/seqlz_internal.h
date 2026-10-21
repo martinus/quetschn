@@ -73,8 +73,17 @@ static_assert((SEQLZ_LIT_SETS == 8U && SEQLZ_LIT_OWN == 8U &&
 	       SEQLZ_LIT_CODE_MASK == 15U && SEQLZ_LIT_WIDTH_AT == 4),
 	      "byte 2: the fixed tables, then the page's own, in 4 bits");
 static_assert((SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
-	       SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3),
+	       SEQLZ_LIT_XOR_AT - SEQLZ_LIT_WIDTH_AT == 3),
 	      "byte 2 has 3 bits for the width");
+/*
+ * How far before a literal the byte is that SEQLZ_XOR_LAST XORs it with, for
+ * the offset last of the sequence before, see SEQLZ_LIT_XOR_AT
+ */
+static inline unsigned int seqlz_xor_last(unsigned int last)
+{
+	return last < 4U ? (last == 3U ? 6U : 4U) : last;
+}
+
 /* the largest stream: every 8th literal of a page, all with the longest code */
 #define LIT_STREAM_MAX \
 	((SEQLZ_PAGE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)

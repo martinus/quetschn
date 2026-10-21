@@ -70,7 +70,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
     ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
-    (" The same bytes as seqlz_encode() for the sequences of seqlz_find(), at the same level.", ""),
+    (" The same bytes as seqlz_encode() for the sequences of seqlz_find() and @src, at the same level.", ""),
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
     ("seqlz_compress()", "seqlz_compress_page()"),
@@ -82,8 +82,6 @@ REWRITES = [
     ("; for 16 KiB pages 15 872 bytes", ""),
     (", 60 for 16 KiB pages", ""),
     ("20 or 22 bits more", "20 bits more"),
-    # port_compress() takes out raw and the check of all_symbols, which the tables built once pass
-    ("a copy: raw if the caller has one, else spare, at least a page,", "a copy in spare, at least a page,"),
     # the second line of seqlz_compress_page()'s Return:, a line of its own
     ("@dst_cap bytes, @t lacks a code, or @level is not one.", "@dst_cap bytes, or @level is not one."),
     ("@t: tables with a code for every symbol, see seqlz_all_symbols()", "@t: the tables"),
@@ -416,18 +414,7 @@ def port_compress(docs):
                r"static unsigned int encode_raw\(.*?\n\}\n\n")
     t = cut(t, r"unsigned int seqlz_encode\(.*?\n\}\n\n")
     # the tables are checked once, by seqlz_init(), not for every page
-    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)\n", "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n")
-    # code_literals()' copy of the raw literals is always the matcher's table: raw is the harness'
-    t = must(t, "static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,\n"
-                "\t\t\t\t  unsigned int len, const u8 *raw, u8 *spare,\n"
-                "\t\t\t\t  struct own_work *own)\n",
-             "static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,\n"
-             "\t\t\t\t  unsigned int len, u8 *spare,\n"
-             "\t\t\t\t  struct own_work *own)\n")
-    t = must(t, "\tliterals = raw ? raw : memcpy(spare, literals, n_literals);\n",
-             "\tliterals = memcpy(spare, literals, n_literals);\n")
-    t = must(t, "\treturn code_literals(t, dst, len, NULL, st->literals,\n",
-             "\treturn code_literals(t, dst, len, st->literals,\n")
+    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)\n", "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
     # the matcher of page_lz.h, right before the one function that calls it, calling encode_emit()
     # itself: in the kernel's copy it has no other caller
     lz = (SRC / "page_lz.h").read_text()
@@ -438,19 +425,19 @@ def port_compress(docs):
               "static __always_inline void seqlz_match_page(u16 *table, const u8 *src,\n"
               "\t\t\t\t\t     bool lazy,\n"
               "\t\t\t\t\t     struct seqlz_encoder *e)\n")
-    lz = must(lz, "emit(ctx, ", "encode_emit(e, ", 2)
+    # encode_seq() with the records of SEQLZ_LEVEL_OWN in the lazy copy, lazy a constant there
+    lz, k = re.subn(r"\bemit\(ctx, (.*?)\);", r"encode_seq(e, \1, lazy);", lz)
+    assert k == 2, k
     t = must(t, '#include "page_lz.h"\n\n', "")
     t = must(t, "static unsigned int compress_page(", "/* ---- the matcher ---- */\n\n" + lz + "\n\n"
              "static unsigned int compress_page(")
-    t = must(t, "\t\tseqlz_match_page(st->table, src, true, encode_emit, &e);\n",
+    t = must(t, "\t\tseqlz_match_page(st->table, src, true, encode_emit_rec, &e);\n",
              "\t\tseqlz_match_page(st->table, src, true, &e);\n")
-    t = must(t, "\t\tseqlz_match_page(st->table, src, false, encode_emit, &e);\n",
-             "\t\tseqlz_match_page(st->table, src, false, &e);\n")
-    t = must(t, "static __always_inline void encode_emit(void *ctx, const u8 *in,\n"
-                "\t\t\t\t\tunsigned int ll, unsigned int ml,\n\t\t\t\t\tunsigned int off)\n{\n"
-                "\tstruct seqlz_encoder *e = ctx;\n",
-             "static __always_inline void encode_emit(struct seqlz_encoder *e,\n"
-             "\t\t\t\t\tconst u8 *in, unsigned int ll,\n\t\t\t\t\tunsigned int ml, unsigned int off)\n{\n")
+    t = must(t, "\tseqlz_match_page(st->table, src, false, encode_emit, &e);\n",
+             "\tseqlz_match_page(st->table, src, false, &e);\n")
+    # the matcher's callbacks: the kernel's copy calls encode_seq() itself
+    t = cut(t, r"/\* encode_seq\(\) as the matcher calls it, without and with records \*/\n.*?"
+               r"encode_seq\(ctx, in, ll, ml, off, true\);\n\}\n\n")
     # seqlz_compress() is the interface's name now, with the work memory and a level
     t = rename_compress(t, "\n{")
     t = make_static(t, "seqlz_compress_page")

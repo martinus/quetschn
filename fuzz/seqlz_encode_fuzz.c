@@ -61,7 +61,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     unwritten(dst, DST_CAP);
     unwritten(scratch, SEQLZ_SCRATCH);
-    len = seqlz_encode(tables, &state, seq, n, literals, n_lit, dst, DST_CAP, 1U + (data[0] >> 1 & 3U) % 3U);
+    len = seqlz_encode(tables, &state, seq, n, literals, n_lit, NULL, dst, DST_CAP, 1U + (data[0] >> 1 & 3U) % 3U);
     if (len == 0)
         return 0;
     if (len > DST_CAP || sum != SEQLZ_PAGE)

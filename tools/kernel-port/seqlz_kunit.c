@@ -133,7 +133,7 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 	const char *w;
 	u64 v;
 
-	switch (kind % 7) {
+	switch (kind % 9) {
 	case 0: /* random bytes: raw literals, few matches */
 		prandom_bytes_state(rng, p, PAGE_SIZE);
 		break;
@@ -177,6 +177,22 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 				       (prandom_u32_state(rng) % n) / n];
 		}
 		break;
+	case 7: /* fields of 4 bytes, the high 3 kept for 2: literals XORed */
+		for (k = 0; k < PAGE_SIZE; k += 4) {
+			if (k % 8 == 0)
+				v = prandom_u32_state(rng);
+			p[k] = prandom_u32_state(rng);
+			memcpy(p + k + 1, &v, 3);
+		}
+		break;
+	case 8: /* records of 16 bytes, a bit flipped here and there: XORed */
+		prandom_bytes_state(rng, p, 16);
+		for (k = 16; k < PAGE_SIZE; k++) {
+			p[k] = p[k - 16];
+			if (prandom_u32_state(rng) % 12 == 0)
+				p[k] ^= 1U << prandom_u32_state(rng) % 8;
+		}
+		break;
 	default: /* mostly zeros, as many swapped pages */
 		memset(p, 0, PAGE_SIZE);
 		for (k = 0; k < 40; k++)
@@ -189,7 +205,7 @@ static void seqlz_test_round_trip(struct kunit *test)
 {
 	struct rnd_state rng;
 	struct bufs b;
-	int round, level, len, coded = 0, own = 0;
+	int round, level, len, coded = 0, own = 0, xored = 0;
 
 	get_bufs(test, &b);
 	prandom_seed_state(&rng, 41);
@@ -203,6 +219,7 @@ static void seqlz_test_round_trip(struct kunit *test)
 			coded += !!(b.c[1] & 0x80);
 			own += (b.c[1] & 0x80) &&
 			       (b.c[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN;
+			xored += (b.c[1] & 0x80) && b.c[2] >> SEQLZ_LIT_XOR_AT;
 			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
 					0);
 			KUNIT_ASSERT_MEMEQ(test, b.out, b.page, PAGE_SIZE);
@@ -238,9 +255,10 @@ static void seqlz_test_round_trip(struct kunit *test)
 						     2 * PAGE_SIZE - len + 1));
 		}
 	}
-	/* the pages have to give both layouts, and pages' own tables */
+	/* the pages have to give both layouts, pages' own tables and XORs */
 	KUNIT_EXPECT_GE(test, coded, 20);
 	KUNIT_EXPECT_GE(test, own, 10);
+	KUNIT_EXPECT_GE(test, xored, 10);
 	KUNIT_EXPECT_EQ(test,
 			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
 				       SEQLZ_LEVEL_MIN - 1),

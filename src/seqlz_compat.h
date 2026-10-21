@@ -170,6 +170,12 @@ static __always_inline u32 get_unaligned_le32(const void *p)
 	return SEQLZ_LE32(v);
 }
 
+static __always_inline void put_unaligned_le32(u32 val, void *p)
+{
+	val = SEQLZ_LE32(val);
+	memcpy(p, &val, sizeof(val));
+}
+
 static __always_inline u64 get_unaligned_le64(const void *p)
 {
 	u64 v;

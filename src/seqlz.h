@@ -51,8 +51,8 @@
  * sequences. The literals follow, all of them one after the other, then the
  * bitstream. Text and code have many literals, so a page can have its literals
  * Huffman coded too, with one of SEQLZ_LIT_SETS fixed tables or with a table
- * of its own. Then the u16 has SEQLZ_LIT_CODED set and a header follows, see
- * SEQLZ_LIT_HEADER.
+ * of its own, and XORed with earlier bytes of the page before that. Then the
+ * u16 has SEQLZ_LIT_CODED set and a header follows, see SEQLZ_LIT_HEADER.
  *
  * docs/format.md is the specification.
  */
@@ -281,11 +281,12 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 /*
  * The header of a page with coded literals, 3 + w bytes: the u16 of every page,
- * then byte 2, with the literals' code in bits 0 to 3 and w -
- * SEQLZ_SIZE_BITS_MIN in bits 4 to 6, bit 7 zero, then the sizes of the 8
- * streams in bytes, w bits each, lowest bit first. The code is one of the
- * SEQLZ_LIT_SETS fixed tables, or SEQLZ_LIT_OWN; codes above it are invalid.
- * The decoder needs the sizes to know where each stream starts.
+ * then byte 2, with the literals' code in bits 0 to 3, w - SEQLZ_SIZE_BITS_MIN
+ * in bits 4 to 6 and in bit 7 whether the literals are XORed, see
+ * SEQLZ_LIT_XOR_AT, then the sizes of the 8 streams in bytes, w bits each,
+ * lowest bit first. The code is one of the SEQLZ_LIT_SETS fixed tables, or
+ * SEQLZ_LIT_OWN; codes above it are invalid. The decoder needs the sizes to
+ * know where each stream starts.
  *
  * w is the fewest bits that hold the largest size, but at least 5. A stream
  * holds every 8th literal of at most 10 bits, at most 640 bytes in a 4 KiB page
@@ -298,7 +299,27 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 /* the fields of byte 2, as above */
 #define SEQLZ_LIT_CODE_MASK 15U
 #define SEQLZ_LIT_WIDTH_AT 4
-#define SEQLZ_LIT_ZERO_AT 7
+#define SEQLZ_LIT_XOR_AT 7
+/*
+ * With bit 7 of byte 2 set, each literal was XORed with an earlier byte of the
+ * page before it was coded, and the byte after the stream sizes, before the
+ * description of SEQLZ_LIT_OWN, says which byte:
+ *   SEQLZ_XOR_4:    the byte 4 before it, for the literals from the 5th of a
+ *                   sequence on; the first 4 are as they are
+ *   SEQLZ_XOR_8:    the byte 8 before it, from the 9th literal of a sequence on
+ *   SEQLZ_XOR_LAST: the byte as far before it as the offset of the sequence
+ *                   before, 1 for the first; an offset of 1 or 2 counts as 4,
+ *                   3 as 6. Literals nearer than that to the page's start are
+ *                   as they are.
+ * Other values are invalid. Memory pages are full of 4- and 8-byte fields: the
+ * bytes of a field are often those of the field before it, and a literal after
+ * a match often differs from the byte the match would have copied in a few
+ * bits only. An offset below 4 counts as a multiple of it of 4 or more, which
+ * repeats the same bytes, so that the decoder can XOR 4 bytes at a time.
+ */
+#define SEQLZ_XOR_4 1U
+#define SEQLZ_XOR_8 2U
+#define SEQLZ_XOR_LAST 3U
 /*
  * The literals' code SEQLZ_LIT_OWN: a table of the page's own, which follows
  * the stream sizes, before the streams. It is the code length of every byte
@@ -387,8 +408,9 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
  * one with the smallest pages. Level 1 keeps the literals raw. From
  * SEQLZ_LEVEL_CODED on they are Huffman coded where that saves enough, with
  * one of the fixed tables. SEQLZ_LEVEL_OWN looks one position ahead before it
- * takes a short match, extends matches backwards, and gives a page a literal
- * table of its own where that saves enough.
+ * takes a short match, extends matches backwards, gives a page a literal
+ * table of its own where that saves enough, and XORs the literals where that
+ * looks like it saves bits, see SEQLZ_LIT_XOR_AT.
  */
 #define SEQLZ_LEVELS 3U
 #define SEQLZ_LEVEL_CODED 2U
@@ -396,9 +418,9 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 
 /*
  * The matcher's hash table, one per CPU, cleared for each page. Once the
- * matcher is done it holds the raw literals while they are coded, and at
- * SEQLZ_LEVEL_OWN, at its end, what the encoder needs for a table of the
- * page's own, see code_literals() in seqlz_compress.c.
+ * matcher is done it holds the raw or XORed literals while they are coded,
+ * and at SEQLZ_LEVEL_OWN, at its end, what the encoder needs for a table of
+ * the page's own, see code_literals() in seqlz_compress.c.
  */
 struct seqlz_state {
 	union {
@@ -432,6 +454,8 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * @n: how many
  * @literals: the literals of all sequences, one after the other
  * @n_literals: how many
+ * @page: the page the sequences describe, for the XOR of SEQLZ_LEVEL_OWN, or
+ *        NULL: then the literals are not XORed
  * @dst: where the compressed page goes
  * @dst_cap: the bytes at @dst
  * @level: what to do with the literals, as seqlz_compress() at that level
@@ -451,7 +475,8 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
-			  void *dst, unsigned int dst_cap, unsigned int level);
+			  const void *page, void *dst, unsigned int dst_cap,
+			  unsigned int level);
 
 /**
  * seqlz_compress() - Compress one page
@@ -467,8 +492,11 @@ unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
  * does not fit is an error, which can happen up to 32 bytes before @dst_cap is
  * full.
  * The page is written with raw literals first, so it has to fit that way; the
- * coded literals then go over the raw ones, which @st holds meanwhile. The same
- * bytes as seqlz_encode() for the sequences of seqlz_find(), at the same level.
+ * coded literals then go over the raw ones, which @st holds meanwhile. At
+ * SEQLZ_LEVEL_OWN the encoder needs 6 bytes more per sequence with literals to
+ * XOR them; without that room the page is written without the XOR. The same
+ * bytes as seqlz_encode() for the sequences of seqlz_find() and @src, at the
+ * same level.
  *
  * Return: the length of the compressed page, or 0 if it does not fit into
  * @dst_cap bytes, @t lacks a code, or @level is not one.
