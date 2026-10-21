@@ -416,11 +416,14 @@ sum is 256 or more carries 1 into the byte above. So the top bit of each byte is
 [`sub_bytes()`](#ch-literals-enc--sub-bytes) of the encoder subtracts. `a & low` and `b & low` keep
 bits 0 to 6 of each byte; two such bytes sum to at most `0x7f + 0x7f = 0xfe`, so no byte carries into
 the next, and the sum's bit 7 is the carry out of bit 6. The true bit 7 of a byte's sum is bit 7 of
-`a`, XOR bit 7 of `b`, XOR that carry, so `(a ^ b) & ~low`, the two top bits XORed, XORed into the sum
-gives it. The carry out of bit 7, which a byte's sum modulo 256 drops, is never made. The deltas
-`f0 01` of [chapter 11](#ch-literals-enc--sub-bytes)'s example plus the bytes `10 00` before them:
+`a`, XOR bit 7 of `b`, XOR that carry. `(a ^ b) & ~low` is the first two in bit 7 of each byte, and
+XORed into the sum it gives the true bit. The carry out of bit 7, which a byte's sum modulo 256 drops,
+is never made. The deltas `f0 01` of [chapter 11](#ch-literals-enc--sub-bytes)'s example plus the
+bytes `10 00` they are to:
 
 ```text
+a, the deltas           {{delta.sub.r}}
+b, the bytes before     {{delta.sub.b}}
 a & low                 {{delta.add.a_lo}}
 b & low                 {{delta.add.b_lo}}
 sum                     {{delta.add.sum}}

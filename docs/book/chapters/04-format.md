@@ -410,8 +410,8 @@ the byte after a match often differs only a little from the byte the match would
 deltas, such literals become a few small values, which a literal table codes in fewer bits
 ([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#literals-as-deltas)).
 A delta, not a XOR: a field that grows by 1 from `0x0f` to `0x10` has a delta of 1, but `0x0f` XOR
-`0x10` is `0x1f`, every bit the carry flipped. The branch that brought `e` first XORed the literals;
-the subtraction replaced the XOR on 21st October 2026, before it was merged ([chapter 17](#ch-decisions)).
+`0x10` is `0x1f`, every bit the carry flipped. The first form of `e`, on 21st October 2026, XORed the
+literals; the subtraction replaced it the same day, before it was merged ([chapter 17](#ch-decisions--deltas)).
 
 The page of 512 pointers of [chapter 9](#ch-matcher--back) at level 3 begins with
 `{{delta.ptr.l3.head}}`: `h` says {{delta.ptr.l3.n}} coded literals, `t = {{delta.ptr.l3.t}}` is code

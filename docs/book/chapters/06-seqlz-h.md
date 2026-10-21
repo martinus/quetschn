@@ -373,6 +373,7 @@ with raw literals, as coding them saves too little; level 3 without deltas would
 {{delta.ptr.l3plain.len}} bytes, with them in {{delta.ptr.l3.len}}. Its byte 2 is `{{delta.ptr.l3.t}}`:
 code {{delta.ptr.l3.code}}, the page's own table, $w = {{delta.ptr.l3.w}}$, bit 7 set, and byte
 {{delta.ptr.l3.dt_at}}, right after the sizes, is {{delta.ptr.l3.dt}}, `SEQLZ_DELTA_LAST`.
+@assert delta.ptr.l3.dt == ch06.DELTA_LAST and delta.ptr.l3.code == own.lit_own and delta.ptr.l3.len < delta.ptr.l3plain.len < delta.ptr.l2.len and delta.ptr.l3.dt_at == delta.ptr.l3.w + 3
 
 This page shows why a delta and not a XOR. A XOR of the same literals with the same bytes, which
 level 3 wrote before the deltas, gives {{delta.ptr.xor.distinct}} values: only {{delta.ptr.xor.h.10}}
@@ -381,7 +382,6 @@ upper bits of the low byte, e.g. from `0x30` to `0x40`, where `0x30` XOR `0x40` 
 objects in a row, counters and sizes grow by a little from one field to the next, and a subtraction
 turns that into one small value where a XOR gives one value per pattern of carries.
 @assert delta.ptr.xor.distinct > delta.ptr.distinct.deltas and F("delta.ptr.xor.h.10") < F("delta.ptr.h.10") and min(F("delta.ptr.xor.h.30"), F("delta.ptr.xor.h.70"), F("delta.ptr.xor.h.f0")) > 0
-@assert delta.ptr.l3.dt == ch06.DELTA_LAST and delta.ptr.l3.code == own.lit_own and delta.ptr.l3.len < delta.ptr.l3plain.len < delta.ptr.l2.len and delta.ptr.l3.dt_at == delta.ptr.l3.w + 3
 
 0 is not one of the values: bit 7 already says whether there are deltas, and the decoder rejects a byte
 of 0 or above 3. The byte is at $3 + w$ with every code, a fixed table's or the page's own, whose
