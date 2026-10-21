@@ -252,6 +252,17 @@ TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders,
     CHECK(coded > 30);
 }
 
+// c with bit q of byte i flipped. A copy and a write of a byte the code computes made gcc warn of a write
+// past the copy's end, with -O3, on arm64 and x86-64.
+std::vector<unsigned char> with_bit_flipped(std::vector<unsigned char> c, std::size_t i, unsigned q) {
+    for (auto& b : c) {
+        if (static_cast<std::size_t>(&b - c.data()) == i) {
+            b = static_cast<unsigned char>(b ^ (1U << q));
+        }
+    }
+    return c;
+}
+
 // Pages whose literals level 3 XORs: fields of 4 bytes whose 3 high bytes every second field repeats from
 // the one before (SEQLZ_XOR_4 or SEQLZ_XOR_LAST), or records of 16 bytes, each the one before with a bit
 // flipped here and there, which leaves literals next to matches 16 bytes back (SEQLZ_XOR_LAST).
@@ -298,12 +309,8 @@ TEST_CASE("seqlz_ref: XORed literals decode the same with both decoders, and dam
             continue;
         }
         for (auto q = 0U; q < 8U; ++q) {
-            auto bad = c;
-            bad[at] = static_cast<unsigned char>(bad[at] ^ (1U << q));
-            check_same(t.get(), r.get(), bad);
-            bad = c;
-            bad[2] = static_cast<unsigned char>(bad[2] ^ (1U << q));
-            check_same(t.get(), r.get(), bad);
+            check_same(t.get(), r.get(), with_bit_flipped(c, at, q));
+            check_same(t.get(), r.get(), with_bit_flipped(c, 2, q));
         }
     }
     // both kinds of pages are XORed, with SEQLZ_XOR_4 and with SEQLZ_XOR_LAST
