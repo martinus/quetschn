@@ -2258,7 +2258,7 @@ its records (`LIT_REC`), the `xor` argument of `code_literals()` in `src/seqlz_c
 in `decode_literals()`, `unxor_literals()`, `unxor_fast()`, `xor4()`, `xor8()` and `decode_page()` in
 `src/seqlz_decompress.c`; `SEQLZ_LIT_XOR_AT`, `SEQLZ_XOR_4`, `SEQLZ_XOR_8`, `SEQLZ_XOR_LAST` in
 `src/seqlz.h`, `seqlz_xor_last()` in `src/seqlz_internal.h`; the format in
-[format.md, "XORed literals"](format.md#xored-literals); branch `seqlz-literal-xor`.
+[format.md, "XORed literals"](format.md#literals-as-deltas); branch `seqlz-literal-xor`.
 
 **Where it comes from.** The literal research of 21st October (the lane entry linked above) found most
 predictable literals in the high bytes of 4-byte fields and next to matches. Its lane formats coded

@@ -135,15 +135,15 @@ def decode(page, tables, page_bits):
         raise Invalid
     h = page[0] | page[1] << 8
     n = h & 0x7FFF
-    xr = 0
+    dt = 0
     if h & 0x8000:
         t = page[2] if len(page) > 2 else 0
         w, code, e = 5 + (t >> 4 & 7), t & 15, t >> 7
         if len(page) < 3 + w + e or code > 8 or n > size:
             raise Invalid
         if e:
-            xr = page[3 + w]
-            if xr not in (1, 2, 3):
+            dt = page[3 + w]
+            if dt not in (1, 2, 3):
                 raise Invalid
         codes, d = own_table(page, 3 + w + e, own_codes) if code == 8 else (lit_codes[code], 0)
         sizes = int.from_bytes(page[3 : 3 + w], "little")
@@ -176,18 +176,18 @@ def decode(page, tables, page_bits):
     out, used, last = bytearray(), 0, 1
 
     def copy(k):
-        """the next k literals to out, the XOR undone as "XORed literals" says"""
+        """the next k literals to out, deltas added back as "Literals as deltas" says"""
         nonlocal used
         for i in range(k):
             b, p = lits[used + i], len(out)
-            if xr == 1 and i >= 4:
-                b ^= out[p - 4]
-            elif xr == 2 and i >= 8:
-                b ^= out[p - 8]
-            elif xr == 3:
+            if dt == 1 and i >= 4:
+                b = (b + out[p - 4]) & 255
+            elif dt == 2 and i >= 8:
+                b = (b + out[p - 8]) & 255
+            elif dt == 3:
                 x = 4 if last <= 2 else 6 if last == 3 else last
                 if p >= x:
-                    b ^= out[p - x]
+                    b = (b + out[p - x]) & 255
             out.append(b)
         used += k
 

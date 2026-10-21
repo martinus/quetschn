@@ -263,10 +263,10 @@ std::vector<unsigned char> with_bit_flipped(std::vector<unsigned char> c, std::s
     return c;
 }
 
-// Pages whose literals level 3 XORs: fields of 4 bytes whose 3 high bytes every second field repeats from
-// the one before (SEQLZ_XOR_4 or SEQLZ_XOR_LAST), or records of 16 bytes, each the one before with a bit
-// flipped here and there, which leaves literals next to matches 16 bytes back (SEQLZ_XOR_LAST).
-std::vector<unsigned char> xored_page(std::mt19937_64& rng, int kind) {
+// Pages whose literals level 3 codes as deltas: fields of 4 bytes whose 3 high bytes every second field repeats from
+// the one before (SEQLZ_DELTA_4 or SEQLZ_DELTA_LAST), or records of 16 bytes, each the one before with a bit
+// flipped here and there, which leaves literals next to matches 16 bytes back (SEQLZ_DELTA_LAST).
+std::vector<unsigned char> delta_page(std::mt19937_64& rng, int kind) {
     auto p = std::vector<unsigned char>(SEQLZ_PAGE);
     if (kind % 2 == 0) {
         auto high = std::array<unsigned char, 3>{};
@@ -290,22 +290,22 @@ std::vector<unsigned char> xored_page(std::mt19937_64& rng, int kind) {
     return p;
 }
 
-TEST_CASE("seqlz_ref: XORed literals decode the same with both decoders, and damaged XORs alike") {
-    // The XOR byte and byte 2 with each bit flipped: other XORs, invalid ones, a page without the XOR whose
-    // byte is then read as the first one after the sizes.
+TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and damaged deltas alike") {
+    // The delta byte and byte 2 with each bit flipped: other deltas, invalid ones, a page without deltas whose
+    // delta byte is then read as the first one after the sizes.
     auto const t = fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(53);
-    auto xors = std::array<int, 4>{};
+    auto deltas = std::array<int, 4>{};
     for (int round = 0; round < 40; ++round) {
         CAPTURE(round);
-        auto const page = xored_page(rng, round);
+        auto const page = delta_page(rng, round);
         auto const c = compress(t.get(), page, 3);
         REQUIRE(check_same(t.get(), r.get(), c) == page);
         auto const at = SEQLZ_LIT_HEADER(size_width(c));
-        auto const xored = (c[1] & 0x80) != 0 && (c[2] >> SEQLZ_LIT_XOR_AT) != 0;
-        ++xors[xored ? c[at] & 3U : 0U];
-        if (!xored) {
+        auto const has_delta = (c[1] & 0x80) != 0 && (c[2] >> SEQLZ_LIT_DELTA_AT) != 0;
+        ++deltas[has_delta ? c[at] & 3U : 0U];
+        if (!has_delta) {
             continue;
         }
         for (auto q = 0U; q < 8U; ++q) {
@@ -313,9 +313,9 @@ TEST_CASE("seqlz_ref: XORed literals decode the same with both decoders, and dam
             check_same(t.get(), r.get(), with_bit_flipped(c, 2, q));
         }
     }
-    // both kinds of pages are XORed, with SEQLZ_XOR_4 and with SEQLZ_XOR_LAST
-    CHECK(xors[SEQLZ_XOR_4] > 5);
-    CHECK(xors[SEQLZ_XOR_LAST] > 5);
+    // both kinds of pages get deltas, SEQLZ_DELTA_4 and SEQLZ_DELTA_LAST
+    CHECK(deltas[SEQLZ_DELTA_4] > 5);
+    CHECK(deltas[SEQLZ_DELTA_LAST] > 5);
 }
 
 TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid or invalid for both decoders alike") {

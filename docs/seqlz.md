@@ -206,7 +206,7 @@ often differs from the byte the match would have copied in a few bits only. On t
 samples level 3 stores 3.8% less with it, 881.0 instead of 915.6 bytes per page, for about 3.6 µs more
 per page written on the Mi 9T's big core and 0.37 µs more per read, in userspace
 ([explored-designs.md](explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept),
-[format.md](format.md#xored-literals)). The numbers below are from 15th October, before it.
+[format.md](format.md#literals-as-deltas)). The numbers below are from 15th October, before it.
 
 On the Mi 9T, zram in the phone's own kernel, the 19 775 pages of a phone session that the tables were
 not trained on, 15th October 2026, time per page written as above:

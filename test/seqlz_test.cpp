@@ -1576,23 +1576,23 @@ TEST_CASE("seqlz: a page without matches but with literals that code well gets t
 
 namespace {
 
-// The XOR of a compressed page's literals (docs/format.md): 0 for raw literals or coded ones without it.
-unsigned lit_xor(std::vector<unsigned char> const& c) {
-    return lits_coded(c) && (c[2] >> SEQLZ_LIT_XOR_AT) != 0 ? c[lit_header(c)] : 0U;
+// The delta of a compressed page's literals (docs/format.md): 0 for raw literals or coded ones without it.
+unsigned lit_delta(std::vector<unsigned char> const& c) {
+    return lits_coded(c) && (c[2] >> SEQLZ_LIT_DELTA_AT) != 0 ? c[lit_header(c)] : 0U;
 }
 
-// Pages whose literals one XOR turns into many zeros, for xor SEQLZ_XOR_4, SEQLZ_XOR_8 or SEQLZ_XOR_LAST.
+// Pages whose literals one delta turns into many zeros, for SEQLZ_DELTA_4, SEQLZ_DELTA_8 or SEQLZ_DELTA_LAST.
 // 4: fields of 4 bytes, a random low byte and 3 high bytes that every second field repeats from the one
 // before; 8: fields of 8 bytes, 5 random low bytes and 3 high ones that are the same in every field. So
-// the other XOR finds no zeros, and no 4 bytes repeat: the page is literals, and the matcher's match at
+// the other delta finds no zeros, and no 4 bytes repeat: the page is literals, and the matcher's match at
 // the last offset finds nothing either. LAST: records of 16 bytes, each the one before with a byte
 // or two a bit off, from 16 random bytes at the page's start: matches 16 back with literals between them
-// that differ from the byte 16 before in one bit.
-std::vector<unsigned char> xor_page(std::mt19937_64& rng, unsigned xor_kind) {
+// that differ from the byte 16 before in one bit. The random bytes make deltas that wrap around 256.
+std::vector<unsigned char> delta_page(std::mt19937_64& rng, unsigned kind) {
     auto page = std::vector<unsigned char>(page_size);
-    auto const field = xor_kind == SEQLZ_XOR_8 ? 8U : 4U;
-    auto const low = xor_kind == SEQLZ_XOR_8 ? 5U : 1U;
-    if (xor_kind == SEQLZ_XOR_LAST) {
+    auto const field = kind == SEQLZ_DELTA_8 ? 8U : 4U;
+    auto const low = kind == SEQLZ_DELTA_8 ? 5U : 1U;
+    if (kind == SEQLZ_DELTA_LAST) {
         for (unsigned k = 0; k < 16; ++k) {
             page[k] = static_cast<unsigned char>(rng());
         }
@@ -1607,7 +1607,7 @@ std::vector<unsigned char> xor_page(std::mt19937_64& rng, unsigned xor_kind) {
     }
     auto high = std::vector<unsigned char>(field - low);
     for (unsigned k = 0; k < page_size; k += field) {
-        if (k == 0 || (xor_kind == SEQLZ_XOR_4 && k / field % 2 == 0)) {
+        if (k == 0 || (kind == SEQLZ_DELTA_4 && k / field % 2 == 0)) {
             for (auto& b : high) {
                 b = static_cast<unsigned char>(rng());
             }
@@ -1622,30 +1622,30 @@ std::vector<unsigned char> xor_page(std::mt19937_64& rng, unsigned xor_kind) {
 
 } // namespace
 
-TEST_CASE("seqlz: level 3 XORs the literals with the bytes that make them cheapest, and they come back") {
+TEST_CASE("seqlz: level 3 codes the literals as deltas to the bytes that make them cheapest, and they come back") {
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(71);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
-    for (unsigned xor_kind : {SEQLZ_XOR_4, SEQLZ_XOR_8, SEQLZ_XOR_LAST}) {
-        CAPTURE(xor_kind);
+    for (unsigned kind : {SEQLZ_DELTA_4, SEQLZ_DELTA_8, SEQLZ_DELTA_LAST}) {
+        CAPTURE(kind);
         auto picked = 0;
         for (int round = 0; round < 20; ++round) {
             CAPTURE(round);
-            auto const page = xor_page(rng, xor_kind);
+            auto const page = delta_page(rng, kind);
             auto c = std::vector<unsigned char>(2 * page_size);
             auto const len = seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, 3);
             REQUIRE(len > 0);
             c.resize(len);
             // a few 5-byte repeats in a page of fields, more in one of 16 KiB, leave sequences after a match
-            // of the field's size: there SEQLZ_XOR_LAST is that XOR too, from the sequence's first literal on
-            CHECK((lit_xor(c) == xor_kind || lit_xor(c) == SEQLZ_XOR_LAST));
-            picked += lit_xor(c) == xor_kind;
+            // of the field's size: there SEQLZ_DELTA_LAST is that delta too, from the sequence's first literal on
+            CHECK((lit_delta(c) == kind || lit_delta(c) == SEQLZ_DELTA_LAST));
+            picked += lit_delta(c) == kind;
             auto out = std::vector<unsigned char>(page_size);
             REQUIRE(seqlz_decode(t.get(), c.data(), len, out.data(), scratch.data()) == 0);
             CHECK(out == page);
-            // the same sequences without the XOR take more bytes; with the page, the same bytes
+            // the same sequences without deltas take more bytes; with the page, the same bytes
             auto const n = seqlz_find(st.get(), page.data(), seq.data(), 3);
             auto const lits = literals_of(page, seq.data(), n);
             auto plain = std::vector<unsigned char>(2 * page_size);
@@ -1662,7 +1662,7 @@ TEST_CASE("seqlz: level 3 XORs the literals with the bytes that make them cheape
             REQUIRE(plen > 0);
             CHECK(plen > len);
             plain.resize(plen);
-            CHECK(lit_xor(plain) == 0);
+            CHECK(lit_delta(plain) == 0);
             auto again = std::vector<unsigned char>(2 * page_size);
             CHECK(seqlz_encode(t.get(),
                                st.get(),
@@ -1675,27 +1675,27 @@ TEST_CASE("seqlz: level 3 XORs the literals with the bytes that make them cheape
                                2 * page_size,
                                3) == len);
             CHECK(std::equal(c.begin(), c.end(), again.begin()));
-            // levels 1 and 2 never XOR
+            // levels 1 and 2 never code deltas
             for (unsigned level = 1; level < 3; ++level) {
                 auto low = std::vector<unsigned char>(2 * page_size);
                 low.resize(seqlz_compress(t.get(), st.get(), page.data(), low.data(), 2 * page_size, level));
-                CHECK(lit_xor(low) == 0);
+                CHECK(lit_delta(low) == 0);
             }
         }
         CHECK(picked >= 15);
     }
 }
 
-TEST_CASE("seqlz: level 3 without room for the XOR's records writes the page without the XOR") {
+TEST_CASE("seqlz: level 3 without room for the delta's records writes the page without deltas") {
     // The records take 6 bytes per sequence with literals: a dst with room for the page with raw literals and
-    // 32 bytes, but not for them, gets a page without the XOR, which comes back.
+    // 32 bytes, but not for them, gets a page without deltas, which comes back.
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(73);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
-    for (unsigned xor_kind : {SEQLZ_XOR_4, SEQLZ_XOR_LAST}) {
-        CAPTURE(xor_kind);
-        auto const page = xor_page(rng, xor_kind);
+    for (unsigned kind : {SEQLZ_DELTA_4, SEQLZ_DELTA_LAST}) {
+        CAPTURE(kind);
+        auto const page = delta_page(rng, kind);
         auto raw = std::vector<unsigned char>(2 * page_size);
         auto const rlen = seqlz_compress(t.get(), st.get(), page.data(), raw.data(), 2 * page_size, 1);
         REQUIRE(rlen > 0);
@@ -1703,33 +1703,33 @@ TEST_CASE("seqlz: level 3 without room for the XOR's records writes the page wit
         auto const len = seqlz_compress(t.get(), st.get(), page.data(), d.data(), rlen + 32, 3);
         REQUIRE(len > 0);
         d.resize(len);
-        CHECK(lit_xor(d) == 0);
+        CHECK(lit_delta(d) == 0);
         auto out = std::vector<unsigned char>(page_size);
         REQUIRE(seqlz_decode(t.get(), d.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == page);
     }
 }
 
-TEST_CASE("seqlz: a XOR byte other than 1 to 3, or none, is invalid") {
+TEST_CASE("seqlz: a delta byte other than 1 to 3, or none, is invalid") {
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(79);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     auto out = std::vector<unsigned char>(page_size);
-    auto const page = xor_page(rng, SEQLZ_XOR_4);
+    auto const page = delta_page(rng, SEQLZ_DELTA_4);
     auto c = std::vector<unsigned char>(2 * page_size);
     c.resize(seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, 3));
-    REQUIRE(lit_xor(c) == SEQLZ_XOR_4);
+    REQUIRE(lit_delta(c) == SEQLZ_DELTA_4);
     auto const at = lit_header(c);
     for (unsigned v = 0; v < 256; ++v) {
         CAPTURE(v);
         auto bad = c;
         bad[at] = static_cast<unsigned char>(v);
         auto const r = seqlz_decode(t.get(), bad.data(), static_cast<unsigned>(bad.size()), out.data(), scratch.data());
-        if (v == 0 || v > SEQLZ_XOR_LAST) {
+        if (v == 0 || v > SEQLZ_DELTA_LAST) {
             CHECK(r == -EINVAL);
-        } else if (v == SEQLZ_XOR_8) {
-            // another XOR decodes, to other bytes; SEQLZ_XOR_LAST is SEQLZ_XOR_4 here: the page is one
+        } else if (v == SEQLZ_DELTA_8) {
+            // another delta decodes, to other bytes; SEQLZ_DELTA_LAST is SEQLZ_DELTA_4 here: the page is one
             // sequence of literals, and the offset before the first sequence counts as 4
             CHECK((r != 0 || out != page));
         } else {
@@ -1737,6 +1737,6 @@ TEST_CASE("seqlz: a XOR byte other than 1 to 3, or none, is invalid") {
             CHECK(out == page);
         }
     }
-    // the page cut right before the XOR byte
+    // the page cut right before the delta byte
     CHECK(seqlz_decode(t.get(), c.data(), static_cast<unsigned>(at), out.data(), scratch.data()) == -EINVAL);
 }

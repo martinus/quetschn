@@ -95,9 +95,9 @@ struct seqlz_encoder {
  * At SEQLZ_LEVEL_OWN the encoder writes LIT_REC bytes before each sequence's
  * literals: where they start in the page, how many there are and the offset of
  * the sequence before, a u16 each, little endian. Once the page is matched,
- * xor_literals() picks the literals' XOR from them, see SEQLZ_LIT_XOR_AT, and
- * moves the literals down over them. They take room in dst: a page that does
- * not fit with them is matched again without them, and not XORed.
+ * delta_literals() picks the literals' delta from them, see SEQLZ_LIT_DELTA_AT,
+ * and moves the literals down over them. They take room in dst: a page that
+ * does not fit with them is matched again without them, without deltas.
  */
 #define LIT_REC 6U
 
@@ -320,19 +320,20 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 }
 
 /*
- * xor_literals() prices the XORs with every XOR_STEP-th literal. Pricing every
- * literal made pages almost no smaller and the encoder slower. Not every 4th:
- * in fields of 4 or 8 bytes that is the same byte of each field, and pages
- * were larger.
+ * delta_literals() prices the deltas with every DELTA_STEP-th literal. Pricing
+ * every literal made pages almost no smaller and the encoder slower. Not every
+ * 4th: in fields of 4 or 8 bytes that is the same byte of each field, and
+ * pages were larger.
  */
-#define XOR_STEP 5U
-static_assert(LIT_COST_WORDS == 1U, "xor_literals() sums one lit_cost word");
+#define DELTA_STEP 5U
+static_assert(LIT_COST_WORDS == 1U, "delta_literals() sums one lit_cost word");
 
 /*
  * The bits of the literals in fixed table k, from even and odd lanes of 16
  * bits as lit_cost() sums them: even has tables 0, 2, 4 and 6
  */
-static __always_inline unsigned int xor_bits(u64 even, u64 odd, unsigned int k)
+static __always_inline unsigned int delta_bits(u64 even, u64 odd,
+					       unsigned int k)
 {
 	return (unsigned int)(((k & 1U ? odd : even) >> (16U * (k / 2U))) &
 			      0xffffU);
@@ -342,7 +343,7 @@ static __always_inline unsigned int xor_bits(u64 even, u64 odd, unsigned int k)
  * Adds the 8-bit lanes of the sums s to the 16-bit lanes of even and odd, as
  * lit_cost() does, and clears s
  */
-static __always_inline void xor_spill(u64 *s, u64 *even, u64 *odd)
+static __always_inline void delta_spill(u64 *s, u64 *even, u64 *odd)
 {
 	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
 	const u64 lanes = 0x00ff00ff00ff00ffULL;
@@ -356,34 +357,45 @@ static __always_inline void xor_spill(u64 *s, u64 *even, u64 *odd)
 }
 
 /*
- * Picks the XOR of the literals from the records before them, see LIT_REC and
- * SEQLZ_LIT_XOR_AT, and moves the literals down over the records, to right
- * after the u16; e->lit is then their end. With a XOR they are also written to
- * xored, XORed. Returns the XOR, 0 for none.
- *
- * Each XOR is priced as code_literals() prices the fixed tables, with sums of
- * lit_cost: the XOR whose best table takes the fewest bits, 8 bits more for the
- * byte that says which XOR. The bits of the fixed tables also tell which XOR
- * suits a table of the page's own.
+ * Each byte of a minus the byte of b at the same place, modulo 256, with no
+ * borrow from one byte to the next: the top bit of each byte computed apart
  */
-static unsigned int xor_literals(const struct seqlz_tables *t,
-				 struct seqlz_encoder *e, u8 *d, const u8 *page,
-				 u8 *xored)
+static __always_inline u64 sub_bytes(u64 a, u64 b)
+{
+	const u64 high = 0x8080808080808080ULL; /* bit 7 of each byte */
+
+	return ((a | high) - (b & ~high)) ^ ((a ^ ~b) & high);
+}
+
+/*
+ * Picks the delta of the literals from the records before them, see LIT_REC
+ * and SEQLZ_LIT_DELTA_AT, and moves the literals down over the records, to
+ * right after the u16; e->lit is then their end. With a delta, their deltas
+ * are also written to deltas. Returns the delta, 0 for none.
+ *
+ * Each delta is priced as code_literals() prices the fixed tables, with sums
+ * of lit_cost: the delta whose best table takes the fewest bits, 8 bits more
+ * for the byte that says which delta. The bits of the fixed tables also tell
+ * which delta suits a table of the page's own.
+ */
+static unsigned int delta_literals(const struct seqlz_tables *t,
+				   struct seqlz_encoder *e, u8 *d,
+				   const u8 *page, u8 *deltas)
 {
 	u64 s[4] = { 0 }, even[4] = { 0 }, odd[4] = { 0 };
 	unsigned int k, x, j = 0, n = 0, pos, ll, last, best = ~0U, pick = 0;
-	u8 *p, *out = d + SEQLZ_HEADER, *to = xored;
+	u8 *p, *out = d + SEQLZ_HEADER, *to = deltas;
 
 	/*
 	 * The sums: each literal's length in all fixed tables, as it is and
-	 * with each XOR, in the 8-bit lanes of s, LIT_COST_RUN at a time, then
+	 * with each delta, in the 8-bit lanes of s, LIT_COST_RUN at a time, then
 	 * in the 16-bit lanes
 	 */
 	for (p = d + SEQLZ_HEADER; p < e->lit; p += LIT_REC + ll) {
 		pos = get_unaligned_le16(p);
 		ll = get_unaligned_le16(p + 2);
-		last = seqlz_xor_last(get_unaligned_le16(p + 4));
-		for (k = j; k < ll; k += XOR_STEP) {
+		last = seqlz_delta_last(get_unaligned_le16(p + 4));
+		for (k = j; k < ll; k += DELTA_STEP) {
 			const unsigned int at = pos + k, b = page[at],
 					   b4 = k >= 4U ? page[at - 4] : 0U,
 					   b8 = k >= 8U ? page[at - 8] : 0U,
@@ -391,23 +403,23 @@ static unsigned int xor_literals(const struct seqlz_tables *t,
 							     0U;
 
 			if (n == LIT_COST_RUN) {
-				xor_spill(s, even, odd);
+				delta_spill(s, even, odd);
 				n = 0;
 			}
 			s[0] += t->lit_cost[b][0];
-			s[SEQLZ_XOR_4] += t->lit_cost[b ^ b4][0];
-			s[SEQLZ_XOR_8] += t->lit_cost[b ^ b8][0];
-			s[SEQLZ_XOR_LAST] += t->lit_cost[b ^ bl][0];
+			s[SEQLZ_DELTA_4] += t->lit_cost[(u8)(b - b4)][0];
+			s[SEQLZ_DELTA_8] += t->lit_cost[(u8)(b - b8)][0];
+			s[SEQLZ_DELTA_LAST] += t->lit_cost[(u8)(b - bl)][0];
 			n++;
 		}
 		/* the next sequence's literals go on with the step */
 		j = k - ll;
 	}
-	xor_spill(s, even, odd);
+	delta_spill(s, even, odd);
 	for (x = 0; x < 4; x++)
 		for (k = 0; k < SEQLZ_LIT_SETS; k++) {
-			unsigned int b = xor_bits(even[x], odd[x], k) +
-					 (x ? 8U / XOR_STEP : 0U);
+			unsigned int b = delta_bits(even[x], odd[x], k) +
+					 (x ? 8U / DELTA_STEP : 0U);
 
 			if (b < best) {
 				best = b;
@@ -415,9 +427,9 @@ static unsigned int xor_literals(const struct seqlz_tables *t,
 			}
 		}
 	/*
-	 * The literals down over the records, and XORed into xored: the first
-	 * of a sequence or of the page as they are. 8 bytes at a time, also
-	 * past the sequence's last literal: what that writes, the next
+	 * The literals down over the records, and their deltas into deltas: the
+	 * first of a sequence or of the page as they are. 8 bytes at a time,
+	 * also past the sequence's last literal: what that writes, the next
 	 * sequence's literals overwrite, of the next record it reaches at most
 	 * the first 2 bytes, read before, and after the last literals dst has
 	 * ENC_ROOM bytes more, see encode_seq(). memcpy() was a call for every
@@ -427,7 +439,7 @@ static unsigned int xor_literals(const struct seqlz_tables *t,
 	if (p < e->lit) {
 		pos = get_unaligned_le16(p);
 		ll = get_unaligned_le16(p + 2);
-		last = seqlz_xor_last(get_unaligned_le16(p + 4));
+		last = seqlz_delta_last(get_unaligned_le16(p + 4));
 	}
 	while (p < e->lit) {
 		const u8 *in = p + LIT_REC, *pin = page + pos;
@@ -437,7 +449,7 @@ static unsigned int xor_literals(const struct seqlz_tables *t,
 		if (p < e->lit) {
 			pos = get_unaligned_le16(p);
 			ll = get_unaligned_le16(p + 2);
-			last = seqlz_xor_last(get_unaligned_le16(p + 4));
+			last = seqlz_delta_last(get_unaligned_le16(p + 4));
 		}
 		/* a load, then a store: the copy overlaps its source */
 		for (k = 0; k < n_lit; k += 8)
@@ -445,27 +457,27 @@ static unsigned int xor_literals(const struct seqlz_tables *t,
 		out += n_lit;
 		if (!pick)
 			continue;
-		if (pick == SEQLZ_XOR_LAST) {
+		if (pick == SEQLZ_DELTA_LAST) {
 			x = dist;
 			j = x > at ? x - at : 0;
 		} else {
-			x = pick == SEQLZ_XOR_4 ? 4U : 8U;
+			x = pick == SEQLZ_DELTA_4 ? 4U : 8U;
 			j = x;
 		}
 		for (k = 0; k < j && k < n_lit; k++)
 			to[k] = pin[k];
-		/* past the last literal only inside the page and xored */
+		/* past the last literal only inside the page and deltas */
 		if (at + n_lit + 8 <= SEQLZ_PAGE &&
-		    (unsigned long)(to - xored) + n_lit + 8 <= SEQLZ_PAGE) {
+		    (unsigned long)(to - deltas) + n_lit + 8 <= SEQLZ_PAGE) {
 			for (; k < n_lit; k += 8) {
-				u64 v = get_unaligned_le64(pin + k) ^
-					get_unaligned_le64(pin + k - x);
+				u64 a = get_unaligned_le64(pin + k),
+				    r = get_unaligned_le64(pin + k - x);
 
-				put_unaligned_le64(v, to + k);
+				put_unaligned_le64(sub_bytes(a, r), to + k);
 			}
 		} else {
 			for (; k < n_lit; k++)
-				to[k] = pin[k] ^ *(pin + k - x);
+				to[k] = (u8)(pin[k] - *(pin + k - x));
 		}
 		to += n_lit;
 	}
@@ -477,7 +489,7 @@ static unsigned int xor_literals(const struct seqlz_tables *t,
 static unsigned int encode_raw(const struct seqlz_tables *t,
 			       const struct seqlz_sequence *seq, unsigned int n,
 			       const u8 *literals, unsigned int n_literals,
-			       const u8 *page, u8 *xored, unsigned int *xor,
+			       const u8 *page, u8 *deltas, unsigned int *delta,
 			       void *dst, unsigned int dst_cap)
 {
 	const u8 *in = literals;
@@ -508,7 +520,7 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 	if (pos != SEQLZ_PAGE || lits != n_literals)
 		return 0;
 	encoder_init(&e, t, dst, dst_cap, literals + n_literals);
-	/* with a page, the records for the XOR, as compress_page() */
+	/* with a page, the records for the deltas, as compress_own() */
 	e.rec = page != NULL;
 	for (;;) {
 		for (i = 0; i < n; i++) {
@@ -523,7 +535,7 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 		encoder_init(&e, t, dst, dst_cap, literals + n_literals);
 		in = literals;
 	}
-	*xor = e.rec ? xor_literals(t, &e, dst, page, xored) : 0;
+	*delta = e.rec ? delta_literals(t, &e, dst, page, deltas) : 0;
 	return encoder_finish(&e, dst, dst_cap);
 }
 
@@ -1040,13 +1052,13 @@ static __always_inline unsigned int size_width(const unsigned int *sizes)
  * the raw literals until it moves down behind the coded ones at the end. So d
  * needs no room beyond len, and the page is coded in any dst it fits into raw.
  *
- * With xor not 0, raw has the literals XORed with it, see SEQLZ_LIT_XOR_AT,
+ * With delta not 0, raw has the literals' deltas, see SEQLZ_LIT_DELTA_AT,
  * which are coded instead, and the header says so; if they stay raw, d keeps
  * them as they are.
  */
 static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 				  unsigned int len, const u8 *raw, u8 *spare,
-				  struct own_work *own, unsigned int xor)
+				  struct own_work *own, unsigned int delta)
 {
 	const unsigned int n_literals = get_unaligned_le16(d),
 			   bitstream = len - SEQLZ_HEADER - n_literals;
@@ -1082,8 +1094,8 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 		coded += sizes[j];
 	}
 	width = size_width(sizes);
-	/* with a XOR, its byte after the sizes */
-	header = SEQLZ_LIT_HEADER(width) + (unsigned int)(xor != 0);
+	/* with a delta, its byte after the sizes */
+	header = SEQLZ_LIT_HEADER(width) + (unsigned int)(delta != 0);
 	enc = t->lit[set].enc;
 	if (own) {
 		unsigned int n = own_code(t, own, n_literals, header + coded),
@@ -1092,14 +1104,14 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 		if (n) {
 			own_coded = own_sizes(own, literals, n_literals);
 			own_width = size_width(own->sizes);
-			/* both without the byte of a XOR, which both need */
+			/* both without the byte of a delta, which both need */
 			if (SEQLZ_LIT_HEADER(own_width) + n + own_coded +
 				    OWN_SAVES_MIN <=
-			    header + coded - (xor ? 1U : 0U)) {
+			    header + coded - (delta ? 1U : 0U)) {
 				desc = n;
 				width = own_width;
 				header = SEQLZ_LIT_HEADER(width) +
-					 (unsigned int)(xor != 0) + desc;
+					 (unsigned int)(delta != 0) + desc;
 				coded = own_coded;
 				memcpy(sizes, own->sizes, sizeof(sizes));
 				enc = own->enc;
@@ -1122,16 +1134,16 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	put_unaligned_le16((u16)(SEQLZ_LIT_CODED | n_literals), d);
 	/*
 	 * byte 2: the literals' code in bits 0 to 3, width - SEQLZ_SIZE_BITS_MIN
-	 * in bits 4 to 6, in bit 7 whether they are XORed
+	 * in bits 4 to 6, in bit 7 whether they are deltas
 	 */
 	d[2] = (u8)((desc ? SEQLZ_LIT_OWN : set) |
 		    (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT |
-		    (unsigned int)(xor != 0) << SEQLZ_LIT_XOR_AT);
+		    (unsigned int)(delta != 0) << SEQLZ_LIT_DELTA_AT);
 	lit_sizes(d + SEQLZ_LIT_HEADER(0), sizes, width);
-	if (xor)
-		d[SEQLZ_LIT_HEADER(width)] = (u8)xor;
+	if (delta)
+		d[SEQLZ_LIT_HEADER(width)] = (u8)delta;
 	if (desc)
-		memcpy(d + SEQLZ_LIT_HEADER(width) + (unsigned int)(xor != 0),
+		memcpy(d + SEQLZ_LIT_HEADER(width) + (unsigned int)(delta != 0),
 		       own->desc, desc);
 	/* the bitstream, down to right after the coded literals */
 	coded += header;
@@ -1152,17 +1164,17 @@ static struct own_work *own_work(struct seqlz_state *st)
 }
 
 /*
- * code_literals() at SEQLZ_LEVEL_OWN: the literals XORed, as xor_literals()
+ * code_literals() at SEQLZ_LEVEL_OWN: the literals' deltas, as delta_literals()
  * left them in the matcher's state, unless that is none or they would stay
  * raw; else as they are.
  */
 static unsigned int code_own(const struct seqlz_tables *t, u8 *d,
 			     unsigned int len, struct seqlz_state *st,
-			     unsigned int xor)
+			     unsigned int delta)
 {
-	if (xor) {
+	if (delta) {
 		unsigned int n = code_literals(t, d, len, st->literals, NULL,
-					       own_work(st), xor);
+					       own_work(st), delta);
 
 		if (n != len)
 			return n;
@@ -1176,19 +1188,19 @@ unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
 			  const void *page, void *dst, unsigned int dst_cap,
 			  unsigned int level)
 {
-	unsigned int len, xor;
+	unsigned int len, delta;
 
 	if (level < 1 || level > SEQLZ_LEVELS ||
 	    (level >= SEQLZ_LEVEL_OWN && !st))
 		return 0;
 	len = encode_raw(t, seq, n, literals, n_literals,
 			 level >= SEQLZ_LEVEL_OWN ? page : NULL,
-			 st ? st->literals : NULL, &xor, dst, dst_cap);
+			 st ? st->literals : NULL, &delta, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
 	if (level < SEQLZ_LEVEL_OWN)
 		return code_literals(t, dst, len, literals, NULL, NULL, 0);
-	return code_own(t, dst, len, st, xor);
+	return code_own(t, dst, len, st, delta);
 }
 
 static unsigned int compress_page(const struct seqlz_tables *t,
@@ -1206,18 +1218,18 @@ static unsigned int compress_page(const struct seqlz_tables *t,
 
 /*
  * compress_page() for SEQLZ_LEVEL_OWN: the lazy matcher, with the records for
- * the XOR, and without them if the page does not fit with them; *xor gets the
- * XOR. A function of its own, so that the other levels' code stays as it is
- * without it: inlined next to it, their pages were slower to write.
+ * the deltas, and without them if the page does not fit with them; *delta
+ * gets the delta. A function of its own, so that the other levels' code stays
+ * as it is without it: inlined next to it, their pages were slower to write.
  */
 static noinline unsigned int compress_own(const struct seqlz_tables *t,
 					  struct seqlz_state *st, const u8 *src,
 					  void *dst, unsigned int dst_cap,
-					  unsigned int *xor)
+					  unsigned int *delta)
 {
 	struct seqlz_encoder e;
 
-	*xor = 0;
+	*delta = 0;
 	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)
 		return 0;
 	encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
@@ -1229,7 +1241,7 @@ static noinline unsigned int compress_own(const struct seqlz_tables *t,
 		encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
 	}
 	if (e.rec)
-		*xor = xor_literals(t, &e, dst, src, st->literals);
+		*delta = delta_literals(t, &e, dst, src, st->literals);
 	return encoder_finish(&e, dst, dst_cap);
 }
 
@@ -1237,13 +1249,13 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 			    struct seqlz_state *st, const void *src, void *dst,
 			    unsigned int dst_cap, unsigned int level)
 {
-	unsigned int len, xor;
+	unsigned int len, delta;
 
 	if (level < 1 || level > SEQLZ_LEVELS)
 		return 0;
 	if (level >= SEQLZ_LEVEL_OWN) {
-		len = compress_own(t, st, src, dst, dst_cap, &xor);
-		return len ? code_own(t, dst, len, st, xor) : 0;
+		len = compress_own(t, st, src, dst, dst_cap, &delta);
+		return len ? code_own(t, dst, len, st, delta) : 0;
 	}
 	len = compress_page(t, st, src, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
