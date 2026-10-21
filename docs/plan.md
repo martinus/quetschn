@@ -110,10 +110,10 @@ swap-in in the VM of Phase 5, `r = 0.73`, `b = 1`, 16th October 2026: from `lz4`
 bytes per µs, to `seqlz-2` 145, to `seqlz-3` 21, to `zstd` 3 0.2 ([explored-designs.md, "The numbers
 again on 16th
 October"](explored-designs.md#the-numbers-again-on-16th-october-all-three-levels-with-lzo-rle-the-readmes-chart)).
-Since 21st October `seqlz-3` XORs its literals; in the VM run of that day the hull is `lz4`, `seqlz-1`,
-`seqlz-2` and `seqlz-3` at 837, 128 and 19 bytes per µs, and `zstd` 3 is off it: it stores more than
-`seqlz-3` in more time ([explored-designs.md, "Level 3 XORs its
-literals"](explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
+Since 21st October `seqlz-3` stores its literals as deltas; in the VM run of that day the hull is `lz4`,
+`seqlz-1`, `seqlz-2` and `seqlz-3` at 618, 143 and 20 bytes per µs, and `zstd` 3 is off it: it stores more
+than `seqlz-3` in more time ([explored-designs.md, "Level 3 stores its literals as
+deltas"](explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept)).
 Per sample `seqlz-2` has the lowest score from 19 to 23 bytes per µs up to 98 to 202, and `zstd` 3
 is on the hull only on two of the four. Whoever runs `lz4` instead of `zstd` 3 values a µs at more
 than 43 bytes, (1494.9 - 1038.0) / (19.38 - 8.77). With `r = 0.34` the hull is the same, but
