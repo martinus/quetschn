@@ -20,7 +20,8 @@ How to read the numbers:
 
 * **Three levels, one format.** `seqlz-1` stores the leftover bytes of a page as they are,
   `seqlz-2` also compresses them with one of 8 fixed tables, `seqlz-3` searches one position further
-  for matches and can give a page a table of its own, see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time).
+  for matches, can give a page a table of its own and XORs the leftover bytes with earlier bytes of the
+  page first, see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time).
   All write the same format, and one decoder reads all of them. Numbers are for `seqlz-2` unless they
   say otherwise.
 * **Dumps.** A dump is a copy of all pages that were in zram on my desktop at one moment. The numbers
@@ -197,6 +198,16 @@ against the best of the 8 fixed tables. The description is the code length of ea
 the bytes, about 50 to 75 bytes; the decoder builds the table in the page it decodes into, so it needs no
 more memory ([format.md](format.md#a-pages-own-literal-table)).
 
+Since 21st October 2026 level 3 also XORs each literal with an earlier byte of the page before it codes
+them: with the byte 4 or 8 before, inside the literals of one sequence, or with the byte as far back as
+the last match's offset, one choice per page, the one whose literals the fixed tables code in the
+fewest bits. Pages are full of 4- and 8-byte fields whose high bytes repeat, and a literal after a match
+often differs from the byte the match would have copied in a few bits only. On the ten 20 000-page
+samples level 3 stores 3.8% less with it, 881.0 instead of 915.6 bytes per page, for about 3.6 µs more
+per page written on the Mi 9T's big core and 0.37 µs more per read, in userspace
+([explored-designs.md](explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept),
+[format.md](format.md#xored-literals)). The numbers below are from 15th October, before it.
+
 On the Mi 9T, zram in the phone's own kernel, the 19 775 pages of a phone session that the tables were
 not trained on, 15th October 2026, time per page written as above:
 
@@ -216,8 +227,9 @@ dumps of desktops and phones it stores 0.30% more than `zstd` 3 on average, betw
 more. Its reads are 0.4 and 1.1 µs slower than `seqlz-2`'s warm, 0.5 and 2.9 µs cold, and its work memory
 is the same, 16 KiB per CPU
 ([explored-designs.md](explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
-In the kernel VM, the mean over four zram dumps, it stores 25.4% of a page in 12.16 µs per page written,
-`zstd` 3 25.3% in 19.38 µs ([README](../README.md)).
+In the kernel VM on 21st October, the mean over four zram dumps, level 3 stores 24.7% of a page in 14.54
+µs per page written with the XOR and 25.4% in 12.96 µs without it, `zstd` 3 25.3% in 20.35 µs
+([README](../README.md)).
 
 ## What is not known yet
 
