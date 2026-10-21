@@ -203,6 +203,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **Level 3 and a literal table of the page's own**
 
+- 2026-10-21 **not kept** [Literal tables for XORed literals](#literal-tables-trained-for-xored-literals-at-most-28-bytes-per-page-at-level-3-with-12-tables-not-kept): 99% of XORed pages on a fixed table use table 1. Trained on train-mix-1012, ten samples, level 3: today's 8 + 1 / 2 / 4 tables for XORed literals -0.9 / -1.6 / -2.8 bytes per page (at most 0.3%); 7 plain + 1 XORed -0.4 at level 3, +1.4 at level 2; 8 to 10 trained on both at most -1.5 at level 3, up to +3.5 at level 2. Not worth more tables, a format change and level 2's pricing cost. Code: not committed; ~/quetschn-corpus/research/2026-10-21-tools/xt/. Now: current.
 - 2026-10-21 **kept** [Level 3 XORs its literals](#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept): each literal XORed with the byte 4 or 8 before (inside its sequence) or at the last offset, one choice per page, priced with the fixed tables' sums of every 5th literal. Ten samples: level 3 881.0 bytes per page instead of 915.6 (-3.8%; phone -4.1% to -6.9%, desktop -0.7% to -1.2%), 20.5% of the pages XORed. Mi 9T userspace, p3 and 4 Oct: writes +3.5 to +3.8 µs on the A76 (+28%), +7.3 to +7.5 on the A55; reads +0.34 to +0.40 on the A76, +0.9 to +1.1 on the A55; levels 1 and 2 unchanged. Kernel VM, mean of four samples, same boots: 24.7% of a page in 14.54 µs per page written against 25.4% in 12.96 without the XOR; zstd 3 25.3% in 20.35 drops off the hull. Code: xor_literals(), compress_own(), code_own(), encode_seq() (src/seqlz_compress.c); unxor_literals(), unxor_fast(), decode_page() (src/seqlz_decompress.c); byte 2's bit 7 and the XOR byte in docs/format.md; branch seqlz-literal-xor. Now: current. Untried: zram in the phone's kernel; level 2 with the XOR (-4.4% for 3.4 µs per write on the A76, prototype).
 - 2026-10-16 **not kept** [Level 3 matcher, three small changes](#level-3s-matcher-three-small-changes-none-faster-at-the-same-bytes-not-kept): x86-64 userspace, level 3 26 459 against level 2 18 498 cycles per page on p3, about 3700 more in the matcher, 3200 in the own table, 700 in code_literals(); step back 8 bytes at a time +0.4% to +0.8% cycles, one branch for both lazy candidates +0.1% to +0.5%, SEQLZ_LAZY_LEN 12 -1.3% to -1.4% for 1.5 to 1.8 bytes per page more (20 bytes per µs, the rate of level 2 to level 3 itself). Code: not committed. Now: current. Untried: the phone.
 - 2026-10-16 **not built** [OWN chosen by the symbol before](#own-chosen-by-the-symbol-before-54-bytes-per-description-11-bytes-per-page-counted-offline-not-built): offline, level 3's descriptions on ten 20 000-page samples, codes trained on train-mix: 12 codes by the symbol before take 58.67 instead of 64.08 bytes per description (-9.1%), 6 codes by the length before 59.46; 1.11 and 0.94 bytes per page, 0.12% and 0.10% of the compressed bytes. Not worth 12 code tables in the format and a context in own_table(). Code: tools/seqlz-bound/owndump.c, own_context.py. Now: current. Untried: any time; more pages with a table of their own from a cheaper description.
@@ -2392,6 +2393,44 @@ A55's reads of pages that a decode before did not warm.
 Commands: sizes `srccheck/sizes.c` and the phone benchmark `srccheck/lvbench.c` in the session's
 scratchpad, both copied to `~/quetschn-corpus/research/2026-10-21-tools/`; the research log is
 `~/quetschn-corpus/research/2026-10-21-literal-structure.md`, rounds 10 to 12.
+
+## Literal tables trained for XORed literals: at most 2.8 bytes per page at level 3 with 12 tables, not kept
+
+Status: not kept, 2026-10-21. Now: current.
+
+*After level 3 got its XOR ([the XOR](#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)),
+99% of the XORed pages that a fixed table codes take table 1: none of the 8 was trained on XORed
+literals. Literal tables trained for them save little: with today's 8 tables and 1, 2 or 4 more trained
+on XORed literals, level 3 stores 0.9, 1.6 and 2.8 bytes per page less on the ten samples (0.1% to
+0.3%); trained together with the plain literals into 8, 9 or 10 tables it gains at most 1.5 bytes and
+level 2 loses up to 3.5. 7 plain tables and 1 for XORed literals: level 3 0.4 bytes less, level 2 1.4
+more. Not kept: more tables cost 3 KiB each, a format change, and a second word of `lit_cost` that
+level 2 would pay for on every literal, for less than 0.3%.* Code: not committed; `xtrain.cpp`, `eval.sh` and the copy of `src/` with any
+number of tables in `~/quetschn-corpus/research/2026-10-21-tools/xt/`.
+
+Training: `train-mix-1012`, 1 091 983 pages, 966 108 with more than 64 literals in level 2's parse
+(the plain histograms, as `quetschn-seqlz-train` counts them) and 478 293 whose level 3 picked a XOR
+(their XORed literals, with today's tables). k-means as in `lit_sets()`, 8 starts instead of 32; the
+control `p8`, today's training with 8 starts, is within 0.3 bytes of today's tables. Evaluation:
+`seqlz_compress()` with the trained tables (fixed tables 0 to n-1, the own table on code 15), compressed
+bytes per page, the mean of the ten 20 000-page samples; p1, p2 and p4 are in the training set, the mean
+of the other seven in brackets:
+
+| tables | level 2 | level 3 |
+| --- | ---: | ---: |
+| today's 8 | 958.8 (975.0) | 881.0 (903.6) |
+| 8, today's training with 8 starts | 959.1 (976.1) | 881.2 (903.7) |
+| 8, plain and XORed together | 962.3 (979.1) | 881.7 (904.7) |
+| 7 plain + 1 XORed | 960.2 (977.4) | 880.6 (903.3) |
+| 6 plain + 2 XORed | 960.7 (977.5) | 879.8 (902.6) |
+| today's 8 + 1 XORed | 958.4 (974.6) | 880.2 (902.8) |
+| today's 8 + 2 XORed | 958.2 (974.4) | 879.5 (902.2) |
+| today's 8 + 4 XORed | 957.6 (973.9) | 878.3 (901.3) |
+| 9, plain and XORed together | 959.1 (975.3) | 879.5 (902.3) |
+| 10, plain and XORed together | 960.9 (977.8) | 880.6 (903.5) |
+
+Level 2 also takes the XORed literals' tables where they code its plain literals in fewer bits, hence
+its 1.2 bytes less with 12 tables. Not measured: the time of more tables; 16 KiB pages.
 
 ## The matcher without its step back: writes 6.6% faster on the A76 and 1% to 2% in the VM, kept
 
