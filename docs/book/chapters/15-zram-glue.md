@@ -267,7 +267,7 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
   more user, `seqlz_find()`.
 - **What only the harness uses is cut**: all of `src/seqlz.h` but `seqlz_token()`, which goes into
   `seqlz_compress.c`, its one user there; `seqlz_find()`, `seqlz_encode()` and `encode_raw()`; the
-  `all_symbols` field and its checks. The `raw` parameter of `seqlz_code_literals()` stays: at level 3 it carries the deltas
+  `all_symbols` field and its checks. The `raw` parameter of `code_literals()` stays: at level 3 it carries the deltas
   ([chapter 11](#ch-literals-enc--code-own)).
 
 Every textual replacement goes through `must()` or `cut()`, which assert that the text occurs exactly as

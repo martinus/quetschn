@@ -2,25 +2,26 @@
 
 When `compress_block()` is done, `dst` holds a valid page with raw literals ([chapter 10](#ch-encoder)),
 which is what level 1, `seqlz-1`, stores. From level 2 on, `seqlz_compress()` then calls
-`seqlz_code_literals()`: it prices the literals in all 8 literal tables, takes the cheapest, at level 3 also
-builds a table of the page's own where that promises to save more, decides whether coding them saves
-enough, and if so rewrites `dst` in place. Level 3 first stores the literals as deltas to earlier
-bytes of the page where that looks cheaper, in `seqlz_delta_literals()`, and `seqlz_code_own()` codes the deltas. The
-sequences' bitstream does not change; it only moves down behind the coded literals. This chapter is
-lines 323 to 489 and 546 to 1152 of `src/seqlz_compress.c` and `seqlz_code_own()`, in the order
-`seqlz_code_literals()` uses the helpers rather than file order. The format is in
+`seqlz_code_literals()`, at level 3 `seqlz_code_own()`, and both call `code_literals()`: it prices the
+literals in all 8 literal tables, takes the cheapest, at level 3 also builds a table of the page's own
+where that promises to save more, decides whether coding them saves enough, and if so rewrites `dst`
+in place. Level 3 first stores the literals as deltas to earlier bytes of the page where that looks
+cheaper, in `seqlz_delta_literals()`, and `seqlz_code_own()` codes the deltas. The sequences' bitstream
+does not change; it only moves down behind the coded literals. This chapter is all of
+`src/seqlz_compress_literals.c`, in the order `code_literals()` uses the helpers rather than file
+order; the four functions without `static` are what `seqlz_compress.c` calls. The format is in
 [chapter 4](#ch-format--layout), the tables and `lit_cost` in [chapter 7](#ch-internal--lit-cost), the
 decoder's side in [chapter 13](#ch-literals-dec).
 
-## What seqlz_code_literals() does to dst {#ch-literals-enc--overview}
+## What code_literals() does to dst {#ch-literals-enc--overview}
 
 @listing src/seqlz_compress_literals.c 1-7
-@listing src/seqlz_compress_literals.c 667-712
+@listing src/seqlz_compress_literals.c 667-710
 
 The coded literals go where the raw ones were, so the raw literals are read from a copy. The callers
-bring it differently: `seqlz_compress()` at level 2 passes `raw = NULL` and `spare = st->literals`, the
-per-CPU matcher's hash table, which is garbage once the matcher is done; `seqlz_encode()` has the
-caller's literals and passes them as `raw`. At level 3 with deltas, `seqlz_code_own()` passes as `raw` the
+bring it differently, through `seqlz_code_literals()`: `seqlz_compress()` at level 2 passes
+`raw = NULL` and `spare = st->literals`, the per-CPU matcher's hash table, which is garbage once the
+matcher is done; `seqlz_encode()` has the caller's literals and passes them as `raw`. At level 3 with deltas, `seqlz_code_own()` passes as `raw` the
 deltas that `seqlz_delta_literals()` wrote into the matcher's state, and which delta in `delta`; those are
 the literals that get priced and coded, so `literals` is `raw` where there is one, while `d` still
 holds them as they are. So `d` needs no room beyond `len`. `delta_byte` is 1 with a delta and 0
@@ -40,7 +41,7 @@ the letters and the first zero, and one match that copies the zero byte to the e
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 280" font-size="12" role="img" aria-label="dst before and after seqlz_code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
+<svg viewBox="0 0 720 280" font-size="12" role="img" aria-label="dst before and after code_literals(): the raw literals are copied into the matcher's table, the coded streams are written over their old place, and the bitstream moves down behind them">
   <text x="20" y="22">dst after compress_block(): {{letters.len}} bytes, raw literals</text>
   <rect x="20" y="30" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="50" text-anchor="middle">{{ch11.raw.u16}}</text>
@@ -72,7 +73,7 @@ the letters and the first zero, and one match that copies the zero byte to the e
     <text x="536" y="130">memmove()</text>
   </g>
 
-  <text x="20" y="194">dst after seqlz_code_literals(): {{letters.coded.len}} bytes</text>
+  <text x="20" y="194">dst after code_literals(): {{letters.coded.len}} bytes</text>
   <rect x="20" y="200" width="60" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="50" y="220" text-anchor="middle">{{ch11.u16}}</text>
   <rect x="80" y="200" width="30" height="30" class="fill-sheet" stroke="currentColor"/>
@@ -118,7 +119,7 @@ the letters and the first zero, and one match that copies the zero byte to the e
   <text x="450" y="262" text-anchor="middle">q[8]</text>
 </svg>
 </div>
-<figcaption>One page in dst before and after seqlz_code_literals(), not to scale: the raw literals are copied out, the 8 streams are written over their old place, and the bitstream moves down.</figcaption>
+<figcaption>One page in dst before and after code_literals(), not to scale: the raw literals are copied out, the 8 streams are written over their old place, and the bitstream moves down.</figcaption>
 </figure>
 
 The offsets under the second row are `q[0]` to `q[8]` for this page, from `d`. Bytes
@@ -130,9 +131,9 @@ For every stream and every literal table, `lit_cost()` sums how many bits the st
 The obvious loops are 8 loads and 8 adds per literal; the first version in the project, a histogram
 followed by 8 times 256 products, cost 1400 ns on pages with few literals
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
-`t->lit_cost[b]` has byte `b`'s code length in table $j$ in byte lane $j$, so one 64-bit add sums all 8
-tables, SWAR ([chapter 3](#ch-cpu--swar)); the kernel may not use the vector registers here.
-`LIT_COST_WORDS` is 1 with 8 tables, so read `[w]` as `[0]`.
+`seqlz_tables.lit_cost[b]` has byte `b`'s code length in table $j$ in byte lane $j$, so one 64-bit
+add sums all 8 tables, SWAR ([chapter 3](#ch-cpu--swar)); the kernel may not use the vector registers
+here.
 
 @listing src/seqlz_compress_literals.c 238-275
 
@@ -148,10 +149,10 @@ userspace on the Mi 9T's Cortex-A76, on 15th October 2026
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 
 The adds go into the 8-bit lanes of `x`, 25 literals per stream, `LIT_COST_RUN`: 25 codes of at most
-10 bits sum to at most 250, a 26th could overflow into the next lane. Then each stream's 8 byte lanes
-are widened into the 16-bit lanes of `even`, tables 0, 2, 4 and 6, and `odd`, tables 1, 3, 5 and 7:
-`x & lanes` keeps bytes 0, 2, 4 and 6 in place, `x >> 8 & lanes` moves the other four down by a byte
-first. The chunks are 200 literals, a multiple of 8, so `k` is a multiple of 8 in the first inner
+10 bits sum to at most 250, a 26th could overflow into the next lane. Then `lanes_spill()` widens
+each stream's 8 byte lanes into the 16-bit lanes of `even`, tables 0, 2, 4 and 6, and `odd`, tables 1,
+3, 5 and 7: `x & lanes` keeps bytes 0, 2, 4 and 6 in place, `x >> 8 & lanes` moves the other four down
+by a byte first ([below](#ch-literals-enc--deltas), with `seqlz_delta_literals()`, its other user). The chunks are 200 literals, a multiple of 8, so `k` is a multiple of 8 in the first inner
 loop and literal `k + j` is stream `j`; only the last chunk takes a rest one literal at a time. A
 16-bit lane holds the {{ch11.stream_bits}} bits of a stream at most, {{k16.ch11.stream_bits}} on 16 KiB
 pages.
@@ -180,7 +181,7 @@ literals in chunks of 25:
 @anim pricing The sums of stream 0 of chapter 16's page in x[0], one add per literal, and their move into the 16-bit lanes of even[0] and odd[0] after each chunk; or, as a choice, the same adds in 8-bit lanes only. Code lengths, literals and the sums of all 8 streams come from the real tables and lit_cost().
 
 One sum per page would do to choose the table. The 8 sums per table are for after the choice: each
-stream is rounded up to whole bytes on its own, and `seqlz_code_literals()` needs all 8 sizes before it
+stream is rounded up to whole bytes on its own, and `code_literals()` needs all 8 sizes before it
 writes the first stream, since stream 1 starts where stream 0 ends. So the sizes fall out of the
 pricing, and no second pass over the literals is needed.
 
@@ -201,15 +202,15 @@ too ([below](#ch-literals-enc--deltas)); the comment's last sentence names both 
 
 @listing src/seqlz_compress_literals.c 17-27
 
-`even` and `odd` have one row per sum, `j`, of `LIT_COST_WORDS` words. Odd tables are in `odd`, `k / 8`
-is the word, always 0 with 8 tables, and `k % 8 / 2` is the 16-bit lane: tables 0 and 1 in lane 0, 2
-and 3 in lane 1, and so on. For `k = 5` and stream 0, `odd[0][0]` shifted right by 32 is
+`even` and `odd` have one word per sum, `j`. Odd tables are in `odd`, and `k / 2` is the 16-bit
+lane: tables 0 and 1 in lane 0, 2 and 3 in lane 1, and so on. For `k = 5` and stream 0, `odd[0]`
+shifted right by 32 is
 `{{ch11.odd32}}`, and `& 0xffff` gives `0x{{ch11.sum.5.hex}} = {{ch11.sum.5.dec}}`, table 5's sum in
 the example above.
 
 ## The table with the fewest bits, and the 8 sizes {#ch-literals-enc--choice}
 
-@listing src/seqlz_compress_literals.c 713-727
+@listing src/seqlz_compress_literals.c 711-725
 
 A tie keeps the lower table number, which matters only to the encoder; the decoder takes whatever
 byte 2 names. The choice compares bits, not bytes, so a table with fewer bits can take a few bytes
@@ -217,14 +218,14 @@ more after the 8 sizes are rounded up; the code does not look for that case.
 
 ## The width of a size, from one count of leading zeros {#ch-literals-enc--width}
 
-@listing src/seqlz_compress_literals.c 728-730
+@listing src/seqlz_compress_literals.c 726-728
 
 With deltas, the byte that says which comes before the sizes, and `header` counts it, `delta_byte`.
 
 @listing src/seqlz_compress_literals.c 654-665
 
 `size_width()` is called twice at level 3, for the fixed table's sizes and for the page's own; it
-comes from the file's part before `seqlz_code_literals()`. `all`, the OR of the sizes, has the highest set bit
+comes from the file's part before `code_literals()`. `all`, the OR of the sizes, has the highest set bit
 of the largest one, which is all the width needs, without a compare per stream. Setting bit 4 makes
 the width at least 5, `SEQLZ_SIZE_BITS_MIN`, without a compare, and keeps `all` from being 0, for
 which `__builtin_clz()` is undefined. `32 - clz` is then the bit width:
@@ -244,14 +245,14 @@ of the pages, the mean of two dumps, so the header is now mostly 9 to 11 bytes
 
 `enc` holds the fixed table's codes so far. At level 3 a table of the page's own may take its place:
 Huffman-like code lengths for exactly the bytes this page has, sent in front of the streams
-([chapter 4](#ch-format--own)). This section follows `seqlz_code_literals()` through it on the text page of
+([chapter 4](#ch-format--own)). This section follows `code_literals()` through it on the text page of
 chapter 4, {{own.enc.n_lit}} literals of 12 letters and the space, whose best fixed table is table
 {{own.enc.set}}, at {{own.enc.set_bits_per_lit}} bits per literal.
 @assert own.enc.set == ch04.text.set and own.enc.n_lit == ch04.text.n
 
 ### Which pages get one
 
-@listing src/seqlz_compress_literals.c 731-750
+@listing src/seqlz_compress_literals.c 729-748
 
 `own_code()` gets `header + coded`, what the fixed table costs, as `limit`, and returns the bytes of
 the table's description, or 0 where it does not pay. Two checks decide, the first one cheap and at
@@ -269,7 +270,7 @@ table:
 
 So the page takes its own table: header, description and streams are {{own.enc.total}} bytes instead of
 {{own.enc.fixed_total}}. `desc`, `width`, `header`, `coded`, `sizes` and `enc` change over to it, and the
-rest of `seqlz_code_literals()` writes the page as for a fixed table, with the description in the header,
+rest of `code_literals()` writes the page as for a fixed table, with the description in the header,
 behind the sizes, which come behind the delta's byte if there is one. With deltas, `header` on the
 right side of the second check counts that byte, so the left side adds `delta_byte` too: both tables need it, it cancels out, and the
 page's own table has to save the same 16 bytes as without deltas.
@@ -294,7 +295,7 @@ mask its index, and 8 more for its last 8-byte store.
 
 ### own_code(): which bytes, and what the entropy promises
 
-@listing src/seqlz_compress_literals.c 505-541
+@listing src/seqlz_compress_literals.c 505-539
 
 `w->freq[0]` and `w->freq[1]` are the even and the odd literals' counts, and this loop adds them, 4
 bytes at a time: `own_lanes()` loads 4 counts as the 16-bit lanes of a `u64`, one add sums 4 pairs,
@@ -355,7 +356,7 @@ A Huffman code gets the code lengths right, but it needs the bytes sorted by cou
 comment's way is cheaper: start with lengths that are about right, then repair them in an order that
 a counting sort gives.
 
-@listing src/seqlz_compress_literals.c 402-445
+@listing src/seqlz_compress_literals.c 402-443
 
 A byte that is a fraction $p = f / n$ of the literals would ideally get $-\log_2 p$ bits. The first
 loop gives it the shortest `l` with $f \cdot 2^l \ge n$, which is $\lceil -\log_2 p \rceil$: the count
@@ -386,7 +387,7 @@ For the space, `clz({{own.enc.b.20.freq}}) - clz({{own.enc.n_lit}})` is ${{own.e
 and ${{own.enc.b.20.freq}} \cdot 4 < {{own.enc.n_lit}}$ makes it {{own.enc.b.20.l0}}. The 13 first lengths, one of 3 bits and 12 of 4, fill {{own.enc.space0}} of the 1024
 units of a 10-bit code space: {{own.enc.room0}} are left.
 
-@listing src/seqlz_compress_literals.c 446-467
+@listing src/seqlz_compress_literals.c 444-467
 
 An overfull code gets longer codes from bucket 0 up: lengthening a byte frees the least room where it
 costs the fewest bits per room. Room left is handed out from the top bucket down, while a byte's
@@ -420,7 +421,7 @@ with the `nb - 1` bits below the run's top bit, one put: for the run of 32 befor
 the code `{{own.code.15}}` and `00000`. At the end the bits left in `acc` go out as whole bytes, the
 last one filled with zeros. On the text page that is {{own.enc.d}} bytes, the ones
 [chapter 4](#ch-format--own) reads symbol by symbol. The last lines are the first check of
-`seqlz_code_literals()` above, with these bytes and `bits`: the text page passes it with
+`code_literals()` above, with these bytes and `bits`: the text page passes it with
 {{own.enc.first_lhs}} bytes against {{own.enc.limit}}.
 @assert own.enc.d == own.text.dbytes
 
@@ -453,7 +454,7 @@ codes a page's literals in the fewest bits is a question of the same kind as whi
 and `seqlz_delta_literals()` answers it the same way, with the sums of `lit_cost` of
 [above](#ch-literals-enc--pricing): four sums, the literals as they are and with each delta, in all 8
 fixed tables at once. It runs once the page is matched, on the records that `encode_seq()` wrote in
-front of each sequence's literals ([chapter 10](#ch-encoder--records)), and before `seqlz_code_literals()`.
+front of each sequence's literals ([chapter 10](#ch-encoder--records)), and before `code_literals()`.
 The page of pointers of [chapter 9](#ch-matcher--back) is the example: its {{delta.ptr.n_lit}}
 literals at level 3 are mostly the low byte of a pointer right after a match at offset 8.
 
@@ -466,21 +467,19 @@ pages 1.0 byte larger than every 5th on ten samples of 20 000 pages, because in 
 every 4th literal of a sequence is the same byte of each field, so the sample saw the same bytes of
 every field and missed the others
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept),
-21st October 2026). The `static_assert` is for the code below, which adds one word of `lit_cost` per
-literal and would miss tables if there were more than 8.
+21st October 2026).
 
-`lit_bits()` comes next in the file; it is explained where `seqlz_code_literals()` uses it
+`lit_bits()` comes next in the file; it is explained where `code_literals()` uses it
 ([above](#ch-literals-enc--lit-bits)).
 
 @listing src/seqlz_compress_literals.c 29-51
 
-This is `lit_cost()`'s second step with one sum per choice instead of one per stream: `delta_spill()`
-moves 8 lanes of 8 bits into 4 lanes of 16 bits in `even` and 4 in `odd`, with the mask
-`0x00ff00ff00ff00ff`. `even` and `odd` are `[4][LIT_COST_WORDS]`, the layout of `seqlz_code_literals()`'s
-with a row per choice where that has a row per stream, so `lit_bits()` reads table `k`'s sum out of
-them; with one word, as the `static_assert` makes sure, the spill adds into word 0. `s` and the rows
-of `even` and `odd` are indexed by the delta's value: 0 is none, `SEQLZ_DELTA_4`, `SEQLZ_DELTA_8` and
-`SEQLZ_DELTA_LAST` are 1 to 3.
+`lanes_spill()` is `lit_cost()`'s second step: it moves 8 lanes of 8 bits into 4 lanes of 16 bits in
+`even` and 4 in `odd`, with the mask `0x00ff00ff00ff00ff`. `delta_spill()` does that for one sum per
+choice instead of one per stream. `even` and `odd` are `[4]`, the layout of `code_literals()`'s with a
+word per choice where that has a word per stream, so `lit_bits()` reads table `k`'s sum out of them.
+`s` and the words of `even` and `odd` are indexed by the delta's value: 0 is none, `SEQLZ_DELTA_4`,
+`SEQLZ_DELTA_8` and `SEQLZ_DELTA_LAST` are 1 to 3.
 
 @listing src/seqlz_compress_literals.c 64-83
 
@@ -491,7 +490,7 @@ makes: the delta is chosen by the fixed tables, also for a page that then gets a
 `sub_bytes()`, which comes before it in the file, is explained where it is used,
 [further down](#ch-literals-enc--sub-bytes).
 
-@listing src/seqlz_compress_literals.c 84-116
+@listing src/seqlz_compress_literals.c 85-114
 
 The loop walks the records: `p` is a record, `p + LIT_REC` its literals, and the next record follows
 them. For each priced literal at position `at` it loads the byte, and the byte each delta would be
@@ -508,7 +507,7 @@ the page's literals, not of each sequence, where a sequence of 1 literal would b
 The page of pointers has {{delta.ptr.sampled}} priced literals of {{delta.ptr.n_lit}}.
 @assert delta.ptr.sampled == (delta.ptr.n_lit + delta.step - 1) // delta.step
 
-@listing src/seqlz_compress_literals.c 117-127
+@listing src/seqlz_compress_literals.c 115-125
 
 The cheapest of 4 times 8 sums wins, each read with `lit_bits()`, choice `x` in table `k`. A delta
 costs its byte in the header, 8 bits, and the sums count every {{delta.step}}th literal only, so the
@@ -530,7 +529,7 @@ fixed tables underrate the deltas: the deltas are
 few bits, and the page's own table then takes the page from {{delta.ptr.l3plain.len}} bytes without
 deltas to {{delta.ptr.l3.len}} with them ([chapter 6](#ch-header--literals)).
 
-@listing src/seqlz_compress_literals.c 128-152
+@listing src/seqlz_compress_literals.c 126-150
 
 The second pass goes over the records again. The comment is the argument for the word copies below,
 which write up to 7 bytes past a sequence's last literal, to `out + n_lit + 6` at most: those bytes
@@ -543,7 +542,7 @@ copies, while `in`, `pin`, `n_lit`, `at` and `dist` keep the current one. Past t
 bytes written reach at most the first byte past the old end of the literals, inside the room the
 encoder's check left before `p` ([chapter 10](#ch-encoder--emit)).
 
-@listing src/seqlz_compress_literals.c 153-158
+@listing src/seqlz_compress_literals.c 151-156
 
 The copy moves each sequence's literals down by the {{delta.rec}} bytes of every record so far, 8 bytes
 at a time with no tail loop: up to 7 bytes past the last literal are written, and the next sequence's
@@ -589,7 +588,7 @@ Compiled for arm64 by clang with `-O2`, `sub_bytes()` is 7 instructions where th
 masks as immediates of `orr`, `and` and `eor`. The decoder's `add4()` and `add8()` are the same trick
 for an addition ([chapter 13](#ch-literals-dec--undelta)).
 
-@listing src/seqlz_compress_literals.c 159-182
+@listing src/seqlz_compress_literals.c 157-182
 
 `x` is the distance of the delta, 4, 8 or the `dist` of the record, and `j` the number of literals at
 the start of the sequence that stay as they are: those whose position is below `x`, which only a
@@ -623,15 +622,23 @@ up by one. Of the page's {{delta.ptr.n_lit}} literals, {{delta.ptr.xor.h.10}} XO
 
 @listing src/seqlz_compress_literals.c 795-821
 
-`seqlz_code_own()` is level 3's call of `seqlz_code_literals()`. With a delta it codes the deltas in the matcher's
-state, as `raw`, with no `spare`, since that copy is the one it reads. If the deltas stay raw, the page
-is still unchanged, `n == len`, and the plain literals in `dst` get their own try: `spare` is the
-matcher's state again, and the plain literals are copied over the deltas there. So a page never stores
-deltas as raw literals; the format would not allow them, as only coded literals have a byte 2.
+`seqlz_code_own()` is level 3's call of `code_literals()`, with `own_work()` for a table of the
+page's own. With a delta it codes the deltas in the matcher's state, as `raw`, with no `spare`, since
+that copy is the one it reads. If the deltas stay raw, the page is still unchanged, `n == len`, and the
+plain literals in `dst` get their own try: `spare` is the matcher's state again, and the plain
+literals are copied over the deltas there. So a page never stores deltas as raw literals; the format
+would not allow them, as only coded literals have a byte 2.
+
+`seqlz_code_literals()` is the call below level 3, with no table of the page's own and no delta.
+`code_literals()` is `static`, so that the compiler can build it for the constants of each call and
+drop what that caller never needs, as for the two copies of the matcher
+([chapter 10](#ch-encoder--find)). Until 22nd October 2026 the coder was in `seqlz_compress.c`, a
+`static` function next to its callers; the two ways in keep that now that the callers are in another
+file.
 
 ## Coded only where it saves 1/16 of the literals and {{ch11.coded_min}} bytes {#ch-literals-enc--rule}
 
-@listing src/seqlz_compress_literals.c 751-752
+@listing src/seqlz_compress_literals.c 749-750
 
 The page with raw literals has `2 + n` bytes before the bitstream, the coded one `3 + w + e + desc +
 coded`, with `e` 1 with deltas, else 0, and `desc` 0 for a fixed table. If the rule holds, the page
@@ -675,7 +682,7 @@ So the rule kept the old 19 bytes as its constant, which today's {{ch11.coded_mi
 
 ## Writing over the raw literals, safely {#ch-literals-enc--in-place}
 
-@listing src/seqlz_compress_literals.c 753-763
+@listing src/seqlz_compress_literals.c 751-761
 
 `memcpy()` returns its first argument, so with `raw == NULL` the line copies the raw literals into
 `spare` and points `literals` there; pages that stay raw are never copied. With deltas, `raw` is the
@@ -712,7 +719,7 @@ checked on 80 000 desktop and phone pages
 
 ## Four streams at a time: lit_streams() {#ch-literals-enc--streams}
 
-@listing src/seqlz_compress_literals.c 277-300
+@listing src/seqlz_compress_literals.c 277-298
 
 Appending a code is `acc = acc << len | code`, and the next code of the same stream needs the result:
 one stream is one chain where every step waits for the one before. Written one stream after the
@@ -728,15 +735,15 @@ twice" wrote a page in 7590 ns at p50 and 12 030 ns at p99 on a desktop's zram p
 12 030 ns with the 4 streams of the format before in one loop
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
 
-### Blocks of 32 literals
+### Runs of 32 literals
 
-@listing src/seqlz_compress_literals.c 301-317
+@listing src/seqlz_compress_literals.c 299-315
 
-A block is 32 literals of the page, 4 for each stream of this half: for `half = 0` and `k = 0`, stream
-0 gets literals 0, 8, 16 and 24, stream 1 gets 1, 9, 17 and 25; for `half = 4`, `k` starts at 4. 4
-codes of at most 10 bits and 7 bits left over are 47 bits, which fit; 5 would fit too, $7 + 50 = 57$,
-and the repository does not say why 4. The highest literal of a block is `k + 27`, and the condition
-asks for one more, so after the loop each stream of this half has at most 4 literals left, which fit
+A run is `run`, 32 literals of the page, 4 for each stream of this half: for `half = 0` and `k = 0`,
+stream 0 gets literals 0, 8, 16 and 24, stream 1 gets 1, 9, 17 and 25; for `half = 4`, `k` starts at
+4. 4 codes of at most 10 bits and 7 bits left over are 47 bits, which fit; 5 would fit too,
+$7 + 50 = 57$, and the repository does not say why 4. The highest literal of a run is `k + 27`, and the
+condition `k + run - 4 < n_literals` asks for one more, so after the loop each stream of this half has at most 4 literals left, which fit
 without a flush.
 
 ### lit_put(): one code into an accumulator
@@ -773,7 +780,7 @@ the next stream. A partial last byte is written again by the next flush.
 
 ::: why One byte swap before the branch
 The obvious form is `put_unaligned_be64()` in the first branch and a big-endian byte loop in the
-second. On arm64, swapping the bytes inside both branches gave `seqlz_code_literals()` other machine
+second. On arm64, swapping the bytes inside both branches gave the coder other machine
 code, so the code swaps once, in a register, before the branch, and both branches store the
 same `w` (commit `9d64639`). On a big-endian machine `put_unaligned_le64()` swaps the bytes itself, so
 the bytes in memory are the same on every machine; CI checks that on s390x.
@@ -804,11 +811,11 @@ exactly at `e`, and the bits after the last code are the zeros of the shift, as 
 
 ### The tail: at most 4 literals per stream, one switch
 
-@listing src/seqlz_compress_literals.c 318-345
+@listing src/seqlz_compress_literals.c 316-345
 
 Cases 0 and 4 both go to `a0`, which is stream 0 for `half = 0` and stream 4 for `half = 4`, so one
 switch serves both halves. After this half's 4th literal of a group of 8, `k += 4` skips the other
-half's 4. For `half = 0` and the example's `n = {{ch11.n}}`, the blocks end at `k = {{ch11.tail0}}`,
+half's 4. For `half = 0` and the example's `n = {{ch11.n}}`, the runs end at `k = {{ch11.tail0}}`,
 and the tail takes:
 
 ```text
@@ -827,7 +834,7 @@ skip makes `k` {{ch11.tr4.jump}}, past the end, where the loop condition stops i
 
 ## The header: u16, byte 2 and the sizes {#ch-literals-enc--header}
 
-@listing src/seqlz_compress_literals.c 763-776
+@listing src/seqlz_compress_literals.c 762-776
 
 The u16 gets `SEQLZ_LIT_CODED`: {{ch11.n}} literals are `{{ch11.u16hex}}`, the bytes `{{ch11.u16}}`.
 Byte 2 is the literals' code in bits 0 to 3, `width - 5` in bits 4 to 6, and in bit 7 whether they are
@@ -954,14 +961,14 @@ With {{ch11.lraw}} letters instead of 200 the literals stay raw, with one more t
 
 ## What writing the literals costs {#ch-literals-enc--cost}
 
-The pricing is cheap, writing the streams is not. On the Cortex-A55, `seqlz_code_literals()` takes about
+The pricing is cheap, writing the streams is not. On the Cortex-A55, `code_literals()` takes about
 5400 cycles, 3 µs, per page in the hot loop of the userspace benchmark: `seqlz-2` compresses a
 page in 47 640 cycles, `seqlz-1` in 42 241. Most pages pay part of that even when they stay raw:
 in that sample 14 582 of 19 387 pages kept their raw literals, about 404 each, all priced in all 8
 tables first. Pricing only every 8th literal first, to send hopeless pages back early, made
 compression slower, because the literals of most raw pages come close to paying
 ([item 8 of "Six choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#8-coded-literals-on-the-a55-78-instructions-per-literal-at-one-per-cycle)).
-This is where `seqlz-1`, which never calls `seqlz_code_literals()`, gains on the phone: in an earlier
+This is where `seqlz-1`, which never calls `code_literals()`, gains on the phone: in an earlier
 measurement on the Mi 9T's little core, `seqlz-2` stored 55 bytes per page less and took
 4.2 µs more per page written, with 0.34 reads per write
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-second-phone-dump-after-12-hours-of-use-seqlz-fast-reads-faster-than-lzo-rle-at-p99)).
