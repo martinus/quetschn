@@ -1,10 +1,12 @@
 # The decoder's tools: prefetches, copies and a bit reader {#ch-dec-basics}
 
-`src/seqlz_decompress.c` is the decoder, {{ch12.lines}} lines. Its first 249 lines, this chapter, are
-what every decoder of an LZ format needs in some form: a prefetch of the tables, copies of 8 and 16
-bytes, a copy for the literals, one for matches that overlap the bytes they write, and a reader for the
-bitstream. Lines 251 to 433 decode the coded literals ([chapter 13](#ch-literals-dec)), the rest is
-`seqlz_decode()`, the loop over the sequences of a page ([chapter 14](#ch-decode)).
+`src/seqlz_decompress.c` is the decoder, {{ch12.lines}} lines. Its first 213 lines, this chapter, are
+what every decoder of an LZ format needs in some form: copies of 8 and 16 bytes, a copy for the
+literals, one for matches that overlap the bytes they write, and a reader for the bitstream; the
+prefetch of the tables is in `seqlz_internal.h`, which the decoder of the coded literals uses too.
+Lines 215 to 300 turn deltas back into literals ([chapter 13](#ch-literals-dec--undelta)), the rest is
+`seqlz_decode()`, the loop over the sequences of a page ([chapter 14](#ch-decode)). The coded literals
+are decoded in a file of their own, `seqlz_decompress_literals.c` ([chapter 13](#ch-literals-dec)).
 
 @listing src/seqlz_decompress.c 1-5
 
@@ -204,7 +206,7 @@ and the slowest 1% of pages took 5700 ns, where `lz4` took 500
 `off & 7U` changes nothing, `off` is below 8 here. It is left from the older
 `step = off >= 8 ? 8U : repeat_step[off & 7U]`, which commit `b163902` moved into this branch. With
 fewer than 8 bytes left in the page, the byte loop at the end copies all of the match. The comment on
-lines 146 to 149 bounds the load of `repeat_pattern()`: it reads up to `d - off + 7`, at most `d + 6`,
+lines 111 to 114 bounds the load of `repeat_pattern()`: it reads up to `d - off + 7`, at most `d + 6`,
 inside the page also when the page is nearly full. For `off = 3, len = 20` the stores are at `k = 0, 6,
 12, 18`, as in the figure. For the example page's match of [chapter 4](#ch-format--example),
 `off = 2, len = 4094`, the loop stops at `k = 4088`, where 8 more bytes would not fit, and the byte loop
@@ -339,7 +341,7 @@ The match length value of the example page, with the 4 KiB tables: after the esc
 12 bits and the offset, {{ch12.ab.tokdrop}} bits, the register is `{{ch12.ab.bits2}}` with
 `count = {{ch12.ab.count2}}`.
 
-- The index is the top 8 bits, {{ch12.ab.idx}}, and `t->ml.decode[{{ch12.ab.idx}}]` is `{{ch12.ab.entry}}`.
+- The index is the top 8 bits, {{ch12.ab.idx}}, and with `t` the `ml` table, `t->decode[{{ch12.ab.idx}}]` is `{{ch12.ab.entry}}`.
 - `n = {{ch12.ab.n}}`: the code `{{ch12.ab.code}}`, symbol {{ch12.ab.sym}}. `x = {{ch12.ab.x}}`, and the
   base is {{ch12.ab.base}}, $2^{ {{ch12.ab.x}} }$.
 - `bits << {{ch12.ab.n}}` is `{{ch12.ab.shl}}`, `>> 1` is `{{ch12.ab.shr1}}`, `>> {{ch12.ab.shr2}}` is
@@ -350,11 +352,11 @@ The match length value of the example page, with the 4 KiB tables: after the esc
 
 `seqlz_decode()` adds the token's {{ch12.ml_tok}}, and the match is {{ch12.ab.match}} bytes, as the
 format's example says. A direct symbol: the code `{{ch12.ml0.code}}` gives
-`t->ml.decode[{{ch12.ml0.index}}] = {{ch12.ml0.entry}}`, `n = {{ch12.ml0.n}}`, `x = 0`, and the value
+`t->decode[{{ch12.ml0.index}}] = {{ch12.ml0.entry}}`, `n = {{ch12.ml0.n}}`, `x = 0`, and the value
 {{ch12.ml0.base}}, the shift by 63 gives 0 for the extra bits.
 @assert ch12.ml0.x == 0 and ml.code[ch12.ml0.base] == ch12.ml0.code and ch12.ab.match == 4094
 
-The comment's bound, `SEQLZ_MAX_BITS + QUETSCHN_PAGE_BITS`, 20 or 22 bits, has a bit to spare: a code
+The comment's bound, `SEQLZ_MAX_BITS + SEQLZ_BLOCK_BITS`, 20 or 22 bits, has a bit to spare: a code
 has at most 8 bits, a value at most {{ch10.len_extra_max}} extra bits with 4 KiB pages and
 {{k16.ch10.len_extra_max}} with 16 KiB pages, and the caller refills before, which leaves at least 56.
 The largest base, {{k16.ch12.base_max|grp}} with 16 KiB pages, fits the entry's 16 bits.

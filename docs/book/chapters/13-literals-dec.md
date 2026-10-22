@@ -325,9 +325,10 @@ reads 2.9% slower on the A76 and 1.0% on the A55, for pages 0.5% smaller
 @listing src/seqlz_decompress_literals.c 227-237
 
 `n_lit` is the page's u16 without the `SEQLZ_LIT_CODED` bit. `*delta` gets which delta level 3's
-literals are, which the loop over the sequences turns back into literals ([below](#ch-literals-dec--undelta)). A static function with one caller is
-normally inlined; inlined, the 8 streams competed for registers with the loop over the sequences, and
-made pages with raw literals slower too, 12% when the comment still had a number on 7th October 2026,
+literals are, which the loop over the sequences turns back into literals ([below](#ch-literals-dec--undelta)).
+The function is in another file than its one caller, `decode_block()`; `noinline` still matters for a
+kernel built with link-time optimization, which can inline across files. Inlined, the 8 streams
+competed for registers with the loop over the sequences, and made pages with raw literals slower too, 12% when the comment still had a number on 7th October 2026,
 with a setup that is not recorded. Until 10th October the function was also aligned to 64 bytes; measured
 again, that made less than 0.02 µs of difference in the kernel VM, and it was removed (commit `bad6224`).
 
@@ -356,11 +357,11 @@ pass. Without deltas, `*delta` is 0 and the page's byte 3 is the first byte of t
 @listing src/seqlz_decompress_literals.c 269-291
 
 Code 8 builds the page's own table
-([above](#ch-literals-dec--own)) into `page`, the output page that `seqlz_decode()` passes down for
+([above](#ch-literals-dec--own)) into `block`, the output page that `seqlz_decode()` passes down for
 this, from its first even address: the table is read as `u16`, and a caller may decode into a page at
 an odd address, which zram does not, but a test does. Then `q`, the start of the streams, moves behind
 the table's description. The codes 0 to 7 are a
-fixed table; `& (SEQLZ_LIT_SETS - 1U)` changes none of them and keeps the index inside `t->lit[]`
+fixed table; `& (SEQLZ_LIT_SETS - 1U)` changes none of them and keeps the index inside `seqlz_tables.lit[]`
 whatever the value. The prefetch of the 2 KiB table goes out before the sizes are read, so its misses
 overlap with that work; the table never starts a line, so it covers {{ch13.lt.lines}} lines, the last
 one asked for by the prefetch of `end - 1` ([chapter 12](#ch-dec-basics--prefetch)). The sizes are
@@ -411,8 +412,8 @@ The literals of a page with deltas come out of `seqlz_decode_literals()` still a
 They can only be turned back into literals in the page: each is a delta to an earlier byte of the page,
 which may be a byte of a match or of another sequence's literals, and that byte has to be the page's own
 when the literal is restored. So the loop over the sequences restores each sequence's literals right
-after it copied them, before the match after them ([chapter 14](#ch-decode--deltas)), with the helpers
-that follow `seqlz_decode_literals()` in the file.
+after it copied them, before the match after them ([chapter 14](#ch-decode--deltas)), with helpers in
+`seqlz_decompress.c`, right before that loop.
 
 @listing src/seqlz_decompress.c 215-234
 
@@ -448,9 +449,9 @@ distance of 8 or more.
 
 @listing src/seqlz_decompress.c 236-275
 
-`undelta_literals()` restores the `nl` literals at `d`, `at` bytes into the page. `dist` is the delta's
-distance, 4, 8, or the offset of the sequence before as `seqlz_delta_last()` makes it, at least 4
-([chapter 7](#ch-internal--byte2)). `k` is the first literal that is a delta, by the one rule of the
+`delta_dist()` is the delta's distance, 4, 8, or the offset of the sequence before as
+`seqlz_delta_last()` makes it, at least 4 ([chapter 7](#ch-internal--byte2)); both restoring functions
+start with it. `undelta_literals()` restores the `nl` literals at `d`, `at` bytes into the page. `k` is the first literal that is a delta, by the one rule of the
 format ([chapter 4](#ch-format--deltas)), the same for all three: 0, the sequence's first literal,
 when the sequence starts `dist` or more bytes into the page, else `dist - at`, as the literals before
 byte `dist` have no byte to be a delta to. Then whole words, 8 bytes for a distance of 8 or more, else
