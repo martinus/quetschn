@@ -264,11 +264,26 @@ std::vector<unsigned char> with_bit_flipped(std::vector<unsigned char> c, std::s
 }
 
 // Pages whose literals level 3 codes as deltas: fields of 4 bytes whose 3 high bytes every second field repeats from
-// the one before (SEQLZ_DELTA_4 or SEQLZ_DELTA_LAST), or records of 16 bytes, each the one before with a bit
-// flipped here and there, which leaves literals next to matches 16 bytes back (SEQLZ_DELTA_LAST).
+// the one before (SEQLZ_DELTA_4 or SEQLZ_DELTA_LAST); records of 16 bytes, each the one before with a bit flipped
+// here and there, which leaves literals next to matches 16 bytes back (SEQLZ_DELTA_LAST); or runs of a 3-byte
+// pattern, matches of offset 3, each followed by 8 bytes a little above the byte 6 before them (SEQLZ_DELTA_LAST
+// with the last offset 3, which counts as 6).
 std::vector<unsigned char> delta_page(std::mt19937_64& rng, int kind) {
     auto p = std::vector<unsigned char>(SEQLZ_PAGE);
-    if (kind % 2 == 0) {
+    if (kind % 3 == 2) {
+        for (std::size_t k = 0; k < p.size();) {
+            auto const pattern = std::array<unsigned char, 3>{
+                static_cast<unsigned char>(rng()), static_cast<unsigned char>(rng()), static_cast<unsigned char>(rng())};
+            for (int i = 0; i < 12 && k < p.size(); ++i, ++k) {
+                p[k] = pattern[static_cast<std::size_t>(i % 3)];
+            }
+            for (int i = 0; i < 8 && k < p.size(); ++i, ++k) {
+                p[k] = static_cast<unsigned char>(p[k - 6] + 1 + rng() % 3);
+            }
+        }
+        return p;
+    }
+    if (kind % 3 == 0) {
         auto high = std::array<unsigned char, 3>{};
         for (std::size_t k = 0; k < p.size(); k += 4) {
             if (k % 8 == 0) {
@@ -297,6 +312,7 @@ TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and
     auto const r = make_ref();
     auto rng = std::mt19937_64(53);
     auto deltas = std::array<int, 4>{};
+    auto last3 = 0;
     for (int round = 0; round < 40; ++round) {
         CAPTURE(round);
         auto const page = delta_page(rng, round);
@@ -305,6 +321,7 @@ TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and
         auto const at = SEQLZ_LIT_HEADER(0);
         auto const has_delta = (c[1] & 0x80) != 0 && (c[2] >> SEQLZ_LIT_DELTA_AT) != 0;
         ++deltas[has_delta ? c[at] & 3U : 0U];
+        last3 += round % 3 == 2 && has_delta && c[at] == SEQLZ_DELTA_LAST;
         if (!has_delta) {
             continue;
         }
@@ -313,9 +330,10 @@ TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and
             check_same(t.get(), r.get(), with_bit_flipped(c, 2, q));
         }
     }
-    // both kinds of pages get deltas, SEQLZ_DELTA_4 and SEQLZ_DELTA_LAST
+    // the pages get deltas, SEQLZ_DELTA_4 and SEQLZ_DELTA_LAST, the latter also after an offset of 3
     CHECK(deltas[SEQLZ_DELTA_4] > 5);
     CHECK(deltas[SEQLZ_DELTA_LAST] > 5);
+    CHECK(last3 > 5);
 }
 
 TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid or invalid for both decoders alike") {
@@ -629,7 +647,7 @@ TEST_CASE("seqlz_ref: literal streams that end at every place of a byte, their p
     }
 }
 
-TEST_CASE("seqlz_ref: coded literals need byte 2's top bits zero and every code inside its stream") {
+TEST_CASE("seqlz_ref: coded literals need a delta byte of 1 to 3, a code up to 8 and every code inside its stream") {
     auto const t = fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(47);
@@ -639,8 +657,16 @@ TEST_CASE("seqlz_ref: coded literals need byte 2's top bits zero and every code 
         CAPTURE(round);
         auto const c = compress(t.get(), make_page(rng, 5), 2);
         REQUIRE((c[1] & 0x80) != 0);
-        // bit 7 of byte 2 set, or a code of the literals above the page's own table, 9 to 15
-        for (unsigned int b2 : {c[2] | 0x80U, (c[2] & ~15U) | 9U, (c[2] & ~15U) | 15U}) {
+        // deltas, with a delta byte of 0 or 4 after byte 2, or a code of the literals above the page's own
+        // table, 9 to 15
+        for (unsigned int dt : {0U, 4U}) {
+            auto bad = c;
+            bad[2] = static_cast<unsigned char>(bad[2] | 1U << SEQLZ_LIT_DELTA_AT);
+            bad.insert(bad.begin() + 3, static_cast<unsigned char>(dt));
+            CHECK(seqlz_ref_decode(r.get(), bad.data(), bad.size(), out.data()) == -1);
+            check_same(t.get(), r.get(), bad);
+        }
+        for (unsigned int b2 : {(c[2] & ~15U) | 9U, (c[2] & ~15U) | 15U}) {
             auto bad = c;
             bad[2] = static_cast<unsigned char>(b2);
             CHECK(seqlz_ref_decode(r.get(), bad.data(), bad.size(), out.data()) == -1);

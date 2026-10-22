@@ -1238,19 +1238,14 @@ TEST_CASE("seqlz: the stream sizes take as many bits as the largest needs, 5 to 
         }
         auto const n_lit = lits_count(c);
         CHECK(coded + 51 < n_lit - n_lit / 16);
-        // a decoder takes any width from 5 to 12; bit 7 of byte 2 must be 0, and the literals' code at most
-        // SEQLZ_LIT_OWN
+        // a decoder takes any width from 5 to 12, and the literals' code at most SEQLZ_LIT_OWN
         for (unsigned w = width; w <= SEQLZ_SIZE_BITS_MAX; ++w) {
             auto const wider = with_size_width(c, w);
             REQUIRE(seqlz_decode(t.get(), wider.data(), static_cast<unsigned>(wider.size()), out.data(), scratch.data()) == 0);
             CHECK(out == page);
         }
-        auto reserved = c;
-        reserved[2] = static_cast<unsigned char>(reserved[2] | 0x80U);
-        CHECK(seqlz_decode(t.get(), reserved.data(), static_cast<unsigned>(reserved.size()), out.data(), scratch.data()) ==
-              -EINVAL);
         for (unsigned code = SEQLZ_LIT_OWN + 1; code <= SEQLZ_LIT_CODE_MASK; ++code) {
-            reserved = c;
+            auto reserved = c;
             reserved[2] = static_cast<unsigned char>((c[2] & ~SEQLZ_LIT_CODE_MASK) | code);
             CHECK(seqlz_decode(t.get(), reserved.data(), static_cast<unsigned>(reserved.size()), out.data(), scratch.data()) ==
                   -EINVAL);
@@ -1696,7 +1691,8 @@ TEST_CASE("seqlz: level 3 codes the literals as deltas to the bytes that make th
 
 TEST_CASE("seqlz: level 3 without room for the delta's records writes the page without deltas") {
     // The records take 6 bytes per sequence with literals: a dst with room for the page with raw literals and
-    // 32 bytes, but not for them, gets a page without deltas, which comes back.
+    // 32 bytes, but not for them, gets a page without deltas, which comes back; from seqlz_encode() with the
+    // page, the same bytes.
     auto const t = default_tables(seqlz_default_own);
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(73);
@@ -1715,6 +1711,21 @@ TEST_CASE("seqlz: level 3 without room for the delta's records writes the page w
         auto out = std::vector<unsigned char>(page_size);
         REQUIRE(seqlz_decode(t.get(), d.data(), len, out.data(), scratch.data()) == 0);
         CHECK(out == page);
+        auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+        auto const n = seqlz_find(st.get(), page.data(), seq.data(), 3);
+        auto const lits = literals_of(page, seq.data(), n);
+        auto e = std::vector<unsigned char>(rlen + 32);
+        CHECK(seqlz_encode(t.get(),
+                           st.get(),
+                           seq.data(),
+                           n,
+                           lits.data(),
+                           static_cast<unsigned>(lits.size()),
+                           page.data(),
+                           e.data(),
+                           rlen + 32,
+                           3) == len);
+        CHECK(std::equal(d.begin(), d.end(), e.begin()));
     }
 }
 

@@ -503,7 +503,9 @@ static void seqlz_test_one_sequence(struct kunit *test)
 /* what coded_literals() does to the page it makes */
 enum damage {
 	GOOD,
-	TOP_BIT, /* bit 7 of byte 2 set */
+	DELTA_0, /* deltas, their byte 0 */
+	DELTA_4, /* deltas, their byte 4 */
+	DELTA_CUT, /* deltas, the page ends 1 byte before its header does */
 	CODE_9, /* the literals' code 9, above a page's own table */
 	STREAM_0_LONGER, /* stream 0 a 0 byte longer than its codes */
 	BYTE_TO_STREAM_1, /* stream 0's last byte counted in stream 1 */
@@ -566,6 +568,9 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 	/* the bytes of each stream, and the sizes the header gives */
 	unsigned int size[SEQLZ_LIT_STREAMS], told[SEQLZ_LIT_STREAMS];
 	unsigned int width = 5, at, j, k, q;
+	/* the byte that says which delta, with deltas */
+	unsigned int e = damage == DELTA_0 || damage == DELTA_4 ||
+			 damage == DELTA_CUT;
 	u8 desc[64];
 
 	t = (struct bits){ .p = desc };
@@ -593,17 +598,19 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 
 	c[0] = n;
 	c[1] = 0x80 | n >> 8;
-	c[2] = (width - 5) << SEQLZ_LIT_WIDTH_AT | (own ? SEQLZ_LIT_OWN : 0);
-	if (damage == TOP_BIT)
-		c[2] |= 0x80;
+	c[2] = (width - 5) << SEQLZ_LIT_WIDTH_AT | (own ? SEQLZ_LIT_OWN : 0) |
+	       e << SEQLZ_LIT_DELTA_AT;
+	c[3] = damage == DELTA_0 ? 0 : damage == DELTA_4 ? 4 : SEQLZ_DELTA_4;
 	if (damage == CODE_9)
 		c[2] = (c[2] & ~SEQLZ_LIT_CODE_MASK) | 9;
 	/* the sizes are one number of 8 * width bits, little endian */
-	memset(c + 3, 0, width);
+	memset(c + 3 + e, 0, width);
 	for (q = 0; q < 8 * width; q++)
-		c[3 + q / 8] |= ((told[q / width] >> (q % width)) & 1)
-				<< (q % 8);
-	at = 3 + width;
+		c[3 + e + q / 8] |= ((told[q / width] >> (q % width)) & 1)
+				    << (q % 8);
+	at = 3 + e + width;
+	if (damage == DELTA_CUT)
+		return at - 1;
 	memcpy(c + at, desc, bytes(&t));
 	at += bytes(&t);
 	if (damage == OWN_CUT)
@@ -652,7 +659,7 @@ static void check_coded(struct maker *m, struct bufs *b, unsigned int n,
 			    "n %u arg %u", n, arg);
 	for (k = 0; k < PAGE_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b->out[k], lit(min(k, n - 1), arg));
-	for (d = TOP_BIT; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
+	for (d = DELTA_0; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
 		if ((d == PADDING_BIT && !padding) ||
 		    (d == OWN_PADDING_BIT && !m->own_padding))
 			continue;
