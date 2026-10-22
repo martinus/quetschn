@@ -15,6 +15,14 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 kmake=(make -C "$work/src" O="$work/build" "$@")
 
+# a make whose output goes to $work/build.log; stops the script on a failed build or a warning, printing
+# them. Not "make | grep && exit 1": with pipefail a failed make fails the pipe, the exit never runs, and
+# set -e does not stop at a command before && either
+build() {
+    "$@" >"$work/build.log" 2>&1 || { grep -E 'warning|error' "$work/build.log" >&2; echo "build failed" >&2; exit 1; }
+    ! grep -E 'warning|error' "$work/build.log" || exit 1
+}
+
 git -C "$tree" archive HEAD | tar -x -C "$work" --one-top-level=src
 # without automatic maintenance: the commit of a whole tree starts it in the background, and it still
 # wrote into .git when the trap removed it, which failed the job
@@ -36,10 +44,10 @@ for c in ZRAM_BACKEND_SEQLZ=y SEQLZ_KUNIT_TEST=m; do
     grep -q "^CONFIG_$c" "$work/build/.config" || { echo "CONFIG_$c not set" >&2; exit 1; }
 done
 "${kmake[@]}" -j"$(nproc)" prepare >/dev/null
-"${kmake[@]}" -j"$(nproc)" W=1 KCFLAGS=-fstack-usage lib/seqlz/ drivers/block/zram/ 2>&1 | tee "$work/build.log" |
-    grep -E 'warning|error' && exit 1
+build "${kmake[@]}" -j"$(nproc)" W=1 KCFLAGS=-fstack-usage lib/seqlz/ drivers/block/zram/
 ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
-    "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null && echo "build: no warnings"
+    "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null || exit 1
+echo "build: no warnings"
 # a division of 64 bits that the compiler leaves to a library call: the kernel has none, and only the
 # link, which check.sh does not do, would say so on 32-bit arm and x86; div_u64() is the kernel's way
 calls=$(nm -u "$work/build"/lib/seqlz/*.o | grep -E '__aeabi_l(div|mod)|__aeabi_uldivmod|__(u?div|u?mod)di3' || true)
@@ -64,7 +72,8 @@ fi
 (cd "$work/src" && { git diff --cached --stat; git diff --cached; } | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
 echo "x86-prefetcht0.patch:"
 (cd "$work/src" && perl scripts/checkpatch.pl --strict --show-types "$here/x86-prefetcht0.patch" || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:"
-(cd "$work/src" && scripts/kernel-doc -none -Wall lib/seqlz/seqlz_codes.c lib/seqlz/seqlz_compress.c lib/seqlz/seqlz_decompress.c lib/seqlz/seqlz_internal.h lib/seqlz/seqlz.h include/linux/seqlz.h) && echo "kernel-doc: no warnings"
+(cd "$work/src" && scripts/kernel-doc -none -Wall -Werror lib/seqlz/seqlz_codes.c lib/seqlz/seqlz_compress.c lib/seqlz/seqlz_decompress.c lib/seqlz/seqlz_internal.h lib/seqlz/seqlz.h include/linux/seqlz.h) || exit 1
+echo "kernel-doc: no warnings"
 # the specification as docutils reads it; Sphinx, which the kernel's htmldocs need, is not required here
 if python3 -c 'import docutils' 2>/dev/null; then
     python3 - "$work/src/Documentation/staging/seqlz.rst" <<'EOF'
