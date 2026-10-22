@@ -42,7 +42,7 @@ void fast_tables() {
 // Pages of several kinds, so that every class of offset, long lengths, escapes and coded literals occur.
 std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
     static char const* const words[] = {"the ", "page ", "swap ", "memory ", "of ", "zram ", "kernel ", "and "};
-    auto p = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto p = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     switch (kind % 7) {
     case 0: // random bytes, raw literals and few matches
         for (auto& b : p) {
@@ -99,7 +99,7 @@ std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
 
 std::vector<unsigned char> compress(std::vector<unsigned char> const& page, unsigned level) {
     auto st = std::make_unique<seqlz_state>();
-    auto c = std::vector<unsigned char>(2 * SEQLZ_PAGE);
+    auto c = std::vector<unsigned char>(2 * SEQLZ_BLOCK_SIZE);
     auto const len = seqlz_compress(st.get(), page.data(), c.data(), static_cast<unsigned>(c.size()), level);
     REQUIRE(len > 0);
     c.resize(len);
@@ -109,8 +109,8 @@ std::vector<unsigned char> compress(std::vector<unsigned char> const& page, unsi
 // Both decoders on the same input: the same verdict, and for a valid page the same bytes. Returns the
 // page, empty for an invalid input.
 std::vector<unsigned char> check_same(seqlz_ref const* r, std::vector<unsigned char> const& c) {
-    auto fast = std::vector<unsigned char>(SEQLZ_PAGE, 0xa5);
-    auto slow = std::vector<unsigned char>(SEQLZ_PAGE, 0x5a);
+    auto fast = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE, 0xa5);
+    auto slow = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE, 0x5a);
     auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
     // exactly sized copies, so that ASan sees a read past the end
     auto const in = std::make_unique<unsigned char[]>(c.size() + (c.empty() ? 1 : 0));
@@ -193,8 +193,8 @@ std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int c) {
     if (c == 1) {
         w.put(1, 4);
     }
-    w.value(r.ll, SEQLZ_PAGE - 15U); // ll = 15 + value(LL) = PAGE
-    auto c_page = literals_only(SEQLZ_PAGE);
+    w.value(r.ll, SEQLZ_BLOCK_SIZE - 15U); // ll = 15 + value(LL) = PAGE
+    auto c_page = literals_only(SEQLZ_BLOCK_SIZE);
     c_page.insert(c_page.end(), w.bytes.begin(), w.bytes.end());
     return c_page;
 }
@@ -204,7 +204,7 @@ std::vector<unsigned char> one_sequence(seqlz_ref const& r, unsigned int c) {
 std::vector<unsigned char> one_match(seqlz_ref const& r, unsigned int* padding) {
     auto w = bit_writer{};
     w.token(r.tok, 1 + 16 * 31);
-    w.value(r.ml, SEQLZ_PAGE - 1U - 35U); // ml = 35 + value(ML) = PAGE - 1
+    w.value(r.ml, SEQLZ_BLOCK_SIZE - 1U - 35U); // ml = 35 + value(ML) = PAGE - 1
     auto c_page = std::vector<unsigned char>{1, 0, 7};
     c_page.insert(c_page.end(), w.bytes.begin(), w.bytes.end());
     *padding = static_cast<unsigned int>(8 * w.bytes.size()) - w.n;
@@ -217,7 +217,7 @@ std::vector<unsigned char> one_match(seqlz_ref const& r, unsigned int* padding) 
 TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
     auto const r = make_ref();
     auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0x23, 0xf2, 0xff, 0xfb, 0x60};
-    auto out = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     REQUIRE(seqlz_ref_decode(r.get(), c.data(), c.size(), out.data()) == 0);
     for (std::size_t k = 0; k < out.size(); ++k) {
         REQUIRE(out[k] == (k % 2 ? 'b' : 'a'));
@@ -267,7 +267,7 @@ std::vector<unsigned char> with_bit_flipped(std::vector<unsigned char> c, std::s
 // pattern, matches of offset 3, each followed by 8 bytes a little above the byte 6 before them (SEQLZ_DELTA_LAST
 // with the last offset 3, which counts as 6).
 std::vector<unsigned char> delta_page(std::mt19937_64& rng, int kind) {
-    auto p = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto p = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     if (kind % 3 == 2) {
         for (std::size_t k = 0; k < p.size();) {
             auto const pattern = std::array<unsigned char, 3>{
@@ -409,12 +409,12 @@ TEST_CASE("seqlz_ref: tables that are no complete prefix code, and other page si
 TEST_CASE("seqlz_ref: a page of literals only has no bits, and as many literals as the page") {
     fast_tables();
     auto const r = make_ref();
-    auto out = std::vector<unsigned char>(SEQLZ_PAGE);
-    auto const good = literals_only(SEQLZ_PAGE);
+    auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
+    auto const good = literals_only(SEQLZ_BLOCK_SIZE);
     REQUIRE(seqlz_ref_decode(r.get(), good.data(), good.size(), out.data()) == 0);
     CHECK(out[7] == 49);
     check_same(r.get(), good);
-    for (auto const& bad : {literals_only(SEQLZ_PAGE - 1), one_sequence(*r, 0), one_sequence(*r, 1)}) {
+    for (auto const& bad : {literals_only(SEQLZ_BLOCK_SIZE - 1), one_sequence(*r, 0), one_sequence(*r, 1)}) {
         CHECK(seqlz_ref_decode(r.get(), bad.data(), bad.size(), out.data()) == -1);
         check_same(r.get(), bad);
     }
@@ -423,7 +423,7 @@ TEST_CASE("seqlz_ref: a page of literals only has no bits, and as many literals 
 TEST_CASE("seqlz_ref: a page ends where its bits end, the rest of the last byte 0") {
     fast_tables();
     auto const r = make_ref();
-    auto out = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     auto padding = 0U;
     auto const good = one_match(*r, &padding);
     REQUIRE(seqlz_ref_decode(r.get(), good.data(), good.size(), out.data()) == 0);
@@ -525,7 +525,7 @@ std::vector<unsigned char> coded_literals(
     // ll and ml - 4 at their caps, class 0 with the offset 1 a page starts with
     seq.token(r.tok, 15 + 16 * 31);
     seq.value(r.ll, n - 15);
-    seq.value(r.ml, SEQLZ_PAGE - n - 35);
+    seq.value(r.ml, SEQLZ_BLOCK_SIZE - n - 35);
     c.insert(c.end(), seq.bytes.begin(), seq.bytes.end());
     return c;
 }
@@ -578,7 +578,7 @@ TEST_CASE("seqlz_ref: pages with a literal table of their own, and tables invali
     // their own, 97 and 254; each damage makes the page invalid, for both decoders.
     fast_tables();
     auto const r = make_ref();
-    auto out = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     for (auto const& [x, y] : {std::pair{3U, 5U}, std::pair{97U, 98U}, std::pair{0U, 255U}}) {
         CAPTURE(x);
         // x gets code 0, y code 1
@@ -594,8 +594,8 @@ TEST_CASE("seqlz_ref: pages with a literal table of their own, and tables invali
             auto padding = 0U;
             auto const good = coded_literals(*r, n, literal, code, own_table(*r, x, y, own_damage::none, &padding));
             auto const page = check_same(r.get(), good);
-            REQUIRE(page.size() == SEQLZ_PAGE);
-            for (unsigned int k = 0; k < SEQLZ_PAGE; ++k) {
+            REQUIRE(page.size() == SEQLZ_BLOCK_SIZE);
+            for (unsigned int k = 0; k < SEQLZ_BLOCK_SIZE; ++k) {
                 REQUIRE(page[k] == literal(std::min(k, n - 1)));
             }
             for (auto const d : {own_damage::overfull, own_damage::above_255, own_damage::padding_bit}) {
@@ -634,10 +634,10 @@ TEST_CASE("seqlz_ref: literal streams that end at every place of a byte, their p
     }
     for (unsigned int b : {0x65U, 0x71U, 0x00U, 0xffU}) {
         CAPTURE(b);
-        for (unsigned int n = 16; n + 40 <= SEQLZ_PAGE && n < 1200; ++n) {
+        for (unsigned int n = 16; n + 40 <= SEQLZ_BLOCK_SIZE && n < 1200; ++n) {
             CAPTURE(n);
             auto const page = check_same(r.get(), coded_run(*r, n, b));
-            REQUIRE(page.size() == SEQLZ_PAGE);
+            REQUIRE(page.size() == SEQLZ_BLOCK_SIZE);
             CHECK(std::all_of(page.begin(), page.end(), [&](unsigned char x) {
                 return x == b;
             }));
@@ -649,7 +649,7 @@ TEST_CASE("seqlz_ref: coded literals need a delta byte of 1 to 3, a code up to 8
     fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(47);
-    auto out = std::vector<unsigned char>(SEQLZ_PAGE);
+    auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     auto tried = 0;
     for (int round = 0; tried < 20; ++round) {
         CAPTURE(round);

@@ -324,7 +324,7 @@ out, measured on 14th October). [Chapter 6](#ch-header--escape) has why they do 
 
 ## The literal tables {#ch-codes--lit-sets-file}
 
-@listing src/seqlz_lit_sets.c 1-19
+@listing src/seqlz_lit_sets.c 1-20
 
 **k-means** puts each training page into the group of the table that codes its literals in the fewest
 bits, makes each table the Huffman code of its group, and repeats until the groups stop changing.

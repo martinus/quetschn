@@ -337,7 +337,7 @@ The lengths that pages' own tables have most, 7 to 10 bits, get the shortest cod
 description is in the order of the byte values, so a byte value costs no bits of its own, only its
 length does; `docs/format.md` gives about 0.45 bytes per byte value with a code, 60 to 120 bytes on
 most pages that have a table of their own
-([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#a-pages-own-literal-table)).
+([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#a-blocks-own-literal-table)).
 A run of 256 to 511 can never be valid, as a table has only 256 byte values; it is there so that `OWN`
 is complete too. Sent in byte order, with runs, the descriptions made pages 0.5% smaller than the ones
 of 9th October, which listed the bytes by code length, each as its distance to the one before

@@ -23,7 +23,7 @@ static unsigned int value_len(const struct value_table* vt, unsigned int v) {
 }
 
 static void page_facts(const char* name, void (*make)(u8*)) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     const struct seqlz_tables* t = fact_tables();

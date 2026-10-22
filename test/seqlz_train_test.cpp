@@ -22,7 +22,8 @@ using quetschn::write_seqlz_counts;
 namespace {
 
 seqlz_counts committed_counts() {
-    auto const path = std::string(QUETSCHN_SOURCE_DIR) + "/bench/seqlz_counts_" + (SEQLZ_PAGE == 4096 ? "4k" : "16k") + ".txt";
+    auto const path =
+        std::string(QUETSCHN_SOURCE_DIR) + "/bench/seqlz_counts_" + (SEQLZ_BLOCK_SIZE == 4096 ? "4k" : "16k") + ".txt";
     auto in = std::ifstream(path);
     REQUIRE_MESSAGE(in.good(), "cannot read ", path);
     return read_seqlz_counts(in);

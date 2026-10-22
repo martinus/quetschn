@@ -3,8 +3,8 @@
 #define SEQLZ_PAGE_LZ_H
 
 /*
- * The part of seqlz that is plain LZ: the matcher, which finds the sequences
- * of a page. All of it is static inline, so that it ends up inside the loops of
+ * The part of seqlz that is plain LZ: the matcher, which finds the sequences of
+ * a block. All of it is static inline, so that it ends up inside the loops of
  * seqlz_compress.c.
  */
 
@@ -84,7 +84,8 @@ static __always_inline unsigned int
 seqlz_lazy(u16 *table, const u8 *src, unsigned int *pos, unsigned int *m,
 	   unsigned int len, unsigned int last, u64 v, unsigned int h)
 {
-	const u8 *const next = src + *pos + 1, *const end = src + SEQLZ_PAGE;
+	const u8 *const next = src + *pos + 1, *const end =
+						       src + SEQLZ_BLOCK_SIZE;
 	const unsigned int cand = table[h];
 	unsigned int best = len, l;
 
@@ -117,40 +118,40 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
 			unsigned int ml, unsigned int off);
 
 /*
- * Finds the sequences of a page, greedy like lz4's fast mode: at each position
+ * Finds the sequences of a block, greedy like lz4's fast mode: at each position
  * it tries two places where the next 4 bytes might have been before, and takes
  * the first match it finds. One is the offset of the match before, which
  * repeats often. The other is the last position whose 5 bytes had the same
  * hash, from the hash table. Hashing 5 bytes instead of 4 finds fewer and
  * longer matches: less time to compress, and with the trained tables smaller
- * pages too. A match of 4 bytes at a new offset takes about as many bits as
+ * blocks too. A match of 4 bytes at a new offset takes about as many bits as
  * its 4 coded literals, and the greedy matcher then misses a longer match
  * behind it. Matches of 4 bytes still come from the repeated offset.
  *
  * Unlike lz4 it tries every position, also after a long stretch without a
  * match, where lz4 starts to skip. Skipping needed more state in the loop:
- * without it, pages that compress are written faster and pages that do not
+ * without it, blocks that compress are written faster and blocks that do not
  * slower.
  *
  * With lazy, for level 3, a match shorter than SEQLZ_LAZY_LEN is taken only
  * if pos + 1 has none that is longer, at the repeated offset or at the table's
  * entry; else the byte at pos becomes a literal and the longer match is taken.
  * Then the match is extended backwards into the literals as far as the bytes
- * before it are the same. Both make pages smaller and writes slower.
+ * before it are the same. Both make blocks smaller and writes slower.
  *
  * Each sequence goes to the encoder as soon as it is found. With the encoder
- * inlined, finding and writing the sequences is one pass over the page.
+ * inlined, finding and writing the sequences is one pass over the block.
  */
-static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
-					     bool lazy, emit_fn emit, void *ctx)
+static __always_inline void
+seqlz_match_block(u16 *table, const u8 *src, bool lazy, emit_fn emit, void *ctx)
 {
 	/*
-	 * Positions in the page, not pointers: the limit is a constant, and the
-	 * table stores positions. The last 8 bytes are not tried, every try
+	 * Positions in the block, not pointers: the limit is a constant, and
+	 * the table stores positions. The last 8 bytes are not tried, every try
 	 * reads 8 bytes.
 	 */
-	const unsigned int limit = SEQLZ_PAGE - 8U;
-	const u8 *const end = src + SEQLZ_PAGE;
+	const unsigned int limit = SEQLZ_BLOCK_SIZE - 8U;
+	const u8 *const end = src + SEQLZ_BLOCK_SIZE;
 	unsigned int pos = 1, anchor = 0, last = 1, h, cand;
 	/*
 	 * The repeated offset as a negative index, src + pos + back, so the
@@ -183,8 +184,8 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 		 * branch tests both: with a branch for each, the matcher
 		 * mispredicted almost twice as often as lz4. Reading both is
 		 * always safe. The repeated offset starts at 1 and the search
-		 * at position 1, and the table is cleared for each page, so
-		 * both point into the page, before pos.
+		 * at position 1, and the table is cleared for each block, so
+		 * both point into the block, before pos.
 		 */
 		unsigned int rep_hit = get_unaligned_le32(src + pos + back) ==
 				       cur;
@@ -236,7 +237,7 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 			cand_bytes = get_unaligned_le32(src + cand);
 		}
 	}
-	emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);
+	emit(ctx, src + anchor, SEQLZ_BLOCK_SIZE - anchor, 0, 0);
 }
 
 #endif

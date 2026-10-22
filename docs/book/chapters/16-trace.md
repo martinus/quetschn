@@ -74,9 +74,9 @@ for this page, which gives `0x00` {{lit.3.len.0}} bits.
 ## seqlz_compress(), and the matcher's first sequence {#ch-trace--matcher}
 
 The backend calls `seqlz_compress(st, page, dst, 8192, 2)`: the per-CPU state of {{size.state}}
-bytes, an output buffer of 2 pages, and level 2, the default. `compress_page()` checks that `dst_cap` is at
+bytes, an output buffer of 2 pages, and level 2, the default. `compress_block()` checks that `dst_cap` is at
 least {{ch16.enc_min}} bytes, sets up the encoder with the bitstream growing down from `dst + 8192` and
-the literals up from `dst + 2` ([chapter 10](#ch-encoder--layout)), and runs `seqlz_match_page()`
+the literals up from `dst + 2` ([chapter 10](#ch-encoder--layout)), and runs `seqlz_match_block()`
 ([chapter 9](#ch-matcher)) with `encode_emit()` as its callback. The matcher clears its
 {{ch16.hash_entries}} entries of hash table and starts at position 1.
 
@@ -290,7 +290,7 @@ one, {{ch16.zs.lower}}.
 
 The backend calls `seqlz_decode(src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of
 {{const.SCRATCH}} bytes ([chapter 14](#ch-decode)). Bit 7 of byte 2 is 0, so it runs the copy of
-`decode_page()` without deltas. That prefetches the token and length tables, finds the
+`decode_block()` without deltas. That prefetches the token and length tables, finds the
 top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `decode_literals()`
 ([chapter 13](#ch-literals-dec)) reads table {{ch16.lt.set}} and width {{ch16.lt.width}} from byte 2,
 prefetches the literal table, and reads the sizes, {{ch16.lt.sizes_sp}}. {{ch16.lits}} literals are
@@ -393,7 +393,7 @@ static void make_page(u8 *p)
 		"Every table is fixed, so a page carries none of its own.\n";
 	unsigned int i;
 
-	memset(p, 0, SEQLZ_PAGE);
+	memset(p, 0, SEQLZ_BLOCK_SIZE);
 	memcpy(p, "TASKSLAB", 8);
 	le(p + 8, N_REC, 4);
 	le(p + 12, 32, 4);
@@ -441,7 +441,7 @@ static unsigned int value_bits(const struct value_table *vt, unsigned int v,
 
 int main(void)
 {
-	static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE],
+	static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE],
 		scratch[SEQLZ_SCRATCH];
 	static struct seqlz_state st;
 	static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
@@ -531,7 +531,7 @@ int main(void)
 	printf("raw literals: %u bytes = 2 + %u + %u\n", len0, n_lit,
 	       len0 - 2 - n_lit);
 	if (seqlz_decode(dst, len0, out, NULL) ||
-	    memcmp(out, page, SEQLZ_PAGE))
+	    memcmp(out, page, SEQLZ_BLOCK_SIZE))
 		return 2;
 
 	/* the 8 literal tables as code_literals() weighs them */
@@ -594,7 +594,7 @@ int main(void)
 		return 3;
 	memset(out, 0, sizeof out);
 	if (seqlz_decode_counted(dst, len1, out, scratch) ||
-	    memcmp(out, page, SEQLZ_PAGE))
+	    memcmp(out, page, SEQLZ_BLOCK_SIZE))
 		return 4;
 	printf("round trip ok, %u sequences on the fast path, %u on the slow path\n",
 	       n_fast, n_slow);

@@ -60,7 +60,7 @@ struct lit_table {
 };
 
 /*
- * To pick the literal table that codes a page's literals in the fewest bits,
+ * To pick the literal table that codes a block's literals in the fewest bits,
  * the encoder sums their code lengths in all 8 tables. lit_cost has, for each
  * byte value, its code length in all 8 tables in one u64, 8 bits each, so one
  * add per literal sums all tables at once. A lane of 8 bits overflows after
@@ -68,10 +68,10 @@ struct lit_table {
  */
 #define LIT_COST_WORDS ((SEQLZ_LIT_SETS + 7U) / 8U)
 #define LIT_COST_RUN (255U / SEQLZ_LIT_BITS) /* 25 */
-/* byte 2 of a page with coded literals, see SEQLZ_LIT_HEADER */
+/* byte 2 of a block with coded literals, see SEQLZ_LIT_HEADER */
 static_assert((SEQLZ_LIT_SETS == 8U && SEQLZ_LIT_OWN == 8U &&
 	       SEQLZ_LIT_CODE_MASK == 15U && SEQLZ_LIT_WIDTH_AT == 4),
-	      "byte 2: the fixed tables, then the page's own, in 4 bits");
+	      "byte 2: the fixed tables, then the block's own, in 4 bits");
 static_assert((SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
 	       SEQLZ_LIT_DELTA_AT - SEQLZ_LIT_WIDTH_AT == 3),
 	      "byte 2 has 3 bits for the width");
@@ -85,18 +85,20 @@ static inline unsigned int seqlz_delta_last(unsigned int last)
 	return last < 4U ? (last == 3U ? 6U : 4U) : last;
 }
 
-/* the largest stream: every 8th literal of a page, all with the longest code */
+/*
+ * the largest stream: every 8th literal of a block, all with the longest code
+ */
 #define LIT_STREAM_MAX \
-	((SEQLZ_PAGE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)
+	((SEQLZ_BLOCK_SIZE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)
 static_assert(LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX,
 	      "the widest size holds the largest stream");
 static_assert(SEQLZ_LIT_STREAMS == 8U,
 	      "the literal coder is written out for 8 streams");
 
 /*
- * The code of a page's own literal table, see SEQLZ_LIT_OWN. quad[] decodes the
- * lengths whose codes the next 8 bits hold whole, at most two, each with the
- * run before it where that fits too, with one lookup:
+ * The code of a block's own literal table, see SEQLZ_LIT_OWN. quad[] decodes
+ * the lengths whose codes the next 8 bits hold whole, at most two, each with
+ * the run before it where that fits too, with one lookup:
  *   bits  0..3:  the first length
  *   bits  4..7:  the second, or OWN_QUAD_NONE
  *   bits  8..11: the bits up to the end of the first, run and length
@@ -137,8 +139,8 @@ static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
 	       SEQLZ_OFF_SHIFT(1) <= 3U && SEQLZ_OFF_SHIFT(4) <= 3U &&
 	       SEQLZ_OFF_SHIFT(5) <= 3U),
 	      "token_entry's fields are too narrow");
-static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE,
-	      "class 5's offsets are inside the page");
+static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_BLOCK_SIZE,
+	      "class 5's offsets are inside the block");
 static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
 	      "an escaped token has SEQLZ_ESCAPE_BITS bits");
 /*

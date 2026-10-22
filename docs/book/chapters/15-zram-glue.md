@@ -118,7 +118,7 @@ same. The kernel builds without the warning about unused parameters below `W=3`,
 compressor 2 pages of output, and a page always fits into 2 pages ([chapter 10](#ch-encoder)), so the 0
 of a page that did not fit comes only with a smaller buffer, e.g. the one page zswap gives.
 
-@listing src/zram_seqlz.c 71-85
+@listing src/zram_seqlz.c 71-86
 
 `s` is the compression context here, because this codec has no `create_dctx`, and pages with raw
 literals need no work memory. In zram with the split, a codec without `create_dctx` gets a stream with
@@ -149,14 +149,14 @@ codecs, so its decode times include a prefetch the kernel's backend does not do.
 from the VM and the phone, are the ones the project trusts for decode times.
 :::
 
-@listing src/zram_seqlz.c 87-95
+@listing src/zram_seqlz.c 88-96
 
 The fields not named are null, which is how the harness, like zram after the split, knows that this
 codec has no decompression context. The object is not `static`: `bench/bench_main.cpp` names it.
 
 ## seqlz-2 and seqlz-3: a second context for the scratch {#ch-zram-glue--fast-lit}
 
-@listing src/zram_seqlz.c 97-106
+@listing src/zram_seqlz.c 98-107
 
 The scratch is where the coded literals are decoded to ([chapter 13](#ch-literals-dec)), a page plus 16
 bytes, at levels 2 and 3, {{const.SCRATCH}} with 4 KiB pages: the decoder's 16-byte copies read up to 15 bytes past the last
@@ -166,7 +166,7 @@ literal, and the last step of `decode_literals()` writes up to 8. So `seqlz-2` h
 harness's one context before the split was a struct of both, also {{ch15.mem.struct_gets|grp}} bytes
 handed out, so the split cost seqlz no memory.
 
-@listing src/zram_seqlz.c 108-120
+@listing src/zram_seqlz.c 109-121
 
 `seqlz_compress()` writes the raw literals first and codes them over the raw ones in the same buffer
 where that pays, so the same 2 pages of output suffice. Level 3 needs no more memory than level 2:
@@ -175,13 +175,13 @@ its table of the page's own is worked out in the compression context, behind the
 ([chapter 13](#ch-literals-dec--own)); the records for the deltas go into the output buffer, and the
 deltas into the compression context ([chapter 10](#ch-encoder--records)).
 
-@listing src/zram_seqlz.c 122-132
+@listing src/zram_seqlz.c 123-133
 
 Here `s` is the decompression context, and pages with raw literals leave the scratch alone. One
 `decompress()` serves `seqlz-2` and `seqlz-3`: the decoder reads from byte 2 which table a page uses,
 and whether its literals are deltas.
 
-@listing src/zram_seqlz.c 134-156
+@listing src/zram_seqlz.c 135-157
 
 ## The kernel's copy is generated, not written {#ch-zram-glue--port}
 
@@ -252,7 +252,7 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
   header to the definition and the parameters wrapped again in the kernel's style.
 - **`__init` on the table builders**, which run once at boot ([chapter 8](#ch-codes--kernel)).
 - **`seqlz_compress_page()`.** The interface takes the name `seqlz_compress()`.
-- **The matcher inside `seqlz_compress.c`**, right before its callers, `compress_page()` and
+- **The matcher inside `seqlz_compress.c`**, right before its callers, `compress_block()` and
   `compress_own()`, with its `emit` callback a direct call of `encode_seq(e, ..., lazy)`: the lazy copy,
   level 3's, is the one with the records for the deltas, so the wrappers `encode_emit()` and
   `encode_emit_rec()` are cut ([chapter 10](#ch-encoder--wrappers)). In `src/` the matcher has one

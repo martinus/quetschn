@@ -411,7 +411,7 @@ static void ch08(void) {
 static void random_page(u8* p) {
     unsigned int k, seed = 12345;
 
-    for (k = 0; k < SEQLZ_PAGE; k++) {
+    for (k = 0; k < SEQLZ_BLOCK_SIZE; k++) {
         seed = seed * 1103515245U + 12345U;
         p[k] = (u8)(seed >> 16);
     }
@@ -420,7 +420,7 @@ static void random_page(u8* p) {
 }
 
 /*
- * The loop of seqlz_match_page() again, with what each position sees: its hash,
+ * The loop of seqlz_match_block() again, with what each position sees: its hash,
  * the table's candidate, the repeat offset and the two hits. The sequences it
  * finds must be those of seqlz_find(), or this program fails, so the steps are
  * those of the real matcher.
@@ -436,8 +436,8 @@ static void replay(const u8* src, struct step* at) {
     unsigned int pos = 1, anchor = 0, last = 1, n = seqlz_find(&st, src, seq, 2), i = 0;
 
     memset(table, 0, sizeof table);
-    memset(at, 0, SEQLZ_PAGE * sizeof *at);
-    while (pos < SEQLZ_PAGE - 8U) {
+    memset(at, 0, SEQLZ_BLOCK_SIZE * sizeof *at);
+    while (pos < SEQLZ_BLOCK_SIZE - 8U) {
         u32 cur = get_unaligned_le32(src + pos);
         unsigned int h = seqlz_hash5(get_unaligned_le64(src + pos)), cand = table[h], m, len;
         unsigned int rep_hit = get_unaligned_le32(src + pos - last) == cur;
@@ -450,7 +450,7 @@ static void replay(const u8* src, struct step* at) {
             continue;
         }
         m = rep_hit ? pos - last : cand;
-        len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, src + SEQLZ_PAGE);
+        len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, src + SEQLZ_BLOCK_SIZE);
         last = pos - m;
         if (i >= n || seq[i].literals != pos - anchor || seq[i].match != len || seq[i].offset != last) {
             fprintf(stderr, "facts/ch07_09.c: the replay of the matcher differs at sequence %u\n", i);
@@ -459,7 +459,7 @@ static void replay(const u8* src, struct step* at) {
         i++;
         pos += len;
         anchor = pos;
-        if (pos < SEQLZ_PAGE - 8U)
+        if (pos < SEQLZ_BLOCK_SIZE - 8U)
             table[seqlz_hash5(get_unaligned_le64(src + pos - 2))] = (u16)(pos - 2);
     }
     if (i + 1 != n) {
@@ -505,16 +505,16 @@ static void ch09(void) {
     static const unsigned int ptr_seq[] = {0, 1, 13, 14, 15, 29, 30};
     static const u8 h1[8] = {0x10, 0x00, 0x56, 0x34, 0x12, 0x7f, 0, 0}, h2[8] = {0x20, 0x00, 0x56, 0x34, 0x12, 0x7f, 0, 0};
     static const u8 p[] = "ABCDEFGHIJKLMNOP", q[] = "ABCDEFGHIJKxMNOP";
-    static u8 page[SEQLZ_PAGE];
-    static struct step at[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE];
+    static struct step at[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int k, n, pos, odd = 0, cand0 = 0, first = 0;
     u64 x2 = get_unaligned_le64(p + 8) ^ get_unaligned_le64(q + 8);
 
     fact_num("ch09.lines", lines_of("src/page_lz.h"));
-    fact_num("ch09.limit", SEQLZ_PAGE - 8);
-    fact_num("ch09.limit_last", SEQLZ_PAGE - 9);
+    fact_num("ch09.limit", SEQLZ_BLOCK_SIZE - 8);
+    fact_num("ch09.limit_last", SEQLZ_BLOCK_SIZE - 9);
     fact_num("ch09.table_bytes", sizeof(u16) << SEQLZ_HASH_BITS);
     hash_facts("ch09.h1", h1);
     hash_facts("ch09.h2", h2);
@@ -604,7 +604,7 @@ static void ch09(void) {
      * byte 0x5a and the 4 bytes at 21, 105 not the byte at 25; at 199 the byte 0x5a, then the 31
      * bytes of 21 to 51
      */
-    for (k = 0, pos = 12345; k < SEQLZ_PAGE; k++) {
+    for (k = 0, pos = 12345; k < SEQLZ_BLOCK_SIZE; k++) {
         pos = pos * 1103515245U + 12345U;
         page[k] = (u8)(pos >> 16);
     }

@@ -145,7 +145,7 @@ static int build_lit_sets(struct seqlz_tables *t)
 }
 
 /*
- * The fixed code of a page's own literal table, seqlz_own_lengths: its codes,
+ * The fixed code of a block's own literal table, seqlz_own_lengths: its codes,
  * its decode table, and quad[], see struct own_table. For quad[], the symbols
  * at the start of each 8 bits are decoded one after the other, as long as
  * their codes and extra bits end within the 8 bits: at most one run, then a
@@ -215,7 +215,7 @@ static int build_own(struct own_table *t)
 }
 
 /*
- * Whether the encoder can write every page: every token has a code or the
+ * Whether the encoder can write every block: every token has a code or the
  * escape has one, every length value and every literal has one.
  */
 static bool has_all_symbols(const struct seqlz_lengths *lengths)

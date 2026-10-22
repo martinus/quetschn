@@ -34,7 +34,7 @@ static const char* code_of(const u8* len, unsigned int n, unsigned int s) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int len, n, raw, cls, tok, extra, sym, v, k, n_lit;
@@ -43,7 +43,7 @@ int main(void) {
         return 1;
     ab_page(page);
     len = seqlz_compress(&st, page, dst, sizeof dst, 1);
-    if (!len || seqlz_decode(dst, len, out, NULL) || memcmp(out, page, SEQLZ_PAGE))
+    if (!len || seqlz_decode(dst, len, out, NULL) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         return 1;
     n = seqlz_find(&st, page, seq, 2);
     n_lit = get_unaligned_le16(dst);

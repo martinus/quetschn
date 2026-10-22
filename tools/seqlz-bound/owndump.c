@@ -11,7 +11,7 @@
 #include "seqlz.h"
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     unsigned long pages = 0, own = 0;
     FILE *in, *out;
@@ -26,11 +26,11 @@ int main(int argc, char** argv) {
         perror("owndump");
         return 1;
     }
-    while (fread(page, 1, SEQLZ_PAGE, in) == SEQLZ_PAGE) {
+    while (fread(page, 1, SEQLZ_BLOCK_SIZE, in) == SEQLZ_BLOCK_SIZE) {
         unsigned int n = seqlz_compress(&st, page, dst, sizeof dst, 3);
 
         pages++;
-        if (n > 3 && n < SEQLZ_PAGE && (dst[1] & 0x80) && (dst[2] & 15) == 8) {
+        if (n > 3 && n < SEQLZ_BLOCK_SIZE && (dst[1] & 0x80) && (dst[2] & 15) == 8) {
             unsigned char len[2] = {n & 255, n >> 8};
 
             if (fwrite(len, 1, 2, out) != 2 || fwrite(dst, 1, n, out) != n) {

@@ -13,7 +13,7 @@
  */
 static int setup(struct quetschn_params *p)
 {
-	if (p->page_size != SEQLZ_PAGE)
+	if (p->page_size != SEQLZ_BLOCK_SIZE)
 		return -1;
 	/*
 	 * the encoder needs a code for every symbol; the tables are fixed, so
@@ -52,7 +52,7 @@ static int compress(struct quetschn_params *p, struct quetschn_stream *s,
 {
 	unsigned int len;
 
-	if (src_len != SEQLZ_PAGE)
+	if (src_len != SEQLZ_BLOCK_SIZE)
 		return -1;
 	len = seqlz_compress(s->context, src, dst, *dst_len, level);
 	if (!len)
@@ -77,10 +77,11 @@ static int decompress_1(struct quetschn_params *p, struct quetschn_stream *s,
 			unsigned int *dst_len)
 {
 	(void)s;
-	quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
-	if (*dst_len < SEQLZ_PAGE || seqlz_decode(src, src_len, dst, NULL))
+	quetschn_prefetch_page(src, src_len, dst, SEQLZ_BLOCK_SIZE);
+	if (*dst_len < SEQLZ_BLOCK_SIZE ||
+	    seqlz_decode(src, src_len, dst, NULL))
 		return -1;
-	*dst_len = SEQLZ_PAGE;
+	*dst_len = SEQLZ_BLOCK_SIZE;
 	return 0;
 }
 
@@ -123,11 +124,11 @@ static int decompress(struct quetschn_params *p, struct quetschn_stream *s,
 		      const void *src, unsigned int src_len, void *dst,
 		      unsigned int *dst_len)
 {
-	quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
-	if (*dst_len < SEQLZ_PAGE ||
+	quetschn_prefetch_page(src, src_len, dst, SEQLZ_BLOCK_SIZE);
+	if (*dst_len < SEQLZ_BLOCK_SIZE ||
 	    seqlz_decode(src, src_len, dst, s->context))
 		return -1;
-	*dst_len = SEQLZ_PAGE;
+	*dst_len = SEQLZ_BLOCK_SIZE;
 	return 0;
 }
 

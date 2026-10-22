@@ -14,7 +14,7 @@
 #include "seqlz.h"
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     FILE *f, *o;
@@ -24,12 +24,12 @@ int main(int argc, char** argv) {
         fprintf(stderr, "usage: seqs <pages file> <output>\n");
         return 1;
     }
-    while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
+    while (fread(page, 1, SEQLZ_BLOCK_SIZE, f) == SEQLZ_BLOCK_SIZE) {
         unsigned int n, last = 1;
 
-        for (k = 1; k < SEQLZ_PAGE && page[k] == page[0]; k++)
+        for (k = 1; k < SEQLZ_BLOCK_SIZE && page[k] == page[0]; k++)
             ;
-        if (k == SEQLZ_PAGE || seqlz_compress(&st, page, dst, sizeof dst, 2) >= 3625)
+        if (k == SEQLZ_BLOCK_SIZE || seqlz_compress(&st, page, dst, sizeof dst, 2) >= 3625)
             continue;
         n = seqlz_find(&st, page, seq, 2);
         for (i = 0; i + 1 < n; i++) {

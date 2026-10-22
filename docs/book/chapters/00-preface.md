@@ -71,9 +71,9 @@ How the pieces call each other, the compressor on the left and the decompressor 
 <pre class="mermaid">
 flowchart TB
     Z["zram: a page to store"] --> C["seqlz_compress()"]
-    C --> CP["compress_page()<br/>levels 1 and 2"]
+    C --> CP["compress_block()<br/>levels 1 and 2"]
     C --> CO["compress_own()<br/>level 3"]
-    CP --> M["seqlz_match_page()<br/>page_lz.h, the matcher"]
+    CP --> M["seqlz_match_block()<br/>page_lz.h, the matcher"]
     CO --> M
     M -->|"each sequence<br/>as it is found"| E["encode_seq()<br/>token, offset,<br/>length values"]
     CO --> X["delta_literals()<br/>level 3: the literals<br/>as deltas"]
@@ -84,7 +84,7 @@ flowchart TB
     R["zram: a page to read"] --> D["seqlz_decode()"]
     D --> DL["decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
     DL --> OT["own_table()<br/>builds a page's own<br/>table in the page"]
-    D --> LOOP["decode_page(): the loop<br/>over the sequences,<br/>one table lookup each"]
+    D --> LOOP["decode_block(): the loop<br/>over the sequences,<br/>one table lookup each"]
     T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C
     T -.->|"read only"| D
 </pre>

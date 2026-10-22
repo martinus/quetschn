@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * ends.c: chapter 16's page compressed as compress_page() does, raw literals, into a dst of two
+ * ends.c: chapter 16's page compressed as compress_block() does, raw literals, into a dst of two
  * pages, into the smallest dst it fits, and into one byte less. A callback around encode_emit()
  * records after each sequence the two ends (lit and p), the accumulator's count, the bits the
  * sequence added and what they were, and which bytes the sequence wrote outside the page's bytes:
@@ -15,7 +15,7 @@
 #include "pages.h"
 #include "seqlz_compress.c"
 
-#define CAP_MAX (2 * SEQLZ_PAGE)
+#define CAP_MAX (2 * SEQLZ_BLOCK_SIZE)
 
 /* what one sequence did; positions as offsets in dst */
 struct rec {
@@ -133,13 +133,13 @@ static void rec_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
     R->n++;
 }
 
-/* compress_page() up to encoder_finish(), with rec_emit() around encode_emit() */
+/* compress_block() up to encoder_finish(), with rec_emit() around encode_emit() */
 static void run(struct run* R, struct seqlz_state* st, const u8* page, u8* dst, unsigned int cap) {
     memset(R, 0, sizeof(*R));
     R->d = dst;
     R->cap = cap;
-    encoder_init(&R->e, dst, cap, page + SEQLZ_PAGE);
-    seqlz_match_page(st->table, page, false, rec_emit, R);
+    encoder_init(&R->e, dst, cap, page + SEQLZ_BLOCK_SIZE);
+    seqlz_match_block(st->table, page, false, rec_emit, R);
 }
 
 static void print_recs(const struct run* R) {
@@ -174,7 +174,7 @@ static void print_recs(const struct run* R) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], ref[CAP_MAX], dst[CAP_MAX];
+    static u8 page[SEQLZ_BLOCK_SIZE], ref[CAP_MAX], dst[CAP_MAX];
     static struct seqlz_state st;
     static struct run R, R0;
     unsigned int ref_len, len, n_lit, bytes, cap, small, i, k;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * accum.c: the encoder's accumulator for the first sequences of chapter 16's page. The page is
- * compressed as compress_page() does; for the first SEQS sequences a copy of the encoder does the
+ * compressed as compress_block() does; for the first SEQS sequences a copy of the encoder does the
  * puts and flushes of encode_emit() one at a time with the helpers of seqlz_compress.c, and prints
  * each: the value put and its parts, acc and cnt before and after, the word a flush stores and
  * where. Fails if the copy does not end where encode_emit() ends: the same acc, cnt, p and bytes.
@@ -14,7 +14,7 @@
 #include "seqlz_compress.c"
 
 #define SEQS 4
-#define CAP (2 * SEQLZ_PAGE)
+#define CAP (2 * SEQLZ_BLOCK_SIZE)
 
 struct drv {
     struct seqlz_encoder e; /* the copy, writing into shadow */
@@ -157,7 +157,7 @@ static void drv_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], ref[CAP];
+    static u8 page[SEQLZ_BLOCK_SIZE], ref[CAP];
     static struct seqlz_state st;
     static struct drv D;
     unsigned int len, ref_len;
@@ -165,10 +165,10 @@ int main(void) {
     if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     slab_page(page);
-    encoder_init(&real, real_dst, CAP, page + SEQLZ_PAGE);
-    encoder_init(&D.e, shadow, CAP, page + SEQLZ_PAGE);
+    encoder_init(&real, real_dst, CAP, page + SEQLZ_BLOCK_SIZE);
+    encoder_init(&D.e, shadow, CAP, page + SEQLZ_BLOCK_SIZE);
     printf("{\"ops\":[");
-    seqlz_match_page(st.table, page, false, drv_emit, &D);
+    seqlz_match_block(st.table, page, false, drv_emit, &D);
     len = encoder_finish(&real, real_dst, CAP);
     ref_len = seqlz_compress(&st, page, ref, CAP, 1);
     if (!len || len != ref_len || memcmp(real_dst, ref, len)) {

@@ -3,7 +3,7 @@
 /* the interface's sizes are the codec's */
 static_assert(sizeof(struct seqlz_state) == SEQLZ_MEM_COMPRESS);
 static_assert(SEQLZ_MEM_DECOMPRESS == SEQLZ_SCRATCH);
-static_assert(SEQLZ_PAGE == 1U << SEQLZ_PAGE_BITS);
+static_assert(SEQLZ_BLOCK_SIZE == 1U << SEQLZ_BLOCK_BITS);
 
 /* subsys_initcall: the tables are there before a zram that is built in */
 static int __init seqlz_init(void)

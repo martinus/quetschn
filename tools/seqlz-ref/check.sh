@@ -78,7 +78,7 @@ EOF
 "$out/compress" "$out"/*.page >/dev/null
 
 # The 16 KiB tables: only their hashes. Loading them checks them, the empty file is no page.
-python3 "$here/seqlz_ref.py" --page-bits 14 /dev/null >/dev/null
+python3 "$here/seqlz_ref.py" --block-bits 14 /dev/null >/dev/null
 
 pages=0
 wrong=0

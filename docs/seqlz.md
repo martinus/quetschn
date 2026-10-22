@@ -196,7 +196,7 @@ shorter than 20 bytes, and extends a match backwards over the literals before it
 literals or more gets a literal table of its own where that and the table's description save 16 bytes
 against the best of the 8 fixed tables. The description is the code length of each byte, in the order of
 the bytes, about 50 to 75 bytes; the decoder builds the table in the page it decodes into, so it needs no
-more memory ([format.md](format.md#a-pages-own-literal-table)).
+more memory ([format.md](format.md#a-blocks-own-literal-table)).
 
 Since 21st October 2026 level 3 also stores each literal as its delta to an earlier byte of the page,
 the literal minus that byte, before it codes them: the byte 4 or 8 before, inside the literals of one

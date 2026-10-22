@@ -300,7 +300,7 @@ static void cat(void) {
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     static char code[SEQLZ_TOKEN_SYMBOLS + 1][17];
-    static u8 page[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE];
     unsigned int n, i, last = 1, lz4 = 0, ml_bytes = 0, ml_255 = 0, bits = 0;
     char key[64], buf[32];
 

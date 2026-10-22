@@ -15,12 +15,12 @@
 #include "seqlz.h"
 #include "unwritten.h"
 
-#define DST_CAP (2U * SEQLZ_PAGE)
+#define DST_CAP (2U * SEQLZ_BLOCK_SIZE)
 
 static int tables_built;
 static struct seqlz_state state;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-static unsigned char literals[SEQLZ_PAGE];
+static unsigned char literals[SEQLZ_BLOCK_SIZE];
 /* each an allocation of its own exact size, for ASan */
 static unsigned char *dst, *again, *out, *scratch;
 
@@ -28,10 +28,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 
 /* decodes into out, which holds other bytes before, so that a byte the decoder skips shows */
 static int decodes_to(const unsigned char* page, unsigned int len, void* scr) {
-    memset(out, 0xa5, SEQLZ_PAGE);
-    unwritten(out, SEQLZ_PAGE);
+    memset(out, 0xa5, SEQLZ_BLOCK_SIZE);
+    unwritten(out, SEQLZ_BLOCK_SIZE);
     unwritten(scratch, SEQLZ_SCRATCH);
-    return seqlz_decode(dst, len, out, scr) == 0 && memcmp(out, page, SEQLZ_PAGE) == 0;
+    return seqlz_decode(dst, len, out, scr) == 0 && memcmp(out, page, SEQLZ_BLOCK_SIZE) == 0;
 }
 
 /* the page at level, against seqlz_encode() for the sequences of seqlz_find() at that level */
@@ -45,7 +45,7 @@ static void roundtrip(const unsigned char* page, unsigned int level) {
         n_lit += seq[k].literals;
         pos += seq[k].literals + seq[k].match;
     }
-    if (pos != SEQLZ_PAGE)
+    if (pos != SEQLZ_BLOCK_SIZE)
         abort();
     unwritten(&state, sizeof(state));
     unwritten(dst, DST_CAP);
@@ -78,29 +78,29 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     unsigned char* page;
     unsigned int k, level;
 
-    if (size < 1 || size > SEQLZ_PAGE + 1U)
+    if (size < 1 || size > SEQLZ_BLOCK_SIZE + 1U)
         return 0;
     if (!tables_built) {
         tables_built = 1;
         dst = malloc(DST_CAP);
         again = malloc(DST_CAP);
-        out = malloc(SEQLZ_PAGE);
+        out = malloc(SEQLZ_BLOCK_SIZE);
         scratch = malloc(SEQLZ_SCRATCH);
         if (!dst || !again || !out || !scratch || seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
             abort();
     }
-    page = calloc(1, SEQLZ_PAGE);
+    page = calloc(1, SEQLZ_BLOCK_SIZE);
     if (!page)
         abort();
     memcpy(page, data + 1, size - 1);
     if (size > 1 && (data[0] & 1))
-        for (k = (unsigned int)size - 1U; k < SEQLZ_PAGE; k++)
+        for (k = (unsigned int)size - 1U; k < SEQLZ_BLOCK_SIZE; k++)
             page[k] = page[k - (size - 1)];
 
     for (level = 1; level <= SEQLZ_LEVELS; level++)
         roundtrip(page, level);
-    small_dst(page, SEQLZ_PAGE, 2 + (data[0] >> 2 & 1));
-    small_dst(page, (unsigned int)(size * 2654435761U % (SEQLZ_PAGE + 64U)), 1 + (data[0] >> 1 & 3) % 3);
+    small_dst(page, SEQLZ_BLOCK_SIZE, 2 + (data[0] >> 2 & 1));
+    small_dst(page, (unsigned int)(size * 2654435761U % (SEQLZ_BLOCK_SIZE + 64U)), 1 + (data[0] >> 1 & 3) % 3);
     free(page);
     return 0;
 }

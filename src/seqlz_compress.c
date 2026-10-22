@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * The compressor: the matcher, which finds a page's sequences, and the
+ * The compressor: the matcher, which finds a block's sequences, and the
  * encoder, which writes them as it finds them.
  */
 #include "seqlz_internal.h"
@@ -35,46 +35,45 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 	if (level < 1 || level > SEQLZ_LEVELS)
 		return 0;
 	if (level >= SEQLZ_LEVEL_OWN)
-		seqlz_match_page(st->table, src, true, find_emit, &f);
+		seqlz_match_block(st->table, src, true, find_emit, &f);
 	else
-		seqlz_match_page(st->table, src, false, find_emit, &f);
+		seqlz_match_block(st->table, src, false, find_emit, &f);
 	return f.n;
 }
 
 /* ---- encoder ---- */
 
 /*
- * The encoder writes a page in one pass, as the matcher finds the sequences.
- * The page starts with the literals and the bitstream follows, but how many
+ * The encoder writes a block in one pass, as the matcher finds the sequences.
+ * The block starts with the literals and the bitstream follows, but how many
  * literals there are is known only at the end. So the literals go to the front
  * of dst, after the u16, and the bitstream goes to the back of dst, backwards:
  * its first byte is the last byte of dst, and it grows down toward the
  * literals. At the end it is copied, the right way round, to right after the
  * literals.
  *
- * So dst can have any size, and a page that does not fit is an error, as for
+ * So dst can have any size, and a block that does not fit is an error, as for
  * the other compressors. Before each sequence the encoder checks that its
  * literals and ENC_ROOM bytes more are free between the two: a sequence's
  * copies write up to 16 bytes past its literals, and its flushes write at most
  * 15 bytes below where the bitstream was before it. A sequence has at most two
  * flushes: the first moves the bitstream down by at most 7 bytes, as it has at
  * most 60 bits (see below), and the second writes 8 bytes below that. 16 + 15
- * bytes fit into ENC_ROOM. A page that does not fit stops the writes there, and
- * seqlz_compress() returns 0. It can happen up to ENC_ROOM bytes before dst is
- * full. With the two pages zram gives, it never happens: a sequence with a
- * match covers at least 4 bytes of the page, and its token and offset take at
+ * bytes fit into ENC_ROOM. A block that does not fit stops the writes there,
+ * and seqlz_compress() returns 0. It can happen up to ENC_ROOM bytes before dst
+ * is full. With the two pages zram gives, it never happens: a sequence with a
+ * match covers at least 4 bytes of the block, and its token and offset take at
  * most 31 bits, also with an escaped token, see SEQLZ_MAX_ESCAPE_LEN; the last
- * sequence has no bits. So the bitstream has at most SEQLZ_PAGE / 4 * 31 bits,
- * 3968 bytes for 4 KiB pages, and with a page of literals that leaves more than
- * ENC_ROOM bytes free; for 16 KiB pages 15 872 bytes.
+ * sequence has no bits. So the bitstream has at most SEQLZ_BLOCK_SIZE / 4 * 31
+ * bits, 3968 bytes for blocks of 4 KiB, and with a block of literals that
+ * leaves more than ENC_ROOM bytes free; for blocks of 16 KiB 15 872 bytes.
  *
  * Bits are collected in a 64-bit accumulator and written 8 bytes at a time;
  * then the write position moves down by the whole bytes, and the at most 7 bits
- * left over are written again with the next ones. After a write the
- * accumulator holds at most 7 bits, so a sequence's token, offset and match
- * length value fit before the next one: 7 + 31 + 20 = 58 bits, 60 for 16 KiB
- * pages. Only a literal length value, 20 or 22 bits more, needs a write of its
- * own.
+ * left over are written again with the next ones. After a write the accumulator
+ * holds at most 7 bits, so a sequence's token, offset and match length value
+ * fit before the next one: 7 + 31 + 20 = 58 bits, 60 for 16 KiB blocks. Only a
+ * literal length value, 20 or 22 bits more, needs a write of its own.
  */
 #define ENC_ROOM 32U
 
@@ -85,17 +84,19 @@ struct seqlz_encoder {
 	u8 *lit; /* where the next literal goes */
 	const u8 *src_end; /* copies of 16 literals may read up to here */
 	unsigned int last; /* the offset of the sequence before, class 0 */
-	/* at SEQLZ_LEVEL_OWN: write a record before the literals, see LIT_REC */
+	/*
+	 * at SEQLZ_LEVEL_OWN: write a record before the literals, see LIT_REC
+	 */
 	bool rec;
 	unsigned int pos; /* with rec: where the next sequence starts */
 };
 
 /*
  * At SEQLZ_LEVEL_OWN the encoder writes LIT_REC bytes before each sequence's
- * literals: where they start in the page, how many there are and the offset of
- * the sequence before, a u16 each, little endian. Once the page is matched,
+ * literals: where they start in the block, how many there are and the offset of
+ * the sequence before, a u16 each, little endian. Once the block is matched,
  * delta_literals() picks the literals' delta from them, see SEQLZ_LIT_DELTA_AT,
- * and moves the literals down over them. They take room in dst: a page that
+ * and moves the literals down over them. They take room in dst: a block that
  * does not fit with them is matched again without them, without deltas.
  */
 #define LIT_REC 6U
@@ -183,7 +184,7 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 	u32 code;
 
 	/*
-	 * The page does not fit: no more writes. With p at lit, every later
+	 * The block does not fit: no more writes. With p at lit, every later
 	 * sequence ends here too, and encoder_finish() sees it.
 	 */
 	if ((size_t)(e->p - e->lit) < ll + n_rec + ENC_ROOM) {
@@ -215,7 +216,7 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 
 	/*
 	 * The last sequence: no token, the decoder knows it from the literals
-	 * left, which fill the rest of the page.
+	 * left, which fill the rest of the block.
 	 */
 	if (ml == 0)
 		return;
@@ -267,7 +268,7 @@ static __always_inline void encoder_init(struct seqlz_encoder *e, u8 *d,
 
 /*
  * Writes the u16, and copies the bitstream from the back of dst to right after
- * the literals, the right way round. Returns the length of the page, or 0 if
+ * the literals, the right way round. Returns the length of the block, or 0 if
  * it did not fit into the dst_cap bytes at d.
  */
 static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
@@ -293,7 +294,7 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 	/*
 	 * Byte k of the bitstream is at end - 1 - k. 8 bytes at a time while
 	 * the copy does not overlap them, else one at a time, in place: only a
-	 * page that nearly fills dst gets there.
+	 * block that nearly fills dst gets there.
 	 */
 	if ((size_t)(in - out) >= bytes) {
 		for (; k + 8U <= bytes; k += 8)
@@ -317,9 +318,9 @@ static unsigned int encoder_finish(struct seqlz_encoder *e, u8 *d,
 
 /*
  * delta_literals() prices the deltas with every DELTA_STEP-th literal. Pricing
- * every literal made pages almost no smaller and the encoder slower. Not every
+ * every literal made blocks almost no smaller and the encoder slower. Not every
  * 4th: in fields of 4 or 8 bytes that is the same byte of each field, and
- * pages were larger.
+ * blocks were larger.
  */
 #define DELTA_STEP 5U
 static_assert(LIT_COST_WORDS == 1U, "delta_literals() sums one lit_cost word");
@@ -377,10 +378,10 @@ static __always_inline u64 sub_bytes(u64 a, u64 b)
  * of lit_cost: the delta whose best table takes the fewest bits, with the 8
  * bits of the byte that says which delta scaled as the sums are, 8 /
  * DELTA_STEP. The bits of the fixed tables also tell which delta suits a table
- * of the page's own.
+ * of the block's own.
  */
 static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
-				   const u8 *page, u8 *deltas)
+				   const u8 *block, u8 *deltas)
 {
 	u64 s[4] = { 0 }, even[4][LIT_COST_WORDS] = { { 0 } },
 	    odd[4][LIT_COST_WORDS] = { { 0 } };
@@ -389,18 +390,18 @@ static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
 
 	/*
 	 * The sums: each literal's length in all fixed tables, as it is and
-	 * with each delta, in the 8-bit lanes of s, LIT_COST_RUN at a time, then
-	 * in the 16-bit lanes
+	 * with each delta, in the 8-bit lanes of s, LIT_COST_RUN at a time,
+	 * then in the 16-bit lanes
 	 */
 	for (p = d + SEQLZ_HEADER; p < e->lit; p += LIT_REC + ll) {
 		pos = get_unaligned_le16(p);
 		ll = get_unaligned_le16(p + 2);
 		last = seqlz_delta_last(get_unaligned_le16(p + 4));
 		for (k = j; k < ll; k += DELTA_STEP) {
-			const unsigned int at = pos + k, b = page[at],
-					   b4 = at >= 4U ? page[at - 4] : 0U,
-					   b8 = at >= 8U ? page[at - 8] : 0U,
-					   bl = at >= last ? page[at - last] :
+			const unsigned int at = pos + k, b = block[at],
+					   b4 = at >= 4U ? block[at - 4] : 0U,
+					   b8 = at >= 8U ? block[at - 8] : 0U,
+					   bl = at >= last ? block[at - last] :
 							     0U;
 
 			if (n == LIT_COST_RUN) {
@@ -432,12 +433,12 @@ static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
 		}
 	/*
 	 * The literals down over the records, and their deltas into deltas: the
-	 * ones near the page's start as they are. 8 bytes at a time,
-	 * also past the sequence's last literal: what that writes, the next
-	 * sequence's literals overwrite, only the first sequence's copy reaches
-	 * the next record, its first byte, read before, and after the last
-	 * literals dst has ENC_ROOM bytes more, see encode_seq(). memcpy() was a
-	 * call for every sequence, and a loop over the last bytes mispredicted.
+	 * ones near the block's start as they are. 8 bytes at a time, also past
+	 * the sequence's last literal: what that writes, the next sequence's
+	 * literals overwrite, only the first sequence's copy reaches the next
+	 * record, its first byte, read before, and after the last literals dst
+	 * has ENC_ROOM bytes more, see encode_seq(). memcpy() was a call for
+	 * every sequence, and a loop over the last bytes mispredicted.
 	 */
 	p = d + SEQLZ_HEADER;
 	if (p < e->lit) {
@@ -446,7 +447,7 @@ static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
 		last = seqlz_delta_last(get_unaligned_le16(p + 4));
 	}
 	while (p < e->lit) {
-		const u8 *in = p + LIT_REC, *pin = page + pos;
+		const u8 *in = p + LIT_REC, *pin = block + pos;
 		const unsigned int n_lit = ll, at = pos, dist = last;
 
 		p += LIT_REC + n_lit;
@@ -467,8 +468,11 @@ static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
 		j = x > at ? x - at : 0;
 		for (k = 0; k < j && k < n_lit; k++)
 			to[k] = pin[k];
-		/* past the last literal only inside the page; to - deltas <= at */
-		if (at + n_lit + 8 <= SEQLZ_PAGE) {
+		/*
+		 * past the last literal only inside the block;
+		 * to - deltas <= at
+		 */
+		if (at + n_lit + 8 <= SEQLZ_BLOCK_SIZE) {
 			for (; k < n_lit; k += 8) {
 				u64 a = get_unaligned_le64(pin + k),
 				    r = get_unaligned_le64(pin + k - x);
@@ -488,7 +492,7 @@ static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
 /* seqlz_encode() up to the coded literals, with the compressor's encoder */
 static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 			       const u8 *literals, unsigned int n_literals,
-			       const u8 *page, u8 *deltas, unsigned int *delta,
+			       const u8 *block, u8 *deltas, unsigned int *delta,
 			       void *dst, unsigned int dst_cap)
 {
 	const u8 *in = literals;
@@ -496,18 +500,18 @@ static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 	unsigned int i, pos = 0, lits = 0;
 
 	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols ||
-	    n == 0 || n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_PAGE)
+	    n == 0 || n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_BLOCK_SIZE)
 		return 0;
 	/*
-	 * Only sequences that make a page, checked as the decoder checks them,
+	 * Only sequences that make a block, checked as the decoder checks them,
 	 * before anything is written. dst has room only because every match
 	 * covers at least 4 bytes: a shorter one makes ml - 4 wrap, and its
-	 * length value takes more bits than the page could save.
+	 * length value takes more bits than the block could save.
 	 */
 	for (i = 0; i < n; i++) {
 		lits += seq[i].literals;
 		pos += seq[i].literals;
-		if (pos > SEQLZ_PAGE)
+		if (pos > SEQLZ_BLOCK_SIZE)
 			return 0;
 		if (i + 1 == n)
 			break;
@@ -516,11 +520,11 @@ static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 			return 0;
 		pos += seq[i].match;
 	}
-	if (pos != SEQLZ_PAGE || lits != n_literals)
+	if (pos != SEQLZ_BLOCK_SIZE || lits != n_literals)
 		return 0;
 	encoder_init(&e, dst, dst_cap, literals + n_literals);
-	/* with a page, the records for the deltas, as compress_own() */
-	e.rec = page != NULL;
+	/* with a block, the records for the deltas, as compress_own() */
+	e.rec = block != NULL;
 	for (;;) {
 		for (i = 0; i < n; i++) {
 			unsigned int ll = seq[i].literals;
@@ -529,13 +533,16 @@ static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 				   seq[i].offset, true);
 			in += ll;
 		}
-		/* encoder_init() clears rec: the pass without records is the last */
+		/*
+		 * encoder_init() clears rec: the pass without records is the
+		 * last
+		 */
 		if (e.p != e.lit || !e.rec)
 			break;
 		encoder_init(&e, dst, dst_cap, literals + n_literals);
 		in = literals;
 	}
-	*delta = e.rec ? delta_literals(&e, dst, page, deltas) : 0;
+	*delta = e.rec ? delta_literals(&e, dst, block, deltas) : 0;
 	return encoder_finish(&e, dst, dst_cap);
 }
 
@@ -598,7 +605,7 @@ static __always_inline u8 *lit_flush(u8 *p, const u8 *end, u64 acc,
  * 16-bit lanes of even and odd: even has tables 0, 2, 4 and 6, odd tables 1,
  * 3, 5 and 7. LIT_COST_RUN literals per stream in the 8-bit lanes of x, then
  * into the 16-bit lanes, before an 8-bit lane overflows. Unless hist is NULL,
- * it counts the bytes too, for a table of the page's own: the even literals in
+ * it counts the bytes too, for a table of the block's own: the even literals in
  * hist[0], the odd ones in hist[1], so that a run of one byte does not wait for
  * its own count.
  */
@@ -730,10 +737,10 @@ static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
 }
 
 /*
- * A literal table of the page's own, see SEQLZ_LIT_OWN: what the encoder needs
- * for it, in the matcher's state behind the copy of the literals. So a page
+ * A literal table of the block's own, see SEQLZ_LIT_OWN: what the encoder needs
+ * for it, in the matcher's state behind the copy of the literals. So a block
  * gets one only if its literals leave OWN_WORK bytes of the state free, which
- * all pages of 4 KiB do.
+ * all blocks of 4 KiB do.
  */
 #define OWN_WORK 4096U
 #define OWN_LITERALS_MAX (sizeof_field(struct seqlz_state, work) - OWN_WORK)
@@ -743,7 +750,7 @@ static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
  * power of 2, own_put() masks its index with it.
  */
 #define OWN_DESC_ROOM 512U
-/* a page's own table only for pages with this many literals or more */
+/* a block's own table only for blocks with this many literals or more */
 #define OWN_LITERALS_MIN 512U
 /* and only where it saves this many bytes against the best fixed table */
 #define OWN_SAVES_MIN 16U
@@ -758,13 +765,13 @@ struct own_work {
 	u32 enc[256]; /* code length | code << 8, as in struct lit_table */
 	/* the streams' bytes with the code, see own_sizes() */
 	unsigned int sizes[SEQLZ_LIT_STREAMS];
-	/* the table as the page sends it, and 8 bytes of room for own_put() */
+	/* the table as the block sends it, and 8 bytes of room for own_put() */
 	u8 desc[OWN_DESC_ROOM + 8];
 };
 
 static_assert((sizeof(struct own_work) <= OWN_WORK &&
 	       sizeof_field(struct seqlz_state, work) >= OWN_WORK),
-	      "the matcher's state holds the work of a page's own table");
+	      "the matcher's state holds the work of a block's own table");
 
 /*
  * The code lengths of the n >= 2 bytes in w->bytes, of n_literals literals,
@@ -780,7 +787,9 @@ static_assert((sizeof(struct own_work) <= OWN_WORK &&
 static void own_lengths(struct own_work *w, unsigned int n,
 			unsigned int n_literals)
 {
-	/* 2^40 / n_literals: freq * 2^l * inv >> 36 is 16 times freq * 2^l / n */
+	/*
+	 * 2^40 / n_literals: freq * 2^l * inv >> 36 is 16 times freq * 2^l / n
+	 */
 	const u64 inv = div_u64(1ULL << 40, n_literals);
 	const unsigned int full = 1U << SEQLZ_LIT_BITS;
 	unsigned int k, space = 0, at[17] = { 0 };
@@ -867,7 +876,7 @@ static __always_inline void own_put(struct own_work *w, u64 *acc,
 }
 
 /*
- * The page's own code for its literals, from the counts in w->freq: lengths,
+ * The block's own code for its literals, from the counts in w->freq: lengths,
  * the encoder's codes, the description in w->desc. Returns the bytes of the
  * description, or 0 if it does not pay: fewer than 2 different bytes, or the
  * literals' entropy, or their bits with the code and the description with the
@@ -888,7 +897,8 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 	 * sums fit. Each sum that is not 0 sets a bit in present, bit k for
 	 * byte k: the top bit of a lane of c | (c & 0x7fff) + 0x7fff is set
 	 * where the lane is not 0, and the multiply moves the 4 top bits, at 0,
-	 * 16, 32 and 48 after the shift by 15, to bits 48 to 51 without carries.
+	 * 16, 32 and 48 after the shift by 15, to bits 48 to 51 without
+	 * carries.
 	 */
 	for (k = 0; k < 256; k += 4) {
 		u64 c = own_lanes(&w->freq[0][k]) + own_lanes(&w->freq[1][k]);
@@ -920,7 +930,7 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 	 * Only where the entropy and a description of about 0.45 bytes per byte
 	 * with a code leave the code at least OWN_SAVES_MIN bytes smaller than
 	 * limit, and small enough not to stay raw, see code_literals(), is the
-	 * code built. On many pages it is not.
+	 * code built. On many blocks it is not.
 	 */
 	h = n_literals * log2_256(n_literals) - h;
 	est = h / 2048U + n * 115U / 256U;
@@ -974,7 +984,7 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 }
 
 /*
- * The bytes of each stream with the page's own code, in w->sizes, and their
+ * The bytes of each stream with the block's own code, in w->sizes, and their
  * sum: 8 literals a step, the sum of each stream in a register of its own.
  */
 static unsigned int own_sizes(struct own_work *w, const u8 *literals,
@@ -1027,21 +1037,21 @@ static __always_inline unsigned int size_width(const unsigned int *sizes)
 }
 
 /*
- * Turns the page of len bytes in d, with raw literals as the encoder wrote it,
+ * Turns the block of len bytes in d, with raw literals as the encoder wrote it,
  * into one with Huffman coded literals, where that saves more than 1/16 of them
  * plus SEQLZ_LIT_CODED_MIN bytes. Decoding coded literals costs time for every
  * byte, and coding them wherever they save anything at all saved almost no
  * more memory. Returns the new length, or len if the literals stay raw.
  *
  * The code is the fixed table that codes them in the fewest bits, or, with own
- * not NULL, a table of the page's own, where that and its description take at
+ * not NULL, a table of the block's own, where that and its description take at
  * least OWN_SAVES_MIN bytes less.
  *
  * The coded literals are written over the raw ones in d, so they are read from
- * a copy: raw if the caller has one, else spare, at least a page, which they
+ * a copy: raw if the caller has one, else spare, at least a block, which they
  * are copied into once it is clear they get coded. The bitstream stays behind
  * the raw literals until it moves down behind the coded ones at the end. So d
- * needs no room beyond len, and the page is coded in any dst it fits into raw.
+ * needs no room beyond len, and the block is coded in any dst it fits into raw.
  *
  * With delta not 0, raw has the literals' deltas, see SEQLZ_LIT_DELTA_AT,
  * which are coded instead, and the header says so; if they stay raw, d keeps
@@ -1124,8 +1134,9 @@ static unsigned int code_literals(u8 *d, unsigned int len, const u8 *raw,
 	lit_streams(enc, literals, n_literals, q);
 	put_unaligned_le16((u16)(SEQLZ_LIT_CODED | n_literals), d);
 	/*
-	 * byte 2: the literals' code in bits 0 to 3, width - SEQLZ_SIZE_BITS_MIN
-	 * in bits 4 to 6, in bit 7 whether they are deltas
+	 * byte 2: the literals' code in bits 0 to 3,
+	 * width - SEQLZ_SIZE_BITS_MIN in bits 4 to 6, in bit 7 whether they are
+	 * deltas
 	 */
 	d[2] = (u8)((desc ? SEQLZ_LIT_OWN : set) |
 		    (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT |
@@ -1145,7 +1156,7 @@ static unsigned int code_literals(u8 *d, unsigned int len, const u8 *raw,
 static_assert((SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MAX) + 1U <=
 	       SEQLZ_HEADER + SEQLZ_LIT_CODED_MIN),
 	      "code_literals() writes the coded literals before the bitstream");
-static_assert(sizeof_field(struct seqlz_state, table) >= SEQLZ_PAGE,
+static_assert(sizeof_field(struct seqlz_state, table) >= SEQLZ_BLOCK_SIZE,
 	      "the raw literals take no memory beyond the matcher's table");
 
 /* behind the literals in the matcher's state, see OWN_WORK */
@@ -1175,7 +1186,7 @@ static unsigned int code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 unsigned int seqlz_encode(struct seqlz_state *st,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
-			  const void *page, void *dst, unsigned int dst_cap,
+			  const void *block, void *dst, unsigned int dst_cap,
 			  unsigned int level)
 {
 	unsigned int len, delta;
@@ -1184,7 +1195,7 @@ unsigned int seqlz_encode(struct seqlz_state *st,
 	    (level >= SEQLZ_LEVEL_OWN && !st))
 		return 0;
 	len = encode_raw(seq, n, literals, n_literals,
-			 level >= SEQLZ_LEVEL_OWN ? page : NULL,
+			 level >= SEQLZ_LEVEL_OWN ? block : NULL,
 			 st ? st->literals : NULL, &delta, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
@@ -1193,23 +1204,23 @@ unsigned int seqlz_encode(struct seqlz_state *st,
 	return code_own(dst, len, st, delta);
 }
 
-static unsigned int compress_page(struct seqlz_state *st, const u8 *src,
-				  void *dst, unsigned int dst_cap)
+static unsigned int compress_block(struct seqlz_state *st, const u8 *src,
+				   void *dst, unsigned int dst_cap)
 {
 	struct seqlz_encoder e;
 
 	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)
 		return 0;
-	encoder_init(&e, dst, dst_cap, src + SEQLZ_PAGE);
-	seqlz_match_page(st->table, src, false, encode_emit, &e);
+	encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
+	seqlz_match_block(st->table, src, false, encode_emit, &e);
 	return encoder_finish(&e, dst, dst_cap);
 }
 
 /*
- * compress_page() for SEQLZ_LEVEL_OWN: the lazy matcher, with the records for
- * the deltas, and without them if the page does not fit with them; *delta
+ * compress_block() for SEQLZ_LEVEL_OWN: the lazy matcher, with the records for
+ * the deltas, and without them if the block does not fit with them; *delta
  * gets the delta. A function of its own, so that the other levels' code stays
- * as it is without it: inlined next to it, their pages were slower to write.
+ * as it is without it: inlined next to it, their blocks were slower to write.
  */
 static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 					  void *dst, unsigned int dst_cap,
@@ -1220,14 +1231,17 @@ static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 	*delta = 0;
 	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)
 		return 0;
-	encoder_init(&e, dst, dst_cap, src + SEQLZ_PAGE);
+	encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	e.rec = true;
 	for (;;) {
-		seqlz_match_page(st->table, src, true, encode_emit_rec, &e);
-		/* encoder_init() clears rec: the pass without records is the last */
+		seqlz_match_block(st->table, src, true, encode_emit_rec, &e);
+		/*
+		 * encoder_init() clears rec: the pass without records is the
+		 * last
+		 */
 		if (e.p != e.lit || !e.rec)
 			break;
-		encoder_init(&e, dst, dst_cap, src + SEQLZ_PAGE);
+		encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	}
 	if (e.rec)
 		*delta = delta_literals(&e, dst, src, st->literals);
@@ -1245,7 +1259,7 @@ unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,
 		len = compress_own(st, src, dst, dst_cap, &delta);
 		return len ? code_own(dst, len, st, delta) : 0;
 	}
-	len = compress_page(st, src, dst, dst_cap);
+	len = compress_block(st, src, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
 	return code_literals(dst, len, NULL, st->literals, NULL, 0);

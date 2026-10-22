@@ -105,7 +105,7 @@ static void codes(void) {
 /* ---- chapter 4 ---- */
 
 static void text_facts(void) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     const char* P = "ch04.text";
     unsigned int raw, len, h, n, t, set, w, j, sum = 0, s[SEQLZ_LIT_STREAMS], best = 0, cost[SEQLZ_LIT_SETS] = {0};
     char buf[64], *b;
@@ -130,7 +130,7 @@ static void text_facts(void) {
     }
     /* the literal table that codes them in the fewest bits */
     {
-        static u8 lits[SEQLZ_PAGE];
+        static u8 lits[SEQLZ_BLOCK_SIZE];
         static struct seqlz_state st;
         static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
         unsigned int ns = seqlz_find(&st, page, seq, 2), i, at = 0, m = 0, k;
@@ -257,10 +257,10 @@ static void value_facts(const char* P, const char* name, char (*code)[17], unsig
  * page's bitstream.
  */
 static void page_walk(const char* name, void (*make)(u8*)) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    static char all[8 * 2 * SEQLZ_PAGE], want[8 * 2 * SEQLZ_PAGE];
+    static char all[8 * 2 * SEQLZ_BLOCK_SIZE], want[8 * 2 * SEQLZ_BLOCK_SIZE];
     unsigned int len, n, i, last = 1, n_lit, nb, k;
     char P[64], key[64];
 
@@ -341,7 +341,7 @@ static void page_walk(const char* name, void (*make)(u8*)) {
 
 /* the pointer page of chapter 9: which tokens its sequences have */
 static void pointer_facts(void) {
-    static u8 page[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int n, i, last = 1, raw, t49 = 0, t34 = 0;
@@ -425,7 +425,7 @@ static void header_facts(void) {
     unsigned int extra;
     char buf[64];
 
-    fact_num(K(P, "PAGE"), SEQLZ_PAGE);
+    fact_num(K(P, "PAGE"), SEQLZ_BLOCK_SIZE);
     fact_num(K(P, "MAX_ESCAPE_LEN"), SEQLZ_MAX_ESCAPE_LEN);
     fact_num(K(P, "LEN_SYMBOLS"), SEQLZ_LEN_SYMBOLS);
     snprintf(buf, sizeof buf, "0x%X", SEQLZ_RAW_NIBBLES);
@@ -452,10 +452,10 @@ static void header_facts(void) {
     fact_num(K(P, "lengths"), sizeof(struct seqlz_lengths));
     fact_num(K(P, "state"), sizeof(struct seqlz_state));
     /* the largest length values: ll before a match of 4, a match after 1 literal */
-    fact_num(K(P, "max_ll_value"), SEQLZ_PAGE - 4U - SEQLZ_LL_CAP);
-    fact_num(K(P, "max_ml_value"), SEQLZ_PAGE - 1U - 4U - SEQLZ_ML_CAP);
-    fact_num(K(P, "max_ll_sym"), seqlz_len_symbol(SEQLZ_PAGE - 4U - SEQLZ_LL_CAP, &extra));
-    fact_num(K(P, "max_ml_sym"), seqlz_len_symbol(SEQLZ_PAGE - 1U - 4U - SEQLZ_ML_CAP, &extra));
+    fact_num(K(P, "max_ll_value"), SEQLZ_BLOCK_SIZE - 4U - SEQLZ_LL_CAP);
+    fact_num(K(P, "max_ml_value"), SEQLZ_BLOCK_SIZE - 1U - 4U - SEQLZ_ML_CAP);
+    fact_num(K(P, "max_ll_sym"), seqlz_len_symbol(SEQLZ_BLOCK_SIZE - 4U - SEQLZ_LL_CAP, &extra));
+    fact_num(K(P, "max_ml_sym"), seqlz_len_symbol(SEQLZ_BLOCK_SIZE - 1U - 4U - SEQLZ_ML_CAP, &extra));
     fact_num(K(P, "last_sym"), SEQLZ_LEN_SYMBOLS - 1U);
 }
 

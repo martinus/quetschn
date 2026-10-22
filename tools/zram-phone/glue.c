@@ -28,7 +28,7 @@ static int q_compress(struct crypto_tfm *tfm, const u8 *src, unsigned int slen,
 	struct q_ctx *c = crypto_tfm_ctx(tfm);
 	unsigned int len;
 
-	if (slen != SEQLZ_PAGE)
+	if (slen != SEQLZ_BLOCK_SIZE)
 		return -EINVAL;
 	len = seqlz_compress(&c->st, src, dst, *dlen, level);
 	if (!len)
@@ -54,9 +54,10 @@ static int q_decompress(struct crypto_tfm *tfm, const u8 *src,
 {
 	struct q_ctx *c = crypto_tfm_ctx(tfm);
 
-	if (*dlen < SEQLZ_PAGE || seqlz_decode(src, slen, dst, c->scratch))
+	if (*dlen < SEQLZ_BLOCK_SIZE ||
+	    seqlz_decode(src, slen, dst, c->scratch))
 		return -EINVAL;
-	*dlen = SEQLZ_PAGE;
+	*dlen = SEQLZ_BLOCK_SIZE;
 	return 0;
 }
 

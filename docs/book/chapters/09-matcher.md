@@ -5,7 +5,7 @@ next bytes appeared earlier in the same page. What it finds are sequences, `ll` 
 of `ml` bytes from `offset` bytes back ([chapter 4](#ch-format)), and it hands each one to a function
 it is given; in the compressor that is the encoder of [chapter 10](#ch-encoder), which writes the
 sequence before the matcher looks at the next byte. `seqlz_hash5()` turns 5 bytes into a slot of a
-hash table, `seqlz_match_len()` counts how long a match is, and `seqlz_match_page()` is the loop over
+hash table, `seqlz_match_len()` counts how long a match is, and `seqlz_match_block()` is the loop over
 the page. That loop alone took about as long as all of `lz4` takes to compress a page, 17 300 to
 17 900 cycles against `lz4`'s 17 203 on x86-64, when it was last measured alone
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)),
@@ -152,16 +152,16 @@ the matcher only reads, the decoder has to care ([chapter 14](#ch-decode)).
 
 ## The callback costs no call {#ch-matcher--emit}
 
-@listing src/page_lz.h 112-117
+@listing src/page_lz.h 113-118
 
 A call through `emit_fn` once per sequence would be an indirect call, and the matcher would have to
-keep its state in memory across it. It does not happen: `seqlz_match_page()` is `__always_inline`, and
-its callers in `src/seqlz_compress.c`, `seqlz_find()`, `compress_page()` and `compress_own()`, pass a
+keep its state in memory across it. It does not happen: `seqlz_match_block()` is `__always_inline`, and
+its callers in `src/seqlz_compress.c`, `seqlz_find()`, `compress_block()` and `compress_own()`, pass a
 constant function, `find_emit()`, `encode_emit()` and `encode_emit_rec()`, all `__always_inline` too.
 After inlining, the compiler sees which function `emit` is and inlines it as well. `gcc -O2` for
 x86-64 makes `seqlz_compress.o` without a single indirect call. So the type is for the source: one
 matcher with several receivers. The `bool lazy` of level 3 goes the same way: every call passes a
-constant, `seqlz_find()` has one call with `true` and one with `false`, `compress_page()` passes
+constant, `seqlz_find()` has one call with `true` and one with `false`, `compress_block()` passes
 `false` and `compress_own()`, level 3's, `true`. So each inlined copy of the loop sees a constant, and
 the one for levels 1 and 2 has no code of level 3 at all ([chapter 10](#ch-encoder--entry)).
 `seqlz_find()` collects the sequences into an array for tests and tools such as the table trainer,
@@ -180,7 +180,7 @@ x86-64, 20 000 pages of a desktop dump).
 
 ## Greedy, two candidates, every position {#ch-matcher--plan}
 
-@listing src/page_lz.h 119-146
+@listing src/page_lz.h 120-147
 
 **Greedy.** At levels 1 and 2 the matcher takes the first match it finds, counts how long it is and
 jumps over it. A **lazy** matcher checks whether a match one byte later is longer, a hash chain
@@ -226,7 +226,7 @@ the writes gained 0.05 µs.
 
 ## The state of the loop, and why reading a candidate is always safe {#ch-matcher--state}
 
-@listing src/page_lz.h 147-174
+@listing src/page_lz.h 148-175
 
 `limit` is {{ch09.limit}}, a constant the compiler puts into the compare, and positions instead of
 pointers took 21 916 to 21 786 cycles per page
@@ -265,7 +265,7 @@ safe the same way: `last` and `pos` start at 1, after a match `last` is at most 
 
 ## One position: two candidates, one branch {#ch-matcher--position}
 
-@listing src/page_lz.h 176-201
+@listing src/page_lz.h 177-202
 
 This is the path taken most: on the phone's pages a run without a match is 4 positions long on average
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept)).
@@ -308,7 +308,7 @@ right one with a compare was 9% slower: more instructions.
 
 ## A hit: count, emit {#ch-matcher--hit}
 
-@listing src/page_lz.h 202-208
+@listing src/page_lz.h 203-209
 
 When both candidates hit, the repeat offset wins, as its offset costs 0 bits; which gives the longer
 match is not checked. Measured offline on 40 000 zram pages of a desktop, always taking the longer of
@@ -338,7 +338,7 @@ it a whole byte.
 
 ## Level 3: one position later, and backwards {#ch-matcher--lazy}
 
-@listing src/page_lz.h 209-219
+@listing src/page_lz.h 210-220
 
 At levels 1 and 2 `lazy` is a constant `false` in the inlined loop, and these lines are not compiled
 in. At level 3 a match found at `pos` gets two more chances to grow. If it is shorter than
@@ -350,7 +350,7 @@ the sequence before, whose match ended at `anchor`, and `m > 0` keeps `src[m - 1
 
 @listing src/page_lz.h 69-73
 
-@listing src/page_lz.h 75-110
+@listing src/page_lz.h 75-111
 
 `seqlz_lazy()` comes before the matcher in the file and is explained here, where it is called. It
 needs no new load of the next position: `v_next` and `h_next`, its 8 bytes and their hash, are what
@@ -400,7 +400,7 @@ October 2026
 
 ## One position of a match goes into the table {#ch-matcher--insert}
 
-@listing src/page_lz.h 220-242
+@listing src/page_lz.h 221-243
 
 `last` and `back` become the new repeat offset, and the sequence goes to `emit`, the encoder in the
 compressor. The positions inside a match were skipped. One of them, 2 bytes before its end, goes into the table,
@@ -423,7 +423,7 @@ that its output fits rely on ([chapter 10](#ch-encoder--layout)).
 
 ## The matcher on two made-up pages {#ch-matcher--back}
 
-Below, `seqlz_match_page()` runs on two pages, one statement at a time: the page of 512 pointers of this
+Below, `seqlz_match_block()` runs on two pages, one statement at a time: the page of 512 pointers of this
 section, and the made-up page of [chapter 16](#ch-trace). It is the function of this chapter, recorded
 while it searched the pages when the book was built, so every position, slot and match is the real one.
 Step with the buttons or the arrow keys, and with shift from one sequence to the next.
@@ -499,14 +499,14 @@ src/seqlz_compress.c src/seqlz_codes.c src/seqlz_default_tables.c src/seqlz_lit_
 #include <stdio.h>
 
 static struct seqlz_state st;
-static u8 page[SEQLZ_PAGE];
+static u8 page[SEQLZ_BLOCK_SIZE];
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
 
 int main(void)
 {
 	unsigned int i, n, pos = 0;
 
-	for (i = 0; i < SEQLZ_PAGE / 8; i++)
+	for (i = 0; i < SEQLZ_BLOCK_SIZE / 8; i++)
 		put_unaligned_le64(0x7f1234560010ULL + 16 * i, page + 8 * i);
 	n = seqlz_find(&st, page, seq, 2);
 	printf("%u sequences\n", n);

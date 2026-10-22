@@ -21,7 +21,7 @@ Directives, each on a line of its own, outside fenced code:
       facts= adds the facts under those prefixes to the data, as data.facts["ch02.cls.0.share"]
 
   @stepper decode | match
-      the step-through of decode_page(), seqlz_decode()'s body, or seqlz_match_page(): stepper/instrument.py puts hooks
+      the step-through of decode_block(), seqlz_decode()'s body, or seqlz_match_block(): stepper/instrument.py puts hooks
       into a copy of the real function, stepper/trace.c or trace_match.c records it on the pages,
       stepper/stepper.js or match.js plays it; needs a C compiler. The C programs of anim/ and
       stepper/ get their pages from pages.h
@@ -406,13 +406,13 @@ STEPPERS = {
         "src": "src/seqlz_decompress.c", "copy": "dec_inst.c", "trace": "trace.c",
         "link": ("codes", "compress", "default_tables", "lit_sets"),
         "pages": [("ab", "ab \u00d7 2048, 9 bytes"), ("slab", "chapter 16\u2019s page, 796 bytes")],
-        "label": "decode_page() step by step", "fn": "decode_page()", "js": "stepper.js",
+        "label": "decode_block() step by step", "fn": "decode_block()", "js": "stepper.js",
         "what": "decoding two pages", "seq": "a sequence",
     },
     "match": {
         "src": "src/page_lz.h", "copy": "page_lz.h", "trace": "trace_match.c", "link": (),
         "pages": [("pointers", "512 pointers"), ("slab", "chapter 16\u2019s page")],
-        "label": "seqlz_match_page() step by step", "fn": "seqlz_match_page()", "js": "match.js",
+        "label": "seqlz_match_block() step by step", "fn": "seqlz_match_block()", "js": "match.js",
         "what": "finding the sequences of two pages", "seq": "the next sequence emitted",
     },
 }

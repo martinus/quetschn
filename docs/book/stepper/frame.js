@@ -1,6 +1,6 @@
 /*
  * The frame both step-throughs share, stepper.js for seqlz_decode() and match.js for
- * seqlz_match_page(): the controls and the arrow keys, the page buttons, the comments button, the code
+ * seqlz_match_block(): the controls and the arrow keys, the page buttons, the comments button, the code
  * pane that keeps the current line a third down, the redraw in the other theme, and the links to the
  * same sequence of chapter 16's page in the other figures. A view, made by makeView(ctx), does the rest:
  *

@@ -10,7 +10,7 @@
 #include "seqlz.h"
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     int i;
     unsigned int level;
@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
     for (i = 1; i < argc; i++) {
         FILE* f = fopen(argv[i], "rb");
 
-        if (!f || fread(page, 1, SEQLZ_PAGE, f) != SEQLZ_PAGE) {
+        if (!f || fread(page, 1, SEQLZ_BLOCK_SIZE, f) != SEQLZ_BLOCK_SIZE) {
             fprintf(stderr, "%s: not a page\n", argv[i]);
             return 1;
         }
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
             unsigned int n = seqlz_compress(&st, page, dst, sizeof dst, level);
             char name[4096];
 
-            if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+            if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
                 fprintf(stderr, "%s: the roundtrip failed\n", argv[i]);
                 return 1;
             }

@@ -29,7 +29,7 @@ static void make_page(unsigned char* p, unsigned int k) {
 
     switch (k % 6) {
     case 0:
-        for (i = 0; i < SEQLZ_PAGE; i++)
+        for (i = 0; i < SEQLZ_BLOCK_SIZE; i++)
             p[i] = (unsigned char)next();
         break;
     case 1: {
@@ -38,24 +38,24 @@ static void make_page(unsigned char* p, unsigned int k) {
 
         for (j = 0; j < len; j++)
             pat[j] = (unsigned char)next();
-        for (i = 0; i < SEQLZ_PAGE; i++)
+        for (i = 0; i < SEQLZ_BLOCK_SIZE; i++)
             p[i] = i % 61 == 0 ? (unsigned char)next() : pat[i % len];
         break;
     }
     case 2: {
         unsigned long long v = 0x00007f1234560000ULL + (next() & 0xfff0U);
 
-        for (i = 0; i < SEQLZ_PAGE; i += 8, v += 16 + (next() & 8U))
+        for (i = 0; i < SEQLZ_BLOCK_SIZE; i += 8, v += 16 + (next() & 8U))
             for (j = 0; j < 8; j++)
                 p[i + j] = (unsigned char)(v >> (8 * j));
         break;
     }
     case 3:
-        for (i = 0; i < SEQLZ_PAGE;) {
+        for (i = 0; i < SEQLZ_BLOCK_SIZE;) {
             unsigned char b = (unsigned char)(next() % 5);
             unsigned int run = 1 + (unsigned int)(next() % 40);
 
-            for (j = 0; j < run && i < SEQLZ_PAGE; j++)
+            for (j = 0; j < run && i < SEQLZ_BLOCK_SIZE; j++)
                 p[i++] = b;
         }
         break;
@@ -69,23 +69,23 @@ static void make_page(unsigned char* p, unsigned int k) {
                 words[j][c] = letters[next() % (sizeof(letters) - 1)];
             words[j][len] = 0;
         }
-        for (i = 0; i < SEQLZ_PAGE;) {
+        for (i = 0; i < SEQLZ_BLOCK_SIZE;) {
             const char* w = next() % 3 ? words[next() % 32] : &letters[next() % (sizeof(letters) - 1)];
 
-            for (j = 0; w[j] && i < SEQLZ_PAGE; j++)
+            for (j = 0; w[j] && i < SEQLZ_BLOCK_SIZE; j++)
                 p[i++] = (unsigned char)w[j];
         }
         break;
     }
     default:
-        memset(p, 0, SEQLZ_PAGE);
-        for (i = 0; i < SEQLZ_PAGE / 2; i++)
-            p[(next() % SEQLZ_PAGE)] = (unsigned char)(next() % 7);
+        memset(p, 0, SEQLZ_BLOCK_SIZE);
+        for (i = 0; i < SEQLZ_BLOCK_SIZE / 2; i++)
+            p[(next() % SEQLZ_BLOCK_SIZE)] = (unsigned char)(next() % 7);
     }
 }
 
 int main(void) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     unsigned long long hash = 0xcbf29ce484222325ULL;
     unsigned int k, i, coded_pages = 0, own_pages = 0, failed = 0;
@@ -98,7 +98,7 @@ int main(void) {
         for (level = 1; level <= SEQLZ_LEVELS; level++) {
             unsigned int n = seqlz_compress(&st, page, dst, sizeof dst, level);
 
-            if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
+            if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
                 failed++;
             coded_pages += n > 1 && (dst[1] & 0x80U);
             own_pages += n > 2 && (dst[1] & 0x80U) && (dst[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN;

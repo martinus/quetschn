@@ -3,15 +3,15 @@
  * seqlz: compression of single blocks of 4 KiB, for zram, where a block is one
  * memory page with 4 KiB pages. An LZ format whose sequences and literals are
  * Huffman coded with tables that are part of the format, so a block carries
- * none. Documentation/staging/seqlz.rst specifies the format, which calls a
- * block a page. The format may change from one kernel to the next, so a
- * compressed block is only for the kernel that wrote it, not for storage.
+ * none. Documentation/staging/seqlz.rst specifies the format. It may change
+ * from one kernel to the next, so a compressed block is only for the kernel
+ * that wrote it, not for storage.
  */
 #ifndef _LINUX_SEQLZ_H
 #define _LINUX_SEQLZ_H
 
 /* the bytes of a block, whatever PAGE_SIZE is */
-#define SEQLZ_BLOCK_SIZE 4096
+#define SEQLZ_BLOCK_SIZE 4096U
 /* room at dst with which seqlz_compress() never fails */
 #define SEQLZ_COMPRESS_BOUND (2 * SEQLZ_BLOCK_SIZE)
 

@@ -38,7 +38,7 @@ static inline void fact_str(const char* key, const char* s) {
 
 /* n bytes as "02 00 61 62" */
 static inline void fact_hex(const char* key, const unsigned char* p, unsigned int n) {
-    static char buf[3 * 2 * SEQLZ_PAGE + 1];
+    static char buf[3 * 2 * SEQLZ_BLOCK_SIZE + 1];
     char* w = buf;
     unsigned int k;
 
@@ -50,7 +50,7 @@ static inline void fact_hex(const char* key, const unsigned char* p, unsigned in
 
 /* the bits from bit `first` on, n of them, most significant bit of each byte first, as "0110" */
 static inline void fact_bits(const char* key, const unsigned char* p, unsigned int first, unsigned int n) {
-    static char buf[8 * 2 * SEQLZ_PAGE + 1];
+    static char buf[8 * 2 * SEQLZ_BLOCK_SIZE + 1];
     unsigned int k;
 
     for (k = 0; k < n; k++)
@@ -77,13 +77,13 @@ static inline const struct seqlz_tables* fact_tables(void) {
 /* the page compressed as seqlz_compress() writes it at a level, 1 to SEQLZ_LEVELS, and decoded again */
 static inline unsigned int fact_compress_level(const unsigned char* page, unsigned char* dst, unsigned int level) {
     static struct seqlz_state st;
-    static unsigned char out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static unsigned char out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     unsigned int n;
 
     fact_tables(); /* built once, for seqlz_compress() and seqlz_decode() */
-    n = seqlz_compress(&st, page, dst, 2 * SEQLZ_PAGE, level);
+    n = seqlz_compress(&st, page, dst, 2 * SEQLZ_BLOCK_SIZE, level);
 
-    if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+    if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
         fprintf(stderr, "facts: a page does not come back\n");
         exit(1);
     }

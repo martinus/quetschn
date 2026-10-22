@@ -49,10 +49,11 @@ static unsigned int lit_len(const struct seqlz_tables* t, unsigned int k, unsign
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], d2[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], d2[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE],
+        scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     static unsigned int hist[256], plain_hist[256];
-    static u8 deltas[SEQLZ_PAGE];
+    static u8 deltas[SEQLZ_BLOCK_SIZE];
     const struct seqlz_tables* t = fact_tables();
     struct seqlz_encoder e;
     unsigned int k, x, i, n, pick = 0, best = ~0U, n_lit, recs = 0, last8 = 0, with_rec, distinct = 0, distinct_plain = 0;
@@ -97,9 +98,9 @@ int main(void) {
 
     /* the page of pointers through compress_own()'s steps, the records looked at before delta_literals() */
     pointer_page(page);
-    encoder_init(&e, dst, sizeof(dst), page + SEQLZ_PAGE);
+    encoder_init(&e, dst, sizeof(dst), page + SEQLZ_BLOCK_SIZE);
     e.rec = true;
-    seqlz_match_page(st.table, page, true, encode_emit_rec, &e);
+    seqlz_match_block(st.table, page, true, encode_emit_rec, &e);
     if (e.p == e.lit || !e.rec)
         fail("the page of pointers does not fit with its records");
     with_rec = (unsigned int)(e.lit - (dst + SEQLZ_HEADER));
@@ -165,7 +166,7 @@ int main(void) {
     if (x != pick)
         fail("delta_literals() picks another delta than the prices");
     fact_num("delta.ptr.pick", pick);
-    memcpy(deltas, st.literals, SEQLZ_PAGE);
+    memcpy(deltas, st.literals, SEQLZ_BLOCK_SIZE);
     n_lit = (unsigned int)(e.lit - (dst + SEQLZ_HEADER));
     fact_num("delta.ptr.n_lit", n_lit);
     if (with_rec != n_lit + LIT_REC * recs)
@@ -218,14 +219,14 @@ int main(void) {
     fact_num("delta.ptr.l3.dt", d2[SEQLZ_LIT_HEADER(0)]);
     fact_hex("delta.ptr.l3.head", d2, SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN + (d2[2] >> SEQLZ_LIT_WIDTH_AT & 7U)) + 1);
     fact_num("delta.ptr.l3.n", get_unaligned_le16(d2) & (SEQLZ_LIT_CODED - 1U));
-    if (seqlz_decode(d2, len, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
+    if (seqlz_decode(d2, len, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         fail("the page of pointers does not decode to itself");
     {
         /* level 3 without deltas: compress_own() with the records off, then code_own() with delta 0 */
         unsigned int raw, n0;
 
-        encoder_init(&e, d2, sizeof(d2), page + SEQLZ_PAGE);
-        seqlz_match_page(st.table, page, true, encode_emit, &e);
+        encoder_init(&e, d2, sizeof(d2), page + SEQLZ_BLOCK_SIZE);
+        seqlz_match_block(st.table, page, true, encode_emit, &e);
         raw = encoder_finish(&e, d2, sizeof(d2));
         n0 = code_own(d2, raw, &st, 0);
         fact_num("delta.ptr.l3plain.len", n0);
@@ -236,7 +237,7 @@ int main(void) {
      * then 16 bytes copied from the deltas at d
      */
     {
-        u8 buf[SEQLZ_PAGE];
+        u8 buf[SEQLZ_BLOCK_SIZE];
         const unsigned int dist = pick == SEQLZ_DELTA_4 ? 4U : pick == SEQLZ_DELTA_8 ? 8U : rec_dist[1];
 
         n = rec_pos[1];

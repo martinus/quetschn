@@ -18,7 +18,7 @@ static int fail(const char* what) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], raw[2 * SEQLZ_PAGE], comp[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], raw[2 * SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE];
     static u8 scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     unsigned int n, n_raw, n_lit, set, width, i, k, bits[SEQLZ_LIT_STREAMS] = {0};
@@ -46,7 +46,7 @@ int main(void) {
     for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
         sz[i] = (unsigned int)(h >> (i * width)) & ((1U << width) - 1U);
     memset(scratch, 0xaa, sizeof(scratch));
-    if (seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
+    if (seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         return fail("the page does not decode to itself");
     /* the decoder's literals are the encoder's raw literals */
     if (memcmp(scratch, raw + SEQLZ_HEADER, n_lit))

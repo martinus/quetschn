@@ -186,7 +186,7 @@ Each row is a decision of [chapter 4](#ch-format), against the other way in the 
 | only complete prefix codes | a check for invalid codes | 6% of the decoder's instructions | | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | trained codes for length values | the symbol in 5 plain bits | 2.2 bytes per page | two more tables in the format | [5 plain bits again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept) |
 | a page ends exactly where its bits end | trailing bytes ignored | a damaged page is rejected | 0.07 to 0.10 µs per warm read on the A55 | [strict end](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept) |
-| no version in the page | a version byte | none needed | a format change needs a new kernel | [format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page) |
+| no version in the page | a version byte | none needed | a format change needs a new kernel | [format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-block) |
 
 ### The token: 4 bits, 5 bits and 6 classes
 
@@ -285,7 +285,7 @@ per page, 0.12% of zsmalloc memory, at no time the VM or the phone could measure
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 zram's pages never outlive the kernel that wrote them, so a new format needs a new kernel, not a version
 byte, and the codes 9 to 15 in byte 2 and the values of the delta's byte other than 1 to 3 stay free for
-a format that has to tell itself apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
+a format that has to tell itself apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-block)).
 
 
 ## The literals {#ch-decisions--literals}

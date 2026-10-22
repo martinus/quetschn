@@ -66,8 +66,8 @@ static __always_inline void copy16(u8 *d, const u8 *s)
 /*
  * Copies the nl literals of a sequence from lit to d; the caller has checked
  * that they fit. It copies 16 bytes at a time, also past nl, as long as 16
- * bytes fit in the page and in the input: what it writes past nl, the next
- * sequence overwrites. Only near the end of the page or of the input does it
+ * bytes fit in the block and in the input: what it writes past nl, the next
+ * sequence overwrites. Only near the end of the block or of the input does it
  * copy byte by byte, at most 15 bytes.
  */
 static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
@@ -122,10 +122,10 @@ static __always_inline u64 repeat_pattern(const u8 *d, unsigned int off)
 
 /*
  * Copies a match of len bytes that starts off bytes before d; the caller has
- * checked that it fits and that off points into the page. Like the literals, 8
- * bytes at a time as long as 8 bytes fit in the page, also past len; only the
- * last 7 bytes of a page are copied one by one. Copying byte by byte up to the
- * end of the page made the slowest pages many times slower than lz4.
+ * checked that it fits and that off points into the block. Like the literals, 8
+ * bytes at a time as long as 8 bytes fit in the block, also past len; only the
+ * last 7 bytes of a block are copied one by one. Copying byte by byte up to the
+ * end of the block made the slowest blocks many times slower than lz4.
  *
  * An offset below 8 overlaps the bytes it writes: off = 1 repeats one byte,
  * off = 2 two bytes, and so on. Then the off bytes before d are repeated to 8
@@ -145,7 +145,7 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 			unsigned int step = repeat_step[off & 7U];
 			/*
 			 * reads d - off up to d - off + 7, which is below
-			 * d + 8 <= d_end: inside the page
+			 * d + 8 <= d_end: inside the block
 			 */
 			u64 pat = repeat_pattern(d, off);
 
@@ -162,7 +162,7 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
 			 * Most matches are at most 16 bytes, so 16 bytes are
 			 * copied without a loop. The second copy reads bytes
 			 * the first one wrote or that were there before, so the
-			 * order is right. 32 bytes made the median page faster
+			 * order is right. 32 bytes made the median block faster
 			 * and the slowest ones slower: those have many short
 			 * matches, and copied 32 bytes for each.
 			 */
@@ -183,8 +183,8 @@ static __always_inline void copy_match(u8 *d, const u8 *d_end, unsigned int off,
  * Reads the sequences' bitstream, most significant bit first: bits has the
  * next bits on top, count says how many of them are real. A refill loads 8
  * bytes at once while 8 are left, and byte by byte at the end, so it never
- * reads past the stream. A page that wants more bits than it has gets zeros,
- * and count goes negative: the page is not valid. That bits are right does not
+ * reads past the stream. A block that wants more bits than it has gets zeros,
+ * and count goes negative: the block is not valid. That bits are right does not
  * matter for memory safety, every length and offset is checked where it is
  * used.
  */
@@ -230,7 +230,7 @@ static inline void seqlz_br_drop(struct seqlz_bit_reader *r, unsigned int n)
 /*
  * Reads one length value. The entry of its code has the base value and the
  * number of extra bits, which follow the code. Takes up to SEQLZ_MAX_BITS +
- * QUETSCHN_PAGE_BITS bits, 20 or 22; the caller refills before.
+ * SEQLZ_BLOCK_BITS bits, 20 or 22; the caller refills before.
  */
 static inline unsigned int seqlz_br_value(struct seqlz_bit_reader *r,
 					  const struct value_table *t)
@@ -258,7 +258,7 @@ static inline unsigned int seqlz_br_value(struct seqlz_bit_reader *r,
  * of x86-64. A refill leaves at least 56 bits, codes never reach the 1.
  */
 /*
- * the 8 bytes at ip, zeros after end; only the last refills of a page need it,
+ * the 8 bytes at ip, zeros after end; only the last refills of a block need it,
  * so it stays out of the loop
  */
 static noinline __cold u64 lit_load_tail(const u8 *ip, const u8 *end)
@@ -306,7 +306,7 @@ static __always_inline u64 lit_decode(u8 *out, u64 bits, const u16 *lt,
 /*
  * The sizes of the 8 streams of coded literals, width bits each from p, and
  * where each starts, the first at q. Returns their sum. The sizes are copied
- * out of the page first: a 4-byte load at the last size's byte would read past
+ * out of the block first: a 4-byte load at the last size's byte would read past
  * the header.
  */
 static __always_inline u64 lit_stream_sizes(const u8 *p, unsigned int width,
@@ -333,7 +333,7 @@ static __always_inline u64 lit_stream_sizes(const u8 *p, unsigned int width,
  * with bits left in the 64 bits of b, the last of them marked by a 1: the bits
  * used, the bytes it moved past plus the 1's position, are 0 to 7 fewer than
  * its size, and the bits after its last code are 0. Those are read from the
- * page, not from b: when the stream's last 8 bytes are in it, its last bit is
+ * block, not from b: when the stream's last 8 bytes are in it, its last bit is
  * where the 1 is. A stream that read into the next one fails here, and so does
  * one with bytes after its codes, also one without literals that has a size.
  */
@@ -349,12 +349,12 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
 /* the most bits one step of own_table() takes: a run's code and 8 bits more */
 #define OWN_STEP_MAX (2U * SEQLZ_OWN_CODE_BITS)
 static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
-	       (sizeof(u16) << SEQLZ_LIT_BITS) + 1U <= SEQLZ_PAGE),
-	      "own_table()'s buckets fit the scratch, its table the page");
+	       (sizeof(u16) << SEQLZ_LIT_BITS) + 1U <= SEQLZ_BLOCK_SIZE),
+	      "own_table()'s buckets fit the scratch, its table the block");
 
 /*
- * A page's own literal table, see SEQLZ_LIT_OWN: reads it from p and writes its
- * decode table to lt, 1 << SEQLZ_LIT_BITS entries as those of the fixed
+ * A block's own literal table, see SEQLZ_LIT_OWN: reads it from p and writes
+ * its decode table to lt, 1 << SEQLZ_LIT_BITS entries as those of the fixed
  * tables. Returns where the table ends, or NULL if it is not valid: codes that
  * overfill the code space, more than 256 bytes, bits that are not zero after
  * its last symbol, or fewer bytes than it needs.
@@ -363,9 +363,9 @@ static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
  * per length from 1 to OWN_QUAD_NONE, the last for none. Then the entries are
  * written length by length, which is the order of the canonical codes. Each
  * step decodes up to two lengths with one lookup of own->quad[]; the checks of
- * the bytes wait until the end, nothing reads the table before. Each step
- * moves on by at least one code, so the loop ends for any input: past its end
- * the page reads as zeros, and a code of zeros is a length. Not inlined: in
+ * the bytes wait until the end, nothing reads the table before. Each step moves
+ * on by at least one code, so the loop ends for any input: past its end the
+ * block reads as zeros, and a code of zeros is a length. Not inlined: in
  * decode_literals() its locals made the stack frame larger than the kernel
  * allows with KASAN.
  */
@@ -397,7 +397,9 @@ static noinline const u8 *own_table(const struct own_table *own, const u8 *p,
 		top = (unsigned int)(bits >> (64U - SEQLZ_OWN_CODE_BITS));
 		e = own->quad[top];
 		if (e >> OWN_QUAD_ALONE_AT) {
-			/* a run alone: its code, then nb - 1 bits below its top */
+			/*
+			 * a run alone: its code, then nb - 1 bits below its top
+			 */
 			unsigned int d = own->decode[top],
 				     nb = (d & 0xffU) - SEQLZ_OWN_RUN;
 
@@ -463,20 +465,21 @@ static noinline const u8 *own_table(const struct own_table *own, const u8 *p,
 }
 
 /*
- * Decodes the coded literals of a page into out, the scratch, see
+ * Decodes the coded literals of a block into out, the scratch, see
  * SEQLZ_LIT_HEADER for the layout, and their delta into *delta, 0 for none.
- * Returns where the sequences' bitstream starts, or NULL if the page is not
+ * Returns where the sequences' bitstream starts, or NULL if the block is not
  * valid. Not inlined: inside the loop over the sequences its registers made
- * pages with raw literals slower too.
+ * blocks with raw literals slower too.
  */
 static noinline const u8 *decode_literals(const u8 *s, unsigned int src_len,
-					  unsigned int n_lit, u8 *out, u8 *page,
-					  unsigned int *delta)
+					  unsigned int n_lit, u8 *out,
+					  u8 *block, unsigned int *delta)
 {
 	const u8 *const end = s + src_len;
 	/*
-	 * byte 2: the literals' code in bits 0 to 3, width - SEQLZ_SIZE_BITS_MIN
-	 * in bits 4 to 6, in bit 7 whether they are deltas, then their byte
+	 * byte 2: the literals' code in bits 0 to 3,
+	 * width - SEQLZ_SIZE_BITS_MIN in bits 4 to 6, in bit 7 whether they are
+	 * deltas, then their byte
 	 */
 	const unsigned int width =
 		SEQLZ_SIZE_BITS_MIN +
@@ -496,7 +499,8 @@ static noinline const u8 *decode_literals(const u8 *s, unsigned int src_len,
 	const u16 *lt;
 
 	if (src_len < SEQLZ_LIT_HEADER(width) + deltas ||
-	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN || n_lit > SEQLZ_PAGE)
+	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN ||
+	    n_lit > SEQLZ_BLOCK_SIZE)
 		return NULL;
 	/* the delta, SEQLZ_DELTA_4 to SEQLZ_DELTA_LAST, in byte 3 */
 	*delta = deltas ? s[SEQLZ_LIT_HEADER(0)] : 0U;
@@ -504,10 +508,10 @@ static noinline const u8 *decode_literals(const u8 *s, unsigned int src_len,
 		return NULL;
 	if ((s[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN) {
 		/*
-		 * the page's own table, built in the page itself, from an even
-		 * address: the caller's page may start at an odd one
+		 * the block's own table, built in the block itself, from an
+		 * even address: the caller's block may start at an odd one
 		 */
-		u16 *own = (u16 *)(page + ((unsigned long)page & 1U));
+		u16 *own = (u16 *)(block + ((unsigned long)block & 1U));
 
 		q = own_table(&seqlz_tables.own, q, end, own, out);
 		if (!q)
@@ -548,7 +552,7 @@ static noinline const u8 *decode_literals(const u8 *s, unsigned int src_len,
 	 * ends right after its own codes; what they decode lands after
 	 * the literals, in the 16 bytes the scratch has there. All
 	 * streams take the same steps: a loop per stream would end
-	 * after a different number of literals on every page, and
+	 * after a different number of literals on every block, and
 	 * mispredict.
 	 */
 	rest = n_lit - k;
@@ -592,8 +596,8 @@ static __always_inline void add8(u8 *p, unsigned int dist)
 
 /*
  * Turns the nl deltas just copied to d back into literals, see
- * SEQLZ_LIT_DELTA_AT, in the page's order: the byte a delta is to is before
- * it, so it is the page's own again by then. last is the offset of the
+ * SEQLZ_LIT_DELTA_AT, in the block's order: the byte a delta is to is before
+ * it, so it is the block's own again by then. last is the offset of the
  * sequence before.
  * Whole words while a word fits before the literals' end: as the byte
  * referred to is at least 4 (8) bytes before each byte of the word, all of
@@ -625,7 +629,7 @@ static __always_inline void undelta_literals(unsigned int delta, u8 *d,
  * undelta_literals() for the fast path, which copied 16 bytes to d, of which nl
  * are literals: all 16 bytes, without a loop. What it writes past nl, the match
  * after the literals overwrites, and that match reads only bytes before them.
- * Near the page's start, the loops above.
+ * Near the block's start, the loops above.
  */
 static __always_inline void undelta_fast(unsigned int delta, u8 *d,
 					 const u8 *dst, unsigned int nl,
@@ -700,7 +704,7 @@ static __always_inline void copy_match_fast(u8 *d, unsigned int off,
 static __always_inline u32 next_token(struct seqlz_bit_reader *br,
 				      const struct token_table *t)
 {
-	if (br->count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
+	if (br->count < (int)(SEQLZ_TOKEN_BITS + SEQLZ_BLOCK_BITS))
 		seqlz_br_refill(br);
 	return t->decode[br->bits >> (64U - SEQLZ_TOKEN_BITS)];
 }
@@ -713,7 +717,7 @@ static __always_inline u32 next_token(struct seqlz_bit_reader *br,
  *
  * The refill: every second fast sequence, without checking the bits left.
  * Whether they run short depends on the codes before, which the branch
- * predictor learns only for a page it has seen, and a swap-in decodes a page
+ * predictor learns only for a block it has seen, and a swap-in decodes a block
  * once. A refill leaves at least 56 bits, and two fast sequences take at most
  * 50, 11 for each token and up to 14 for each offset; after a slow one it
  * always refills, *skip is 0 then. 8 bytes of input are there, and count is at
@@ -736,27 +740,27 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 }
 
 /*
- * The room the fast path of seqlz_decode() needs. In the page: it writes at
+ * The room the fast path of seqlz_decode() needs. In the block: it writes at
  * most 54 bytes, 14 literals and 40 bytes of match. In the literals: one copy
  * of 16 bytes. In the input: the 8 bytes of a refill.
  */
-#define FAST_PAGE_ROOM 64U
+#define FAST_BLOCK_ROOM 64U
 #define FAST_LIT_ROOM 16U
 #define FAST_IN_ROOM 8U
 
 /*
- * seqlz_decode() for a page whose literals are deltas, see SEQLZ_LIT_DELTA_AT,
+ * seqlz_decode() for a block whose literals are deltas, see SEQLZ_LIT_DELTA_AT,
  * or not, deltas a constant: two copies of the loop over the sequences, so
- * that a page without deltas runs none of their code. A check of it for every
- * sequence made those pages slower to read.
+ * that a block without deltas runs none of their code. A check of it for every
+ * sequence made those blocks slower to read.
  */
-static __always_inline int decode_page(const void *src, unsigned int src_len,
-				       void *dst, void *scratch, bool deltas)
+static __always_inline int decode_block(const void *src, unsigned int src_len,
+					void *dst, void *scratch, bool deltas)
 {
 	const u8 *s = src;
 	const u8 *const s_end = s + src_len;
 	u8 *d = dst;
-	u8 *const d_end = d + SEQLZ_PAGE;
+	u8 *const d_end = d + SEQLZ_BLOCK_SIZE;
 	const u8 *lit, *lit_end, *lit_bound;
 	u8 *d_fast;
 	unsigned long lit_fast, in_fast, end_gap;
@@ -801,10 +805,10 @@ static __always_inline int decode_page(const void *src, unsigned int src_len,
 	/*
 	 * The fast path below copies without checking the room left, so it is
 	 * taken only where there is enough, one compare each, see
-	 * FAST_PAGE_ROOM. lit_fast and in_fast are numbers, not pointers: with
+	 * FAST_BLOCK_ROOM. lit_fast and in_fast are numbers, not pointers: with
 	 * less input, lit_bound - FAST_LIT_ROOM would point before it.
 	 */
-	d_fast = d_end - FAST_PAGE_ROOM;
+	d_fast = d_end - FAST_BLOCK_ROOM;
 	lit_fast = (unsigned long)lit_bound - FAST_LIT_ROOM;
 	/* 0 if the input is shorter than a refill: no refill without a check */
 	in_fast = src_len >= FAST_IN_ROOM ?
@@ -812,14 +816,14 @@ static __always_inline int decode_page(const void *src, unsigned int src_len,
 			  0;
 
 	/*
-	 * The literals left fill the rest of the page when d_end - d is
-	 * lit_end - lit, that is when d - lit is end_gap: one compare of the two
-	 * pointers the loop moves. Numbers, as d and lit point into different
-	 * buffers.
+	 * The literals left fill the rest of the block when d_end - d is
+	 * lit_end - lit, that is when d - lit is end_gap: one compare of the
+	 * two pointers the loop moves. Numbers, as d and lit point into
+	 * different buffers.
 	 */
 	end_gap = (unsigned long)d_end - (unsigned long)lit_end;
-	/* a page of literals only has no sequence with a match, no token */
-	if (n_lit == SEQLZ_PAGE)
+	/* a block of literals only has no sequence with a match, no token */
+	if (n_lit == SEQLZ_BLOCK_SIZE)
 		goto last_literals;
 	tok = next_token(&br, &seqlz_tables.token);
 	for (;;) {
@@ -854,9 +858,9 @@ static __always_inline int decode_page(const void *src, unsigned int src_len,
 		 * The fast path: no length value follows, and there is room,
 		 * see d_fast. Then nl is at most 14 and len at most 34, and the
 		 * copies are 16 literal bytes and 16 to 40 bytes of match,
-		 * without loops. The page's last match never takes it: after
-		 * it fewer than 8 bits are left, and the fast path needs 8 bytes
-		 * of input, so it never misses the end below.
+		 * without loops. The block's last match never takes it: after
+		 * it fewer than 8 bits are left, and the fast path needs 8
+		 * bytes of input, so it never misses the end below.
 		 */
 		if (!(tok & (1U << TOK_VALUE_AT)) && d <= d_fast &&
 		    (unsigned long)lit <= lit_fast &&
@@ -867,8 +871,8 @@ static __always_inline int decode_page(const void *src, unsigned int src_len,
 			 * 3 instructions per sequence. The 16 bytes read are
 			 * inside lit_bound, so lit stays inside it. If nl goes
 			 * past lit_end, bytes of the bitstream were taken as
-			 * literals, and the slow path below, where every page
-			 * ends, rejects the page because lit > lit_end.
+			 * literals, and the slow path below, where every block
+			 * ends, rejects the block because lit > lit_end.
 			 */
 			copy16(d, lit);
 			if (deltas)
@@ -900,16 +904,16 @@ static __always_inline int decode_page(const void *src, unsigned int src_len,
 			len += seqlz_br_value(&br, &seqlz_tables.ml);
 		}
 		last = off;
-		/* off must point into the page; off - 1 wraps for 0 */
+		/* off must point into the block; off - 1 wraps for 0 */
 		if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||
 		    len > (unsigned int)(d_end - d))
 			return -EINVAL;
 		copy_match(d, d_end, off, len);
 		d += len;
 		/*
-		 * The literals left fill the rest of the page, see end_gap:
-		 * every match has at least 4 bytes, so none can follow. They are
-		 * the last sequence, which has no token.
+		 * The literals left fill the rest of the block, see end_gap:
+		 * every match has at least 4 bytes, so none can follow. They
+		 * are the last sequence, which has no token.
 		 */
 		if ((unsigned long)d - (unsigned long)lit == end_gap)
 			break;
@@ -917,15 +921,17 @@ static __always_inline int decode_page(const void *src, unsigned int src_len,
 		skip = 0;
 	}
 last_literals:
-	/* the last sequence: the literals left, as many as the page has room */
+	/*
+	 * the last sequence: the literals left, as many as the block has room
+	 */
 	copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));
 	if (deltas)
 		undelta_literals(delta, d, dst, (unsigned int)(lit_end - lit),
 				 last);
 	/*
-	 * The page must end where its bits end: every byte read, fewer than 8
+	 * The block must end where its bits end: every byte read, fewer than 8
 	 * bits left in the last one, and those 0, as the compressor writes
-	 * them. zram has no checksum, so this is what tells a damaged page.
+	 * them. zram has no checksum, so this is what tells a damaged block.
 	 */
 	if (br.count < 0 || br.p != br.end || br.count >= 8 ||
 	    (br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))))
@@ -942,6 +948,6 @@ int seqlz_decode(const void *src, unsigned int src_len, void *dst,
 	if (src_len > SEQLZ_HEADER &&
 	    (get_unaligned_le16(s) & SEQLZ_LIT_CODED) &&
 	    s[2] >> SEQLZ_LIT_DELTA_AT)
-		return decode_page(src, src_len, dst, scratch, true);
-	return decode_page(src, src_len, dst, scratch, false);
+		return decode_block(src, src_len, dst, scratch, true);
+	return decode_block(src, src_len, dst, scratch, false);
 }

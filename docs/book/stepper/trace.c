@@ -60,7 +60,7 @@ static void stepper_step(int line,
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], comp[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static u8 page[SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     static const struct {
         const char* id;
@@ -74,11 +74,11 @@ int main(void) {
 
     if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
-    printf("{\"consts\":{\"PAGE\":%u,\"SCRATCH\":%u,\"FAST_PAGE_ROOM\":%u,\"FAST_LIT_ROOM\":%u,"
+    printf("{\"consts\":{\"PAGE\":%u,\"SCRATCH\":%u,\"FAST_BLOCK_ROOM\":%u,\"FAST_LIT_ROOM\":%u,"
            "\"FAST_IN_ROOM\":%u,\"TOKEN_BITS\":%u,\"LL_CAP\":%u,\"ML_CAP\":%u,\"HEADER\":%u},\"pages\":{",
-           SEQLZ_PAGE,
+           SEQLZ_BLOCK_SIZE,
            SEQLZ_SCRATCH,
-           FAST_PAGE_ROOM,
+           FAST_BLOCK_ROOM,
            FAST_LIT_ROOM,
            FAST_IN_ROOM,
            SEQLZ_TOKEN_BITS,
@@ -103,12 +103,12 @@ int main(void) {
         memset(out, 0, sizeof(out));
         printf("%s\"%s\":{\"coded\":%d,", k ? "," : "", pages[k].id, coded);
         printf("\"steps\":[");
-        if (seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+        if (seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
             fprintf(stderr, "trace.c: page %s does not decode to itself\n", pages[k].id);
             return 1;
         }
         printf("],");
-        array("page", page, SEQLZ_PAGE);
+        array("page", page, SEQLZ_BLOCK_SIZE);
         printf(",");
         array("comp", comp, n);
         printf(",");

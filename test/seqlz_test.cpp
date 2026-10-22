@@ -26,7 +26,7 @@ namespace {
 
 // The page size seqlz is built for, 4 KiB or 16 KiB (QUETSCHN_PAGE_BITS): the tests run with both.
 constexpr unsigned page_bits = QUETSCHN_PAGE_BITS;
-constexpr unsigned page_size = SEQLZ_PAGE;
+constexpr unsigned page_size = SEQLZ_BLOCK_SIZE;
 // zram's huge_class_size, from which on a page is stored as it is (docs/plan.md §3.1 and §3.5)
 constexpr unsigned zram_huge = page_bits == 12 ? 3625U : 14553U;
 
@@ -543,7 +543,7 @@ TEST_CASE("seqlz: the matcher never takes a position of an earlier page") {
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
     auto rng = std::mt19937_64(73);
     auto random_page = [&] {
-        auto bytes = std::vector<unsigned char>(SEQLZ_PAGE);
+        auto bytes = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
         for (auto& b : bytes) {
             b = static_cast<unsigned char>(rng());
         }
@@ -565,19 +565,19 @@ TEST_CASE("seqlz: the matcher reads nothing behind the page") {
     // its last positions: random bytes, which have no match. The mapping is rounded up to the system's
     // pages, which may be smaller than seqlz's, and a page without access follows it.
     auto const ps = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    auto const span = (SEQLZ_PAGE + ps - 1) / ps * ps;
+    auto const span = (SEQLZ_BLOCK_SIZE + ps - 1) / ps * ps;
     auto* const mem =
         static_cast<unsigned char*>(mmap(nullptr, span + ps, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     REQUIRE(mem != MAP_FAILED);
     REQUIRE(mprotect(mem + span, ps, PROT_NONE) == 0);
-    unsigned char* const page = mem + span - SEQLZ_PAGE;
+    unsigned char* const page = mem + span - SEQLZ_BLOCK_SIZE;
     auto const t = default_tables(seqlz_default_lengths);
     auto st = std::make_unique<seqlz_state>();
     auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
-    auto c = std::vector<unsigned char>(2 * SEQLZ_PAGE);
+    auto c = std::vector<unsigned char>(2 * SEQLZ_BLOCK_SIZE);
     auto rng = std::mt19937_64(79);
     for (int round = 0; round < 20; ++round) {
-        for (unsigned k = 0; k < SEQLZ_PAGE; ++k) {
+        for (unsigned k = 0; k < SEQLZ_BLOCK_SIZE; ++k) {
             page[k] = static_cast<unsigned char>(rng());
         }
         CHECK(seqlz_find(st.get(), page, seq.data(), 2) == 1);

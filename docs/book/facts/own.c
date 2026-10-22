@@ -209,7 +209,7 @@ static unsigned int read_description(const u8* p, u8* len, unsigned int* rows) {
 
 /* chapter 4's text page at level 3, and what the encoder did for it */
 static const u8* text_facts(const struct seqlz_tables* t, unsigned int* d_out) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], len[256];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], len[256];
     static struct seqlz_state st;
     struct own_work* w = own_work(&st);
     unsigned int n, h, b2, wdt, d, rows, used, k, nb = 0, sum = 0, s[SEQLZ_LIT_STREAMS];
@@ -267,7 +267,7 @@ static const u8* text_facts(const struct seqlz_tables* t, unsigned int* d_out) {
 
 /* own_code() and own_lengths() on the text page, step by step */
 static void encoder_facts(const struct seqlz_tables* t) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static const u8 shown[] = {' ', 'a', 'd', 'e', 'l', 'n', 'u'};
     struct own_work* w = own_work(&st);
@@ -435,7 +435,7 @@ static void encoder_facts(const struct seqlz_tables* t) {
  * decode table they give must be the one own_table() builds
  */
 static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned int d) {
-    static u8 page[SEQLZ_PAGE], bucket[SEQLZ_SCRATCH], dt_page[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], bucket[SEQLZ_SCRATCH], dt_page[SEQLZ_BLOCK_SIZE];
     const unsigned int full = 1U << SEQLZ_LIT_BITS;
     unsigned int at = 0, b = 0, space = 0, step = 0, k, i, pos = 0, count[OWN_QUAD_NONE + 1] = {0};
     u8 order[OWN_QUAD_NONE + 1][256];

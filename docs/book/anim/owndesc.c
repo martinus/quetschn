@@ -16,7 +16,7 @@ static unsigned int bit_at(const u8* p, unsigned int i) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE + 16], scratch[SEQLZ_SCRATCH];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE + 16], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     unsigned int first[17] = {0}, count[17] = {0}, sym_of[17][SEQLZ_OWN_SYMBOLS], len[256] = {0};
     unsigned int n, w, at = 0, b = 0, space = 0, s, l, k, rows = 0, d, next[17] = {0}, code[256] = {0};
@@ -27,7 +27,7 @@ int main(void) {
     words_page(page);
     n = seqlz_compress(&st, page, dst, sizeof dst, SEQLZ_LEVEL_OWN);
     if (!n || !(get_unaligned_le16(dst) & SEQLZ_LIT_CODED) || (dst[2] & SEQLZ_LIT_CODE_MASK) != SEQLZ_LIT_OWN ||
-        seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+        seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
         fprintf(stderr, "owndesc.c: the text page has no table of its own at level 3\n");
         return 1;
     }

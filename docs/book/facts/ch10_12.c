@@ -17,7 +17,7 @@
 #include "seqlz_compress.c"
 #include "seqlz_decompress.c"
 
-#define CAP (2 * SEQLZ_PAGE)
+#define CAP (2 * SEQLZ_BLOCK_SIZE)
 
 static char key_buf[128];
 
@@ -143,7 +143,7 @@ static void len_value_facts(const char* prefix, const struct value_table* vt, un
  * r->flushes flushes; fails unless the page comes out as seqlz_compress() writes it.
  */
 static void encode_traced(struct trace* r, void (*make)(u8*)) {
-    static u8 page[SEQLZ_PAGE], ref[CAP];
+    static u8 page[SEQLZ_BLOCK_SIZE], ref[CAP];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     struct seqlz_encoder* e = &r->e;
@@ -153,7 +153,7 @@ static void encode_traced(struct trace* r, void (*make)(u8*)) {
     make(page);
     n = seqlz_find(&st, page, seq, 2);
     memset(dst, 0, sizeof dst);
-    encoder_init(e, dst, CAP, page + SEQLZ_PAGE);
+    encoder_init(e, dst, CAP, page + SEQLZ_BLOCK_SIZE);
     r->low = dst + CAP;
     r->n_flush = 0;
     for (i = 0; i < n; i++) {
@@ -229,7 +229,7 @@ static void encode_traced(struct trace* r, void (*make)(u8*)) {
 
 /* the smallest dst the page fits into with raw literals */
 static unsigned int min_dst(void (*make)(u8*)) {
-    static u8 page[SEQLZ_PAGE], out[CAP];
+    static u8 page[SEQLZ_BLOCK_SIZE], out[CAP];
     static struct seqlz_state st;
     unsigned int cap;
 
@@ -288,13 +288,13 @@ static void chapter10(void) {
     fact_num("ch10.max_tok_off", most);
 
     /* the bound on the bitstream: 31 bits per 4 bytes of the page */
-    tex_num("ch10.bound.seqs", SEQLZ_PAGE / 4);
-    tex_num("ch10.bound.bits", SEQLZ_PAGE / 4 * 31);
-    tex_num("ch10.bound.bytes", SEQLZ_PAGE / 4 * 31 / 8);
-    tex_num("ch10.bound.page", SEQLZ_PAGE);
-    tex_num("ch10.bound.total", SEQLZ_HEADER + SEQLZ_PAGE + SEQLZ_PAGE / 4 * 31 / 8);
-    tex_num("ch10.bound.two", 2 * SEQLZ_PAGE);
-    tex_num("ch10.bound.left", 2 * SEQLZ_PAGE - (SEQLZ_HEADER + SEQLZ_PAGE + SEQLZ_PAGE / 4 * 31 / 8));
+    tex_num("ch10.bound.seqs", SEQLZ_BLOCK_SIZE / 4);
+    tex_num("ch10.bound.bits", SEQLZ_BLOCK_SIZE / 4 * 31);
+    tex_num("ch10.bound.bytes", SEQLZ_BLOCK_SIZE / 4 * 31 / 8);
+    tex_num("ch10.bound.page", SEQLZ_BLOCK_SIZE);
+    tex_num("ch10.bound.total", SEQLZ_HEADER + SEQLZ_BLOCK_SIZE + SEQLZ_BLOCK_SIZE / 4 * 31 / 8);
+    tex_num("ch10.bound.two", 2 * SEQLZ_BLOCK_SIZE);
+    tex_num("ch10.bound.left", 2 * SEQLZ_BLOCK_SIZE - (SEQLZ_HEADER + SEQLZ_BLOCK_SIZE + SEQLZ_BLOCK_SIZE / 4 * 31 / 8));
     fact_num("ch10.len_sym_max", SEQLZ_LEN_SYMBOLS - 1);
     fact_num("ch10.len_extra_max", SEQLZ_LEN_SYMBOLS - 1 - SEQLZ_LEN_LOG_BASE);
     fact_num("ch10.len_bits_max", SEQLZ_MAX_BITS + SEQLZ_LEN_SYMBOLS - 1 - SEQLZ_LEN_LOG_BASE);
@@ -314,7 +314,7 @@ static unsigned int letters_n;
 static void letters_page_n(u8* p) {
     unsigned int k, seed = 1;
 
-    memset(p, 0, SEQLZ_PAGE);
+    memset(p, 0, SEQLZ_BLOCK_SIZE);
     for (k = 0; k < letters_n; k++) {
         seed = seed * 1103515245U + 12345U;
         p[k] = (u8) "etaoinshrdlu "[(seed >> 16) % 13];
@@ -322,7 +322,7 @@ static void letters_page_n(u8* p) {
 }
 
 static int coded_with(unsigned int n) {
-    static u8 page[SEQLZ_PAGE], out[CAP];
+    static u8 page[SEQLZ_BLOCK_SIZE], out[CAP];
 
     letters_n = n;
     letters_page_n(page);
@@ -330,7 +330,7 @@ static int coded_with(unsigned int n) {
 }
 
 static void chapter11(void) {
-    static u8 page[SEQLZ_PAGE], raw[CAP], cod[CAP], check[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], raw[CAP], cod[CAP], check[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}}, odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}};
@@ -349,20 +349,20 @@ static void chapter11(void) {
     fact_num("ch11.save_min", SEQLZ_LIT_CODED_MIN - 1 - SEQLZ_SIZE_BITS_MAX);
     fact_num("ch11.hash_entries", 1U << SEQLZ_HASH_BITS);
     fact_num("ch11.hash_bytes", sizeof_field(struct seqlz_state, table));
-    fact_num("ch11.stream_lits", SEQLZ_PAGE / SEQLZ_LIT_STREAMS);
-    fact_num("ch11.stream_bits", SEQLZ_PAGE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS);
+    fact_num("ch11.stream_lits", SEQLZ_BLOCK_SIZE / SEQLZ_LIT_STREAMS);
+    fact_num("ch11.stream_bits", SEQLZ_BLOCK_SIZE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS);
     /* the rest is the page of letters, which chapter 11 shows with 4 KiB pages */
-    if (SEQLZ_PAGE != 4096)
+    if (SEQLZ_BLOCK_SIZE != 4096)
         return;
     letters_page(page);
     letters_n = 200;
     letters_page_n(check);
-    if (memcmp(page, check, SEQLZ_PAGE))
+    if (memcmp(page, check, SEQLZ_BLOCK_SIZE))
         fail("letters_page_n() is not letters_page()");
     for (letters = 0; page[letters]; letters++)
         ;
     fact_num("ch11.letters", letters);
-    fact_num("ch11.zeros", SEQLZ_PAGE - letters);
+    fact_num("ch11.zeros", SEQLZ_BLOCK_SIZE - letters);
     str("ch11.first24", "%.24s", (const char*)page);
     n = seqlz_find(&st, page, seq, 2);
     if (n != 2)
@@ -689,7 +689,7 @@ static void refill_facts(unsigned int step, struct seqlz_bit_reader* r, const u8
 static void chapter12(void) {
     static const u8 made_up[24] = {0xdc, 0x65, 0xef, 0xdb, 0x8a, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
                                    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33};
-    static u8 page[SEQLZ_PAGE], out[CAP], buf[32];
+    static u8 page[SEQLZ_BLOCK_SIZE], out[CAP], buf[32];
     struct seqlz_bit_reader r = {made_up, made_up + sizeof made_up, 0, 0};
     unsigned int off, len, n_lit, n, x, v, i;
     u32 e;
@@ -739,7 +739,7 @@ static void chapter12(void) {
 
     fact_num("ch12.base_max", 1U << (SEQLZ_LEN_SYMBOLS - 1 - SEQLZ_LEN_LOG_BASE));
     /* the page of ab, as chapter 12 shows it with 4 KiB pages: the byte half, the token, the ml value */
-    if (SEQLZ_PAGE != 4096)
+    if (SEQLZ_BLOCK_SIZE != 4096)
         return;
     ab_page(page);
     len = fact_compress(page, out, 0);

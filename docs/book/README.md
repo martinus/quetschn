@@ -24,7 +24,7 @@ python3 docs/book/lint.py            # dashes, banned words, measurements withou
   animation with headless Chrome and fails if a step scrolls sideways.
   `@stepper decode` and `@stepper match` are the step-throughs of chapters 14 and 9:
   `stepper/instrument.py` puts a hook in front of the statements of a copy of `seqlz_decode()` or
-  `seqlz_match_page()`, on the same line, `stepper/trace.c` and `trace_match.c` run the copy on the
+  `seqlz_match_block()`, on the same line, `stepper/trace.c` and `trace_match.c` run the copy on the
   pages, and `stepper.js` and `match.js` play the trace. Both need a C compiler.
 - **Values the code computes are computed when the book is built**, never typed: bytes of a
   compressed page, bit strings, codes, counts, sizes, what a program prints. `{{key}}` anywhere in a

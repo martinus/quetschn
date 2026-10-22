@@ -31,7 +31,7 @@ struct sz_ctx {
  * page once before, as the read benchmark does when one page is read several times in a row. For one CPU
  * only: the VM of run.sh has one.
  */
-static unsigned char warm_src[2 * SEQLZ_PAGE], warm_dst[SEQLZ_PAGE], warm_prev[2 * SEQLZ_PAGE];
+static unsigned char warm_src[2 * SEQLZ_BLOCK_SIZE], warm_dst[SEQLZ_BLOCK_SIZE], warm_prev[2 * SEQLZ_BLOCK_SIZE];
 static unsigned int warm_len, warm_prev_len;
 
 static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
@@ -77,7 +77,7 @@ static int sz_setup_params(struct zcomp_params *params)
 	if (st) {
 		unsigned int x = 1;
 
-		for (k = 0; k < SEQLZ_PAGE; k++) {
+		for (k = 0; k < SEQLZ_BLOCK_SIZE; k++) {
 			x = x * 1103515245U + 12345U;
 			warm_dst[k] = (x >> 16) % 5 == 0 ? ' ' :
 				      "etaoinshrdlucmfwypvbgkqjxz"[((x >> 16) % 89) % 26 % (1 + (x >> 28))];
@@ -129,7 +129,7 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 {
 	unsigned int len;
 
-	if (req->src_len != SEQLZ_PAGE)
+	if (req->src_len != SEQLZ_BLOCK_SIZE)
 		return -EINVAL;
 	len = seqlz_compress(&((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
 			     req->dst_len, level);
@@ -146,7 +146,7 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			prefetch((const char *)req->src + q);
-	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(req->src, req->src_len, req->dst,
+	if (req->dst_len < SEQLZ_BLOCK_SIZE || seqlz_decode(req->src, req->src_len, req->dst,
 							      ((struct sz_ctx *)ctx->context)->scratch))
 		return -EINVAL;
 	return 0;

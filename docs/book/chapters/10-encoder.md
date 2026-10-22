@@ -27,7 +27,7 @@ for levels 1 and 2 has no trace of level 3's code, not even a test of `lazy` per
 
 ## Literals from the front, bits from the back {#ch-encoder--layout}
 
-@listing src/seqlz_compress.c 44-79
+@listing src/seqlz_compress.c 44-78
 
 <figure class="diagram">
 <div class="scroll">
@@ -117,7 +117,7 @@ value only with a match of 35 bytes or more, worth 271. The last sequence has no
 
 | | 4 KiB pages | 16 KiB pages |
 | --- | --- | --- |
-| bits at most, `SEQLZ_PAGE / 4 * 31` | ${{ch10.bound.seqs.tex}} \times 31 = {{ch10.bound.bits.tex}}$ | ${{k16.ch10.bound.seqs.tex}} \times 31 = {{k16.ch10.bound.bits.tex}}$ |
+| bits at most, `SEQLZ_BLOCK_SIZE / 4 * 31` | ${{ch10.bound.seqs.tex}} \times 31 = {{ch10.bound.bits.tex}}$ | ${{k16.ch10.bound.seqs.tex}} \times 31 = {{k16.ch10.bound.bits.tex}}$ |
 | bytes of bitstream at most | {{ch10.bound.bytes|grp}} | {{k16.ch10.bound.bytes|grp}} |
 | the u16 + every byte a literal + that bitstream | $2 + {{ch10.bound.page.tex}} + {{ch10.bound.bytes.tex}} = {{ch10.bound.total.tex}}$ | $2 + {{k16.ch10.bound.page.tex}} + {{k16.ch10.bound.bytes.tex}} = {{k16.ch10.bound.total.tex}}$ |
 | two pages | {{ch10.bound.two|grp}} | {{k16.ch10.bound.two|grp}} |
@@ -136,13 +136,13 @@ bits again, so it gets a flush of its own.
 
 ## The encoder's state {#ch-encoder--state}
 
-@listing src/seqlz_compress.c 81-91
+@listing src/seqlz_compress.c 80-92
 
 `cnt` bits of `acc` count, the newest lowest; bits above may be old ones already written, and are
 shifted out before they matter. `src_end` is how far the 16-byte literal copies may read: the end of
 the page in the compressor, the end of the caller's literals in `seqlz_encode()`. `last` is the repeat
 offset as the encoder sees it, the matcher's `last` again, both starting at 1. The matcher's loop and
-all of `encode_seq()` are inlined into `compress_page()`, and the matcher leaves the encoder no
+all of `encode_seq()` are inlined into `compress_block()`, and the matcher leaves the encoder no
 registers, so this struct lives on the stack
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
 `rec` and `pos` are level 3's, for the records below; `pos` is where the next sequence starts in the
@@ -150,7 +150,7 @@ page, which the encoder does not need for anything else.
 
 ## Level 3: a record in front of each sequence's literals {#ch-encoder--records}
 
-@listing src/seqlz_compress.c 93-101
+@listing src/seqlz_compress.c 94-102
 
 Level 3 stores the literals as deltas to earlier bytes of the page ([chapter 6](#ch-header--literals)),
 one choice for the whole page, and which one is cheapest is known only when all literals are there.
@@ -168,7 +168,7 @@ without them, and stored without deltas ([below](#ch-encoder--entry)).
 
 ## Bits into a 64-bit accumulator {#ch-encoder--put}
 
-@listing src/seqlz_compress.c 103-126
+@listing src/seqlz_compress.c 104-127
 
 `v` must have no bits above `n`, and the comment's `n < 64 - cnt` keeps bits from falling out of the
 top. The masks `& 63U` and `& 31U` change no value the encoder uses; they let the compiler drop the
@@ -192,7 +192,7 @@ The top bit of 4059, the 2048, is not sent: the symbol says it.
 
 ## enc_flush(): whole bytes go below p {#ch-encoder--flush}
 
-@listing src/seqlz_compress.c 128-140
+@listing src/seqlz_compress.c 129-141
 
 The shift puts the `cnt` bits that count at the top of the word, the oldest in bit 63. A little-endian
 store writes the top byte last, at `p - 1`, so the oldest bit lands in bit 7 of the byte right below
@@ -226,7 +226,7 @@ bitstream went forwards and the flush swapped the bytes of each word; now the sw
 
 ## Codes for length values and tokens {#ch-encoder--codes}
 
-@listing src/seqlz_compress.c 142-168
+@listing src/seqlz_compress.c 143-169
 
 `put_len_value()` masks the symbol to the 32 entries of `enc[]`, for UBSan again, and passes `v`
 whole, since `enc_put_code()` masks it to its extra bits. `token_code()` tests for the common case
@@ -249,7 +249,7 @@ and a match of 4 bytes at the repeat offset, has none:
 `encode_emit_rec()` ([below](#ch-encoder--wrappers)), inlined into its loop, and `encode_raw()` calls
 it in a plain loop.
 
-@listing src/seqlz_compress.c 170-192
+@listing src/seqlz_compress.c 171-193
 
 `n_rec` is the record's size, {{delta.rec}} bytes, or 0. Three things have to hold for a record: `rec`,
 a constant at every call, `true` from the callers that write records, `encode_emit_rec()` and
@@ -262,7 +262,7 @@ room is 0, every later sequence fails the same check, and `encoder_finish()` see
 matcher runs to the end of the page anyway, which costs nothing with zram's two pages, where it never
 happens.
 
-@listing src/seqlz_compress.c 193-200
+@listing src/seqlz_compress.c 194-201
 
 The record is the position of the sequence's first literal, `e->pos`, the number of literals, and
 `e->last`, the offset of the sequence before, which the end of this function sets to `off` only after
@@ -279,7 +279,7 @@ The first sequence takes the first pointer and the low byte of the second as lit
 bytes from 8 back, so the second starts at {{delta.ptr.rec.1.pos}} with `last` 8.
 @assert delta.ptr.rec[0].pos == 0 and delta.ptr.rec[0].last == 1 and delta.ptr.rec[1].pos == delta.ptr.rec[0].ll + 7 and delta.ptr.rec[1].last == 8
 
-@listing src/seqlz_compress.c 201-221
+@listing src/seqlz_compress.c 202-222
 
 Most sequences have few literals, 1 in the page of pointers, so the first 16 bytes are one fixed copy
 without a loop, whose exit branch would depend on `ll` and could mispredict. The bytes past `ll` fit
@@ -289,7 +289,7 @@ inlined, also with `CONFIG_FORTIFY_SOURCE` ([chapter 6](#ch-header--summary)). T
 0, has only its literals and no bits; until 11th October 2026 it had a token and possibly an `ll`
 value, about 9 bits per page ([chapter 4](#ch-format--end)).
 
-@listing src/seqlz_compress.c 222-241
+@listing src/seqlz_compress.c 223-242
 
 The first sequence of the page of `ab` is {{ch10.ab.s1.ll}} literals and a match at offset
 {{ch10.ab.s1.off}}, with `last` 1: class {{ch10.ab.s1.cls}}, {{ch10.ab.s1.raw}} bit, token
@@ -321,11 +321,11 @@ $7 + 31 + 20 + 20 = 78$ bits.
 
 ## Two receivers for one encoder {#ch-encoder--wrappers}
 
-@listing src/seqlz_compress.c 243-256
+@listing src/seqlz_compress.c 244-257
 
 The matcher calls its receiver with the signature of `emit_fn` ([chapter 9](#ch-matcher--emit)): a
 `void *` and the sequence. `rec` has to be a constant at the call, so there are two receivers, one
-per constant; `compress_page()` passes `encode_emit()` to the greedy matcher, `compress_own()` passes
+per constant; `compress_block()` passes `encode_emit()` to the greedy matcher, `compress_own()` passes
 `encode_emit_rec()` to the lazy one. Once inlined, the code of the records exists only in level 3's
 copy of the loop.
 
@@ -341,7 +341,7 @@ run's spread.
 
 ## encoder_init() {#ch-encoder--init}
 
-@listing src/seqlz_compress.c 258-266
+@listing src/seqlz_compress.c 259-267
 
 The compound literal zeroes every field it does not name, so `acc` and `cnt` start at 0, `rec` is
 false and `pos` 0. `p` starts at the end of `dst`, `lit` after the 2 bytes of the u16, which is
@@ -350,7 +350,7 @@ with its records clears it again.
 
 ## encoder_finish(): the bitstream turned around {#ch-encoder--finish}
 
-@listing src/seqlz_compress.c 268-292
+@listing src/seqlz_compress.c 269-293
 
 `p == lit` only after a failed room check, since a successful one leaves at least 16 bytes between
 them. The bits left over, at most 7, are in memory already: the sequence's last flush wrote them on
@@ -362,7 +362,7 @@ pages of `test/seqlz_endian.c` and on both desktop dumps (commit `c9db4e5`,
 {{pointers.lits}} literals, `{{ch10.ptr.u16}}`, with `SEQLZ_LIT_CODED` 0; `code_literals()` rewrites it
 if the literals get coded.
 
-@listing src/seqlz_compress.c 293-316
+@listing src/seqlz_compress.c 294-317
 
 Byte `k` of the bitstream is at `end - 1 - k`. A little-endian load of the 8 bytes at `end - 8 - k`
 puts the byte at the highest address on top, and a big-endian store writes the top byte to the lowest
@@ -376,7 +376,7 @@ does all of this for chapter 16's page, whose smallest `dst` takes that path.
 
 ## encode_raw(): sequences from outside, checked first {#ch-encoder--raw}
 
-@listing src/seqlz_compress.c 488-520
+@listing src/seqlz_compress.c 492-524
 
 `seqlz_encode()` writes a page from sequences the caller made, for tests and tools. A `dst` below
 {{ch10.dst_min}} bytes would start `p` below `lit + 32`, or below `lit`, where the room check's cast
@@ -394,7 +394,7 @@ fuzzers had found it, because each reached `seqlz_encode()` with valid sequences
 encoder. `seqlz_compress()` was never affected: its matcher makes only valid sequences.
 :::
 
-@listing src/seqlz_compress.c 521-540
+@listing src/seqlz_compress.c 525-547
 
 `src_end` is the end of the caller's literals, so the 16-byte copies never read past them, and the
 last sequence gets `ml` 0 whatever its `match` field says. With a `page`, level 3, the encoder writes
@@ -410,7 +410,7 @@ matcher's state that `seqlz_encode()` passes; `*delta` is the delta it picked, o
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
 here because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 1151-1155
+@listing src/seqlz_compress.c 1162-1166
 
 For a table of the page's own, `code_literals()` needs `struct own_work`, {{own.enc.work_size|grp}}
 bytes of counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)),
@@ -419,7 +419,7 @@ and `own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `
 3's call of `code_literals()`, first with the deltas; it is in
 [chapter 11](#ch-literals-enc--code-own).
 
-@listing src/seqlz_compress.c 1175-1194
+@listing src/seqlz_compress.c 1186-1205
 
 `code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
 also with a table of the page's own, and returns the new length or `len` unchanged. Level 2 gets the
@@ -429,13 +429,13 @@ At level 3, `encode_raw()` gets the page and the matcher's state, writes the lit
 `SEQLZ_LEVELS`, or level 3 without the state, returns 0 as the header's kernel-doc says
 ([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 1196-1206
+@listing src/seqlz_compress.c 1207-1217
 
-`compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
-construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop of
+`compress_block()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
+construction, and its call of `seqlz_match_block()` with `encode_emit` is the whole compression loop of
 levels 1 and 2 once inlined, the greedy matcher with `lazy` the constant `false`.
 
-@listing src/seqlz_compress.c 1208-1235
+@listing src/seqlz_compress.c 1219-1249
 
 `compress_own()` is the same for level 3: the lazy matcher, with `encode_emit_rec`, so the records go
 in front of the literals. If the page does not fit, `e.p == e.lit`, the loop calls `encoder_init()`
@@ -443,13 +443,13 @@ again, which clears `e.rec`, and matches the page once more, now without records
 the test says it: that pass ends the loop whether the page fits or not. With the records still on,
 `delta_literals()` picks the delta, moves the literals down over the records and writes their deltas to `st->literals`, and `encoder_finish()`
 then finds `dst` as it would without records. It is `noinline`: inlined into `seqlz_compress()` next
-to `compress_page()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
+to `compress_block()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
 of its own.
 
-@listing src/seqlz_compress.c 1237-1252
+@listing src/seqlz_compress.c 1251-1266
 
 `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)), with the level of the device:
-`seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_page()`. Level 2
+`seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_block()`. Level 2
 passes `st->literals`, the matcher's 8 KiB table as bytes through the union in `struct seqlz_state`,
 for the copy of the raw literals; the matcher is done with it, so `code_literals()` needs no memory of
 its own ([chapter 11](#ch-literals-enc--in-place)). Level 3 hands the delta that `compress_own()` picked
@@ -459,7 +459,7 @@ to `code_own()`, which also uses `own_work(st)`, the upper half of the same 8 Ki
 {{pointers.len}} bytes at level 1, {{delta.ptr.l2.len}} at level 2 and {{delta.ptr.l3.len}} at level 3,
 with them.
 @assert words.l3.delta == 0 and pointers.l3.delta == 1
-The kernel's copy keeps `compress_page()`, `compress_own()`, `code_own()` and
+The kernel's copy keeps `compress_block()`, `compress_own()`, `code_own()` and
 `seqlz_compress()`, renamed to `seqlz_compress_page()`, as the kernel's interface function is called
 `seqlz_compress()`, and drops the `!t->all_symbols` tests, because the kernel's tables are checked when
 they are generated ([chapter 15](#ch-zram-glue--init)).
@@ -503,7 +503,7 @@ src/seqlz_codes.c src/seqlz_default_tables.c src/seqlz_lit_sets.c`:
 #include <stdlib.h>
 
 static struct seqlz_state st;
-static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
 
 int main(void)
 {
@@ -511,7 +511,7 @@ int main(void)
 
 	if (seqlz_tables_init(&seqlz_default_lengths))
 		return 1;
-	for (i = 0; i < SEQLZ_PAGE; i++)
+	for (i = 0; i < SEQLZ_BLOCK_SIZE; i++)
 		page[i] = i & 1 ? 'b' : 'a';
 	len = seqlz_compress(&st, page, dst, sizeof(dst), 1);
 	for (i = 0; i < len; i++)

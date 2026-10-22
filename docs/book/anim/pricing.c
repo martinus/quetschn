@@ -13,7 +13,7 @@
 #include "seqlz_compress.c"
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], raw[2 * SEQLZ_PAGE], comp[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], raw[2 * SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {0};
     u64 odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {0};

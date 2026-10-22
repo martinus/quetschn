@@ -1955,7 +1955,7 @@ name.*
 Code: `seqlz_lazy()` and the `lazy` branch of `seqlz_match_page()` in `src/page_lz.h`; `struct
 own_work`, `own_code()`, `own_lengths()` and `code_literals()` in `src/seqlz_compress.c`; `own_table()`
 in `src/seqlz_decompress.c`; `build_own()` in `src/seqlz_codes.c`; the format in
-[format.md, "A page's own literal table"](format.md#a-pages-own-literal-table).
+[format.md, "A page's own literal table"](format.md#a-blocks-own-literal-table).
 
 **What changed since 9th October.** [A literal table of the page's own at levels 3 and 4](#a-literal-table-of-the-pages-own-at-levels-3-and-4-25-to-34-less-a-second-literal-path-in-the-format-not-kept)
 had the same idea on top of [a hash chain](#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)
@@ -2090,7 +2090,7 @@ description in Exp-Golomb codes, see below; the lazy step as a level of its own.
 
 Status: kept, 2026-10-15. Now: current. A code chosen by the symbol before would save 5.4 bytes per description, 1.1 per page, counted offline, not built ([OWN chosen by the symbol before](#own-chosen-by-the-symbol-before-54-bytes-per-description-11-bytes-per-page-counted-offline-not-built)).
 
-*The description of a page's own table in [format.md](format.md#a-pages-own-literal-table): the code
+*The description of a page's own table in [format.md](format.md#a-blocks-own-literal-table): the code
 length of every byte with a code, in the order of the bytes, with runs of the bytes without one, as
 symbols of a fixed prefix code of 19 symbols of at most 8 bits, `OWN`. On 9th October it was the bytes
 by code length, each as its distance to the one before. In byte order the bytes take no bits of their
