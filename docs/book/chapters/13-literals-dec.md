@@ -517,7 +517,8 @@ same level 2 code differed by, and was not kept
   a page. `own_table()` writes its buckets at a masked index in the scratch, and its decode table only
   once the code is complete, exactly 1024 entries, into the page.
 - **The deltas read and write only the page.** `undelta_literals()` writes the `nl` literals at `d`,
-  which the loop over the sequences has checked against the room left, and reads at least `dist` bytes
+  which the loop over the sequences has checked against the room left, or for the last sequence are
+  the room left ([chapter 14](#ch-decode--end)), and reads at least `dist` bytes
   back, never before `dst`, because the first literal it restores is at least `dist` bytes into the
   page. `undelta_fast()` writes the 16 bytes the fast path copied, inside its room, and reads at most
   `dist` bytes back only where `d - dst` is at least `dist`; nearer the page's start it calls

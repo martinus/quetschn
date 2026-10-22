@@ -203,7 +203,7 @@ the {{ch14.room.page}} of `FAST_PAGE_ROOM`. One `copy16()` reads 16 bytes of lit
 the page's literals are deltas ([chapter 6](#ch-header--literals)). `seqlz_decode()` comes last in the
 file, and is the only caller:
 
-@listing src/seqlz_decompress.c 945-956
+@listing src/seqlz_decompress.c 943-954
 
 It reads byte 2 only for a page with coded literals, and only if there is a byte 2, `src_len > 2`; a
 page with raw literals never has deltas, and bit 7 of its byte 2 is a literal. Each call passes a
@@ -382,14 +382,18 @@ left.
 
 ## The end: a page must end where its bits end {#ch-decode--end}
 
-@listing src/seqlz_decompress.c 926-943
+@listing src/seqlz_decompress.c 926-941
 
 When the loop is left, the literals left are exactly the bytes the page still needs, so the copy fills the
 page and uses every literal. A page with deltas restores them as any sequence's literals, the last
-sequence being no different in the format. Its two guards, `lit <= lit_end` and the `min()` with
-the room left, change nothing on the way the loop gets here, where `lit` is at most `lit_end` and the
-two counts are equal; they keep `undelta_literals()` inside the page without that argument. A `memcpy()` here, a call instead of a second inlined copy loop, made the
-swap-in 0.02 µs slower in the kernel VM, at the edge of what the boots differ by
+sequence being no different in the format. `undelta_literals()` gets `lit_end - lit` with no guard, as
+on both ways to `last_literals` that count is the room left in the page, `d_end - d`, and `lit` is at
+most `lit_end`. A page of literals only jumps there with `d` at `dst` and `lit_end - lit` equal to
+`SEQLZ_PAGE`. The `break` comes where `d - lit` is `end_gap`, which is `d_end - d` equal to
+`lit_end - lit`, right after the slow path checked `lit <= lit_end` and `nl <= lit_end - lit` before
+it moved `lit` on by `nl`. Until 22nd October 2026 the call had a guard `lit <= lit_end` and the
+`min()` of the two counts, which changed nothing on either way (commit `753a707`). A `memcpy()`
+here, a call instead of a second inlined copy loop, made the swap-in 0.02 µs slower in the kernel VM, at the edge of what the boots differ by
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 The checks then make sure the input has nothing else to say:
 
