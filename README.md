@@ -86,7 +86,7 @@ not be fixed without root; they stayed at their maximum in every run
 
 ## Where it stands
 
-As of 16th October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
+As of 22nd October 2026. The details, and what comes next, are in [the plan, §9](docs/plan.md#9-where-the-project-stands-and-the-next-actions).
 
 - [x] Benchmark harness, page collectors, zram dumps of a desktop and of a phone
 - [x] The codec, three levels of [`seqlz`](docs/seqlz.md), and every alternative that was measured
@@ -95,7 +95,11 @@ As of 16th October 2026. The details, and what comes next, are in [the plan, §9
 - [x] The tables on pages they were not trained on, Chrome, Firefox, Android 13 and 15, the phone 12
   days later: tables of their own would gain 1.2% at `seqlz-2` and 0.7% at `seqlz-3`
   ([explored-designs.md](docs/explored-designs.md#the-tables-on-five-new-page-populations-tables-of-their-own-12-smaller-at-level-2-07-at-level-3-kept-as-they-are))
-- [x] Ask the zram maintainers whether they want a new backend at all, and in which form: [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), no answer yet
+- [x] Ask the zram maintainers whether they want a new backend at all, and in which form:
+  [asked](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/),
+  [answered](https://lore.kernel.org/linux-mm/atl35k5lvs34BIej@google.com/): as a library in `lib/`, as the other
+  compression libraries are
+- [ ] The library on blocks of 4 KiB instead of `PAGE_SIZE`, then the series to Andrew Morton
 - [x] 16 KiB pages: tables trained on the pages of the Android 17 emulator
 - [ ] 16 KiB pages: work memory within `lz4`'s, and a phone with 16 KiB pages
 - [x] The kernel port: `lib/` and a zram backend, swap thrash under KASAN, the zram selftests
