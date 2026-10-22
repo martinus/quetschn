@@ -1,15 +1,16 @@
-# seqlz_internal.h: tables shaped for the decoder {#ch-internal}
+# seqlz_tables.h: tables shaped for the decoder {#ch-internal}
 
-`src/seqlz_internal.h` is what the three `.c` files of the codec share and nobody else sees: the
-compressor in `seqlz_compress.c`, the decompressor in `seqlz_decompress.c`, and `seqlz_codes.c`, which
-builds the tables both read. `seqlz.h` only declares `struct seqlz_tables`; this file says what is
-inside. Almost all of its {{ch07.lines}} lines are memory layout: the bytes of each table, the bits
-of each entry, and `static_assert()`s that the fields are wide enough.
+`src/seqlz_tables.h` is the layout of the tables: what the compressor, the decompressor and
+`seqlz_codes.c`, which builds the tables both read, share about them. Almost all of its
+{{ch07.lines}} lines are memory layout: the bytes of each table, the bits of each entry, and
+`static_assert()`s that the fields are wide enough. It includes only `seqlz_format.h`, so that a
+program on the build machine can include it too: the kernel builds its tables with one when the
+kernel is built ([chapter 8](#ch-codes--kernel)).
 
 The format stores a table as code lengths ([chapter 4](#ch-format--codes)). The encoder needs each
 symbol's code as a number to shift into its bit buffer, the decoder a table it can index with the next
 bits of the stream. `struct seqlz_tables` holds both forms of all {{ch17.tables}} tables, {{size.tables|grp}}
-bytes, built once by `seqlz_tables_init()` ([chapter 8](#ch-codes)) and then only read, by every CPU.
+bytes, one global struct, built once ([chapter 8](#ch-codes)) and then only read, by every CPU.
 The part to read closely is the end: `token_entry()` packs everything the decoder needs to know about
 a token into one 32-bit number, so that the loop over the sequences never takes a token apart.
 
@@ -17,9 +18,9 @@ a token into one 32-bit number, so that the loop over the sequences never takes 
 
 @listing src/seqlz_tables.h 1-11
 
-The kernel's copy renames the guard to `_LIB_SEQLZ_SEQLZ_INTERNAL_H`, after its place in `lib/seqlz/`.
-The constants come from `seqlz.h` ([chapter 6](#ch-header)); this chapter uses their values for 4 KiB
-pages.
+The kernel's copy renames the guard to `_LIB_SEQLZ_SEQLZ_TABLES_H`, after its place in `lib/seqlz/`.
+The constants come from `seqlz_format.h` ([chapter 6](#ch-header)); this chapter uses their values for
+4 KiB blocks.
 
 ## A decode table is indexed by the next bits {#ch-internal--decode-tables}
 
@@ -54,11 +55,11 @@ pages). On 23rd September 2026 the masks took the compressor to 4.7% fewer instr
 ([chapter 3](#ch-cpu--ubsan) has the cycles).
 
 The first `static_assert` keeps the mask from folding a real symbol onto another one, if a change
-ever gave the page more bits. The second is for `first_codes()` ([chapter 8](#ch-codes--first-codes)),
-which counts the codes of each length in arrays of 16 indexed by the length, so no table may allow
-codes of 16 bits. The conditions are in parentheses, one per line, because the kernel's `checkpatch`
-wants the continuation lines of a call aligned with its first argument
-([chapter 15](#ch-zram-glue--check)).
+ever gave the block more bits. `CODE_LENGTHS`, 16, is the size of the arrays that
+`first_codes()` ([chapter 8](#ch-codes--first-codes)) and `own_code()`
+([chapter 11](#ch-literals-enc--own)) index with a code's length, so no table may allow codes of 16
+bits; the three asserts check that, one per table, as the kernel's `checkpatch` warns about one
+condition that compares two constants inside a longer one ([chapter 15](#ch-zram-glue--check)).
 
 ## The table of length values {#ch-internal--value-table}
 
@@ -192,8 +193,8 @@ The zero byte has a 2-bit code in tables 1 and 4, which are for pages with many 
 [chapter 11](#ch-literals-enc--pricing) prices four literals the same way.
 @assert lit[1].len[0] == lit[4].len[0] == 2 and min(lit[0].len[0], lit[2].len[0], lit[3].len[0], lit[5].len[0], lit[6].len[0], lit[7].len[0]) > 2 and ch07.lit_best == 4
 
-`LIT_COST_WORDS` is 1 word of 8 lanes; written this way it would grow with more tables, but byte 2 of
-the format holds the number at 8. `LIT_COST_RUN` is `255 / 10 = 25`: 25 codes of at most 10 bits sum
+`lit_cost` is one word of 8 lanes per byte value, as byte 2 of the format holds the number of fixed
+tables at 8. `LIT_COST_RUN` is `255 / 10 = 25`: 25 codes of at most 10 bits sum
 to at most 250, 26 could carry into the next lane. So `lit_cost()` ([chapter 11](#ch-literals-enc))
 adds 25 literals per stream into 8-bit lanes, then spreads them into two words of 16-bit lanes with
 the mask `0x00ff00ff00ff00ff` and starts again, every 200 literals of the page.
@@ -202,7 +203,7 @@ the mask `0x00ff00ff00ff00ff` and starts again, every 200 literals of the page.
 
 @listing src/seqlz_tables.h 72-78
 
-These asserts tie the constants of `seqlz.h` to byte 2 of a page with coded literals
+These asserts tie the constants of `seqlz_format.h` to byte 2 of a page with coded literals
 ([chapter 4](#ch-format--layout)): the 8 fixed tables are the codes 0 to 7, the page's own table the
 code after them, 8, and all of them fit the 4 bits below the width; 3 bits hold the 8 widths 5 to 12,
 and the width field ends where the delta bit, bit 7, starts. The first assert would fail for a 9th fixed
@@ -229,11 +230,11 @@ already be the page's own, so none of them may lie in the word it writes.
 
 @listing src/seqlz_tables.h 89-90
 
-`LIT_STREAM_MAX` is the largest stream, every 8th
-literal with a code of 10 bits, $(512 \cdot 10 + 7) / 8 = {{ch07.lit_stream_max}}$ bytes on 4 KiB
-pages and {{k16.ch07.lit_stream_max}} on 16 KiB pages, and the assert proves that a size of 12 bits
-holds it, so the encoder can write the sizes whatever the literals are. The last assert guards code,
-not the format: the encoder's `lit_streams()` and the decoder's `seqlz_decode_literals()`
+`LIT_STREAM_MAX` in `seqlz_internal.h` ([chapter 6](#ch-header--literals)) is the largest stream,
+every 8th literal with a code of 10 bits, $(512 \cdot 10 + 7) / 8 = {{ch07.lit_stream_max}}$ bytes in a
+4 KiB block and {{k16.ch07.lit_stream_max}} in a 16 KiB one, and its assert proves that a size of 12
+bits holds it, so the encoder can write the sizes whatever the literals are. The assert here guards
+code, not the format: the encoder's `lit_streams()` and the decoder's `seqlz_decode_literals()`
 ([chapter 13](#ch-literals-dec)) are written out by hand for 8 streams.
 
 ## The code of a page's own table, and two lengths per lookup {#ch-internal--own}
@@ -302,10 +303,10 @@ encoder reads `token.enc`, 6 KiB, the `enc` of `ll` and `ml`, `lit_cost`, 2 KiB,
 table's `enc`, 1 KiB, at level 3 also `own.enc`.
 
 `all_symbols` is what `seqlz_all_symbols()` returns ([chapter 8](#ch-codes--all-symbols)); `port.py`
-deletes it in the kernel's copy, whose tables are checked before they are compiled in. There the
-struct is one global variable, `seqlz_fixed_tables`, built at boot and read-only after it
-([chapter 15](#ch-zram-glue--init)). The userspace harness, `src/zram_seqlz.c`, allocates one per
-zram device.
+deletes it in the kernel's copy, whose tables are checked when they are generated. There the global
+is `const struct seqlz_tables seqlz_tables`, written as C when the kernel is built, so it is in the
+kernel's read-only data ([chapter 15](#ch-zram-glue--init)). In userspace it is not `const`:
+`seqlz_tables_init()` writes it once, when a program starts.
 
 ## The fields of a token entry {#ch-internal--token-entry}
 
@@ -315,14 +316,13 @@ The asserts check the fields of the entry described next. The 5 bits of `DROP` h
 most a token with a code of its own moves the bitstream is an 11-bit code plus class 3's offset bits,
 $11 + 12 = 23$, 25 on 16 KiB pages. `ll` has 4 bits, `ml` 6 bits for at most 35, the shift 2 bits;
 `SEQLZ_OFF_SHIFT()` reads a whole nibble ([chapter 6](#ch-header--offsets)), so a shift of 4 would fail
-here instead of being cut to 0. Class 5's offsets must stay inside the page, and 12 bits must hold
-every token.
+here instead of being cut to 0. And 12 bits must hold every token.
 
 @listing src/seqlz_tables.h 138-154
 
 Every field is something the decoder would otherwise compute from the token's number for every
-sequence: split off `ll`, `ml` and the class, look up the class's offset bits and shift, add 4 to
-`ml`, compare `ll` and `ml` with their caps. On an in-order core such as the Cortex-A55 an instruction
+sequence: split off `ll`, `ml` and the class, look up the class's offset bits and shift, add
+`SEQLZ_MIN_MATCH` to `ml`, compare `ll` and `ml` with their caps. On an in-order core such as the Cortex-A55 an instruction
 saved is time saved, almost one for one ([chapter 3](#ch-cpu--in-order)).
 
 ::: measured The token unpacked in the table: 1418 fewer instructions per page on the A55
@@ -427,9 +427,9 @@ bits; `cls` and `raw_bits` are computed for it too, class 6, nibble 6 of `{{ch06
 and the compiler drops them. The `(u32)` cast keeps every term of the OR unsigned. Two fields are
 not the token's own numbers.
 
-**`ml + 4U`.** The entry stores the match length itself, 4 to 35, not the token's field. That is one
-add per sequence less in the decoder, which copies `TOK_ML(tok)` bytes, and its test for a length
-value is `len == SEQLZ_ML_CAP + 4U`. The price is 6 bits instead of 5, and bit 29 is still free.
+**`ml + SEQLZ_MIN_MATCH`.** The entry stores the match length itself, 4 to 35, not the token's
+field. That is one add per sequence less in the decoder, which copies `TOK_ML(tok)` bytes, and its
+test for a length value is `len == SEQLZ_ML_CAP + SEQLZ_MIN_MATCH`. The price is 6 bits instead of 5, and bit 29 is still free.
 
 **`(64U - raw_bits) & 63U`.** This is `BACK`, the right shift that brings the offset bits down after
 the code was shifted out on top of the 64-bit register: for class 3, $64 - 12 = 52$. Class 0 has no

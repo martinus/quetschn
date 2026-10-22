@@ -192,7 +192,7 @@ static void ch07(void) {
     unsigned int k, j, best = 0, s, c, n;
     u64 sum = t->lit_cost[0] + t->lit_cost[0x65], reg, e;
 
-    fact_num("ch07.lines", lines_of("src/seqlz_internal.h"));
+    fact_num("ch07.lines", lines_of("src/seqlz_tables.h"));
     for (k = 0; k < sizeof tokens / sizeof tokens[0]; k++)
         token_facts(tokens[k]);
     /* the escaped token 1797 and its offset 1000: the entry with n = 0 */
