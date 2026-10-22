@@ -262,8 +262,8 @@ The benchmarks call seqlz through a copy of this interface in C, `src/zram_seqlz
 
 `quetschn_prefetch_page()` asks the CPU to start loading the compressed bytes and the output page
 before the decoder needs them ([chapter 3](#ch-cpu--prefetch)); it stands for what the project's
-experiments let zram do before every decompression. `p->drv_data` are the tables built once per
-device, `s->context` this CPU's buffer for the decoded literals.
+experiments let zram do before every decompression. `s->context` is this CPU's buffer for the decoded
+literals; the tables are compiled in, one set for every device.
 
 ## Work memory is per CPU, and counted as allocated {#ch-zram--work-memory}
 
@@ -300,8 +300,8 @@ bytes for the decoded literals while it decompresses. zram holds the stream's mu
 neither keeps anything from one page to the next, so the kernel backend puts both into one union of {{ch01.union}} bytes, which `kmalloc()` hands out as
 exactly {{ch01.union_kib}} KiB. With the split streams they are two allocations,
 {{ch01.cctx_kib}} KiB each after rounding, {{ch01.split_kib}} KiB per CPU, below `lz4`'s 20
-KiB. The tables, {{size.tables|grp}} bytes, are not per CPU: they are built once when the kernel
-starts.
+KiB. The tables, {{size.tables|grp}} bytes, are not per CPU: they are generated when the kernel is
+built, and are part of its read-only data.
 @assert ch01.union == 1024 * ch01.union_kib and ch01.cctx_kib == ch01.dctx_kib and ch01.split_kib < 20
 [Chapter 6](#ch-header) and [chapter 15](#ch-zram-glue) have the details, and why 16 KiB pages need
 twice `lz4`'s work memory.

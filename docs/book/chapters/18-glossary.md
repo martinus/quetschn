@@ -92,7 +92,8 @@ sense given here.
 - **symbol**: what a code stands for: a token, a byte value, a length value's symbol.
   [Chapter 2](#ch-compression)
 - **table**: the code lengths of one kind of symbol; seqlz has {{ch17.tables}}, fixed and part of the
-  format, each with a decode table built once. [Chapter 7](#ch-internal), [chapter 8](#ch-codes)
+  format, each with a decode table generated when seqlz is built. [Chapter 7](#ch-internal),
+  [chapter 8](#ch-codes)
 - **token**: one number for `ll`, `ml − 4` and the offset class, {{const.TOKEN_SYMBOLS}} values, coded by
   the token table. [Chapter 4](#ch-format--token)
 - **trained tables, trainer**: code lengths counted on {{ch17.train_pages|grp}} pages, in
