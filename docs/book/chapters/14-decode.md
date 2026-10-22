@@ -118,8 +118,8 @@ lengths before, which the predictor learns only for a page it has seen, and a sw
 once. In a page seen once that branch was the largest single source of mispredictions in the decoder
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
 So the fast path refills on a schedule: `*skip` alternates, and a branch that alternates is one every
-predictor gets right. The refill is the fast half of `seqlz_br_refill()` without the check of bytes
-left.
+predictor gets right. The refill is `seqlz_br_refill_8()`, the fast half of `seqlz_br_refill()`
+([chapter 12](#ch-dec-basics--bit-reader)), without the check of bytes left.
 
 Why the bits never run short: after a refill `count` is at least 56, and until the next one two fast
 sequences drop their code and offset bits, the second one before its own `next_token_fast()` refills.
