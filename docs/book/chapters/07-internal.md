@@ -113,7 +113,7 @@ half the cache lines it would be with 4 bytes. `enc[256]` has the length in the 
 from bit 8 on: `{{lit.0.len.101}} | {{ch07.lit_e.c}} << 8 = {{ch07.lit_e.enc}}` for `e`.
 
 Here the length is below the code, in the other tables above it, because of what `lit_put()` does
-with an entry ([chapter 11](#ch-literals-enc--lit-bits)): `acc = acc << (e & 63) | e >> 8`, then
+with an entry ([chapter 11](#ch-literals-enc--lit_put-one-code-into-an-accumulator)): `acc = acc << (e & 63) | e >> 8`, then
 `*sum += e`. The shift count is the low bits as they are, the code one shift away, and adding whole
 entries adds up the lengths in the low byte of `sum`; the code bits above it are dropped later with
 `& 255`. The 8 tables are {{ch07.size.lit_table}} bytes each, {{ch07.size.lit|grp}} together, and a
