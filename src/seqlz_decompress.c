@@ -926,10 +926,8 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 last_literals:
 	/* the last sequence: the literals left, as many as the page has room */
 	copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));
-	if (deltas && lit <= lit_end)
-		undelta_literals(delta, d, dst,
-				 min((unsigned int)(lit_end - lit),
-				     (unsigned int)(d_end - d)),
+	if (deltas)
+		undelta_literals(delta, d, dst, (unsigned int)(lit_end - lit),
 				 last);
 	/*
 	 * The page must end where its bits end: every byte read, fewer than 8

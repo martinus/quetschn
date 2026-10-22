@@ -284,9 +284,9 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  * the u16 of every page, then byte 2, with the literals' code in bits 0 to 3,
  * w - SEQLZ_SIZE_BITS_MIN in bits 4 to 6 and in bit 7 whether the literals are
  * deltas, then with deltas their byte, see SEQLZ_LIT_DELTA_AT, then the sizes
- * of the 8 streams in bytes, w bits each, lowest bit first. The code is one of the SEQLZ_LIT_SETS fixed tables, or
- * SEQLZ_LIT_OWN; codes above it are invalid. The decoder needs the sizes to
- * know where each stream starts.
+ * of the 8 streams in bytes, w bits each, lowest bit first. The code is one of
+ * the SEQLZ_LIT_SETS fixed tables, or SEQLZ_LIT_OWN; codes above it are
+ * invalid. The decoder needs the sizes to know where each stream starts.
  *
  * w is the fewest bits that hold the largest size, but at least 5. A stream
  * holds every 8th literal of at most 10 bits, at most 640 bytes in a 4 KiB page
@@ -312,12 +312,11 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  *                     before, 1 for the first; an offset of 1 or 2 counts as
  *                     4, 3 as 6. Literals nearer than that to the page's start
  *                     are as they are.
- * Other values are invalid. Memory pages are full of 4- and 8-byte fields: the
- * bytes of a field are often those of the field before it, or differ from them
- * by a little, as counters, sizes and addresses of objects in a row do, and a
- * literal after a match often differs only a little from the byte the match
- * would have copied. An offset below 4 counts as a multiple of it of 4 or more,
- * which repeats the same bytes, so that the decoder can add 4 bytes at a time.
+ * Other values are invalid. Counters, sizes and addresses in fields of 4 or 8
+ * bytes differ little from those of the field before, and a literal after a
+ * match little from the byte the match would have copied. An offset below 4
+ * counts as a multiple of it of 4 or more, which repeats the same bytes, so
+ * that the decoder can add 4 bytes at a time.
  */
 #define SEQLZ_DELTA_4 1U
 #define SEQLZ_DELTA_8 2U
