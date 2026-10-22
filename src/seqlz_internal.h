@@ -77,7 +77,8 @@ static_assert((SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
 	      "byte 2 has 3 bits for the width");
 /*
  * How far before a literal the byte is that SEQLZ_DELTA_LAST takes its delta
- * to, for the offset last of the sequence before, see SEQLZ_LIT_DELTA_AT
+ * to, for the offset last of the sequence before: the smallest multiple of last
+ * that is 4 or more, see SEQLZ_LIT_DELTA_AT
  */
 static inline unsigned int seqlz_delta_last(unsigned int last)
 {

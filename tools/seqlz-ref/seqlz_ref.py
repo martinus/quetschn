@@ -180,14 +180,11 @@ def decode(page, tables, page_bits):
         nonlocal used
         for i in range(k):
             b, p = lits[used + i], len(out)
-            if dt == 1 and i >= 4:
-                b = (b + out[p - 4]) & 255
-            elif dt == 2 and i >= 8:
-                b = (b + out[p - 8]) & 255
-            elif dt == 3:
-                x = 4 if last <= 2 else 6 if last == 3 else last
-                if p >= x:
-                    b = (b + out[p - x]) & 255
+            x = {1: 4, 2: 8, 3: last}.get(dt, 0)
+            while 0 < x < 4:  # the smallest multiple of last that is 4 or more
+                x += last
+            if dt and p >= x:
+                b = (b + out[p - x]) & 255
             out.append(b)
         used += k
 

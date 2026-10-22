@@ -394,22 +394,23 @@ Else the page is invalid. A decoder may read past the end of a stream, as long a
 
 ## Literals as deltas
 
-With `e = 1` each literal was stored as its delta to an earlier byte of the page, the literal minus that
-byte modulo 256, before it was coded, and `copy()` adds the byte back: the `i`-th literal of a sequence,
-from 0, which goes to the page's byte `p = |out|`, is `(lits[used + i] + out[p - x]) mod 256` with
+With `e = 1` each literal was stored as its delta to the byte `x` before it in the page, the literal minus
+that byte modulo 256, before it was coded, and `copy()` adds the byte back: the literal `lits[used + i]`,
+which goes to the page's byte `p = |out|`, is `(lits[used + i] + out[p - x]) mod 256` if `p >= x`, else as
+it is, with
 
-- `dt = 1`: `x = 4`, for `i >= 4`; the literals with `i < 4` are as they are;
-- `dt = 2`: `x = 8`, for `i >= 8`; the literals with `i < 8` are as they are;
-- `dt = 3`: `x = last`, the offset of the sequence before, 1 for the first; with `last` 1 or 2, `x = 4`,
-  with `last = 3`, `x = 6`; for `p >= x`, the literals with `p < x` are as they are.
+- `dt = 1`: `x = 4`;
+- `dt = 2`: `x = 8`;
+- `dt = 3`: `x` the smallest multiple of `last` that is 4 or more, where `last` is the offset of the
+  sequence before, 1 for the first: `x = 4` for `last` 1 or 2, 6 for `last = 3`, else `last`.
 
-`out[p - x]` is a byte already written, a literal of the same sequence included, as it is in the page.
-The last sequence is no different. *Why:* memory pages are full of 4- and 8-byte fields, whose bytes are
-often those of the field before or differ from them by a little, as counters, sizes and addresses of
-objects in a row do, and a literal after a match often differs only a little from the byte the match
-would have copied. As deltas, such literals are many zeros and few other values, which the literal
-tables code in fewer bits. With `last` below 4, a multiple of it from 4 on refers to the same repeated
-bytes, and a decoder can add 4 bytes at a time.
+`out[p - x]` is a byte already written, of the match before or a literal of the same sequence, as it is
+in the page. The last sequence is no different. *Why:* memory pages are full of 4- and 8-byte fields,
+whose bytes are often those of the field before or differ from them by a little, as counters, sizes and
+addresses of objects in a row do, and a literal after a match often differs only a little from the byte
+the match would have copied. As deltas, such literals are many zeros and few other values, which the
+literal tables code in fewer bits. With `x` at least 4, the bytes a word of 4 adds are all written
+before it, and a decoder can add 4 bytes at a time.
 
 ## A page's own literal table
 

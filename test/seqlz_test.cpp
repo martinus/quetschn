@@ -1642,7 +1642,7 @@ TEST_CASE("seqlz: level 3 codes the literals as deltas to the bytes that make th
             REQUIRE(len > 0);
             c.resize(len);
             // a few 5-byte repeats in a page of fields, more in one of 16 KiB, leave sequences after a match
-            // of the field's size: there SEQLZ_DELTA_LAST is that delta too, from the sequence's first literal on
+            // of the field's size: there SEQLZ_DELTA_LAST is the same delta
             CHECK((lit_delta(c) == kind || lit_delta(c) == SEQLZ_DELTA_LAST));
             picked += lit_delta(c) == kind;
             auto out = std::vector<unsigned char>(page_size);

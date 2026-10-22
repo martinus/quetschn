@@ -608,10 +608,8 @@ static __always_inline void undelta_literals(unsigned int delta, u8 *d,
 	unsigned int dist = delta == SEQLZ_DELTA_4 ? 4U :
 			    delta == SEQLZ_DELTA_8 ? 8U :
 						     seqlz_delta_last(last);
-	/* the first delta: the 5th (9th) literal, or the first dist into dst */
-	unsigned int k = delta != SEQLZ_DELTA_LAST ? dist :
-			 at >= dist		   ? 0 :
-						     dist - at;
+	/* the first delta: the first literal dist bytes or more into dst */
+	unsigned int k = at >= dist ? 0 : dist - at;
 
 	if (dist >= 8U) {
 		for (; k + 8 <= nl; k += 8)
@@ -628,21 +626,17 @@ static __always_inline void undelta_literals(unsigned int delta, u8 *d,
  * undelta_literals() for the fast path, which copied 16 bytes to d, of which nl
  * are literals: all 16 bytes, without a loop. What it writes past nl, the match
  * after the literals overwrites, and that match reads only bytes before them.
- * Near the page's start, for SEQLZ_DELTA_LAST, the loops above.
+ * Near the page's start, the loops above.
  */
 static __always_inline void undelta_fast(unsigned int delta, u8 *d,
 					 const u8 *dst, unsigned int nl,
 					 unsigned int last)
 {
-	unsigned int dist = seqlz_delta_last(last);
+	unsigned int dist = delta == SEQLZ_DELTA_4 ? 4U :
+			    delta == SEQLZ_DELTA_8 ? 8U :
+						     seqlz_delta_last(last);
 
-	if (delta == SEQLZ_DELTA_4) {
-		add4(d + 4, 4);
-		add4(d + 8, 4);
-		add4(d + 12, 4);
-	} else if (delta == SEQLZ_DELTA_8) {
-		add8(d + 8, 8);
-	} else if ((unsigned long)(d - dst) < dist) {
+	if ((unsigned long)(d - dst) < dist) {
 		undelta_literals(delta, d, dst, nl, last);
 	} else if (dist >= 8U) {
 		add8(d, dist);

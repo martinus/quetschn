@@ -159,22 +159,22 @@ own_table(const struct seqlz_ref* r, const unsigned char* src, size_t len, size_
 }
 
 /*
- * "Literals as deltas": the literal v, the i-th of its sequence, from 0, as it goes to out[p], with the delta dt
- * and the offset last of the sequence before
+ * "Literals as deltas": the literal v as it goes to out[p], with the delta dt and the offset last of the sequence
+ * before
  */
-static unsigned char
-undelta(unsigned int dt, unsigned char v, const unsigned char* out, unsigned int p, unsigned int i, unsigned int last) {
-    unsigned int x;
+static unsigned char undelta(unsigned int dt, unsigned char v, const unsigned char* out, unsigned int p, unsigned int last) {
+    unsigned int x = 0;
 
     if (dt == 1U)
-        return i >= 4U ? (unsigned char)(v + out[p - 4U]) : v;
+        x = 4U;
     if (dt == 2U)
-        return i >= 8U ? (unsigned char)(v + out[p - 8U]) : v;
+        x = 8U;
     if (dt == 3U) {
-        x = last <= 2U ? 4U : last == 3U ? 6U : last;
-        return p >= x ? (unsigned char)(v + out[p - x]) : v;
+        /* the smallest multiple of last that is 4 or more */
+        for (x = last; x < 4U; x += last) {
+        }
     }
-    return v;
+    return x != 0U && p >= x ? (unsigned char)(v + out[p - x]) : v;
 }
 
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out) {
@@ -279,7 +279,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         if (ll > n - used || ll > page - size)
             return -1;
         for (k = 0; k < ll; k++, size++)
-            out[size] = undelta(dt, lits[used++], out, size, k, last);
+            out[size] = undelta(dt, lits[used++], out, size, last);
         ml = mlf + 4U;
         if (mlf == 31U) {
             if (value(&b, &r->ml, &x))
@@ -295,6 +295,6 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
     }
     /* the last sequence, the literals left; B ends here, that no bit after B was used, every read checked */
     for (k = 0; used < n; k++, size++)
-        out[size] = undelta(dt, lits[used++], out, size, k, last);
+        out[size] = undelta(dt, lits[used++], out, size, last);
     return ends_here(&b) == 0 ? 0 : -1;
 }

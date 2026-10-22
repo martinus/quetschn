@@ -301,22 +301,18 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_WIDTH_AT 4
 #define SEQLZ_LIT_DELTA_AT 7
 /*
- * With bit 7 of byte 2 set, each literal was coded as its delta to an earlier
- * byte of the page, the literal minus that byte, modulo 256, and byte 3, before
- * the stream sizes, says which byte:
- *   SEQLZ_DELTA_4:    the byte 4 before it, for the literals from the 5th of
- *                     a sequence on; the first 4 are as they are
- *   SEQLZ_DELTA_8:    the byte 8 before it, from the 9th literal of a sequence
- *                     on
- *   SEQLZ_DELTA_LAST: the byte as far before it as the offset of the sequence
- *                     before, 1 for the first; an offset of 1 or 2 counts as
- *                     4, 3 as 6. Literals nearer than that to the page's start
- *                     are as they are.
+ * With bit 7 of byte 2 set, each literal was coded as its delta to the byte x
+ * before it in the page, the literal minus that byte, modulo 256; literals
+ * fewer than x bytes from the page's start are as they are. Byte 3, before the
+ * stream sizes, says which x:
+ *   SEQLZ_DELTA_4:    4
+ *   SEQLZ_DELTA_8:    8
+ *   SEQLZ_DELTA_LAST: the offset of the sequence before, 1 for the first, or
+ *                     the smallest multiple of it that is 4 or more
  * Other values are invalid. Counters, sizes and addresses in fields of 4 or 8
  * bytes differ little from those of the field before, and a literal after a
- * match little from the byte the match would have copied. An offset below 4
- * counts as a multiple of it of 4 or more, which repeats the same bytes, so
- * that the decoder can add 4 bytes at a time.
+ * match little from the byte the match would have copied. With x 4 or more,
+ * the decoder can add 4 bytes at a time.
  */
 #define SEQLZ_DELTA_4 1U
 #define SEQLZ_DELTA_8 2U

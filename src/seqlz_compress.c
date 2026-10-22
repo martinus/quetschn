@@ -404,8 +404,8 @@ static unsigned int delta_literals(const struct seqlz_tables *t,
 		last = seqlz_delta_last(get_unaligned_le16(p + 4));
 		for (k = j; k < ll; k += DELTA_STEP) {
 			const unsigned int at = pos + k, b = page[at],
-					   b4 = k >= 4U ? page[at - 4] : 0U,
-					   b8 = k >= 8U ? page[at - 8] : 0U,
+					   b4 = at >= 4U ? page[at - 4] : 0U,
+					   b8 = at >= 8U ? page[at - 8] : 0U,
 					   bl = at >= last ? page[at - last] :
 							     0U;
 
@@ -464,13 +464,10 @@ static unsigned int delta_literals(const struct seqlz_tables *t,
 		out += n_lit;
 		if (!pick)
 			continue;
-		if (pick == SEQLZ_DELTA_LAST) {
-			x = dist;
-			j = x > at ? x - at : 0;
-		} else {
-			x = pick == SEQLZ_DELTA_4 ? 4U : 8U;
-			j = x;
-		}
+		x = pick == SEQLZ_DELTA_4 ? 4U :
+		    pick == SEQLZ_DELTA_8 ? 8U :
+					    dist;
+		j = x > at ? x - at : 0;
 		for (k = 0; k < j && k < n_lit; k++)
 			to[k] = pin[k];
 		/* past the last literal only inside the page; to - deltas <= at */
