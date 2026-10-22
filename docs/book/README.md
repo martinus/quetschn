@@ -41,11 +41,15 @@ python3 docs/book/lint.py            # dashes, banned words, measurements withou
   paragraphs in 5 chapters).
 - Measured numbers are typed, and stay as they were measured: `lint.py` wants a date or a link in
   their paragraph, or `<!-- undated: why -->` when the numbers are background and not the project's.
-- `build.py --check` fails if a non-blank line of `src/` (the generated `.inc` tables aside) is in no
-  listing, if an id is on the page twice, or if a link goes to an id that does not exist. `--out <dir>`
-  writes the page there instead.
-- After a change of `src/`, `remap.py <commit>` moves the listings and the line numbers in the prose
-  from `src/` at that commit to `src/` as it is; read what it prints before `--write`.
+- The book describes the code of one commit, `"src"` in `book.json`, not the checkout's. `build.py`
+  builds in that commit's tree, extracted to a temporary directory, with this `docs/book/` over it, so
+  a change of `src/` needs no change of the book. The page says which commit it describes.
+- `build.py --check` fails if a non-blank line of `src/` at that commit (the generated `.inc` tables
+  aside) is in no listing, if an id is on the page twice, or if a link goes to an id that does not
+  exist. `--out <dir>` writes the page there instead.
+- To bring the book up to newer code: `remap.py [<commit>]` (default `HEAD`) prints how the listings
+  and the line numbers in the prose move from the book's commit to that one; `--write` applies them and
+  sets `"src"` to it. Then read the prose next to each listing marked CHANGED, and `build.py --check`.
 - `STYLE.md` is the brief the chapters were written to, `REVIEW.md` the one they were checked with.
 
 After a change of the format or the tables, build the book: what the code computes follows by

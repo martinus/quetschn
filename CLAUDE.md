@@ -60,7 +60,7 @@ tools/          see tools/README.md. seqlz-ref/ = reference decoders, kernel-por
                 (emulator corpus, 4/16 KiB pages), samecode/ (kernel copy's machine code, old vs new)
 docs/           plan.md, format.md (spec), seqlz.md (overview), measuring.md (all commands),
                 explored-designs.md (every measured design), plots/*.svg; book/ = "seqlz, line by
-                line", every line of src/ explained
+                line", every line of src/ explained, at the commit in docs/book/book.json
 cmake/          kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)
 .claude/        rules/ (path-scoped rules), skills/ (issues, research, kernel-patches)
 ```
@@ -89,6 +89,11 @@ K=/home/martinus/gra/linux/finehill   # src/ or tools/kernel-port/ changed:
 tools/kernel-port/check.sh $K && tools/kernel-port/check.sh $K ARCH=arm64 LLVM=1 && tools/kernel-port/kunit.sh $K
 ```
 
+- How much to run: while iterating, the build, `quetschn_test` and `seqlz_endian.c` (its hash stays as on
+  main unless the format changes), `port.py` too if `src/` or `tools/kernel-port/` changed. Before a
+  push, clang-format, and `check.sh` on x86-64 if the kernel copy changed. CI runs the rest on every
+  push (arm64, arm, s390, KUnit, fuzzers): do not repeat it locally. Instruction counts or timing only
+  for changes on a hot path.
 - CI: `.github/workflows/ci.yml`; `ci-ok` is the only required check. Doctest: read the assertion
   count, not the exit code (zero tests run also exits 0).
 - Format: `src/` = `src/.clang-format` (kernel style), rest = root `.clang-format`; the check covers

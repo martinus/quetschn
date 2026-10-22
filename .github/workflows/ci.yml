@@ -132,15 +132,16 @@ jobs:
       - run: tools/seqlz-ref/check.sh
       - run: tools/check-links.py
 
-  # The book docs/book/ from src/ as it is: --check fails on a line of src/ in no listing and on a link to
-  # an id the page does not have, and the C programs of its figures check themselves against the codec.
+  # The book docs/book/ from the code of its commit, "src" in book.json, not from src/ as it is: --check
+  # fails on a line of src/ in no listing and on a link to an id the page does not have, and the C
+  # programs of its figures check themselves against that commit's codec.
   # The page it builds goes to GitHub Pages from main, see the job pages.
   book:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0  # the listings link to the last commit that changed src/
+          fetch-depth: 0  # the book's commit, book.json's src, has to be in the clone
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
