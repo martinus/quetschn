@@ -435,7 +435,7 @@ static unsigned int delta_literals(const struct seqlz_tables *t,
 		}
 	/*
 	 * The literals down over the records, and their deltas into deltas: the
-	 * first of a sequence or of the page as they are. 8 bytes at a time,
+	 * ones near the page's start as they are. 8 bytes at a time,
 	 * also past the sequence's last literal: what that writes, the next
 	 * sequence's literals overwrite, only the first sequence's copy reaches
 	 * the next record, its first byte, read before, and after the last
