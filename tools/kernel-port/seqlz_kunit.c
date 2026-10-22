@@ -754,6 +754,5 @@ static struct kunit_suite seqlz_test_suite = {
 
 kunit_test_suite(seqlz_test_suite);
 
-MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_DESCRIPTION("KUnit tests for seqlz");

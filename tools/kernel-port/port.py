@@ -378,6 +378,9 @@ def port_internal():
     t = must(t, "#define SEQLZ_LEVELS 3U\n", "#define SEQLZ_LEVELS SEQLZ_LEVEL_MAX\n")
     # the cast is for C++, which src/ is compiled as too
     t = must(t, "\tconst u8 *q = (const u8 *)p; /* a cast for the C++ of the harness */\n", "\tconst u8 *q = p;\n")
+    # raw literals of their own come only from the harness's seqlz_encode()
+    t = must(t, "unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,\n\t\t\t\t u8 *spare);\n",
+             "unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare);\n")
     return common(t)
 
 
@@ -397,8 +400,20 @@ def port_c(name):
     return must(t, ours, "".join(f"#include <{h}>\n" for h in INCLUDES[name]) + '\n#include "seqlz_internal.h"\n')
 
 
+def port_compress_literals():
+    """lib/seqlz/seqlz_compress_literals.c: seqlz_code_literals() without raw, which only the harness has"""
+    t = port_c("compress_literals")
+    t = must(t, "unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,\n\t\t\t\t u8 *spare)\n"
+                "{\n\treturn code_literals(d, len, raw, spare, NULL, 0);\n}\n",
+             "unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare)\n"
+             "{\n\treturn code_literals(d, len, NULL, spare, NULL, 0);\n}\n")
+    return common(t)
+
+
 def port_compress():
     t = port_c("compress")
+    t = must(t, "\treturn seqlz_code_literals(dst, len, NULL, st->literals);\n",
+             "\treturn seqlz_code_literals(dst, len, st->literals);\n")
     # what only the harness uses: seqlz_find(), seqlz_encode() and their helpers
     t = cut(t, r"/\* ---- the matcher of seqlz_match\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
@@ -608,7 +623,7 @@ def main():
         "lib/seqlz/seqlz_tables.h": port_tables_h(),
         "lib/seqlz/seqlz_internal.h": port_internal(),
         "lib/seqlz/seqlz_compress.c": port_compress(),
-        "lib/seqlz/seqlz_compress_literals.c": common(port_c("compress_literals")),
+        "lib/seqlz/seqlz_compress_literals.c": port_compress_literals(),
         "lib/seqlz/seqlz_decompress.c": port_decompress(),
         "lib/seqlz/seqlz_decompress_literals.c": common(port_c("decompress_literals")),
         "lib/seqlz/gen_seqlz_tables.c": port_gen(),
