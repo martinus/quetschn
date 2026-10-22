@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """docs/format.md as reStructuredText for the kernel's Documentation/, for port.py.
 
-Only what format.md uses: headings of 3 levels, paragraphs, lists with "- " and "1. ", pipe tables,
-fenced code blocks, inline code, bold, italics, and links to its own headings or to http(s). Anything
-else fails, so that a new construct in format.md is noticed instead of turned into wrong reST.
+Only what format.md uses: headings of 3 levels, paragraphs, lists with "- " and "1. ", pipe tables (as
+list-tables), fenced code blocks, inline code, bold, italics, and links to its own headings or to
+http(s). Anything else fails, so that a new construct in format.md is noticed instead of turned into
+wrong reST.
 
 Two markers, HTML comments that GitHub does not show, keep the repository's and the kernel's text
 apart:
@@ -80,22 +81,20 @@ def inline(text, titles):
 
 
 def table(rows, titles):
+    """a pipe table as a list-table, whose cells wrap to WIDTH columns as paragraphs do"""
     cells = [[inline(c.strip(), titles) for c in r.strip().strip("|").split("|")] for r in rows]
-    head, rule, body = cells[0], cells[1], cells[2:]
+    head, body = cells[0], cells[2:]
     if not all(re.fullmatch(r"\s*:?-+:?\s*", c) for c in rows[1].strip().strip("|").split("|")):
         raise ValueError(f"no table rule: {rows[1]}")
-    width = [max(len(r[k]) for r in [head] + body) for k in range(len(head))]
     if any(len(r) != len(head) for r in body):
         raise ValueError(f"a table row with another number of cells: {rows[0]}")
-
-    def line(ch):
-        return "+" + "+".join(ch * (w + 2) for w in width) + "+"
-
-    def row(r):
-        return "|" + "|".join(f" {c.ljust(w)} " for c, w in zip(r, width)) + "|"
-
-    del rule
-    return [line("-"), row(head), line("=")] + [x for r in body for x in (row(r), line("-"))]
+    out = [".. list-table::", "   :header-rows: 1", ""]
+    for r in [head] + body:
+        for k, c in enumerate(r):
+            first = ("   * - " if k == 0 else "     - ")
+            # an empty cell is a "-" alone, which reST reads as an empty item
+            out += wrap(c, first, "       ") if c else [first.rstrip()]
+    return out + [""]
 
 
 def wrap(text, first, rest):

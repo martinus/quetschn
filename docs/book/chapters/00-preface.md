@@ -87,7 +87,7 @@ flowchart TB
     L --> OC["own_code()<br/>level 3: a table<br/>of the page's own"]
     R["zram: a page to read"] --> D["seqlz_decode()"]
     D --> DL["seqlz_decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
-    DL --> OT["own_table()<br/>builds a page's own<br/>table in the page"]
+    DL --> OT["read_own_table()<br/>builds a page's own<br/>table in the page"]
     D --> LOOP["decode_block(): the loop<br/>over the sequences,<br/>one table lookup each"]
     T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C
     T -.->|"read only"| D

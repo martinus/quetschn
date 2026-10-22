@@ -160,23 +160,22 @@ struct seqlz_bit_reader {
 	int count; /* negative once more bits were taken than there are */
 };
 
+/*
+ * The refill where 8 bytes of input are there, and count is at least 0: it
+ * only goes negative at the end of the stream. p moves on by the bytes that
+ * went in whole, and count is 56 to 63.
+ */
+static __always_inline void seqlz_br_refill_8(struct seqlz_bit_reader *r)
+{
+	r->bits |= get_unaligned_be64(r->p) >> r->count;
+	r->p += (63 - r->count) >> 3;
+	r->count |= 56;
+}
+
 static inline void seqlz_br_refill(struct seqlz_bit_reader *r)
 {
 	if (r->end - r->p >= 8) {
-		u64 v;
-
-		/*
-		 * count is at least 0 here: it only goes negative at the end of
-		 * the stream
-		 */
-		v = get_unaligned_be64(r->p);
-		r->bits |= v >> r->count;
-		/*
-		 * p moves on by the bytes that went in whole, and count is 56
-		 * to 63
-		 */
-		r->p += (63 - r->count) >> 3;
-		r->count |= 56;
+		seqlz_br_refill_8(r);
 	} else {
 		while (r->count >= 0 && r->count <= 56 && r->p < r->end) {
 			r->bits |= (u64)*r->p++ << (56 - r->count);
@@ -235,6 +234,18 @@ static __always_inline void add8(u8 *p, unsigned int dist)
 }
 
 /*
+ * How far before a literal the byte is that its delta is to, see
+ * SEQLZ_LIT_DELTA_AT; last is the offset of the sequence before
+ */
+static __always_inline unsigned int delta_dist(unsigned int delta,
+					       unsigned int last)
+{
+	return delta == SEQLZ_DELTA_4 ? 4U :
+	       delta == SEQLZ_DELTA_8 ? 8U :
+					seqlz_delta_last(last);
+}
+
+/*
  * Turns the nl deltas just copied to d back into literals, see
  * SEQLZ_LIT_DELTA_AT, in the block's order: the byte a delta is to is before
  * it, so it is the block's own again by then. last is the offset of the
@@ -248,9 +259,7 @@ static __always_inline void undelta_literals(unsigned int delta, u8 *d,
 					     unsigned int last)
 {
 	const unsigned int at = (unsigned int)(d - dst);
-	unsigned int dist = delta == SEQLZ_DELTA_4 ? 4U :
-			    delta == SEQLZ_DELTA_8 ? 8U :
-						     seqlz_delta_last(last);
+	const unsigned int dist = delta_dist(delta, last);
 	/* the first delta: the first literal dist bytes or more into dst */
 	unsigned int k = at >= dist ? 0 : dist - at;
 
@@ -275,9 +284,7 @@ static __always_inline void undelta_fast(unsigned int delta, u8 *d,
 					 const u8 *dst, unsigned int nl,
 					 unsigned int last)
 {
-	unsigned int dist = delta == SEQLZ_DELTA_4 ? 4U :
-			    delta == SEQLZ_DELTA_8 ? 8U :
-						     seqlz_delta_last(last);
+	const unsigned int dist = delta_dist(delta, last);
 
 	if ((unsigned long)(d - dst) < dist) {
 		undelta_literals(delta, d, dst, nl, last);
@@ -304,7 +311,7 @@ static __always_inline void copy_match_fast(u8 *d, unsigned int off,
 		/*
 		 * With 8 <= off < 16 a load reads what the store before it
 		 * wrote, as an overlapping match needs. From m, not d + 8 -
-		 * off: clang computed that sum again for every load.
+		 * off, which the compiler computed again for every load.
 		 */
 		const u8 *m = d - off;
 
@@ -351,9 +358,8 @@ static __always_inline u32 next_token(struct seqlz_bit_reader *br,
 
 /*
  * The next token in the fast path, read before the sequence's copies: its entry
- * takes a while to load, and on an in-order core such as the Cortex-A55 the
- * copies fill that time. No length value follows, so the next token's code
- * comes right after the offset.
+ * takes a while to load, and on an in-order core the copies fill that time. No
+ * length value follows, so the next token's code comes right after the offset.
  *
  * The refill: every second fast sequence, without checking the bits left.
  * Whether they run short depends on the codes before, which the branch
@@ -367,14 +373,8 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 					   const struct token_table *t,
 					   unsigned int *skip)
 {
-	if (!*skip) {
-		u64 v = get_unaligned_be64(br->p);
-
-		br->bits |= v >> br->count;
-		/* as in seqlz_br_refill() */
-		br->p += (63 - br->count) >> 3;
-		br->count |= 56;
-	}
+	if (!*skip)
+		seqlz_br_refill_8(br);
 	*skip ^= 1U;
 	return t->decode[br->bits >> (64U - SEQLZ_TOKEN_BITS)];
 }
@@ -508,8 +508,8 @@ static __always_inline int decode_block(const void *src, unsigned int src_len,
 		    (unsigned long)br.p <= in_fast) {
 			tok = next_token_fast(&br, &seqlz_tables.token, &skip);
 			/*
-			 * No check of nl against the literals left, which saved
-			 * 3 instructions per sequence. The 16 bytes read are
+			 * No check of nl against the literals left, a few
+			 * instructions less per sequence. The 16 bytes read are
 			 * inside lit_bound, so lit stays inside it. If nl goes
 			 * past lit_end, bytes of the bitstream were taken as
 			 * literals, and the slow path below, where every block
@@ -540,7 +540,7 @@ static __always_inline int decode_block(const void *src, unsigned int src_len,
 			undelta_literals(delta, d, dst, nl, last);
 		d += nl;
 		lit += nl;
-		if (len == SEQLZ_ML_CAP + 4U) {
+		if (len == SEQLZ_ML_CAP + SEQLZ_MIN_MATCH) {
 			seqlz_br_refill(&br);
 			len += seqlz_br_value(&br, &seqlz_tables.ml);
 		}

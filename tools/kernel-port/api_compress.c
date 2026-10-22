@@ -1,6 +1,6 @@
-/* the interface's work memory and levels are the matcher's state and levels */
+/* the interface's work memory is the matcher's state, its levels from 1 on */
 static_assert(sizeof(struct seqlz_state) == SEQLZ_MEM_COMPRESS);
-static_assert(SEQLZ_LEVEL_MIN == 1 && SEQLZ_LEVEL_MAX == SEQLZ_LEVELS);
+static_assert(SEQLZ_LEVEL_MIN == 1);
 
 int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 		   void *wrkmem, int level)

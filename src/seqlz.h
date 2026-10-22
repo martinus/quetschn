@@ -68,7 +68,7 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
 				       unsigned int cls)
 {
 	unsigned int a = min(ll, SEQLZ_LL_CAP);
-	unsigned int b = min(ml - 4, SEQLZ_ML_CAP);
+	unsigned int b = min(ml - SEQLZ_MIN_MATCH, SEQLZ_ML_CAP);
 
 	return a + (b << SEQLZ_LL_BITS) +
 	       (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));

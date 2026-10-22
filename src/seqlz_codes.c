@@ -30,9 +30,9 @@ static u32 length_entry(unsigned int s)
  * exactly: too many of them, gaps, or none at all.
  */
 static int first_codes(const u8 *len, unsigned int n, unsigned int bits,
-		       unsigned int next[16])
+		       unsigned int next[CODE_LENGTHS])
 {
-	unsigned int of_len[16] = { 0 }, s, l, k = 0, c = 0;
+	unsigned int of_len[CODE_LENGTHS] = { 0 }, s, l, k = 0, c = 0;
 
 	for (s = 0; s < n; s++) {
 		if (len[s] > bits)
@@ -58,7 +58,7 @@ static int first_codes(const u8 *len, unsigned int n, unsigned int bits,
  */
 static int build_token(const u8 *len, struct token_table *t)
 {
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(len, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, next))
 		return -EINVAL;
@@ -79,7 +79,7 @@ static int build_token(const u8 *len, struct token_table *t)
 /* the same for the length values, with length_entry() */
 static int build_values(const u8 *len, struct value_table *t)
 {
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(len, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, next))
 		return -EINVAL;
@@ -103,7 +103,7 @@ static int build_values(const u8 *len, struct value_table *t)
  */
 static int build_lit(const u8 *len, struct lit_table *t)
 {
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(len, 256, SEQLZ_LIT_BITS, next))
 		return -EINVAL;
@@ -154,7 +154,7 @@ static int build_lit_sets(struct seqlz_tables *t)
 static int build_own(struct own_table *t)
 {
 	const unsigned int bits = SEQLZ_OWN_CODE_BITS;
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(seqlz_own_lengths, SEQLZ_OWN_SYMBOLS, bits, next))
 		return -EINVAL;

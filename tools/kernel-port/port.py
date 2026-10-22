@@ -4,17 +4,19 @@
 
 src/ stays the one source of the codec. This writes from it:
   include/linux/seqlz.h                 the interface, tools/kernel-port/seqlz.h: compress, decompress
-  lib/seqlz/seqlz.h                     from src/seqlz.h, without what only the harness uses
-  lib/seqlz/seqlz_internal.h            from src/, with the tables the interface's functions use
-  lib/seqlz/seqlz_codes.c, seqlz_compress.c, seqlz_decompress.c: from src/, each with its part of the
+  lib/seqlz/seqlz_format.h, seqlz_tables.h, seqlz_internal.h: from src/, without what only the harness
+                                        uses
+  lib/seqlz/seqlz_compress.c, seqlz_compress_literals.c, seqlz_decompress.c,
+  seqlz_decompress_literals.c:          from src/, the two main files each with its part of the
                                         interface from tools/kernel-port/api_*.c; the matcher of
-                                        src/seqlz_match.h in seqlz_compress.c, calling the encoder itself;
-                                        static what only that file calls, and the tables built once,
-                                        __init
-  lib/seqlz/seqlz_tables.c              the tables, generated in the tree by scripts/gen-seqlz-lengths.py,
-                                        tools/kernel-port/gen-seqlz-lengths.py, from lib/seqlz/seqlz_counts.txt,
-                                        bench/seqlz_counts_4k.txt with comments of its own and lines of at
-                                        most 80 columns
+                                        src/seqlz_match.h in seqlz_compress.c, calling the encoder itself
+  lib/seqlz/gen_seqlz_tables.c          src/seqlz_codes.c and tools/kernel-port/gen_tables_main.c, a
+                                        program for the build host that writes the codes and decode
+                                        tables, seqlz_tables.c, when the kernel is built
+  lib/seqlz/seqlz_lengths.h             the code lengths it builds them from, written in the tree by
+                                        scripts/gen-seqlz-lengths.py, tools/kernel-port/gen-seqlz-lengths.py,
+                                        from lib/seqlz/seqlz_counts.txt, bench/seqlz_counts_4k.txt with
+                                        comments of its own and lines of at most 80 columns
   lib/seqlz/tests/seqlz_kunit.c         the KUnit tests, tools/kernel-port/seqlz_kunit.c, with the
                                         tables' SHA-256 and the worked example from docs/format.md
   lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Kconfig.debug, lib/Makefile: the module seqlz,
@@ -32,7 +34,8 @@ references to this repository in the comments (its documents, tools and build) a
 only hold for the Mi 9T's 4.14, Fedora's config or our test machines, which say the reason in general
 terms instead; a comment that changed is wrapped again to 80 columns. Fails if a reference is left,
 naming it; the one URL it keeps is PROJECT_URL.
-  Documentation/staging/seqlz.rst       docs/format.md as reStructuredText, see format_rst.py, in the
+  Documentation/staging/seqlz.rst       docs/format.md as reStructuredText, see format_rst.py, and the
+                                        interface's kernel-doc, in the
                                         index of Documentation/staging/
 Writes only into the tree; run it on a copy or a branch, tools/kernel-port/check.sh does.
 """
@@ -58,6 +61,13 @@ PROJECT_URL = "https://github.com/martinus/quetschn"
 # as the whole URL: with a path after it, it is not the one
 KEPT_URLS = re.compile(re.escape(PROJECT_URL) + r"(?![\w/#-]|\.\w)")
 SPEC = "Documentation/staging/seqlz.rst"
+# the functions' kernel-doc, from the header, at the end of the specification
+SPEC_API = """
+Interface
+=========
+
+.. kernel-doc:: include/linux/seqlz.h
+"""
 # nothing in lib/ depends on the CPU model: such a choice is arch code's, a static key at most
 CPU_MODEL = re.compile(r"read_cpuid|\bMIDR_|boot_cpu_data|x86_model")
 # what may not be left in the kernel's copy
@@ -70,7 +80,6 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 # whole sentences or phrases of comments, as they read after the comment's lines are joined
 REWRITES = [
     ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
-    (" The same bytes as seqlz_encode() for the sequences of seqlz_find() and @src, at the same level.", ""),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_block()
     ("seqlz_compress()", "seqlz_compress_block()"),
     # the library works on blocks of 4 KiB whatever PAGE_SIZE is, see port_header()
@@ -85,12 +94,14 @@ REWRITES = [
     ("; for blocks of 16 KiB 15 872 bytes", ""),
     (", 60 for 16 KiB blocks", ""),
     ("20 or 22 bits more", "20 bits more"),
-    # the second line of seqlz_compress_block()'s Return:, a line of its own
-    ("@dst_cap bytes, the tables lack a code, or @level is not one.", "@dst_cap bytes, or @level is not one."),
     ("SEQLZ_BLOCK_BITS bits, 20 or 22;", "SEQLZ_BLOCK_BITS bits, 20;"),
+    # the numbers of blocks of 4 KiB, where src/'s are for both sizes
+    ("as it has at most 60 bits (see below)", "as it has at most 58 bits (see below)"),
+    ("two fast sequences take at most 50, 11 for each token and up to 14 for each offset",
+     "two fast sequences take at most 46, 11 for each token and up to 12 for each offset"),
 ]
 # the entry in MAINTAINERS, its fields in the order the file's head gives, the files in alphabetic order
-MAINTAINERS_ENTRY = f"""SEQLZ PAGE COMPRESSION
+MAINTAINERS_ENTRY = f"""SEQLZ COMPRESSION LIBRARY
 M:	Martin Leitner-Ankerl <martin.ankerl@gmail.com>
 L:	linux-mm@kvack.org
 L:	linux-kernel@vger.kernel.org
@@ -319,22 +330,6 @@ def make_static(text, name, init=False):
     return text[:m.start()] + signature(head, m.group(2), "\n{") + text[m.end():]
 
 
-# the kernel-doc of the functions that are static in the kernel's copy, out of src/seqlz.h and above their
-# definitions
-STATIC_DOCS = ["seqlz_decode", "seqlz_compress"]
-
-
-def header_docs():
-    """the kernel-doc of each of STATIC_DOCS in src/seqlz.h"""
-    t = (SRC / "seqlz.h").read_text()
-    docs = {}
-    for name in STATIC_DOCS:
-        m = re.search(r"/\*\*\n \* " + name + r"\(\) -.*?\*/\n", t, re.S)
-        assert m, name
-        docs[name] = m.group(0)
-    return docs
-
-
 def put_doc(text, name, doc):
     """doc above the definition of name"""
     m = re.search(r"^static [^\n]*\b" + name + r"\(", text, re.M)
@@ -380,6 +375,7 @@ def port_internal():
              "#include <linux/seqlz.h>\n#include <linux/stddef.h>\n#include <linux/types.h>\n\n#include \"seqlz_tables.h\"\n")
     # blocks of 4 KiB only, whatever PAGE_SIZE is: the values of 16 KiB pages go, not only their comments
     t = must(t, "#define SEQLZ_HASH_BITS (SEQLZ_BLOCK_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
+    t = must(t, "#define SEQLZ_LEVELS 3U\n", "#define SEQLZ_LEVELS SEQLZ_LEVEL_MAX\n")
     # the cast is for C++, which src/ is compiled as too
     t = must(t, "\tconst u8 *q = (const u8 *)p; /* a cast for the C++ of the harness */\n", "\tconst u8 *q = p;\n")
     return common(t)
@@ -401,7 +397,7 @@ def port_c(name):
     return must(t, ours, "".join(f"#include <{h}>\n" for h in INCLUDES[name]) + '\n#include "seqlz_internal.h"\n')
 
 
-def port_compress(docs):
+def port_compress():
     t = port_c("compress")
     # what only the harness uses: seqlz_find(), seqlz_encode() and their helpers
     t = cut(t, r"/\* ---- the matcher of seqlz_match\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
@@ -444,15 +440,17 @@ def port_compress(docs):
     # seqlz_compress() is the interface's name now, with the work memory and a level
     t = rename_compress(t, "\n{")
     t = make_static(t, "seqlz_compress_block")
-    t = put_doc(t, "seqlz_compress_block", docs["seqlz_compress"])
+    # the interface's kernel-doc is in include/linux/seqlz.h, and seqlz_compress() checked the level
+    t = put_doc(t, "seqlz_compress_block", "/* one block, for the interface below, which checked the level */\n")
+    t = must(t, "\tif (level < 1 || level > SEQLZ_LEVELS)\n\t\treturn 0;\n", "")
     t = t.rstrip("\n") + "\n\n" + (HERE / "api_compress.c").read_text()
     return common(t)
 
 
-def port_decompress(docs):
+def port_decompress():
     t = port_c("decompress")
     t = make_static(t, "seqlz_decode")
-    t = put_doc(t, "seqlz_decode", docs["seqlz_decode"])
+    t = put_doc(t, "seqlz_decode", "/* seqlz_decompress(), see include/linux/seqlz.h */\n")
     t = t.rstrip("\n") + "\n\n" + (HERE / "api_decompress.c").read_text()
     return common(t)
 
@@ -506,7 +504,8 @@ def port_lengths_script():
     """scripts/gen-seqlz-lengths.py without what only the repository's userspace build uses"""
     t = (HERE / "gen-seqlz-lengths.py").read_text()
     t = cut(t, r"def main_inc\(what, tables\):\n.*?\n\n\n(?=def main\(\):)")
-    t = must(t, '    what = args.pop(0) if args and args[0] in ("--lengths", "--lit-sets") else None\n', "")
+    t = must(t, '    what = None\n    if args and args[0] in ("--lengths", "--lit-sets"):\n'
+             "        what = args.pop(0)\n", "")
     t = must(t, "    if what:\n        return main_inc(what, tables)\n", "")
     t = must(t, "def lengths_initializer(tables, storage=\"\"):", "def lengths_initializer(tables, storage):")
     t = must(t, "def lit_sets_initializer(tables, storage=\"\"):", "def lit_sets_initializer(tables, storage):")
@@ -603,20 +602,19 @@ def main():
     tree = pathlib.Path(sys.argv[1])
     if not (tree / "drivers/block/zram/zcomp.c").exists():
         sys.exit(f"{tree} is not a Linux tree with zram")
-    docs = header_docs()
     out = {
         "include/linux/seqlz.h": (HERE / "seqlz.h").read_text(),
         "lib/seqlz/seqlz_format.h": port_format(),
         "lib/seqlz/seqlz_tables.h": port_tables_h(),
         "lib/seqlz/seqlz_internal.h": port_internal(),
-        "lib/seqlz/seqlz_compress.c": port_compress(docs),
+        "lib/seqlz/seqlz_compress.c": port_compress(),
         "lib/seqlz/seqlz_compress_literals.c": common(port_c("compress_literals")),
-        "lib/seqlz/seqlz_decompress.c": port_decompress(docs),
+        "lib/seqlz/seqlz_decompress.c": port_decompress(),
         "lib/seqlz/seqlz_decompress_literals.c": common(port_c("decompress_literals")),
         "lib/seqlz/gen_seqlz_tables.c": port_gen(),
         "lib/seqlz/seqlz_counts.txt": port_counts(),
         SPEC: ".. SPDX-License-Identifier: GPL-2.0-only OR MIT\n\n" +
-              format_rst.convert((REPO / "docs" / "format.md").read_text()),
+              format_rst.convert((REPO / "docs" / "format.md").read_text()) + SPEC_API,
         "scripts/gen-seqlz-lengths.py": port_lengths_script(),
         "lib/seqlz/tests/seqlz_kunit.c": port_kunit(),
         "lib/seqlz/Makefile": MAKEFILE,
@@ -653,7 +651,8 @@ def main():
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"
           "\t  seqlz compresses and decompresses one block of 4 KiB at a\n"
           "\t  time, for zram, whatever the page size. It is an LZ format\n"
-          "\t  whose sequences are Huffman coded with fixed tables.\n\n", "config SEQLZ\n")
+          "\t  whose sequences and literals are Huffman coded with fixed\n"
+          "\t  tables, see Documentation/staging/seqlz.rst.\n\n", "config SEQLZ\n")
     # with the other KUnit tests of lib/, in the runtime testing menu
     patch(tree / "lib/Kconfig.debug", "config PRANDOM_KUNIT_TEST\n",
           "config SEQLZ_KUNIT_TEST\n"
@@ -683,14 +682,11 @@ def main():
               "\tdepends on PAGE_SIZE_4KB\n"
               "\tselect SEQLZ\n"
               "\thelp\n"
-              "\t  seqlz is an LZ codec for memory pages whose sequences are\n"
+              "\t  seqlz is an LZ codec whose sequences and literals are\n"
               "\t  Huffman coded with tables trained on memory pages and\n"
               "\t  compiled in. It stores pages in less memory than lz4, and\n"
-              "\t  takes more time to compress and decompress them. Level 1\n"
-              "\t  keeps the literals raw, level 2, the default, codes them\n"
-              "\t  too, level 3 also searches longer for matches, can store\n"
-              "\t  the literals as differences to earlier bytes and codes\n"
-              "\t  them with a table of the page's own.\n\n")
+              "\t  takes more time to compress and decompress them. Its levels\n"
+              "\t  are in Documentation/admin-guide/blockdev/zram.rst.\n\n")
     kc = must(kc, "\t\t!ZRAM_BACKEND_842\n", "\t\t!ZRAM_BACKEND_842 && !ZRAM_BACKEND_SEQLZ\n")
     # without help, as the other ZRAM_DEF_COMP_* entries: checkpatch's CONFIG_DESCRIPTION stays
     kc = must(kc, "config ZRAM_DEF_COMP_842\n\tbool \"842\"\n\tdepends on ZRAM_BACKEND_842\n\n",

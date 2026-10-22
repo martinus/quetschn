@@ -113,7 +113,9 @@
  * seqlz_compress.c.
  */
 #define SEQLZ_MAX_ESCAPE_LEN (31U - SEQLZ_BLOCK_BITS - SEQLZ_ESCAPE_BITS)
-/* the largest ll and ml - 4 a token holds: 15 and 31, larger ones follow */
+/* the shortest match; a token holds ml - SEQLZ_MIN_MATCH */
+#define SEQLZ_MIN_MATCH 4U
+/* the largest ll and ml - SEQLZ_MIN_MATCH a token holds: 15 and 31 */
 #define SEQLZ_LL_CAP ((1U << SEQLZ_LL_BITS) - 1U)
 #define SEQLZ_ML_CAP ((1U << SEQLZ_ML_BITS) - 1U)
 /* length values below 16 are their own symbol */
@@ -173,7 +175,8 @@ static inline unsigned int seqlz_len_symbol(unsigned int v,
  * How many bits of the offset follow the token, per class: 0, 1, 8, the block's
  * bits, 5, SEQLZ_CLASS5_BITS. One nibble per class in one constant, 0x85C810
  * for blocks of 4 KiB, so that it is a shift and a mask without a branch:
- * computing class 3's from the block's bits made gcc branch on the class.
+ * computed from the block's bits, class 3's made the compiler branch on the
+ * class.
  */
 #define SEQLZ_RAW_NIBBLES                                             \
 	(0U | 1U << 4 | 8U << 8 | SEQLZ_BLOCK_BITS << 12 | 5U << 16 | \

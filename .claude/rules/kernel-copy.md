@@ -35,7 +35,7 @@ follows these rules; open gaps in existing code: issues #151 to #157 (review of 
 - `tools/kernel-port/check.sh`: W=1 warning-free on x86-64, arm64, arm, s390; no new checkpatch
   `--strict` finding; stack frames < 1024 bytes (older kernels' 32-bit `FRAME_WARN`; now 1280, 2048 on
   64-bit). It prints the three deepest and fails at 1024; deepest are `seqlz_decode_literals()` and
-  `seqlz_code_literals()`, near 1000 with KASAN+UBSan as `stress.sh` sets them; `own_table()` is `noinline`
+  `seqlz_code_literals()`, near 1000 with KASAN+UBSan as `stress.sh` sets them; `read_own_table()` is `noinline`
   to keep its locals out of `seqlz_decode_literals()`.
 - The copy never names this repo, our machines, phones or dumps. `port.py` fails on names
   (`FORBIDDEN`), not on wording like "on pages of a phone"; also on a `REWRITES` entry that matches no

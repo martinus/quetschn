@@ -224,8 +224,9 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 		put_len_value(e, &seqlz_tables.ll, ll - SEQLZ_LL_CAP);
 		enc_flush(e);
 	}
-	if (ml - 4 >= SEQLZ_ML_CAP)
-		put_len_value(e, &seqlz_tables.ml, ml - 4 - SEQLZ_ML_CAP);
+	if (ml - SEQLZ_MIN_MATCH >= SEQLZ_ML_CAP)
+		put_len_value(e, &seqlz_tables.ml,
+			      ml - SEQLZ_MIN_MATCH - SEQLZ_ML_CAP);
 	enc_flush(e);
 	e->last = off;
 }
@@ -331,7 +332,7 @@ static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 			return 0;
 		if (i + 1 == n)
 			break;
-		if (seq[i].match < 4U || seq[i].offset == 0 ||
+		if (seq[i].match < SEQLZ_MIN_MATCH || seq[i].offset == 0 ||
 		    seq[i].offset > pos)
 			return 0;
 		pos += seq[i].match;
@@ -423,7 +424,7 @@ static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 		encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	}
 	if (e.rec) {
-		/* not &e.lit: e would leave the function, out of its registers */
+		/* not &e.lit: e would leave the function and its registers */
 		u8 *lit = e.lit;
 
 		*delta = seqlz_delta_literals(dst, &lit, src, st->literals);

@@ -2,7 +2,7 @@
 /*
  * own.c: the facts of a page's own literal table, level 3, for chapters 4, 6, 7, 8, 11 and 13. It
  * includes seqlz_compress.c and seqlz_decompress.c to reach own_code(), own_lengths(), log2_256()
- * and own_table():
+ * and read_own_table():
  *   own.len.S, own.code.S     the fixed code OWN that describes a table, symbol S
  *   own.q.XX.*                quad[] for the 8 bits XX, field by field
  *   own.text.*                chapter 4's text page at level 3: its header, its table's
@@ -10,7 +10,7 @@
  *                             and the codes of its bytes
  *   own.enc.*                 the encoder on that page: counts, the entropy estimate, the lengths
  *                             before and after own_lengths() makes the code complete, the choice
- *   own.dec.*                 own_table() on that page, step by step, checked against its result
+ *   own.dec.*                 read_own_table() on that page, step by step, checked against its result
  */
 #include <stdarg.h>
 
@@ -433,8 +433,8 @@ static void encoder_facts(const struct seqlz_tables* t) {
 }
 
 /*
- * own_table() on the text page's description, step by step: the same steps again, recorded, and the
- * decode table they give must be the one own_table() builds
+ * read_own_table() on the text page's description, step by step: the same steps again, recorded, and the
+ * decode table they give must be the one read_own_table() builds
  */
 static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned int d) {
     static u8 page[SEQLZ_BLOCK_SIZE], bucket[SEQLZ_SCRATCH], dt_page[SEQLZ_BLOCK_SIZE];
@@ -491,10 +491,10 @@ static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned
     fact_num("own.dec.steps", step);
     fact_num("own.dec.bits", pos);
     /* the real one */
-    end = own_table(&t->own, desc, desc + d + 64, (u16*)page, bucket);
+    end = read_own_table(&t->own, desc, desc + d + 64, (u16*)page, bucket);
     if (end != desc + d)
-        fail("own_table() ends elsewhere");
-    /* the canonical table from the steps' buckets, as own_table() writes it */
+        fail("read_own_table() ends elsewhere");
+    /* the canonical table from the steps' buckets, as read_own_table() writes it */
     for (i = 1, at = 0; i <= SEQLZ_LIT_BITS; i++)
         for (k = 0; k < count[i]; k++) {
             unsigned int r;
@@ -506,7 +506,7 @@ static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned
             str(key("own.dt.%02x.entry", order[i][k]), "0x%04x", i | order[i][k] << 8);
         }
     if (at != full || memcmp(lt, page, sizeof(u16) * full))
-        fail("the replay of own_table() gives another decode table");
+        fail("the replay of read_own_table() gives another decode table");
     fact_num("own.dt.bytes", sizeof(u16) * full);
     fact_num("own.dt.bucket_bytes", (OWN_QUAD_NONE + 1U) * 256U);
     fact_num("own.dec.step_max", OWN_STEP_MAX);

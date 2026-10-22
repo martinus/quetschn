@@ -705,7 +705,7 @@ decoders. This time it came together with the lazy matcher as one level, and the
 changed the decision: `zstd` 3's memory, one end of the project's goal
 ([plan.md §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)).
 The cost is in the code: `own_code()`, `own_lengths()` and their helpers in the encoder, `build_own()`,
-and `own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
+and `read_own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
 the reference decoders cover it like the rest.
 
 ## Level 3 stores its literals as deltas, first as XORs {#ch-decisions--deltas}

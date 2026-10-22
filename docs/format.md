@@ -76,6 +76,7 @@ codes) from fixed tables that are part of the format and not in the compressed b
 
 ## Block size
 
+<!-- not in the kernel's copy -->
 seqlz is defined for blocks of 4 KiB and of 16 KiB; the block size is not stored in the compressed block,
 the decoder has to know it. Some numbers depend on it:
 
@@ -84,14 +85,20 @@ the decoder has to know it. Some numbers depend on it:
 | `P` | 12 | 14 | log2 of the block size |
 | `BLOCK` | 4096 | 16384 | bytes of the uncompressed block |
 | `LEN_SYMBOLS` | 24 | 26 | symbols of a length value, `12 + P`, see [Length values](#length-values) |
+<!-- end -->
+<!-- in the kernel's copy:
+Linux has seqlz for blocks of 4 KiB, whatever its page size is. The block size is not stored in the
+compressed block, the decoder has to know it. Some numbers depend on it:
+
+| name | value | what it is |
+| --- | --- | --- |
+| `P` | 12 | log2 of the block size |
+| `BLOCK` | 4096 | bytes of the uncompressed block |
+| `LEN_SYMBOLS` | 24 | symbols of a length value, `12 + P`, see [Length values](#length-values) |
+-->
 
 The compressed block is a byte string of length `len`. Its length is not stored in it either: zram
 stores it and gives it to the decoder.
-<!-- in the kernel's copy:
-
-Linux has seqlz for blocks of 4 KiB only, whatever its page size is. The format for blocks of 16 KiB is
-not fixed yet.
--->
 
 ## Layout of a compressed block
 
@@ -126,8 +133,8 @@ are invalid.
 
 The `w` bytes from byte `3 + e` on are one number `S` of `8 * w` bits, little endian, and
 `s[j] = (S >> (j * w)) & ((1 << w) - 1)`: 8 sizes of `w` bits fill exactly `w` bytes; `w` is 5 to 12.
-*Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most 640 bytes in a 4 KiB
-block and 2560 in a 16 KiB block; the largest stream of most blocks is below 128 bytes, so 7 bits each
+*Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most `BLOCK * 10 / 64`
+bytes, 640 in a 4 KiB block; the largest stream of most blocks is below 128 bytes, so 7 bits each
 do, and 2 bytes each made blocks about 5 bytes larger on average. The codes 9 to 15 are kept for later.
 
 The coded literals are split into 8 **streams**: literal 0 goes to stream 0, literal 1 to stream 1, ...,
@@ -233,6 +240,8 @@ way.
 The SHA-256 of each table's lengths, as bytes in symbol order (the literal tables one after the other),
 so that a decoder can check that it has the right ones:
 
+4 KiB blocks:
+
 | table | SHA-256 |
 | --- | --- |
 | `TOK_4k` | `c5f97d70cd50ed0e3517c69231437fd534f5e772bb9ed70dc3769a3337b2d6e0` |
@@ -240,18 +249,23 @@ so that a decoder can check that it has the right ones:
 | `ML_4k` | `c39358b16a14c2462e092ee13b345e9b5002e59c5efc9521f0967063a7873289` |
 | `LIT_4k` | `43f552dca80dcdffd6dc21231555f1c938580650a1b90b94b8c515120ad9ad9e` |
 | `OWN_4k` | `96312d8701c3fa72a06db3dcdb982aab0075aaac91bc895cf1eed3ae88e00721` |
+
+<!-- not in the kernel's copy -->
+16 KiB blocks:
+
+| table | SHA-256 |
+| --- | --- |
 | `TOK_16k` | `e33e3a2353fbc5c9296abb79034a3d118ce34344e059099e1c85afda996b7219` |
 | `LL_16k` | `5e9e225ea55c28a9b0f358101521c670e89cbd32cec5e7f02fe608648dabb8b2` |
 | `ML_16k` | `fe6a87649f4b95830e663270eefe4289561269420cba951931f95c5fe38ccfce` |
 | `LIT_16k` | `cc37c3ba7e7ffdb91ff873d7c9a19f04301efe79c4b2fd7202c137212a769db4` |
 | `OWN_16k` | `53a7c56537de2052791c0d016ff3c92467ef61bfb7be0ef33ad2b81f3bc58906` |
 
-<!-- not in the kernel's copy -->
 `tools/seqlz-ref/seqlz_ref.py` checks them. How the tables were trained is in
 [explored-designs.md](explored-designs.md#the-tables-trained-again-4-less-on-one-desktop-dump-the-phone-the-same).
 <!-- end -->
 <!-- in the kernel's copy:
-The KUnit tests of seqlz check the 4 KiB ones.
+The KUnit tests of seqlz check them.
 -->
 
 ## The bitstream of the sequences
@@ -298,8 +312,8 @@ Each sequence but the last starts with a **token**, one symbol of `TOK` that hol
 once, so that the most frequent combinations take few bits:
 
 ```text
-ll  = token & 15         the literal length, 0 to 15; 15 means 15 or more
-mlf = (token >> 4) & 31  the match length minus 4, 0 to 31; 31 means 31 or more
+ll  = token & 15         the literal length, 0 to 15; 15: 15 or more
+mlf = (token >> 4) & 31  the match length minus 4, 0 to 31; 31: 31 or more
 c   = token >> 9         the class of the offset, 0 to 5
 ```
 
@@ -333,7 +347,7 @@ the most frequent of all and gets a class of its own.
 | 0 | none | the last offset again | the offset of the sequence before |
 | 1 | 1 | `read(1) * 2` | 2 |
 | 2 | 8 | `read(8)` | 1 to 255 |
-| 3 | `P`: 12 or 14 | `read(P)` | 1 to `BLOCK - 1` |
+| 3 | `P` | `read(P)` | 1 to `BLOCK - 1` |
 | 4 | 5 | `read(5) * 8` | 8 to 248, multiples of 8 |
 | 5 | 8 | `read(8) * 8` | 8 to 2040, multiples of 8 |
 
@@ -455,6 +469,7 @@ The 9 bytes `02 00 61 62 23 f2 ff fb 60` are a 4 KiB block of `ab` 2048 times, w
 | | | 0 literals left for 0 bytes of the block: the last sequence, the end |
 | `00000` | | the rest of the last byte |
 
+<!-- not in the kernel's copy -->
 ## What the compressor writes
 
 Not part of the format: any block that decodes is fine, and one block can be written in many ways, as
@@ -480,6 +495,7 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
 The compressed block fits the buffer the compressor is given, or the compressor fails. zram gives it two
 pages, which every block fits, and stores a page that does not compress well enough as it is, so that
 page never reaches the decoder.
+<!-- end -->
 
 ## No version in the block
 

@@ -270,9 +270,11 @@ and offsets but never a wrong memory access, because each is checked against the
 
 ### seqlz_br_refill(): one load of 8 bytes, and count ends at 56 to 63
 
-@listing src/seqlz_decompress.c 163-186
+@listing src/seqlz_decompress.c 163-185
 
-While 8 bytes of the stream are left, the refill loads 8 at once; in the last 7 it goes byte by byte,
+While 8 bytes of the stream are left, the refill loads 8 at once, `seqlz_br_refill_8()`, which the
+fast path of [chapter 14](#ch-decode--next-token) calls by itself, as it knows that 8 bytes are there; in the last 7
+it goes byte by byte,
 because zram hands the decoder a buffer of exactly the compressed size, and the byte after it may belong
 to another allocation. `get_unaligned_be64()` puts the byte at `p` into the top 8 bits, the stream's
 order; on x86-64 and arm64 it is a load and a byte swap. `v >> count` puts it right below the `count`
@@ -317,14 +319,14 @@ below -7, by 64 or more. The example page of [chapter 4](#ch-format--example) ha
 
 ### seqlz_br_drop(): taking bits
 
-@listing src/seqlz_decompress.c 188-193
+@listing src/seqlz_decompress.c 187-192
 
 The `(int)n` keeps the subtraction signed, so `count` can go negative. `n` is never 64: the largest drop
 is a token's code with its offset bits, $11 + 14$ bits with 16 KiB pages.
 
 ### seqlz_br_value(): a length value, with two shifts where one would do
 
-@listing src/seqlz_decompress.c 195-214
+@listing src/seqlz_decompress.c 194-213
 
 A length value is a symbol of the `ll` or `ml` table and then `x` extra bits, added to a base
 ([chapter 4](#ch-format--length-values)). One lookup with the next 8 bits gives the code's length `n` in

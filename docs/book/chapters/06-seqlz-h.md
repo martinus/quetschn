@@ -110,7 +110,7 @@ one more select the Mi 9T's A55 wrote 1.0% and read warm pages 1.7% slower, its 
 
 ## The escape and the caps {#ch-header--escape}
 
-@listing src/seqlz_format.h 99-118
+@listing src/seqlz_format.h 99-120
 
 A code of $l$ bits uses $2^{-l}$ of the code space, and the sum may not exceed 1
 ([chapter 2](#ch-compression--complete)), so codes of at most 11 bits have room for 2048 codes, and
@@ -141,7 +141,7 @@ more", and `ll - 15` follows as a length value.
 
 ## Length values {#ch-header--length-values}
 
-@listing src/seqlz_format.h 119-138
+@listing src/seqlz_format.h 121-140
 
 A length value of 16 or more, with its highest set bit at position $b$, is the symbol $12 + b$ and the
 $b$ bits below that bit. $b$ is at least 4, so the first such symbol is 16, and the base of 12 makes
@@ -166,7 +166,7 @@ most 4 KiB of literals".
 
 ## The tables as code lengths {#ch-header--lengths}
 
-@listing src/seqlz_format.h 140-168
+@listing src/seqlz_format.h 142-170
 
 The canonical code follows from the code lengths alone
 ([chapter 2](#ch-compression--canonical-codes)), so `struct seqlz_lengths`, one byte per symbol, is
@@ -188,7 +188,7 @@ example ([chapter 4](#ch-format--example)) has `ml - 35 = 4059`, symbol {{ch06.l
 
 ## Offset classes without a branch {#ch-header--offsets}
 
-@listing src/seqlz_format.h 170-187
+@listing src/seqlz_format.h 172-190
 
 Class 5 holds the multiples of 8 below `8 << 8`, {{ch06.class5_end}}, on both page sizes. On 16 KiB
 pages 10 bits could reach 8 KiB back, but that made the pages no smaller on average
@@ -214,7 +214,7 @@ sent: `0x330010`, 1 for class 1 and 3 for classes 4 and 5. The token's decode ta
 for that shift ([chapter 7](#ch-internal--token-entry)).
 @assert ch06.OFF_SHIFT == k16.ch06.OFF_SHIFT == "0, 1, 0, 0, 3, 3"
 
-@listing src/seqlz_format.h 189-210
+@listing src/seqlz_format.h 192-213
 
 The encoder calls `seqlz_off_class()` once per match, and the classes of consecutive matches follow no
 pattern a branch predictor could learn ([chapter 3](#ch-cpu--branches)), so it is arithmetic:
@@ -308,7 +308,7 @@ moves its kernel-doc to the definition, as for `seqlz_decode()` and `seqlz_compr
 
 ## The literal tables and their header {#ch-header--literals}
 
-@listing src/seqlz_format.h 212-227
+@listing src/seqlz_format.h 215-230
 @listing src/seqlz_internal.h 23-27
 
 A literal table codes the 256 byte values. With codes of at most 10 bits its decode table has 1024
@@ -327,7 +327,7 @@ already and one bit is the decoder's marker of where the valid bits end
 ([chapter 13](#ch-literals-dec)), so $64 - 7 - 1 = 56$ bits are left: 5 codes of 10 bits, 40
 literals for all 8 streams per refill.
 
-@listing src/seqlz_format.h 228-249
+@listing src/seqlz_format.h 231-252
 
 ```text
 byte 2:      bit 7 | bit 6  bit 5  bit 4 | bit 3  bit 2  bit 1  bit 0
@@ -357,7 +357,7 @@ and bit 7 0, its literals are as they are. `SEQLZ_LIT_CODE_MASK`, `SEQLZ_LIT_WID
 `static_assert`s that they fit together ([chapter 7](#ch-internal--byte2)).
 @assert own.text.lcode == own.lit_own and own.text.w5 + 5 == own.text.w and int(own.text.t, 16) < 128
 
-@listing src/seqlz_format.h 250-266
+@listing src/seqlz_format.h 253-269
 
 The encoder subtracts the earlier byte from the literal, the decoder adds it back, both modulo 256,
 with the byte the encoder used, which the decoder has written to the page by then. What the delta is
@@ -404,7 +404,7 @@ per page with deltas, 915.6 without, 5.0% less, measured on 21st and 22nd Octobe
 [one rule](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept));
 [chapter 17](#ch-decisions--deltas) has what it costs in time.
 
-@listing src/seqlz_format.h 267-292
+@listing src/seqlz_format.h 270-295
 @listing src/seqlz.h 42-48
 
 The comment is the format of [a page's own table](#ch-format--own) in a few lines. "A run of k bits"

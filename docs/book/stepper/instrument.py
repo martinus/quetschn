@@ -47,7 +47,7 @@ DECODE_STOPS = [
     "if (lit > lit_end || nl > (unsigned int)(lit_end - lit) ||",
     "copy_literals(d, d_end, lit, lit_bound, nl);",
     "copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));",
-    "if (len == SEQLZ_ML_CAP + 4U) {",
+    "if (len == SEQLZ_ML_CAP + SEQLZ_MIN_MATCH) {",
     "len += seqlz_br_value(&br, &seqlz_tables.ml);",
     "if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||",
     "copy_match(d, d_end, off, len);",

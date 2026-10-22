@@ -33,13 +33,6 @@ static void seqlz_release_params(struct zcomp_params *params)
 {
 }
 
-/*
- * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
- * them where that saves enough, level 3 searches longer for matches, can store
- * the literals as deltas to earlier bytes and gives a page a literal table of
- * its own: smaller pages for more time each.
- * The tables are the library's, built once.
- */
 static int seqlz_setup_params(struct zcomp_params *params)
 {
 	if (params->dict_sz) {
@@ -61,7 +54,7 @@ static int seqlz_setup_params(struct zcomp_params *params)
 static int seqlz_create_cctx(struct zcomp_params *params,
 			     struct zcomp_ctx *ctx)
 {
-	ctx->context = kvzalloc(SEQLZ_MEM_COMPRESS, GFP_KERNEL);
+	ctx->context = kzalloc(SEQLZ_MEM_COMPRESS, GFP_KERNEL);
 	return ctx->context ? 0 : -ENOMEM;
 }
 
@@ -71,26 +64,22 @@ static int seqlz_create_dctx(struct zcomp_params *params,
 {
 	if (params->level == SEQLZ_LEVEL_MIN)
 		return 0;
-	ctx->context = kvzalloc(SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
+	ctx->context = kzalloc(SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
 	return ctx->context ? 0 : -ENOMEM;
 }
 #else
 static int seqlz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	union seqlz_ctx *c;
+	union seqlz_ctx *c = kzalloc_obj(*c);
 
-	BUILD_BUG_ON(sizeof(*c) > KMALLOC_MAX_CACHE_SIZE);
-	c = kvzalloc_obj(*c);
-	if (!c)
-		return -ENOMEM;
 	ctx->context = c;
-	return 0;
+	return c ? 0 : -ENOMEM;
 }
 #endif
 
 static void seqlz_destroy(struct zcomp_ctx *ctx)
 {
-	kvfree(ctx->context);
+	kfree(ctx->context);
 }
 
 static int seqlz_zcomp_compress(struct zcomp_params *params,

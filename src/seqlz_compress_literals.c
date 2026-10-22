@@ -27,18 +27,25 @@ static __always_inline unsigned int lit_bits(const u64 *even, const u64 *odd,
 }
 
 /*
- * Adds the 8-bit lanes of the sums s to the 16-bit lanes of even and odd, as
- * lit_cost() does, and clears s
+ * Adds the 8 lanes of 8 bits of the sum x to the 4 lanes of 16 bits of even
+ * and odd: tables 0, 2, 4 and 6 to even, 1, 3, 5 and 7 to odd
  */
+static __always_inline void lanes_spill(u64 x, u64 *even, u64 *odd)
+{
+	/* every second byte */
+	const u64 lanes = 0x00ff00ff00ff00ffULL;
+
+	*even += x & lanes;
+	*odd += x >> 8 & lanes;
+}
+
+/* lanes_spill() of the 4 sums s, which are cleared */
 static __always_inline void delta_spill(u64 *s, u64 *even, u64 *odd)
 {
-	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
-	const u64 lanes = 0x00ff00ff00ff00ffULL;
 	unsigned int x;
 
 	for (x = 0; x < 4; x++) {
-		even[x] += s[x] & lanes;
-		odd[x] += s[x] >> 8 & lanes;
+		lanes_spill(s[x], &even[x], &odd[x]);
 		s[x] = 0;
 	}
 }
@@ -209,8 +216,8 @@ static void store_tail(u8 *p, u64 w, unsigned int n)
  * them, as enc_flush() does for the sequences. cnt is the bits left from before
  * the last flush, the low byte of sum the bits added since. 8 bytes at once
  * while the stream has room for them; it ends at end, where the next stream
- * starts. The bytes are swapped once, before the branch: put_unaligned_be64()
- * in both branches gave code_literals() other code on arm64.
+ * starts. The bytes are swapped once, before the branch, not by
+ * put_unaligned_be64() in each, which the compiler did not merge.
  */
 static __always_inline u8 *lit_flush(u8 *p, const u8 *end, u64 acc,
 				     unsigned int *cnt, unsigned int *sum)
@@ -241,8 +248,6 @@ static __always_inline void lit_cost(const u8 *literals,
 				     unsigned int n_literals, u64 *even,
 				     u64 *odd, u16 (*hist)[256])
 {
-	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
-	const u64 lanes = 0x00ff00ff00ff00ffULL;
 	unsigned int k, j;
 
 	for (k = 0; k < n_literals;) {
@@ -264,10 +269,8 @@ static __always_inline void lit_cost(const u8 *literals,
 			if (hist)
 				hist[k & 1U][literals[k]]++;
 		}
-		for (j = 0; j < SEQLZ_LIT_STREAMS; j++) {
-			even[j] += x[j] & lanes;
-			odd[j] += x[j] >> 8 & lanes;
-		}
+		for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
+			lanes_spill(x[j], &even[j], &odd[j]);
 	}
 }
 
@@ -281,6 +284,8 @@ static __always_inline void lit_cost(const u8 *literals,
 static __always_inline void lit_streams(const u32 *enc, const u8 *literals,
 					unsigned int n_literals, u8 *const *q)
 {
+	/* the literals between two flushes, 4 per stream */
+	const unsigned int run = 4U * SEQLZ_LIT_STREAMS;
 	unsigned int half, k, j;
 
 	for (half = 0; half < SEQLZ_LIT_STREAMS; half += 4) {
@@ -292,12 +297,12 @@ static __always_inline void lit_streams(const u32 *enc, const u8 *literals,
 			     s2 = 0, s3 = 0;
 
 		/*
-		 * Blocks of 32 literals, 4 per stream, then a flush: 4 codes of
-		 * up to 10 bits fit the accumulator. The loop stops 28 literals
-		 * before the end, so the rest below has at most 4 per stream.
+		 * A run of literals, then a flush: 4 codes of up to 10 bits fit
+		 * the accumulator. The loop stops run - 4 literals before the
+		 * end, so the rest below has at most 4 per stream.
 		 */
-		for (k = half; k + 28U < n_literals; k += 32) {
-			for (j = 0; j < 32U; j += SEQLZ_LIT_STREAMS) {
+		for (k = half; k + run - 4U < n_literals; k += run) {
+			for (j = 0; j < run; j += SEQLZ_LIT_STREAMS) {
 				a0 = lit_put(a0, &s0, enc, literals[k + j]);
 				a1 = lit_put(a1, &s1, enc, literals[k + j + 1]);
 				a2 = lit_put(a2, &s2, enc, literals[k + j + 2]);
@@ -343,8 +348,7 @@ static __always_inline void lit_streams(const u32 *enc, const u8 *literals,
  * The 8 stream sizes, width bits each, lowest bit first: exactly width bytes
  * at p.
  */
-static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
-				      unsigned int width)
+static void lit_sizes(u8 *p, const unsigned int *sizes, unsigned int width)
 {
 	u64 acc = 0;
 	unsigned int cnt = 0, j;
@@ -414,7 +418,8 @@ static void own_lengths(struct own_work *w, unsigned int n,
 	 */
 	const u64 inv = div_u64(1ULL << 40, n_literals);
 	const unsigned int full = 1U << SEQLZ_LIT_BITS;
-	unsigned int k, space = 0, at[17] = { 0 };
+	/* a counting sort by gain, 0 to 15, and its sums, one more */
+	unsigned int k, space = 0, at[16 + 1] = { 0 };
 
 	for (k = 0; k < n; k++) {
 		unsigned int b = w->bytes[k & 255U], f = w->freq[0][b],
@@ -432,7 +437,7 @@ static void own_lengths(struct own_work *w, unsigned int n,
 		at[q - 15U]++;
 		space += full >> l;
 	}
-	for (k = 1; k < 17; k++)
+	for (k = 1; k <= 16; k++)
 		at[k] += at[k - 1];
 	for (k = 0; k < n; k++)
 		w->by_gain[at[w->gain[k & 255U]]++ & 255U] = w->bytes[k & 255U];
@@ -510,8 +515,9 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 {
 	/* the low 15 bits of each lane */
 	const u64 low = 0x7fff7fff7fff7fffULL;
-	unsigned int k, j, n = 0, count[16] = { 0 }, next[16], l, cnt = 0, prev,
-			   out = 0, h = 0, est, bits = 0;
+	unsigned int k, j, n = 0, count[CODE_LENGTHS] = { 0 },
+			   next[CODE_LENGTHS], l, cnt = 0, prev, out = 0, h = 0,
+			   est, bits = 0;
 	u64 acc = 0, present[4] = { 0 };
 
 	/*
@@ -549,10 +555,10 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 	if (n < 2)
 		return 0;
 	/*
-	 * Only where the entropy and a description of about 0.45 bytes per byte
-	 * with a code leave the code at least OWN_SAVES_MIN bytes smaller than
-	 * limit, and small enough not to stay raw, see code_literals(),
-	 * is the code built. On many blocks it is not.
+	 * Only where the entropy and a description of about 0.45 bytes, 115 /
+	 * 256, per byte with a code leave the code at least OWN_SAVES_MIN
+	 * bytes smaller than limit, and small enough not to stay raw, see
+	 * code_literals(), is the code built. On many blocks it is not.
 	 */
 	h = n_literals * log2_256(n_literals) - h;
 	est = h / 2048U + n * 115U / 256U;
@@ -565,7 +571,7 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 	/* canonical codes, by length and then by byte, as build_lit() */
 	for (k = 0; k < n; k++)
 		count[w->len[w->bytes[k & 255U]] & 15U]++;
-	for (l = 1, next[0] = 0; l < 16; l++)
+	for (l = 1, next[0] = 0; l < CODE_LENGTHS; l++)
 		next[l] = (next[l - 1] + count[l - 1]) << 1;
 	for (k = 0; k < n; k++) {
 		unsigned int b = w->bytes[k & 255U];
@@ -649,7 +655,7 @@ static unsigned int own_sizes(struct own_work *w, const u8 *literals,
  * The bits the stream sizes are written in: as many as the largest needs, at
  * least SEQLZ_SIZE_BITS_MIN.
  */
-static __always_inline unsigned int size_width(const unsigned int *sizes)
+static unsigned int size_width(const unsigned int *sizes)
 {
 	unsigned int all = 1U << (SEQLZ_SIZE_BITS_MIN - 1U), j;
 

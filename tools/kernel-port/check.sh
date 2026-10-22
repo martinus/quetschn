@@ -103,13 +103,15 @@ echo "x86-prefetcht0.patch:"
 (cd "$work/src" && perl scripts/checkpatch.pl --strict --show-types "$here/x86-prefetcht0.patch" || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:"
 (cd "$work/src" && scripts/kernel-doc -none -Wall -Werror lib/seqlz/*.[ch] include/linux/seqlz.h) || exit 1
 echo "kernel-doc: no warnings"
-# the specification as docutils reads it; Sphinx, which the kernel's htmldocs need, is not required here
+# the specification as docutils reads it; Sphinx, which the kernel's htmldocs need, is not required here,
+# so its kernel-doc directive is left out
 if python3 -c 'import docutils' 2>/dev/null; then
     python3 - "$work/src/Documentation/staging/seqlz.rst" <<'EOF'
 import io, sys
 import docutils.core
 err = io.StringIO()
-docutils.core.publish_string(open(sys.argv[1]).read(), writer_name="null",
+text = "".join(line for line in open(sys.argv[1]) if not line.startswith(".. kernel-doc::"))
+docutils.core.publish_string(text, writer_name="null",
                              settings_overrides={"halt_level": 2, "report_level": 1, "warning_stream": err})
 sys.exit(err.getvalue() or print("Documentation/staging/seqlz.rst: no docutils warnings"))
 EOF

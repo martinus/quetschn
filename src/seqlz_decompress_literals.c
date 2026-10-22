@@ -11,8 +11,9 @@
  * bytes at ip with the lowest bit set to 1, shifted left by the bits of ip's
  * first byte already used. Each code shifts them further left, so the
  * position of that 1 tells how many bits were used since ip, and a refill
- * needs no counter. With a counter, 8 streams did not fit into the registers
- * of x86-64. A refill leaves at least 56 bits, codes never reach the 1.
+ * needs no counter: 8 streams with a counter each do not fit into the 16
+ * registers of a 64-bit CPU. A refill leaves at least 56 bits, codes never
+ * reach the 1.
  */
 /*
  * the 8 bytes at ip, zeros after end; only the last refills of a block need it,
@@ -104,11 +105,11 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
 	       (left == 0 || !(start[sz - 1U] & ((1U << left) - 1U)));
 }
 
-/* the most bits one step of own_table() takes: a run's code and 8 bits more */
+/* the most bits a step of read_own_table() takes: a run's code and 8 more */
 #define OWN_STEP_MAX (2U * SEQLZ_OWN_CODE_BITS)
 static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
 	       (sizeof(u16) << SEQLZ_LIT_BITS) + 1U <= SEQLZ_BLOCK_SIZE),
-	      "own_table()'s buckets fit the scratch, its table the block");
+	      "read_own_table(): buckets fit the scratch, the table the block");
 
 /*
  * A block's own literal table, see SEQLZ_LIT_OWN: reads it from p and writes
@@ -127,8 +128,9 @@ static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
  * seqlz_decode_literals() its locals made the stack frame larger than the
  * kernel allows with KASAN.
  */
-static noinline const u8 *own_table(const struct own_table *own, const u8 *p,
-				    const u8 *end, u16 *lt, u8 *bucket)
+static noinline const u8 *read_own_table(const struct own_table *own,
+					 const u8 *p, const u8 *end, u16 *lt,
+					 u8 *bucket)
 {
 	const unsigned int full = 1U << SEQLZ_LIT_BITS,
 			   len = (unsigned int)(end - p);
@@ -271,7 +273,7 @@ noinline const u8 *seqlz_decode_literals(const u8 *s, unsigned int src_len,
 		 */
 		u16 *own = (u16 *)(block + ((unsigned long)block & 1U));
 
-		q = own_table(&seqlz_tables.own, q, end, own, out);
+		q = read_own_table(&seqlz_tables.own, q, end, own, out);
 		if (!q)
 			return NULL;
 		lt = own;

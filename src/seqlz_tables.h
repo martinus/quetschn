@@ -28,9 +28,11 @@
 #define ENC_LEN_SYMBOLS 32U
 static_assert(SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS,
 	      "the length values' enc[] is too small");
-static_assert((SEQLZ_TOKEN_BITS < 16U && SEQLZ_MAX_BITS < 16U &&
-	       SEQLZ_LIT_BITS < 16U),
-	      "first_codes() has arrays of 16 code lengths");
+/* the arrays indexed by a code's length, 0 to 15 */
+#define CODE_LENGTHS 16U
+static_assert(SEQLZ_TOKEN_BITS < CODE_LENGTHS, "a token's code length");
+static_assert(SEQLZ_MAX_BITS < CODE_LENGTHS, "a length value's code length");
+static_assert(SEQLZ_LIT_BITS < CODE_LENGTHS, "a literal's code length");
 
 struct value_table {
 	u32 decode[1U << SEQLZ_MAX_BITS];
@@ -127,7 +129,7 @@ extern struct seqlz_tables seqlz_tables;
 
 static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
 	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
-	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U &&
+	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + SEQLZ_MIN_MATCH <= 63U &&
 	       SEQLZ_OFF_SHIFT(1) <= 3U && SEQLZ_OFF_SHIFT(4) <= 3U &&
 	       SEQLZ_OFF_SHIFT(5) <= 3U),
 	      "token_entry's fields are too narrow");
@@ -176,7 +178,7 @@ static inline u32 token_entry(unsigned int s, unsigned int n)
 		return 1U << TOK_ESCAPE_AT | n << TOK_DROP_AT;
 	return n | ((64U - raw_bits) & 63U) << TOK_BACK_AT |
 	       SEQLZ_OFF_SHIFT(cls) << TOK_SHIFT_AT | drop << TOK_DROP_AT |
-	       ll << TOK_LL_AT | (ml + 4U) << TOK_ML_AT |
+	       ll << TOK_LL_AT | (ml + SEQLZ_MIN_MATCH) << TOK_ML_AT |
 	       (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << TOK_VALUE_AT;
 }
 

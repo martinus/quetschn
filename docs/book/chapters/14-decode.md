@@ -43,7 +43,7 @@ next token, and the room the fast path needs. The slow path's helpers are in
 
 ## copy_match_fast(): the match without loops {#ch-decode--copy-match-fast}
 
-@listing src/seqlz_decompress.c 295-318
+@listing src/seqlz_decompress.c 302-325
 
 On the fast path a match has at most {{ch14.fast_len}} bytes, since the token's longest `ml` means that a
 length value follows. The caller guarantees {{ch14.cmf.room}} bytes of room at `d`. From offset 8 on the
@@ -65,7 +65,7 @@ wrote
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)).
 :::
 
-@listing src/seqlz_decompress.c 319-335
+@listing src/seqlz_decompress.c 326-342
 
 Below offset 8, the pattern register of `repeat_pattern()` ([chapter 12](#ch-dec-basics--pattern)) is
 stored 5 times without a loop. The smallest step is {{ch14.cmf.min_step}}, for
@@ -83,7 +83,7 @@ clang
 
 ## The next token: refill only when the bits might run out {#ch-decode--next-token}
 
-@listing src/seqlz_decompress.c 337-350
+@listing src/seqlz_decompress.c 344-357
 
 The slow path and the first sequence get their token here. It refills only below an 11-bit code plus the
 longest offset, {{ch14.need}} bits with 4 KiB pages and {{k16.ch14.need}} with 16 KiB pages. The index
@@ -104,7 +104,7 @@ The format of then had other tables and another bit order.
 
 ### next_token_fast(): the next token before the copies
 
-@listing src/seqlz_decompress.c 352-380
+@listing src/seqlz_decompress.c 359-380
 
 **The next token before the copies.** No length value follows on the fast path, so the next token's code
 starts right after the offset bits, and its entry can be loaded before the copies. An out-of-order core
