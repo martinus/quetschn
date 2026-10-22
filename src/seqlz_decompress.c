@@ -304,12 +304,12 @@ static __always_inline u64 lit_decode(u8 *out, u64 bits, const u16 *lt,
 }
 
 /*
- * The sizes of the 8 streams of coded literals, width bits each from byte 3 of
- * the page at s, and where each starts, the first at q. Returns their sum. The
- * sizes are copied out of the page first: a 4-byte load at the last size's byte
- * would read past the header.
+ * The sizes of the 8 streams of coded literals, width bits each from p, and
+ * where each starts, the first at q. Returns their sum. The sizes are copied
+ * out of the page first: a 4-byte load at the last size's byte would read past
+ * the header.
  */
-static __always_inline u64 lit_stream_sizes(const u8 *s, unsigned int width,
+static __always_inline u64 lit_stream_sizes(const u8 *p, unsigned int width,
 					    const u8 *q, unsigned int *sz,
 					    const u8 **start)
 {
@@ -317,7 +317,7 @@ static __always_inline u64 lit_stream_sizes(const u8 *s, unsigned int width,
 	u64 total = 0;
 	unsigned int k;
 
-	__builtin_memcpy(h, s + SEQLZ_LIT_HEADER(0), width);
+	__builtin_memcpy(h, p, width);
 	for (k = 0; k < SEQLZ_LIT_STREAMS; k++) {
 		sz[k] = (get_unaligned_le32(h + k * width / 8U) >>
 			 (k * width % 8U)) &
@@ -477,7 +477,7 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	const u8 *const end = s + src_len;
 	/*
 	 * byte 2: the literals' code in bits 0 to 3, width - SEQLZ_SIZE_BITS_MIN
-	 * in bits 4 to 6, in bit 7 whether they are deltas
+	 * in bits 4 to 6, in bit 7 whether they are deltas, then their byte
 	 */
 	const unsigned int width =
 		SEQLZ_SIZE_BITS_MIN +
@@ -485,7 +485,9 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 			 (s[2] >> SEQLZ_LIT_WIDTH_AT) &
 				 (SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN) :
 			 0U);
-	const u8 *q = s + SEQLZ_LIT_HEADER(width);
+	const unsigned int deltas = src_len > 2U ? s[2] >> SEQLZ_LIT_DELTA_AT :
+						   0U;
+	const u8 *q = s + SEQLZ_LIT_HEADER(width) + deltas;
 	const u8 *ip[SEQLZ_LIT_STREAMS];
 	const u8 *start[SEQLZ_LIT_STREAMS];
 	unsigned int sz[SEQLZ_LIT_STREAMS];
@@ -494,16 +496,13 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	u64 total = 0;
 	const u16 *lt;
 
-	if (src_len < SEQLZ_LIT_HEADER(width) ||
+	if (src_len < SEQLZ_LIT_HEADER(width) + deltas ||
 	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN || n_lit > SEQLZ_PAGE)
 		return NULL;
-	*delta = 0;
-	if (s[2] >> SEQLZ_LIT_DELTA_AT) {
-		/* the delta, SEQLZ_DELTA_4 to SEQLZ_DELTA_LAST, after the sizes */
-		if (q >= end || *q - 1U >= SEQLZ_DELTA_LAST)
-			return NULL;
-		*delta = *q++;
-	}
+	/* the delta, SEQLZ_DELTA_4 to SEQLZ_DELTA_LAST, in byte 3 */
+	*delta = deltas ? s[SEQLZ_LIT_HEADER(0)] : 0U;
+	if (deltas && *delta - 1U >= SEQLZ_DELTA_LAST)
+		return NULL;
 	if ((s[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN) {
 		/*
 		 * the page's own table, built in the page itself, from an even
@@ -519,7 +518,8 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 		lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
 		prefetch_lines(lt, sizeof(t->lit[0].decode));
 	}
-	total = lit_stream_sizes(s, width, q, sz, start);
+	total = lit_stream_sizes(s + SEQLZ_LIT_HEADER(0) + deltas, width, q, sz,
+				 start);
 	for (i = 0; i < SEQLZ_LIT_STREAMS; i++) {
 		ip[i] = start[i];
 		b[i] = 1;

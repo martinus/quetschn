@@ -113,8 +113,8 @@ layouts.
 | --- | --- | --- |
 | 0 | 2 | `h`, which is `0x8000 + n` |
 | 2 | 1 | `t`: `code = t & 15` is how the literals are coded, `w = 5 + ((t >> 4) & 7)` the bits of each stream size, `e = t >> 7` whether they are deltas |
-| 3 | `w` | `s[0]` to `s[7]`, the size of each literal stream, `w` bits each |
-| `3 + w` | `e` | with `e = 1` the byte `dt`, which delta the literals are, see [Literals as deltas](#literals-as-deltas), else nothing |
+| 3 | `e` | with `e = 1` the byte `dt`, which delta the literals are, see [Literals as deltas](#literals-as-deltas), else nothing |
+| `3 + e` | `w` | `s[0]` to `s[7]`, the size of each literal stream, `w` bits each |
 | `3 + w + e` | `d` | with `code = 8` the page's own literal table, see [A page's own literal table](#a-pages-own-literal-table), else nothing, `d = 0` |
 | `3 + w + e + d` | `s[0] + ... + s[7]` | the 8 literal streams, one after the other |
 | `3 + w + e + d + s[0] + ... + s[7]` | up to `len` | `B`, the bitstream of the sequences |
@@ -122,7 +122,7 @@ layouts.
 `code` 0 to 7 is one of the 8 fixed literal tables, `code` 8 a table of the page's own, and 9 to 15
 are invalid.
 
-The `w` bytes from byte 3 on are one number `S` of `8 * w` bits, little endian, and
+The `w` bytes from byte `3 + e` on are one number `S` of `8 * w` bits, little endian, and
 `s[j] = (S >> (j * w)) & ((1 << w) - 1)`: 8 sizes of `w` bits fill exactly `w` bytes; `w` is 5 to 12.
 *Why:* a stream holds at most every 8th literal, of at most 10 bits, so at most 640 bytes in a 4 KiB
 page and 2560 in a 16 KiB page; the largest stream of most pages is below 128 bytes, so 7 bits each
@@ -414,7 +414,7 @@ bytes, and a decoder can add 4 bytes at a time.
 ## A page's own literal table
 
 With `code = 8` the literals are coded with a table that the page brings. It starts at byte `3 + w + e`,
-right after the sizes and `dt`, and is read most significant bit first, as a literal stream: bit `i`
+right after `dt` and the sizes, and is read most significant bit first, as a literal stream: bit `i`
 of it is bit `7 - (i mod 8)` of byte `3 + w + e + i div 8`. It is a list of symbols of the table `OWN`, which say
 the code length of each byte value with a code, in the order of the byte values, from 0 on:
 

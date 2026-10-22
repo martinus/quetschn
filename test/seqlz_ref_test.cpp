@@ -292,7 +292,7 @@ std::vector<unsigned char> delta_page(std::mt19937_64& rng, int kind) {
 
 TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and damaged deltas alike") {
     // The delta byte and byte 2 with each bit flipped: other deltas, invalid ones, a page without deltas whose
-    // delta byte is then read as the first one after the sizes.
+    // delta byte is then read as the first byte of the stream sizes.
     auto const t = fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(53);
@@ -302,7 +302,7 @@ TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and
         auto const page = delta_page(rng, round);
         auto const c = compress(t.get(), page, 3);
         REQUIRE(check_same(t.get(), r.get(), c) == page);
-        auto const at = SEQLZ_LIT_HEADER(size_width(c));
+        auto const at = SEQLZ_LIT_HEADER(0);
         auto const has_delta = (c[1] & 0x80) != 0 && (c[2] >> SEQLZ_LIT_DELTA_AT) != 0;
         ++deltas[has_delta ? c[at] & 3U : 0U];
         if (!has_delta) {
@@ -335,7 +335,7 @@ TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid o
             continue;
         }
         ++pages;
-        auto const at = SEQLZ_LIT_HEADER(size_width(c));
+        auto const at = SEQLZ_LIT_HEADER(size_width(c)) + (c[2] >> SEQLZ_LIT_DELTA_AT);
         for (auto q = 8 * at; q < 8 * std::min<std::size_t>(c.size(), at + 160); ++q) {
             auto bad = c;
             bad[q / 8] = static_cast<unsigned char>(bad[q / 8] ^ (0x80U >> (q % 8)));

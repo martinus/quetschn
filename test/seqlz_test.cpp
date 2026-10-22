@@ -1156,21 +1156,26 @@ std::vector<std::vector<std::pair<unsigned, unsigned char>>> canonical_codes(uns
     return by_length;
 }
 
-// In a page with coded literals (docs/format.md): the width of its stream sizes, the length of its header, and
-// the size of literal stream st, width bits from bit st * width of the bytes behind byte 2.
+// In a page with coded literals (docs/format.md): the width of its stream sizes, the bytes that say which
+// delta its literals are (1 with deltas, in byte 3), the length of its header, and the size of literal stream
+// st, width bits from bit st * width of the bytes behind those.
 unsigned size_width(std::vector<unsigned char> const& c) {
     return SEQLZ_SIZE_BITS_MIN + ((c[2] >> SEQLZ_LIT_WIDTH_AT) & 7U);
 }
 
+unsigned delta_bytes(std::vector<unsigned char> const& c) {
+    return c[2] >> SEQLZ_LIT_DELTA_AT;
+}
+
 std::size_t lit_header(std::vector<unsigned char> const& c) {
-    return SEQLZ_LIT_HEADER(size_width(c));
+    return SEQLZ_LIT_HEADER(size_width(c)) + delta_bytes(c);
 }
 
 unsigned stream_size(std::vector<unsigned char> const& c, unsigned st) {
     auto v = 0U;
     for (unsigned i = 0; i < size_width(c); ++i) {
         auto const bit = st * size_width(c) + i;
-        v |= ((c[3 + bit / 8] >> (bit % 8)) & 1U) << i;
+        v |= ((c[3 + delta_bytes(c) + bit / 8] >> (bit % 8)) & 1U) << i;
     }
     return v;
 }
@@ -1179,15 +1184,17 @@ void set_stream_size(std::vector<unsigned char>& c, unsigned st, unsigned size) 
     for (unsigned i = 0; i < size_width(c); ++i) {
         auto const bit = st * size_width(c) + i;
         auto const mask = static_cast<unsigned char>(1U << (bit % 8));
-        c[3 + bit / 8] = static_cast<unsigned char>((size >> i) & 1U ? c[3 + bit / 8] | mask : c[3 + bit / 8] & ~mask);
+        auto& b = c[3 + delta_bytes(c) + bit / 8];
+        b = static_cast<unsigned char>((size >> i) & 1U ? b | mask : b & ~mask);
     }
 }
 
 // the page c with its stream sizes written in width bits instead
 std::vector<unsigned char> with_size_width(std::vector<unsigned char> const& c, unsigned width) {
-    auto out = std::vector<unsigned char>(c.begin(), c.begin() + 3);
-    out[2] = static_cast<unsigned char>((c[2] & SEQLZ_LIT_CODE_MASK) | (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT);
-    out.resize(SEQLZ_LIT_HEADER(width));
+    auto out = std::vector<unsigned char>(c.begin(), c.begin() + 3 + delta_bytes(c));
+    out[2] = static_cast<unsigned char>((c[2] & (SEQLZ_LIT_CODE_MASK | 1U << SEQLZ_LIT_DELTA_AT)) |
+                                        (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT);
+    out.resize(SEQLZ_LIT_HEADER(width) + delta_bytes(c));
     for (unsigned st = 0; st < 8; ++st) {
         set_stream_size(out, st, stream_size(c, st));
     }
@@ -1370,15 +1377,16 @@ TEST_CASE("seqlz: any page with coded literals is safe for the decoder") {
             for (auto& b : c) {
                 b = static_cast<unsigned char>(rng());
             }
-            // any byte 2, also with the bit that must be 0 and the codes above SEQLZ_LIT_OWN
-            auto const b2 = static_cast<unsigned char>(rng());
+            // any byte 2, a quarter with deltas, and the codes above SEQLZ_LIT_OWN
+            auto const b2 = static_cast<unsigned char>(rng() % 4 == 0 ? rng() : rng() & 0x7fU);
             auto const width = SEQLZ_SIZE_BITS_MIN + ((b2 >> SEQLZ_LIT_WIDTH_AT) & 7U);
-            if (c.size() >= SEQLZ_LIT_HEADER(width)) {
+            auto const header = SEQLZ_LIT_HEADER(width) + (b2 >> SEQLZ_LIT_DELTA_AT);
+            if (c.size() >= header) {
                 auto const n_lit = static_cast<unsigned>(rng() % (page_size + 1));
-                auto const rest = static_cast<unsigned>(c.size() - SEQLZ_LIT_HEADER(width));
+                auto const rest = static_cast<unsigned>(c.size() - header);
                 c[0] = static_cast<unsigned char>(n_lit);
                 c[1] = static_cast<unsigned char>((SEQLZ_LIT_CODED | n_lit) >> 8);
-                c[2] = rng() % 4 == 0 ? b2 : static_cast<unsigned char>(b2 & 0x7fU);
+                c[2] = b2;
                 for (unsigned k = 0; k < 8; ++k) {
                     auto const size = static_cast<unsigned>(rng() % (rest / 8 + 2));
                     set_stream_size(c, k, size);
@@ -1578,7 +1586,7 @@ namespace {
 
 // The delta of a compressed page's literals (docs/format.md): 0 for raw literals or coded ones without it.
 unsigned lit_delta(std::vector<unsigned char> const& c) {
-    return lits_coded(c) && (c[2] >> SEQLZ_LIT_DELTA_AT) != 0 ? c[lit_header(c)] : 0U;
+    return lits_coded(c) && delta_bytes(c) != 0 ? c[SEQLZ_LIT_HEADER(0)] : 0U;
 }
 
 // Pages whose literals one delta turns into many zeros, for SEQLZ_DELTA_4, SEQLZ_DELTA_8 or SEQLZ_DELTA_LAST.
@@ -1720,7 +1728,7 @@ TEST_CASE("seqlz: a delta byte other than 1 to 3, or none, is invalid") {
     auto c = std::vector<unsigned char>(2 * page_size);
     c.resize(seqlz_compress(t.get(), st.get(), page.data(), c.data(), 2 * page_size, 3));
     REQUIRE(lit_delta(c) == SEQLZ_DELTA_4);
-    auto const at = lit_header(c);
+    auto const at = SEQLZ_LIT_HEADER(0);
     for (unsigned v = 0; v < 256; ++v) {
         CAPTURE(v);
         auto bad = c;
@@ -1737,6 +1745,7 @@ TEST_CASE("seqlz: a delta byte other than 1 to 3, or none, is invalid") {
             CHECK(out == page);
         }
     }
-    // the page cut right before the delta byte
-    CHECK(seqlz_decode(t.get(), c.data(), static_cast<unsigned>(at), out.data(), scratch.data()) == -EINVAL);
+    // the page cut right before the header's last byte, which the delta byte made one longer
+    auto const cut = std::vector<unsigned char>(c.begin(), c.begin() + static_cast<std::ptrdiff_t>(lit_header(c) - 1));
+    CHECK(seqlz_decode(t.get(), cut.data(), static_cast<unsigned>(cut.size()), out.data(), scratch.data()) == -EINVAL);
 }

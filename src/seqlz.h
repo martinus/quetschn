@@ -280,11 +280,11 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
  */
 #define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 /*
- * The header of a page with coded literals, 3 + w bytes: the u16 of every page,
- * then byte 2, with the literals' code in bits 0 to 3, w - SEQLZ_SIZE_BITS_MIN
- * in bits 4 to 6 and in bit 7 whether the literals are deltas, see
- * SEQLZ_LIT_DELTA_AT, then the sizes of the 8 streams in bytes, w bits each,
- * lowest bit first. The code is one of the SEQLZ_LIT_SETS fixed tables, or
+ * The header of a page with coded literals, 3 + w bytes, one more with deltas:
+ * the u16 of every page, then byte 2, with the literals' code in bits 0 to 3,
+ * w - SEQLZ_SIZE_BITS_MIN in bits 4 to 6 and in bit 7 whether the literals are
+ * deltas, then with deltas their byte, see SEQLZ_LIT_DELTA_AT, then the sizes
+ * of the 8 streams in bytes, w bits each, lowest bit first. The code is one of the SEQLZ_LIT_SETS fixed tables, or
  * SEQLZ_LIT_OWN; codes above it are invalid. The decoder needs the sizes to
  * know where each stream starts.
  *
@@ -302,8 +302,8 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_LIT_DELTA_AT 7
 /*
  * With bit 7 of byte 2 set, each literal was coded as its delta to an earlier
- * byte of the page, the literal minus that byte, modulo 256, and the byte after
- * the stream sizes, before the description of SEQLZ_LIT_OWN, says which byte:
+ * byte of the page, the literal minus that byte, modulo 256, and byte 3, before
+ * the stream sizes, says which byte:
  *   SEQLZ_DELTA_4:    the byte 4 before it, for the literals from the 5th of
  *                     a sequence on; the first 4 are as they are
  *   SEQLZ_DELTA_8:    the byte 8 before it, from the 9th literal of a sequence

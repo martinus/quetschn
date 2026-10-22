@@ -142,11 +142,11 @@ def decode(page, tables, page_bits):
         if len(page) < 3 + w + e or code > 8 or n > size:
             raise Invalid
         if e:
-            dt = page[3 + w]
+            dt = page[3]
             if dt not in (1, 2, 3):
                 raise Invalid
         codes, d = own_table(page, 3 + w + e, own_codes) if code == 8 else (lit_codes[code], 0)
-        sizes = int.from_bytes(page[3 : 3 + w], "little")
+        sizes = int.from_bytes(page[3 + e : 3 + e + w], "little")
         start = [3 + w + e + d]
         for j in range(8):
             start.append(start[-1] + (sizes >> (j * w) & ((1 << w) - 1)))

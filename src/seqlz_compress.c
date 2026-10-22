@@ -1094,7 +1094,7 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 		coded += sizes[j];
 	}
 	width = size_width(sizes);
-	/* with a delta, its byte after the sizes */
+	/* with a delta, its byte before the sizes */
 	header = SEQLZ_LIT_HEADER(width) + (unsigned int)(delta != 0);
 	enc = t->lit[set].enc;
 	if (own) {
@@ -1139,9 +1139,10 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	d[2] = (u8)((desc ? SEQLZ_LIT_OWN : set) |
 		    (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT |
 		    (unsigned int)(delta != 0) << SEQLZ_LIT_DELTA_AT);
-	lit_sizes(d + SEQLZ_LIT_HEADER(0), sizes, width);
 	if (delta)
-		d[SEQLZ_LIT_HEADER(width)] = (u8)delta;
+		d[SEQLZ_LIT_HEADER(0)] = (u8)delta;
+	lit_sizes(d + SEQLZ_LIT_HEADER(0) + (unsigned int)(delta != 0), sizes,
+		  width);
 	if (desc)
 		memcpy(d + SEQLZ_LIT_HEADER(width) + (unsigned int)(delta != 0),
 		       own->desc, desc);

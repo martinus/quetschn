@@ -212,7 +212,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         if (len < 3U + w + e || (t & 15U) > 8U)
             return -1;
         if (e) {
-            dt = src[3U + w];
+            dt = src[3];
             if (dt < 1U || dt > 3U)
                 return -1;
         }
@@ -222,15 +222,15 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
                 return -1;
             code = &page_own;
         }
-        /* S is the 8 * w bits from byte 3 on, little endian, s[j] = (S >> (j * w)) & ((1 << w) - 1):
-         * bit q of S is bit q mod 8 of byte 3 + q div 8. Bit by bit, as S has up to 96 bits. */
+        /* S is the 8 * w bits from byte 3 + e on, little endian, s[j] = (S >> (j * w)) & ((1 << w) - 1):
+         * bit q of S is bit q mod 8 of byte 3 + e + q div 8. Bit by bit, as S has up to 96 bits. */
         for (j = 0; j < 8U; j++) {
             unsigned int x = 0, i;
 
             for (i = 0; i < w; i++) {
                 unsigned int q = j * w + i;
 
-                x |= ((unsigned int)(src[3 + q / 8U] >> (q % 8U)) & 1U) << i;
+                x |= ((unsigned int)(src[3U + e + q / 8U] >> (q % 8U)) & 1U) << i;
             }
             sizes[j] = x;
             total += x;
