@@ -153,7 +153,7 @@ static void encode_traced(struct trace* r, void (*make)(u8*)) {
     make(page);
     n = seqlz_find(&st, page, seq, 2);
     memset(dst, 0, sizeof dst);
-    encoder_init(e, T, dst, CAP, page + SEQLZ_PAGE);
+    encoder_init(e, dst, CAP, page + SEQLZ_PAGE);
     r->low = dst + CAP;
     r->n_flush = 0;
     for (i = 0; i < n; i++) {
@@ -169,7 +169,7 @@ static void encode_traced(struct trace* r, void (*make)(u8*)) {
             break;
         cls = seqlz_off_class(off, e->last, &raw);
         tok = seqlz_token(ll, ml, cls);
-        code = token_code(T, tok, &tlen);
+        code = token_code(tok, &tlen);
         v = (u64)code << raw | ((off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0)));
         enc_put(e, v, tlen + raw);
         if (i < r->seqs) {
@@ -235,7 +235,7 @@ static unsigned int min_dst(void (*make)(u8*)) {
 
     make(page);
     for (cap = SEQLZ_HEADER + ENC_ROOM; cap <= CAP; cap++)
-        if (seqlz_compress(T, &st, page, out, cap, 1))
+        if (seqlz_compress(&st, page, out, cap, 1))
             return cap;
     fail("a page does not fit two pages");
     return 0;
@@ -269,7 +269,7 @@ static void chapter10(void) {
     str("ch10.esc.entry", "0x%x", ee);
     fact_num("ch10.esc.len", ee >> TOK_ENC_LEN_AT);
     str("ch10.esc.codehex", "0x%x", ee & TOK_ENC_CODE_MASK);
-    c = token_code(T, 10, &len);
+    c = token_code(10, &len);
     fact_num("ch10.esc10.enc", T->token.enc[10]);
     fact_num("ch10.esc10.len", len);
     str("ch10.esc10.ret", "0x%x", c);
@@ -280,7 +280,7 @@ static void chapter10(void) {
         unsigned int raw = SEQLZ_RAW_BITS(tok >> (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
 
         codes += T->token.enc[tok] != 0;
-        token_code(T, tok, &len);
+        token_code(tok, &len);
         if (len + raw > most)
             most = len + raw;
     }
@@ -415,7 +415,7 @@ static void chapter11(void) {
     str("ch11.odd32", "0x%08llx", (unsigned long long)((x >> 8 & lanes) >> 32));
 
     /* the pricing of the page, the table with the fewest bits, the sizes */
-    lit_cost(T, page, n_lit, even, odd, NULL);
+    lit_cost(page, n_lit, even, odd, NULL);
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         total[k] = 0;
         for (j = 0; j < SEQLZ_LIT_STREAMS; j++)

@@ -146,7 +146,7 @@
  * The code lengths of the token table and of the two tables of length values,
  * 0 for a symbol without a code. Canonical Huffman codes follow from the
  * lengths alone, so this is all a table is. The ones compiled in,
- * seqlz_default_own, are part of the format.
+ * seqlz_default_lengths, are part of the format.
  */
 struct seqlz_lengths {
 	u8 token[SEQLZ_TOKEN_SYMBOLS + 1]; /* the last one is the escape */
@@ -221,41 +221,28 @@ struct seqlz_sequence {
 	u16 offset;
 };
 
-/*
- * The codes and decode tables built from a struct seqlz_lengths, for the
- * encoder and the decoder. Read only once built, one for all CPUs.
- */
-struct seqlz_tables;
-
-/**
- * seqlz_tables_size() - The size of struct seqlz_tables
- *
- * Return: the bytes to allocate for seqlz_tables_init().
- */
-size_t seqlz_tables_size(void);
-
 /**
  * seqlz_all_symbols() - Whether every symbol has a code
- * @t: tables from seqlz_tables_init()
  *
  * The encoder needs a code for every symbol it may have to write. The decoder
  * does not: a complete prefix code can leave symbols out, and pages that use
  * them are not valid for these tables.
  *
- * Return: true if the encoder can use @t.
+ * Return: true if the encoder can use the tables of seqlz_tables_init().
  */
-bool seqlz_all_symbols(const struct seqlz_tables *t);
+bool seqlz_all_symbols(void);
 
 /**
  * seqlz_tables_init() - Build the codes and decode tables from code lengths
- * @t: seqlz_tables_size() bytes
- * @lengths: the code lengths, e.g. seqlz_default_own
+ * @lengths: the code lengths, e.g. seqlz_default_lengths
+ *
+ * The tables are one object, which the encoder and the decoder use; this
+ * replaces them, so no page may be compressed or decompressed meanwhile.
  *
  * Return: 0, or -EINVAL if the lengths are not a complete prefix code: a code
  * longer than its table allows, more codes than fit, gaps, or none at all.
  */
-int seqlz_tables_init(struct seqlz_tables *t,
-		      const struct seqlz_lengths *lengths);
+int seqlz_tables_init(const struct seqlz_lengths *lengths);
 
 /*
  * Coded literals: the longest code, and the number of fixed tables a page can
@@ -360,7 +347,6 @@ extern const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS];
 
 /**
  * seqlz_decode() - Decompress one page
- * @t: the tables the page was compressed with
  * @src: the compressed page
  * @src_len: its length
  * @dst: SEQLZ_PAGE bytes for the page
@@ -370,10 +356,10 @@ extern const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS];
  * writes outside @dst and @scratch. Without @scratch, pages with coded literals
  * are not valid.
  *
- * Return: 0, or -EINVAL if @src is not a valid page for @t.
+ * Return: 0, or -EINVAL if @src is not a valid page for the tables.
  */
-int seqlz_decode(const struct seqlz_tables *t, const void *src,
-		 unsigned int src_len, void *dst, void *scratch);
+int seqlz_decode(const void *src, unsigned int src_len, void *dst,
+		 void *scratch);
 
 /* the token of a sequence with a match, see the top of this file */
 static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
@@ -444,7 +430,6 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 
 /**
  * seqlz_encode() - Write a compressed page from given sequences
- * @t: tables with a code for every symbol, see seqlz_all_symbols()
  * @st: work memory for a page's own literal table at SEQLZ_LEVEL_OWN, or NULL
  *      below that level
  * @seq: the sequences, the last one with match 0
@@ -466,10 +451,10 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * literals used.
  *
  * Return: the length of the compressed page, or 0 if it does not fit into
- * @dst_cap bytes, @t lacks a code, the sequences do not describe a page, or
- * @level is not one.
+ * @dst_cap bytes, the tables lack a code, see seqlz_all_symbols(), the
+ * sequences do not describe a page, or @level is not one.
  */
-unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
+unsigned int seqlz_encode(struct seqlz_state *st,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
 			  const void *page, void *dst, unsigned int dst_cap,
@@ -477,7 +462,6 @@ unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
 
 /**
  * seqlz_compress() - Compress one page
- * @t: tables with a code for every symbol, see seqlz_all_symbols()
  * @st: the matcher's state, one per CPU
  * @src: the page, SEQLZ_PAGE bytes
  * @dst: where the compressed page goes
@@ -496,13 +480,12 @@ unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
  * same level.
  *
  * Return: the length of the compressed page, or 0 if it does not fit into
- * @dst_cap bytes, @t lacks a code, or @level is not one.
+ * @dst_cap bytes, the tables lack a code, or @level is not one.
  */
-unsigned int seqlz_compress(const struct seqlz_tables *t,
-			    struct seqlz_state *st, const void *src, void *dst,
+unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,
 			    unsigned int dst_cap, unsigned int level);
 
 /* the code lengths compiled in, see seqlz_default_tables.c */
-extern const struct seqlz_lengths seqlz_default_own;
+extern const struct seqlz_lengths seqlz_default_lengths;
 
 #endif

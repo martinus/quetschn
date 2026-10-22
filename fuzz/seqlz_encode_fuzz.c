@@ -19,7 +19,7 @@
 
 #define DST_CAP (2U * SEQLZ_PAGE)
 
-static struct seqlz_tables* tables;
+static int tables_built;
 /* the work memory of level 3 */
 static struct seqlz_state state;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
@@ -54,12 +54,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     if (size < 5)
         return 0;
-    if (!tables) {
-        tables = malloc(seqlz_tables_size());
+    if (!tables_built) {
+        tables_built = 1;
         dst = malloc(DST_CAP);
         out = malloc(SEQLZ_PAGE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!tables || !dst || !out || !scratch || seqlz_tables_init(tables, &seqlz_default_own) || !seqlz_all_symbols(tables))
+        if (!dst || !out || !scratch || seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
             abort();
     }
     for (k = 1; k + 4 <= size && n < SEQLZ_MAX_SEQUENCES; k += 4, n++) {
@@ -84,16 +84,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     unwritten(dst, DST_CAP);
     unwritten(scratch, SEQLZ_SCRATCH);
-    len = seqlz_encode(tables,
-                       &state,
-                       seq,
-                       n,
-                       literals,
-                       n_lit,
-                       made && (data[0] & 8) ? page : NULL,
-                       dst,
-                       DST_CAP,
-                       1U + (data[0] >> 1 & 3U) % 3U);
+    len = seqlz_encode(
+        &state, seq, n, literals, n_lit, made && (data[0] & 8) ? page : NULL, dst, DST_CAP, 1U + (data[0] >> 1 & 3U) % 3U);
     if (len == 0)
         return 0;
     if (len > DST_CAP || sum != SEQLZ_PAGE)
@@ -103,7 +95,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         abort();
     memset(out, 0xa5, SEQLZ_PAGE);
     unwritten(out, SEQLZ_PAGE);
-    if (seqlz_decode(tables, dst, len, out, scratch) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0)
+    if (seqlz_decode(dst, len, out, scratch) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0)
         abort();
     return 0;
 }

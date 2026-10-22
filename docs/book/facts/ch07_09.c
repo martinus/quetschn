@@ -152,7 +152,7 @@ static void fact_u64_bin(const char* k, u64 v, unsigned int n) {
 
 static void token_facts(unsigned int s) {
     const struct seqlz_tables* t = fact_tables();
-    unsigned int n = seqlz_default_own.token[s];
+    unsigned int n = seqlz_default_lengths.token[s];
     u32 e = token_entry(s, n);
 
     fact_fmt(K("ch07.tok.%u.enc", s), "%#llx", t->token.enc[s]);
@@ -204,14 +204,14 @@ static void ch07(void) {
     fact_num("ch07.esc1797.ML", TOK_ML(e));
     fact_field("ch07.esc1797.bits", 1797, 0, SEQLZ_ESCAPE_BITS);
     /* the decoder's top 11 bits: the escape's code, then the token */
-    n = seqlz_default_own.token[SEQLZ_ESCAPE];
+    n = seqlz_default_lengths.token[SEQLZ_ESCAPE];
     c = (t->token.enc[SEQLZ_ESCAPE] & TOK_ENC_CODE_MASK) << (SEQLZ_TOKEN_BITS - n) |
         1797 >> (SEQLZ_ESCAPE_BITS - (SEQLZ_TOKEN_BITS - n));
     fact_num("ch07.esc1797.index", c);
     fact_field("ch07.esc1797.index_bits", c, 0, SEQLZ_TOKEN_BITS);
 
     /* token 2098's code, then its offset 16 / 8 = 2 in 5 bits, then ones */
-    n = seqlz_default_own.token[2098];
+    n = seqlz_default_lengths.token[2098];
     c = t->token.enc[2098] & TOK_ENC_CODE_MASK;
     reg = (u64)c << (64 - n) | (u64)2 << (64 - n - 5) | ((1ULL << (64 - n - 5)) - 1);
     e = token_entry(2098, n);
@@ -229,7 +229,7 @@ static void ch07(void) {
 
     /* symbol 18 of the ll table: values 64 to 127 */
     s = 18;
-    n = seqlz_default_own.ll[s];
+    n = seqlz_default_lengths.ll[s];
     c = t->ll.enc[s] & 0xffffU;
     fact_num("ch07.ll18.c", c);
     fact_fmt("ch07.ll18.enc", "%#llx", t->ll.enc[s]);
@@ -331,32 +331,32 @@ static void ch08(void) {
 
     /* the ll table: its lengths, the sum k of first_codes(), next[] */
     for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
-        w += sprintf(w, "%s%u", k ? " " : "", seqlz_default_own.ll[k]);
+        w += sprintf(w, "%s%u", k ? " " : "", seqlz_default_lengths.ll[k]);
     fact_str("ch08.ll.lengths", lengths);
     for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
-        sum[seqlz_default_own.ll[k]] += 1U << (SEQLZ_MAX_BITS - seqlz_default_own.ll[k]);
+        sum[seqlz_default_lengths.ll[k]] += 1U << (SEQLZ_MAX_BITS - seqlz_default_lengths.ll[k]);
     for (l = 3; l <= SEQLZ_MAX_BITS; l++)
         fact_num(K("ch08.ll.fill.%u", l), sum[l]);
-    next_facts("ll", seqlz_default_own.ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS);
-    next_facts("tok", seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS);
+    next_facts("ll", seqlz_default_lengths.ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS);
+    next_facts("tok", seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS);
 
     /* the token table: how many entries the codes of each length fill */
     for (l = 1; l <= SEQLZ_TOKEN_BITS; l++) {
         unsigned int count = 0;
 
         for (k = 0; k <= SEQLZ_TOKEN_SYMBOLS; k++)
-            count += seqlz_default_own.token[k] == l;
+            count += seqlz_default_lengths.token[k] == l;
         fact_num(K("ch08.tok.fill.%u", l), count << (SEQLZ_TOKEN_BITS - l));
     }
     for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
-        n16 += seqlz_default_own.token[k] != 0;
+        n16 += seqlz_default_lengths.token[k] != 0;
     fact_num("ch08.tok.coded", n16);
     fact_num("ch08.tok.coded_64", n16 / 64);
     fact_num("ch08.tok.escaped", SEQLZ_TOKEN_SYMBOLS - n16);
     /* token 49's entries in bytes of the decode table, and in cache lines of 64
      * bytes */
     {
-        unsigned int c = fact_tables()->token.enc[49] & TOK_ENC_CODE_MASK, n = seqlz_default_own.token[49];
+        unsigned int c = fact_tables()->token.enc[49] & TOK_ENC_CODE_MASK, n = seqlz_default_lengths.token[49];
         unsigned int first = (c << (SEQLZ_TOKEN_BITS - n)) * 4, end = ((c + 1) << (SEQLZ_TOKEN_BITS - n)) * 4;
 
         fact_num("ch08.tok49.byte_first", first);
@@ -366,7 +366,7 @@ static void ch08(void) {
     /* the entries of the 4-bit codes, the first of the table, in bytes and cache
      * lines */
     for (k = 0, j = 0; k <= SEQLZ_TOKEN_SYMBOLS; k++)
-        j += seqlz_default_own.token[k] == 4;
+        j += seqlz_default_lengths.token[k] == 4;
     fact_num("ch08.tok.len4.last", (j << (SEQLZ_TOKEN_BITS - 4)) - 1);
     fact_num("ch08.tok.len4.bytes", 4 * (j << (SEQLZ_TOKEN_BITS - 4)));
     fact_num("ch08.tok.len4.lines", 4 * (j << (SEQLZ_TOKEN_BITS - 4)) / 64);

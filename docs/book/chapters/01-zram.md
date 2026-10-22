@@ -258,7 +258,7 @@ kernel backend is written for both forms
 The benchmarks call seqlz through a copy of this interface in C, `src/zram_seqlz.c`
 ([chapter 15](#ch-zram-glue)). Its decompress function is the whole contract:
 
-@listing src/zram_seqlz.c 129-139
+@listing src/zram_seqlz.c 122-132
 
 `quetschn_prefetch_page()` asks the CPU to start loading the compressed bytes and the output page
 before the decoder needs them ([chapter 3](#ch-cpu--prefetch)); it stands for what the project's

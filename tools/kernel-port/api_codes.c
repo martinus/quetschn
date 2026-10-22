@@ -1,11 +1,5 @@
 /* ---- the kernel's interface, include/linux/seqlz.h ---- */
 
-/*
- * The codes and decode tables, built once from the code lengths compiled in,
- * and only read after that, by every CPU.
- */
-struct seqlz_tables seqlz_fixed_tables __ro_after_init;
-
 /* the interface's sizes are the codec's */
 static_assert(sizeof(struct seqlz_state) == SEQLZ_MEM_COMPRESS);
 static_assert(SEQLZ_MEM_DECOMPRESS == SEQLZ_SCRATCH);
@@ -20,7 +14,7 @@ static int __init seqlz_init(void)
 	 * every table a complete prefix code with a code for every symbol, and
 	 * the KUnit tests check that the lengths are the format's.
 	 */
-	return seqlz_tables_init(&seqlz_fixed_tables, &seqlz_default_own);
+	return seqlz_tables_init(&seqlz_default_lengths);
 }
 subsys_initcall(seqlz_init);
 

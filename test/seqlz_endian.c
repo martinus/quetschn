@@ -87,19 +87,18 @@ static void make_page(unsigned char* p, unsigned int k) {
 int main(void) {
     static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned long long hash = 0xcbf29ce484222325ULL;
     unsigned int k, i, coded_pages = 0, own_pages = 0, failed = 0;
     unsigned int level;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 2;
     for (k = 0; k < 600; k++) {
         make_page(page, k);
         for (level = 1; level <= SEQLZ_LEVELS; level++) {
-            unsigned int n = seqlz_compress(t, &st, page, dst, sizeof dst, level);
+            unsigned int n = seqlz_compress(&st, page, dst, sizeof dst, level);
 
-            if (!n || seqlz_decode(t, dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
+            if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
                 failed++;
             coded_pages += n > 1 && (dst[1] & 0x80U);
             own_pages += n > 2 && (dst[1] & 0x80U) && (dst[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN;
@@ -107,7 +106,6 @@ int main(void) {
                 hash = (hash ^ dst[i]) * 0x100000001b3ULL;
         }
     }
-    free(t);
     printf("pages 600, coded %u, own table %u, failed %u, hash %016llx\n", coded_pages, own_pages, failed, hash);
     return failed != 0 || coded_pages == 0;
 }

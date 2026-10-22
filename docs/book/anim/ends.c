@@ -61,7 +61,6 @@ static void probe(const struct run* R, u8* buf, u8 fill, const u8* in, unsigned 
 static void rec_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, unsigned int off) {
     struct run* R = ctx;
     struct rec* r = &R->r[R->n];
-    const struct seqlz_tables* t = R->e.t;
     long before = bits_out(R), lo = R->e.lit - R->d, hi = R->e.p - R->d, i;
     unsigned int raw;
 
@@ -78,11 +77,11 @@ static void rec_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
         r->off = off;
         r->cls = seqlz_off_class(off, R->e.last, &raw);
         r->tok = seqlz_token(ll, ml, r->cls);
-        r->esc = t->token.enc[r->tok] == 0;
-        token_code(t, r->tok, &r->tlen);
+        r->esc = seqlz_tables.token.enc[r->tok] == 0;
+        token_code(r->tok, &r->tlen);
         r->obits = raw;
-        r->llbits = ll >= SEQLZ_LL_CAP ? len_bits(&t->ll, ll - SEQLZ_LL_CAP) : 0;
-        r->mlbits = ml - 4 >= SEQLZ_ML_CAP ? len_bits(&t->ml, ml - 4 - SEQLZ_ML_CAP) : 0;
+        r->llbits = ll >= SEQLZ_LL_CAP ? len_bits(&seqlz_tables.ll, ll - SEQLZ_LL_CAP) : 0;
+        r->mlbits = ml - 4 >= SEQLZ_ML_CAP ? len_bits(&seqlz_tables.ml, ml - 4 - SEQLZ_ML_CAP) : 0;
         r->flushes = ll >= SEQLZ_LL_CAP ? 2 : 1;
     }
     /* which bytes of the free room the sequence writes: a byte that differs from one fill */
@@ -135,12 +134,11 @@ static void rec_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
 }
 
 /* compress_page() up to encoder_finish(), with rec_emit() around encode_emit() */
-static void
-run(struct run* R, const struct seqlz_tables* t, struct seqlz_state* st, const u8* page, u8* dst, unsigned int cap) {
+static void run(struct run* R, struct seqlz_state* st, const u8* page, u8* dst, unsigned int cap) {
     memset(R, 0, sizeof(*R));
     R->d = dst;
     R->cap = cap;
-    encoder_init(&R->e, t, dst, cap, page + SEQLZ_PAGE);
+    encoder_init(&R->e, dst, cap, page + SEQLZ_PAGE);
     seqlz_match_page(st->table, page, false, rec_emit, R);
 }
 
@@ -179,22 +177,21 @@ int main(void) {
     static u8 page[SEQLZ_PAGE], ref[CAP_MAX], dst[CAP_MAX];
     static struct seqlz_state st;
     static struct run R, R0;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int ref_len, len, n_lit, bytes, cap, small, i, k;
     long p_seq, cnt_seq;
     unsigned int cs[3];
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     slab_page(page);
-    ref_len = seqlz_compress(t, &st, page, ref, CAP_MAX, 1);
+    ref_len = seqlz_compress(&st, page, ref, CAP_MAX, 1);
     if (!ref_len)
         return 1;
     ref_bs = ref + SEQLZ_HEADER + get_unaligned_le16(ref);
     ref_bs_len = (unsigned int)(ref + ref_len - ref_bs);
     /* the smallest dst the page fits into */
     for (small = SEQLZ_HEADER + ENC_ROOM; small < CAP_MAX; small++)
-        if (seqlz_compress(t, &st, page, dst, small, 1))
+        if (seqlz_compress(&st, page, dst, small, 1))
             break;
     cs[0] = CAP_MAX;
     cs[1] = small;
@@ -205,7 +202,7 @@ int main(void) {
     for (k = 0; k < 3; k++) {
         cap = cs[k];
         memset(dst, 0, sizeof(dst));
-        run(&R, t, &st, page, dst, cap);
+        run(&R, &st, page, dst, cap);
         /* what encoder_finish() starts from */
         p_seq = R.e.p - dst;
         cnt_seq = R.e.cnt;
@@ -215,7 +212,7 @@ int main(void) {
             fprintf(stderr, "ends.c: dst of %u: the page is not what seqlz_compress() writes\n", cap);
             return 1;
         }
-        if (k == 2 && (len != 0 || !R.fail || seqlz_compress(t, &st, page, probe_a, cap, 1))) {
+        if (k == 2 && (len != 0 || !R.fail || seqlz_compress(&st, page, probe_a, cap, 1))) {
             fprintf(stderr, "ends.c: dst of %u bytes should fail\n", cap);
             return 1;
         }

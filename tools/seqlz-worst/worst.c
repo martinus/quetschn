@@ -250,7 +250,7 @@ static int escaped_token(unsigned int cls, unsigned int* ll, unsigned int* ml) {
 
     for (l = 0; l < 15; l++)
         for (m = 0; m < 31; m++)
-            if (seqlz_default_own.token[seqlz_token(l, m + 4, cls)] == 0 && l + m + 4 < best) {
+            if (seqlz_default_lengths.token[seqlz_token(l, m + 4, cls)] == 0 && l + m + 4 < best) {
                 best = l + m + 4;
                 *ll = l;
                 *ml = m + 4;
@@ -395,7 +395,6 @@ static struct cost measure(const struct counters* c, int (*f)(void*), void* arg)
 }
 
 struct job {
-    const struct seqlz_tables* t;
     struct seqlz_state* st;
     const unsigned char* page;
     unsigned char *c, *out, *scratch;
@@ -405,14 +404,14 @@ struct job {
 static int do_compress(void* arg) {
     struct job* j = arg;
 
-    j->len = seqlz_compress(j->t, j->st, j->page, j->c, 2 * SEQLZ_PAGE, 2);
+    j->len = seqlz_compress(j->st, j->page, j->c, 2 * SEQLZ_PAGE, 2);
     return j->len ? 0 : -1;
 }
 
 static int do_decode(void* arg) {
     struct job* j = arg;
 
-    return seqlz_decode(j->t, j->c, j->len, j->out, j->scratch);
+    return seqlz_decode(j->c, j->len, j->out, j->scratch);
 }
 
 static int do_nothing(void* arg) {
@@ -426,12 +425,10 @@ static int cmp_u64(const void* a, const void* b) {
     return (x > y) - (x < y);
 }
 
-static struct seqlz_tables* tables(void) {
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
-
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+/* the tables compiled in, for seqlz_compress(), seqlz_encode() and seqlz_decode() */
+static void tables(void) {
+    if (seqlz_tables_init(&seqlz_default_lengths))
         abort();
-    return t;
 }
 
 /* The decoder on the made-up streams, per kind the most instructions and branch misses of its 16 pages,
@@ -439,17 +436,18 @@ static struct seqlz_tables* tables(void) {
 static int count_decode(void) {
     static struct built b;
     static unsigned char c[3 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
-    struct job j = {tables(), 0, 0, c, out, scratch, 0};
+    struct job j = {0, 0, c, out, scratch, 0};
     struct counters ctr;
     struct cost empty;
     unsigned int kind, k;
 
+    tables();
     if (counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);
     /* one decode first, so that the first page measured does not pay for the code and tables alone */
     build(0, &b);
-    j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+    j.len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
     if (!j.len || do_decode(&j))
         return 1;
     printf(
@@ -466,7 +464,7 @@ static int count_decode(void) {
 
             if (k)
                 build(kind, &b);
-            j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+            j.len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
             if (!j.len || do_decode(&j) || memcmp(out, b.page, SEQLZ_PAGE)) {
                 fprintf(stderr, "%s: page %u does not come back\n", name, k);
                 return 1;
@@ -497,12 +495,13 @@ static int count_decode(void) {
 static int count_pages(const char* path) {
     static unsigned char page[SEQLZ_PAGE], c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
-    struct job j = {tables(), &st, page, c, out, scratch, 0};
+    struct job j = {&st, page, c, out, scratch, 0};
     struct counters ctr;
     struct cost empty;
     FILE* f = fopen(path, "rb");
     unsigned int n = 0;
 
+    tables();
     if (!f || counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);
@@ -529,16 +528,17 @@ static int count_pages(const char* path) {
 static int write_streams(const char* dir) {
     static struct built b;
     static unsigned char c[3 * SEQLZ_PAGE];
-    const struct seqlz_tables* t = tables();
     unsigned int kind, k, len;
     char path[4096];
+
+    tables();
 
     for (kind = 0; build(kind, &b); kind++)
         for (k = 0; k < 4; k++) {
             FILE* f;
 
             build(kind, &b);
-            len = seqlz_encode(t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+            len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
             snprintf(path, sizeof path, "%s/stream-%u-%u", dir, kind, k);
             if (!len || !(f = fopen(path, "wb")) || fwrite(c, 1, len, f) != len || fclose(f))
                 return 1;
@@ -550,11 +550,12 @@ static int write_streams(const char* dir) {
  * cycles, or invalid */
 static int count_streams(int n, char** paths) {
     static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
-    struct job j = {tables(), 0, 0, c, out, scratch, 0};
+    struct job j = {0, 0, c, out, scratch, 0};
     struct counters ctr;
     struct cost empty;
     int i;
 
+    tables();
     if (counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);

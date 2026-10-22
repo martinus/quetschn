@@ -13,7 +13,7 @@
 #include "seqlz_ref.h"
 #include "unwritten.h"
 
-static struct seqlz_tables* tables;
+static int tables_built;
 static struct seqlz_ref ref;
 static unsigned char *fast, *slow, *scratch;
 
@@ -26,15 +26,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     /* zram never stores more than a page; twice that covers lengths the decoders have to reject */
     if (size > 2U * SEQLZ_PAGE)
         return 0;
-    if (!tables) {
-        const struct seqlz_ref_tables t = {
-            seqlz_default_own.token, seqlz_default_own.ll, seqlz_default_own.ml, seqlz_lit_sets, seqlz_own_lengths};
+    if (!tables_built) {
+        const struct seqlz_ref_tables t = {seqlz_default_lengths.token,
+                                           seqlz_default_lengths.ll,
+                                           seqlz_default_lengths.ml,
+                                           seqlz_lit_sets,
+                                           seqlz_own_lengths};
 
-        tables = malloc(seqlz_tables_size());
+        tables_built = 1;
         fast = malloc(SEQLZ_PAGE);
         slow = malloc(SEQLZ_PAGE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!tables || !fast || !slow || !scratch || seqlz_tables_init(tables, &seqlz_default_own) ||
+        if (!fast || !slow || !scratch || seqlz_tables_init(&seqlz_default_lengths) ||
             seqlz_ref_init(&ref, &t, QUETSCHN_PAGE_BITS))
             abort();
     }
@@ -48,7 +51,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     unwritten(slow, SEQLZ_PAGE);
     unwritten(scratch, SEQLZ_SCRATCH);
 
-    r_fast = seqlz_decode(tables, src, (unsigned int)size, fast, scratch);
+    r_fast = seqlz_decode(src, (unsigned int)size, fast, scratch);
     r_ref = seqlz_ref_decode(&ref, src, size, slow);
     if ((r_fast == 0) != (r_ref == 0) || (r_fast == 0 && memcmp(fast, slow, SEQLZ_PAGE) != 0))
         abort();

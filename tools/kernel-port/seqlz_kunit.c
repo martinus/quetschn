@@ -48,18 +48,18 @@ static void check_sha256(struct kunit *test, const void *data, size_t len,
 
 static void seqlz_test_tables(struct kunit *test)
 {
-	check_sha256(test, seqlz_default_own.token,
-		     sizeof(seqlz_default_own.token), sha256_tok);
-	check_sha256(test, seqlz_default_own.ll, sizeof(seqlz_default_own.ll),
+	check_sha256(test, seqlz_default_lengths.token,
+		     sizeof(seqlz_default_lengths.token), sha256_tok);
+	check_sha256(test, seqlz_default_lengths.ll, sizeof(seqlz_default_lengths.ll),
 		     sha256_ll);
-	check_sha256(test, seqlz_default_own.ml, sizeof(seqlz_default_own.ml),
+	check_sha256(test, seqlz_default_lengths.ml, sizeof(seqlz_default_lengths.ml),
 		     sha256_ml);
 	check_sha256(test, seqlz_lit_sets, sizeof(seqlz_lit_sets), sha256_lit);
 	check_sha256(test, seqlz_own_lengths, sizeof(seqlz_own_lengths),
 		     sha256_own);
 	/* the encoder's bound of 31 bits for a token and its offset */
-	KUNIT_EXPECT_GT(test, seqlz_default_own.token[SEQLZ_ESCAPE], 0);
-	KUNIT_EXPECT_LE(test, seqlz_default_own.token[SEQLZ_ESCAPE],
+	KUNIT_EXPECT_GT(test, seqlz_default_lengths.token[SEQLZ_ESCAPE], 0);
+	KUNIT_EXPECT_LE(test, seqlz_default_lengths.token[SEQLZ_ESCAPE],
 			SEQLZ_MAX_ESCAPE_LEN);
 }
 
@@ -423,9 +423,9 @@ static struct maker *get_maker(struct kunit *test)
 
 	KUNIT_ASSERT_NOT_NULL(test, m);
 	m->test = test;
-	canonical(&m->tok, seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1);
-	canonical(&m->ll, seqlz_default_own.ll, SEQLZ_LEN_SYMBOLS);
-	canonical(&m->ml, seqlz_default_own.ml, SEQLZ_LEN_SYMBOLS);
+	canonical(&m->tok, seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
+	canonical(&m->ll, seqlz_default_lengths.ll, SEQLZ_LEN_SYMBOLS);
+	canonical(&m->ml, seqlz_default_lengths.ml, SEQLZ_LEN_SYMBOLS);
 	canonical(&m->lit, seqlz_lit_sets[0], 256);
 	canonical(&m->own, seqlz_own_lengths, SEQLZ_OWN_SYMBOLS);
 	return m;

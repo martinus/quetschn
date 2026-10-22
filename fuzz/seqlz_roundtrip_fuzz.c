@@ -17,7 +17,7 @@
 
 #define DST_CAP (2U * SEQLZ_PAGE)
 
-static struct seqlz_tables* tables;
+static int tables_built;
 static struct seqlz_state state;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
 static unsigned char literals[SEQLZ_PAGE];
@@ -31,7 +31,7 @@ static int decodes_to(const unsigned char* page, unsigned int len, void* scr) {
     memset(out, 0xa5, SEQLZ_PAGE);
     unwritten(out, SEQLZ_PAGE);
     unwritten(scratch, SEQLZ_SCRATCH);
-    return seqlz_decode(tables, dst, len, out, scr) == 0 && memcmp(out, page, SEQLZ_PAGE) == 0;
+    return seqlz_decode(dst, len, out, scr) == 0 && memcmp(out, page, SEQLZ_PAGE) == 0;
 }
 
 /* the page at level, against seqlz_encode() for the sequences of seqlz_find() at that level */
@@ -49,15 +49,14 @@ static void roundtrip(const unsigned char* page, unsigned int level) {
         abort();
     unwritten(&state, sizeof(state));
     unwritten(dst, DST_CAP);
-    len = seqlz_compress(tables, &state, page, dst, DST_CAP, level);
+    len = seqlz_compress(&state, page, dst, DST_CAP, level);
     if (len == 0 || len > DST_CAP || !decodes_to(page, len, scratch))
         abort();
     /* level 1's raw literals need no scratch */
     if (level == 1 && !decodes_to(page, len, 0))
         abort();
     unwritten(again, DST_CAP);
-    if (seqlz_encode(tables, &state, seq, n, literals, n_lit, page, again, DST_CAP, level) != len ||
-        memcmp(again, dst, len) != 0)
+    if (seqlz_encode(&state, seq, n, literals, n_lit, page, again, DST_CAP, level) != len || memcmp(again, dst, len) != 0)
         abort();
 }
 
@@ -69,7 +68,7 @@ static void small_dst(const unsigned char* page, unsigned int cap, unsigned int 
     if (!d)
         abort();
     unwritten(&state, sizeof(state));
-    len = seqlz_compress(tables, &state, page, d, cap, level);
+    len = seqlz_compress(&state, page, d, cap, level);
     if (len > cap || (len && (memcpy(dst, d, len), !decodes_to(page, len, scratch))))
         abort();
     free(d);
@@ -81,14 +80,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     if (size < 1 || size > SEQLZ_PAGE + 1U)
         return 0;
-    if (!tables) {
-        tables = malloc(seqlz_tables_size());
+    if (!tables_built) {
+        tables_built = 1;
         dst = malloc(DST_CAP);
         again = malloc(DST_CAP);
         out = malloc(SEQLZ_PAGE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!tables || !dst || !again || !out || !scratch || seqlz_tables_init(tables, &seqlz_default_own) ||
-            !seqlz_all_symbols(tables))
+        if (!dst || !again || !out || !scratch || seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
             abort();
     }
     page = calloc(1, SEQLZ_PAGE);

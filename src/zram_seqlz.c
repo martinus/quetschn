@@ -7,31 +7,26 @@
 #include "seqlz.h"
 #include "zram_codec.h"
 
+/*
+ * The tables are one object for all devices, as the kernel's, which are in its
+ * image; building them again for each device gives the same tables.
+ */
 static int setup(struct quetschn_params *p)
 {
-	struct seqlz_tables *t;
-
 	if (p->page_size != SEQLZ_PAGE)
-		return -1;
-	t = quetschn_zalloc(seqlz_tables_size(), &p->allocated);
-	if (!t)
 		return -1;
 	/*
 	 * the encoder needs a code for every symbol; the tables are fixed, so
 	 * this only catches a training that went wrong
 	 */
-	if (seqlz_tables_init(t, &seqlz_default_own) || !seqlz_all_symbols(t)) {
-		quetschn_free(t, &p->allocated);
+	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
 		return -1;
-	}
-	p->drv_data = t;
 	return 0;
 }
 
 static void release(struct quetschn_params *p)
 {
-	quetschn_free(p->drv_data, &p->allocated);
-	p->drv_data = NULL;
+	(void)p;
 }
 
 static void destroy(struct quetschn_stream *s)
@@ -59,8 +54,7 @@ static int compress(struct quetschn_params *p, struct quetschn_stream *s,
 
 	if (src_len != SEQLZ_PAGE)
 		return -1;
-	len = seqlz_compress(p->drv_data, s->context, src, dst, *dst_len,
-			     level);
+	len = seqlz_compress(s->context, src, dst, *dst_len, level);
 	if (!len)
 		return -1;
 	*dst_len = len;
@@ -84,8 +78,7 @@ static int decompress_1(struct quetschn_params *p, struct quetschn_stream *s,
 {
 	(void)s;
 	quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
-	if (*dst_len < SEQLZ_PAGE ||
-	    seqlz_decode(p->drv_data, src, src_len, dst, NULL))
+	if (*dst_len < SEQLZ_PAGE || seqlz_decode(src, src_len, dst, NULL))
 		return -1;
 	*dst_len = SEQLZ_PAGE;
 	return 0;
@@ -132,7 +125,7 @@ static int decompress(struct quetschn_params *p, struct quetschn_stream *s,
 {
 	quetschn_prefetch_page(src, src_len, dst, SEQLZ_PAGE);
 	if (*dst_len < SEQLZ_PAGE ||
-	    seqlz_decode(p->drv_data, src, src_len, dst, s->context))
+	    seqlz_decode(src, src_len, dst, s->context))
 		return -1;
 	*dst_len = SEQLZ_PAGE;
 	return 0;

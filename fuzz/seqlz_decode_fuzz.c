@@ -16,7 +16,7 @@
 #include "seqlz.h"
 #include "unwritten.h"
 
-static struct seqlz_tables* tables;
+static int tables_built;
 static unsigned char *with, *without, *scratch;
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
@@ -28,12 +28,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     /* zram never stores more than a page; twice that covers lengths the decoder has to reject */
     if (size > 2U * SEQLZ_PAGE)
         return 0;
-    if (!tables) {
-        tables = malloc(seqlz_tables_size());
+    if (!tables_built) {
+        tables_built = 1;
         with = malloc(SEQLZ_PAGE);
         without = malloc(SEQLZ_PAGE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!tables || !with || !without || !scratch || seqlz_tables_init(tables, &seqlz_default_own))
+        if (!with || !without || !scratch || seqlz_tables_init(&seqlz_default_lengths))
             abort();
     }
     src = malloc(size ? size : 1);
@@ -49,8 +49,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     unwritten(without, SEQLZ_PAGE);
     unwritten(scratch, SEQLZ_SCRATCH);
 
-    r_with = seqlz_decode(tables, src, (unsigned int)size, with, scratch);
-    r_without = seqlz_decode(tables, src, (unsigned int)size, without, NULL);
+    r_with = seqlz_decode(src, (unsigned int)size, with, scratch);
+    r_without = seqlz_decode(src, (unsigned int)size, without, NULL);
     if (r_with != 0 && r_with != -EINVAL)
         abort();
     if (r_without == 0 && (r_with != 0 || memcmp(with, without, SEQLZ_PAGE) != 0))

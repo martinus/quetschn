@@ -35,9 +35,9 @@ int main(void) {
     char key[32];
     unsigned int k;
 
-    table("tok", seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1);
-    table("ll", seqlz_default_own.ll, SEQLZ_LEN_SYMBOLS);
-    table("ml", seqlz_default_own.ml, SEQLZ_LEN_SYMBOLS);
+    table("tok", seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1);
+    table("ll", seqlz_default_lengths.ll, SEQLZ_LEN_SYMBOLS);
+    table("ml", seqlz_default_lengths.ml, SEQLZ_LEN_SYMBOLS);
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         snprintf(key, sizeof key, "lit.%u", k);
         table(key, seqlz_lit_sets[k], 256);
@@ -48,7 +48,7 @@ int main(void) {
     fact_num("const.MAX_SEQUENCES", SEQLZ_MAX_SEQUENCES);
     fact_num("size.lengths", sizeof(struct seqlz_lengths));
     fact_num("size.state", sizeof(struct seqlz_state));
-    fact_num("size.tables", (long long)seqlz_tables_size());
+    fact_num("size.tables", (long long)sizeof(struct seqlz_tables));
     facts_end();
     return 0;
 }

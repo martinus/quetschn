@@ -32,15 +32,14 @@ int main(int argc, char** argv) {
     static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
-    const struct seqlz_lengths* L = &seqlz_default_own;
+    const struct seqlz_lengths* L = &seqlz_default_lengths;
     FILE* f = fopen(argv[1], "rb");
     unsigned int i;
 
-    if (!t || !f || seqlz_tables_init(t, L))
+    if (!f || seqlz_tables_init(L))
         return 1;
     while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
-        unsigned int len = seqlz_compress(t, &st, page, dst, sizeof dst, 2), n = seqlz_find(&st, page, seq, 2);
+        unsigned int len = seqlz_compress(&st, page, dst, sizeof dst, 2), n = seqlz_find(&st, page, seq, 2);
         unsigned int coded = dst[1] >> 7, set = dst[2] & 7U, last = 1, extra, k, in = 0, nlit = 0;
         double bits = 0, sbits[8] = {0};
 

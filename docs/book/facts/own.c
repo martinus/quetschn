@@ -215,7 +215,7 @@ static const u8* text_facts(const struct seqlz_tables* t, unsigned int* d_out) {
     unsigned int n, h, b2, wdt, d, rows, used, k, nb = 0, sum = 0, s[SEQLZ_LIT_STREAMS];
 
     words_page(page);
-    n = seqlz_compress(t, &st, page, dst, sizeof dst, SEQLZ_LEVEL_OWN);
+    n = seqlz_compress(&st, page, dst, sizeof dst, SEQLZ_LEVEL_OWN);
     h = get_unaligned_le16(dst);
     b2 = dst[2];
     if (!n || !(h & SEQLZ_LIT_CODED) || (b2 & SEQLZ_LIT_CODE_MASK) != SEQLZ_LIT_OWN)
@@ -277,13 +277,13 @@ static void encoder_facts(const struct seqlz_tables* t) {
     const u8* lits;
 
     words_page(page);
-    if (!seqlz_compress(t, &st, page, dst, sizeof dst, 1))
+    if (!seqlz_compress(&st, page, dst, sizeof dst, 1))
         fail("the text page does not compress");
     n_lit = get_unaligned_le16(dst);
     lits = dst + SEQLZ_HEADER;
     /* code_literals()' first steps, with the counts for the page's own table */
     memset(w->freq, 0, sizeof w->freq);
-    lit_cost(t, lits, n_lit, even, odd, w->freq);
+    lit_cost(lits, n_lit, even, odd, w->freq);
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         unsigned int b = 0;
 
@@ -330,7 +330,7 @@ static void encoder_facts(const struct seqlz_tables* t) {
         fact_str("own.enc.pr.nibble", bin(m * 0x0001000200040008ULL >> 48 & 15U, 4));
     }
     /* own_code() itself */
-    d = own_code(t, w, n_lit, header + coded);
+    d = own_code(w, n_lit, header + coded);
     if (!d)
         fail("own_code() gives the text page no table");
     for (k = 0; k < 256; k++)

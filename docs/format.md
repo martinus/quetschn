@@ -176,9 +176,9 @@ is a list of code lengths, one byte per symbol, symbol 0 first:
 <!-- in the kernel's copy:
 | table | symbols | longest code | in `lib/seqlz/seqlz_tables.c` |
 | --- | --- | --- | --- |
-| tokens and escape, `TOK` | 3073 | 11 bits | `seqlz_default_own.token` |
-| literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_own.ll` |
-| match length values, `ML` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_own.ml` |
+| tokens and escape, `TOK` | 3073 | 11 bits | `seqlz_default_lengths.token` |
+| literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_lengths.ll` |
+| match length values, `ML` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_lengths.ml` |
 | literal tables 0 to 7 | 256 each | 10 bits | `seqlz_lit_sets[0]` to `[7]` |
 | a page's own literal table, `OWN` | 19 | 8 bits | `seqlz_own_lengths` |
 -->

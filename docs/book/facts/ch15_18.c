@@ -219,7 +219,7 @@ static unsigned int allocated(unsigned int n) {
 }
 
 int main(void) {
-    const unsigned char* tok = seqlz_default_own.token;
+    const unsigned char* tok = seqlz_default_lengths.token;
     unsigned int s, own = 0, shortest = 99, longest = 0;
     char buf[32];
 

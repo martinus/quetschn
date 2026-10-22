@@ -6,7 +6,7 @@
  *
  * Do not edit manually.
  */
-const struct seqlz_lengths seqlz_default_own = {
+const struct seqlz_lengths seqlz_default_lengths = {
 	.token = {
 		0, 9, 10, 11, 8, 11, 0, 0, 11, 0, 0, 0, 11, 0, 0, 11,
 		0, 9, 11, 7, 11, 11, 0, 11, 11, 0, 0, 11, 0, 0, 0, 11,

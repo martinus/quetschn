@@ -71,7 +71,6 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
 REWRITES = [
     ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
     (" The same bytes as seqlz_encode() for the sequences of seqlz_find() and @src, at the same level.", ""),
-    ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
     ("seqlz_compress()", "seqlz_compress_page()"),
     # the library works on blocks of 4 KiB whatever PAGE_SIZE is, see port_header()
@@ -86,8 +85,7 @@ REWRITES = [
     (", 60 for 16 KiB pages", ""),
     ("20 or 22 bits more", "20 bits more"),
     # the second line of seqlz_compress_page()'s Return:, a line of its own
-    ("@dst_cap bytes, @t lacks a code, or @level is not one.", "@dst_cap bytes, or @level is not one."),
-    ("@t: tables with a code for every symbol, see seqlz_all_symbols()", "@t: the tables"),
+    ("@dst_cap bytes, the tables lack a code, or @level is not one.", "@dst_cap bytes, or @level is not one."),
     ("QUETSCHN_PAGE_BITS bits, 20 or 22;", "QUETSCHN_PAGE_BITS bits, 20;"),
 ]
 # the entry in MAINTAINERS, its fields in the order the file's head gives, the files in alphabetic order
@@ -272,11 +270,9 @@ def rename_compress(text, end):
     """seqlz_compress() of src/ as seqlz_compress_page(): the interface has the name now. Its signature,
     with end the ";" or the "{" after it, wrapped again under the longer name; the comments get the name
     from REWRITES, which wraps them again."""
-    return must(text, "unsigned int seqlz_compress(const struct seqlz_tables *t,\n"
-                      "\t\t\t    struct seqlz_state *st, const void *src, void *dst,\n"
+    return must(text, "unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,\n"
                       "\t\t\t    unsigned int dst_cap, unsigned int level)" + end,
-                "unsigned int seqlz_compress_page(const struct seqlz_tables *t,\n"
-                "\t\t\t\t struct seqlz_state *st, const void *src,\n"
+                "unsigned int seqlz_compress_page(struct seqlz_state *st, const void *src,\n"
                 "\t\t\t\t void *dst, unsigned int dst_cap,\n"
                 "\t\t\t\t unsigned int level)" + end)
 
@@ -345,7 +341,6 @@ def port_header():
     t = must(t, "#ifndef _LINUX_SEQLZ_H\n#define _LINUX_SEQLZ_H\n", "#ifndef _LIB_SEQLZ_SEQLZ_H\n#define _LIB_SEQLZ_SEQLZ_H\n")
     t = must(t, '#include "seqlz_compat.h"\n', "#include <linux/minmax.h>\n#include <linux/seqlz.h>\n#include <linux/types.h>\n")
     t = cut(t, r"/\* a sequence as the matcher finds it, see seqlz_find\(\) \*/\nstruct seqlz_sequence \{.*?\};\n\n")
-    t = cut(t, r"/\*\*\n \* seqlz_tables_size\(\) -.*?;\n\n")
     t = cut(t, r"/\*\*\n \* seqlz_encode\(\) -.*?;\n\n")
     t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the page \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
@@ -367,8 +362,6 @@ def port_internal():
              "#ifndef _LIB_SEQLZ_SEQLZ_INTERNAL_H\n#define _LIB_SEQLZ_SEQLZ_INTERNAL_H\n")
     t = must(t, '#include "seqlz.h"\n', "#include <linux/stddef.h>\n#include <linux/types.h>\n\n#include \"seqlz.h\"\n")
     t = must(t, "\tbool all_symbols; /* see seqlz_all_symbols() */\n", "")
-    t = must(t, "\n#endif\n", "\n/* built by seqlz_init(), see seqlz_codes.c */\n"
-             "extern struct seqlz_tables seqlz_fixed_tables;\n\n#endif\n")
     return common(t)
 
 
@@ -394,13 +387,14 @@ def port_c(name):
 
 def port_codes(docs):
     t = port_c("codes")
-    t = cut(t, r"size_t seqlz_tables_size\(void\)\n\{\n.*?\n\}\n\n")
     # whether every symbol has a code: scripts/gen-seqlz-tables.py checked that when it wrote the lengths
     t = cut(t, r"bool seqlz_all_symbols\(.*?\n\}\n\n")
     t = cut(t, r"/\*\n \* Whether the encoder can write every page:.*?\n\}\n\n")
     t = must(t, "\tt->all_symbols = has_all_symbols(lengths);\n", "")
     # all of it runs once, from seqlz_init()
-    for name in ["length_entry", "first_codes", "build_token", "build_values", "build_lit", "build_lit_sets"]:
+    t = must(t, "struct seqlz_tables seqlz_tables;\n", "struct seqlz_tables seqlz_tables __ro_after_init;\n")
+    for name in ["length_entry", "first_codes", "build_token", "build_values", "build_lit", "build_lit_sets",
+                 "build_own", "build_tables"]:
         m = re.search(r"^static (\w+) " + name + r"\(([^)]*)\)\n\{", t, re.M)
         assert m, name
         t = t[:m.start()] + signature(f"static {m.group(1)} __init {name}(", m.group(2), "\n{") + t[m.end():]
@@ -419,7 +413,7 @@ def port_compress(docs):
                r"static unsigned int encode_raw\(.*?\n\}\n\n")
     t = cut(t, r"unsigned int seqlz_encode\(.*?\n\}\n\n")
     # the tables are checked once, by seqlz_init(), not for every page
-    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)\n", "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
+    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)\n", "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
     # the matcher of page_lz.h, right before the one function that calls it, calling encode_emit()
     # itself: in the kernel's copy it has no other caller
     lz = (SRC / "page_lz.h").read_text()

@@ -321,7 +321,7 @@ reads 2.9% slower on the A76 and 1.0% on the A55, for pages 0.5% smaller
 
 ## decode_literals(), from the header to the bitstream {#ch-literals-dec--main}
 
-@listing src/seqlz_decompress.c 465-476
+@listing src/seqlz_decompress.c 465-475
 
 `n_lit` is the page's u16 without the `SEQLZ_LIT_CODED` bit. `*delta` gets which delta level 3's
 literals are, which the loop over the sequences turns back into literals ([below](#ch-literals-dec--undelta)). A static function with one caller is
@@ -330,7 +330,7 @@ made pages with raw literals slower too, 12% when the comment still had a number
 with a setup that is not recorded. Until 10th October the function was also aligned to 64 bytes; measured
 again, that made less than 0.02 µs of difference in the kernel VM, and it was removed (commit `bad6224`).
 
-@listing src/seqlz_decompress.c 477-497
+@listing src/seqlz_decompress.c 476-496
 
 A page of 2 bytes has no byte 2 and gets width 5, which the check below rejects. `deltas` is bit 7 of
 byte 2, 0 or 1, the number of bytes that say which delta, and 0 for a page of 2 bytes too. `q`, where
@@ -342,7 +342,7 @@ registers like any variable. Until 10th October 2026 they were 8 variables each,
 the noise of code placement in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
 
-@listing src/seqlz_decompress.c 498-505
+@listing src/seqlz_decompress.c 497-504
 
 The codes 9 to 15 are reserved: a decoder that accepted them now could not tell old pages from new
 ones later. `n_lit` must fit the scratch. The length check counts the delta's byte, so the page holds
@@ -352,7 +352,7 @@ right before its last size byte would have that byte read past its end. With bit
 one compare: a byte of 0 wraps to $2^{32} - 1$, and everything from 4 on is at least 3, so only 1 to 3
 pass. Without deltas, `*delta` is 0 and the page's byte 3 is the first byte of the sizes.
 
-@listing src/seqlz_decompress.c 506-528
+@listing src/seqlz_decompress.c 505-527
 
 Code 8 builds the page's own table
 ([above](#ch-literals-dec--own)) into `page`, the output page that `seqlz_decode()` passes down for
@@ -371,7 +371,7 @@ business.
 
 ### Full rounds: 8 streams, 5 literals each
 
-@listing src/seqlz_decompress.c 529-543
+@listing src/seqlz_decompress.c 528-542
 
 Stream `i` in step `j` of the round at `k` holds literal `k + 8 * j + i`, so the scratch gets the literals
 in page order with no shuffle. The loops have constant bounds, and the compiler unrolls them into 8
@@ -381,7 +381,7 @@ refills and 40 lookups, where each `b[i]` depends only on the `b[i]` before it: 
 
 ### The rest: the same steps for all 8 streams
 
-@listing src/seqlz_decompress.c 544-571
+@listing src/seqlz_decompress.c 543-570
 
 After one more refill, at most `steps + 1 <= 5` codes follow. In the last step,
 `(0U - (r > i)) & 63U` is 63 for the `r` streams that have a literal left and 0 for the others, which
@@ -413,7 +413,7 @@ when the literal is restored. So the loop over the sequences restores each seque
 after it copied them, before the match after them ([chapter 14](#ch-decode--deltas)), with the helpers
 that follow `decode_literals()` in the file.
 
-@listing src/seqlz_decompress.c 573-592
+@listing src/seqlz_decompress.c 572-591
 
 `add4()` and `add8()` add the word `dist` bytes before `p` to the word at `p`, byte by byte, modulo 256:
 a load, a load, the addition and a store, `put_unaligned_le32()` being the store of
@@ -445,7 +445,7 @@ XOR it replaced was 1. The two loads can overlap: with `dist` 4, `add8()` would 
 to change, and the bytes it wrote would be wrong. That is why the callers use `add8()` only for a
 distance of 8 or more.
 
-@listing src/seqlz_decompress.c 594-623
+@listing src/seqlz_decompress.c 593-622
 
 `undelta_literals()` restores the `nl` literals at `d`, `at` bytes into the page. `dist` is the delta's
 distance, 4, 8, or the offset of the sequence before as `seqlz_delta_last()` makes it, at least 4
@@ -470,7 +470,7 @@ literal, so the first 8 bytes stay as they are, the first pointer, and the byte 
 `10 + 10 = 20`, the low byte of the second pointer: `{{delta.ptr.plain}}`.
 @assert delta.ptr.rec[0].ll == 9 and delta.ptr.rec[0].pos == 0 and delta.ptr.pick == ch06.DELTA_8 and delta.ptr.plain == "10 00 56 34 12 7f 00 00 20 30 40 50" and delta.ptr.deltas == "10 00 56 34 12 7f 00 00 10 10 10 10"
 
-@listing src/seqlz_decompress.c 625-650
+@listing src/seqlz_decompress.c 624-649
 
 The fast path of the loop copies 16 bytes of literals whatever `nl` is, at most 14
 ([chapter 14](#ch-decode--fast)), and `undelta_fast()` restores all 16, with no loop and no branch on

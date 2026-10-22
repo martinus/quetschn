@@ -97,7 +97,7 @@ int main(void) {
 
     /* the page of pointers through compress_own()'s steps, the records looked at before delta_literals() */
     pointer_page(page);
-    encoder_init(&e, t, dst, sizeof(dst), page + SEQLZ_PAGE);
+    encoder_init(&e, dst, sizeof(dst), page + SEQLZ_PAGE);
     e.rec = true;
     seqlz_match_page(st.table, page, true, encode_emit_rec, &e);
     if (e.p == e.lit || !e.rec)
@@ -161,7 +161,7 @@ int main(void) {
             }
         }
     }
-    x = delta_literals(t, &e, dst, page, st.literals);
+    x = delta_literals(&e, dst, page, st.literals);
     if (x != pick)
         fail("delta_literals() picks another delta than the prices");
     fact_num("delta.ptr.pick", pick);
@@ -218,16 +218,16 @@ int main(void) {
     fact_num("delta.ptr.l3.dt", d2[SEQLZ_LIT_HEADER(0)]);
     fact_hex("delta.ptr.l3.head", d2, SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN + (d2[2] >> SEQLZ_LIT_WIDTH_AT & 7U)) + 1);
     fact_num("delta.ptr.l3.n", get_unaligned_le16(d2) & (SEQLZ_LIT_CODED - 1U));
-    if (seqlz_decode(t, d2, len, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
+    if (seqlz_decode(d2, len, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
         fail("the page of pointers does not decode to itself");
     {
         /* level 3 without deltas: compress_own() with the records off, then code_own() with delta 0 */
         unsigned int raw, n0;
 
-        encoder_init(&e, t, d2, sizeof(d2), page + SEQLZ_PAGE);
+        encoder_init(&e, d2, sizeof(d2), page + SEQLZ_PAGE);
         seqlz_match_page(st.table, page, true, encode_emit, &e);
         raw = encoder_finish(&e, d2, sizeof(d2));
-        n0 = code_own(t, d2, raw, &st, 0);
+        n0 = code_own(d2, raw, &st, 0);
         fact_num("delta.ptr.l3plain.len", n0);
     }
 

@@ -13,8 +13,6 @@
 
 #include "seqlz.h"
 
-static struct seqlz_tables *tables;
-
 /*
  * per tfm, so per CPU in zram: the matcher's hash table, and the scratch for
  * coded literals
@@ -32,7 +30,7 @@ static int q_compress(struct crypto_tfm *tfm, const u8 *src, unsigned int slen,
 
 	if (slen != SEQLZ_PAGE)
 		return -EINVAL;
-	len = seqlz_compress(tables, &c->st, src, dst, *dlen, level);
+	len = seqlz_compress(&c->st, src, dst, *dlen, level);
 	if (!len)
 		return -EINVAL;
 	*dlen = len;
@@ -56,8 +54,7 @@ static int q_decompress(struct crypto_tfm *tfm, const u8 *src,
 {
 	struct q_ctx *c = crypto_tfm_ctx(tfm);
 
-	if (*dlen < SEQLZ_PAGE ||
-	    seqlz_decode(tables, src, slen, dst, c->scratch))
+	if (*dlen < SEQLZ_PAGE || seqlz_decode(src, slen, dst, c->scratch))
 		return -EINVAL;
 	*dlen = SEQLZ_PAGE;
 	return 0;
@@ -81,24 +78,15 @@ static int __init q_init(void)
 {
 	int ret;
 
-	tables = vzalloc(seqlz_tables_size());
-	if (!tables)
-		return -ENOMEM;
-	if (seqlz_tables_init(tables, &seqlz_default_own) ||
-	    !seqlz_all_symbols(tables)) {
-		vfree(tables);
+	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
 		return -EINVAL;
-	}
 	ret = crypto_register_algs(algs, ARRAY_SIZE(algs));
-	if (ret)
-		vfree(tables);
 	return ret;
 }
 
 static void __exit q_exit(void)
 {
 	crypto_unregister_algs(algs, ARRAY_SIZE(algs));
-	vfree(tables);
 }
 
 module_init(q_init);

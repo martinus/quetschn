@@ -371,7 +371,7 @@ static void ch13(void) {
 
     /* the same as the real decoder, also the bytes behind the literals */
     memset(scratch, 0, sizeof scratch);
-    if (seqlz_decode(t, src, n, out, scratch) || memcmp(scratch, mine, k + 8) || memcmp(out, page, SEQLZ_PAGE))
+    if (seqlz_decode(src, n, out, scratch) || memcmp(scratch, mine, k + 8) || memcmp(out, page, SEQLZ_PAGE))
         die("ch13: the replica differs from seqlz_decode()");
 
     fact_num("ch13.n", n);
@@ -447,7 +447,7 @@ static void ch13(void) {
                 fact_num(key("ch13.e.size%u_bits", d), 8 * nsz);
                 fact_num(key("ch13.e.left%u", d), (long long)(8 * nsz) - used);
             }
-            if (seqlz_decode(t, bad, n, out, scratch) != -EINVAL)
+            if (seqlz_decode(bad, n, out, scratch) != -EINVAL)
                 die("ch13: a damaged page is accepted");
         }
     }
@@ -624,7 +624,7 @@ static void ch14(void) {
     n = fact_compress(page, src, 1);
     ch14_n = 0;
     ch14_on = 1;
-    s = (unsigned int)seqlz_decode(t, src, n, out, scratch);
+    s = (unsigned int)seqlz_decode(src, n, out, scratch);
     ch14_on = 0;
     if (s || memcmp(out, page, SEQLZ_PAGE))
         die("ch14: chapter 16's page");

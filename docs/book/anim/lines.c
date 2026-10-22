@@ -44,16 +44,15 @@ int main(void) {
     static u8 page[SEQLZ_PAGE], comp[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
     static unsigned int idx[SEQLZ_PAGE], len[SEQLZ_PAGE];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int n, n_lit, matched = 0, seqs = 0, i, dt = 0;
     unsigned long pos = 0;
     const u8* q;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     slab_page(page);
-    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 2);
-    if (!n || seqlz_decode(t, comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+    n = seqlz_compress(&st, page, comp, sizeof(comp), 2);
+    if (!n || seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
         fprintf(stderr, "lines.c: the page does not decode to itself\n");
         return 1;
     }
@@ -64,7 +63,7 @@ int main(void) {
     }
     n_lit &= SEQLZ_LIT_CODED - 1U;
     /* where the bitstream starts, as seqlz_decode() gets it; level 2 writes no deltas */
-    q = decode_literals(t, comp, n, n_lit, scratch, out, &dt);
+    q = decode_literals(comp, n, n_lit, scratch, out, &dt);
     if (q && dt) {
         fprintf(stderr, "lines.c: the page has literals as deltas\n");
         return 1;
@@ -81,7 +80,7 @@ int main(void) {
      */
     while (matched != SEQLZ_PAGE - n_lit && seqs < SEQLZ_PAGE) {
         unsigned int ix = peek(pos, SEQLZ_TOKEN_BITS);
-        u32 tok = t->token.decode[ix];
+        u32 tok = seqlz_tables.token.decode[ix];
         unsigned int ml;
 
         idx[seqs] = ix;
@@ -101,9 +100,9 @@ int main(void) {
         pos += TOK_DROP(tok);
         ml = TOK_ML(tok);
         if (TOK_LL(tok) == SEQLZ_LL_CAP)
-            value(&pos, &t->ll);
+            value(&pos, &seqlz_tables.ll);
         if (ml == SEQLZ_ML_CAP + 4U)
-            ml += value(&pos, &t->ml);
+            ml += value(&pos, &seqlz_tables.ml);
         matched += ml;
     }
     /* the walk must end where the bits end: fewer than 8 bits left, in the last byte */

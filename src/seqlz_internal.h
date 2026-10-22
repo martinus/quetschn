@@ -128,6 +128,9 @@ struct seqlz_tables {
 	bool all_symbols; /* see seqlz_all_symbols() */
 };
 
+/* the tables of seqlz_tables_init(), read only after that, by all CPUs */
+extern struct seqlz_tables seqlz_tables;
+
 static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
 	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
 	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U &&

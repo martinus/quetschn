@@ -17,12 +17,10 @@ int main(int argc, char** argv) {
     static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     FILE *f, *o;
     unsigned int pages = 0, i, k;
 
-    if (argc != 3 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb")) || !t ||
-        seqlz_tables_init(t, &seqlz_default_own)) {
+    if (argc != 3 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb")) || seqlz_tables_init(&seqlz_default_lengths)) {
         fprintf(stderr, "usage: seqs <pages file> <output>\n");
         return 1;
     }
@@ -31,7 +29,7 @@ int main(int argc, char** argv) {
 
         for (k = 1; k < SEQLZ_PAGE && page[k] == page[0]; k++)
             ;
-        if (k == SEQLZ_PAGE || seqlz_compress(t, &st, page, dst, sizeof dst, 2) >= 3625)
+        if (k == SEQLZ_PAGE || seqlz_compress(&st, page, dst, sizeof dst, 2) >= 3625)
             continue;
         n = seqlz_find(&st, page, seq, 2);
         for (i = 0; i + 1 < n; i++) {

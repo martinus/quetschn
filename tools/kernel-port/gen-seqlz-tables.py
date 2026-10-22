@@ -154,7 +154,7 @@ def lengths_initializer(tables):
         sys.exit("token: the escape has no code, or one too long")
     check("ll", ll, VALUE_BITS, True)
     check("ml", ml, VALUE_BITS, True)
-    return initializer("const struct seqlz_lengths seqlz_default_own", [
+    return initializer("const struct seqlz_lengths seqlz_default_lengths", [
         (".token = ", token), (".ll = ", ll), (".ml = ", ml)], "\t")
 
 
@@ -194,7 +194,7 @@ def main():
               " * the length values, the 8 literal tables, one chosen per page, the most\n"
               " * used first, and the code of a page's own literal table.\n */\n"
               "#include <kunit/visibility.h>\n#include <linux/export.h>\n\n#include \"seqlz.h\"\n\n" +
-              lengths_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_default_own);\n\n" +
+              lengths_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_default_lengths);\n\n" +
               lit_sets_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_lit_sets);\n\n" +
               own_initializer(tables) + "EXPORT_SYMBOL_IF_KUNIT(seqlz_own_lengths);\n", end="")
 

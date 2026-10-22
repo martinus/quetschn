@@ -13,11 +13,10 @@
 int main(int argc, char** argv) {
     static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned long pages = 0, own = 0;
     FILE *in, *out;
 
-    if (argc != 3 || !t || seqlz_tables_init(t, &seqlz_default_own)) {
+    if (argc != 3 || seqlz_tables_init(&seqlz_default_lengths)) {
         fprintf(stderr, "usage: owndump <in.pages> <out.bin>\n");
         return 1;
     }
@@ -28,7 +27,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     while (fread(page, 1, SEQLZ_PAGE, in) == SEQLZ_PAGE) {
-        unsigned int n = seqlz_compress(t, &st, page, dst, sizeof dst, 3);
+        unsigned int n = seqlz_compress(&st, page, dst, sizeof dst, 3);
 
         pages++;
         if (n > 3 && n < SEQLZ_PAGE && (dst[1] & 0x80) && (dst[2] & 15) == 8) {

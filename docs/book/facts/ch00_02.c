@@ -304,7 +304,7 @@ static void cat(void) {
     unsigned int n, i, last = 1, lz4 = 0, ml_bytes = 0, ml_255 = 0, bits = 0;
     char key[64], buf[32];
 
-    fact_canonical(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, code);
+    fact_canonical(seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, code);
     cat_page(page);
     fact_num("ch02.hash.dog", seqlz_hash5(get_unaligned_le64(page + 5)));
     fact_num("ch02.hash.dog17", seqlz_hash5(get_unaligned_le64(page + 17)));
@@ -325,20 +325,20 @@ static void cat(void) {
         fact_num(K("off"), seq[i].offset);
         fact_num(K("cls"), cls);
         fact_num(K("tok"), tok);
-        fact_num(K("escaped"), !seqlz_default_own.token[tok]);
-        bits += seqlz_default_own.token[tok] ? seqlz_default_own.token[tok]
-                                             : seqlz_default_own.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS;
+        fact_num(K("escaped"), !seqlz_default_lengths.token[tok]);
+        bits += seqlz_default_lengths.token[tok] ? seqlz_default_lengths.token[tok]
+                                                 : seqlz_default_lengths.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS;
         bits += raw;
-        fact_str(K("code"), seqlz_default_own.token[tok] ? code[tok] : code[SEQLZ_ESCAPE]);
+        fact_str(K("code"), seqlz_default_lengths.token[tok] ? code[tok] : code[SEQLZ_ESCAPE]);
         bits_str(buf, tok, SEQLZ_ESCAPE_BITS);
-        fact_str(K("esc"), seqlz_default_own.token[tok] ? "" : buf);
+        fact_str(K("esc"), seqlz_default_lengths.token[tok] ? "" : buf);
         bits_str(buf, seq[i].offset >> SEQLZ_OFF_SHIFT(cls), raw);
         fact_str(K("raw"), buf);
         fact_num(K("rawbits"), raw);
         fact_num(K("tml"), mlm4 < SEQLZ_ML_CAP ? mlm4 : SEQLZ_ML_CAP);
         if (mlm4 >= SEQLZ_ML_CAP) {
             snprintf(key, sizeof key, "ch02.cat.%u", i);
-            bits += value_facts(key, seqlz_default_own.ml, mlm4 - SEQLZ_ML_CAP);
+            bits += value_facts(key, seqlz_default_lengths.ml, mlm4 - SEQLZ_ML_CAP);
         }
 #undef K
         lz4 += 2;
@@ -386,7 +386,7 @@ static void consts(void) {
     fact_num("ch02.tok_entry_bytes", sizeof(u32));
     fact_num("ch02.tok_table_kib", sizeof(((struct token_table*)0)->decode) / 1024);
     fact_num("ch02.tok49", seqlz_token(1, 7, 0));
-    fact_num("ch02.tok49_entries", 1U << (SEQLZ_TOKEN_BITS - seqlz_default_own.token[49]));
+    fact_num("ch02.tok49_entries", 1U << (SEQLZ_TOKEN_BITS - seqlz_default_lengths.token[49]));
 }
 
 int main(void) {

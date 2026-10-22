@@ -5,11 +5,6 @@
  */
 #include "seqlz_internal.h"
 
-size_t seqlz_tables_size(void)
-{
-	return sizeof(struct seqlz_tables);
-}
-
 /*
  * The decode entry of length value symbol s: its base value and how many extra
  * bits follow its code. build_values() adds the code's length.
@@ -126,9 +121,9 @@ static int build_lit(const u8 *len, struct lit_table *t)
 	return 0;
 }
 
-bool seqlz_all_symbols(const struct seqlz_tables *t)
+bool seqlz_all_symbols(void)
 {
-	return t->all_symbols;
+	return seqlz_tables.all_symbols;
 }
 
 /*
@@ -239,8 +234,14 @@ static bool has_all_symbols(const struct seqlz_lengths *lengths)
 	return all;
 }
 
-int seqlz_tables_init(struct seqlz_tables *t,
-		      const struct seqlz_lengths *lengths)
+struct seqlz_tables seqlz_tables;
+
+/*
+ * The codes and decode tables of lengths, seqlz_lit_sets and seqlz_own_lengths
+ * in t; -EINVAL as seqlz_tables_init()
+ */
+static int build_tables(struct seqlz_tables *t,
+			const struct seqlz_lengths *lengths)
 {
 	/*
 	 * zero, so that symbols without a code have code 0, and so have the
@@ -254,4 +255,9 @@ int seqlz_tables_init(struct seqlz_tables *t,
 		return -EINVAL;
 	t->all_symbols = has_all_symbols(lengths);
 	return 0;
+}
+
+int seqlz_tables_init(const struct seqlz_lengths *lengths)
+{
+	return build_tables(&seqlz_tables, lengths);
 }

@@ -32,9 +32,10 @@ seqlz_counts committed_counts() {
 
 TEST_CASE("seqlz_train: the tables compiled in are built from the counts in bench/") {
     auto const t = seqlz_build_tables(committed_counts());
-    CHECK(t.token == std::vector<unsigned char>(seqlz_default_own.token, seqlz_default_own.token + SEQLZ_TOKEN_SYMBOLS + 1));
-    CHECK(t.ll == std::vector<unsigned char>(seqlz_default_own.ll, seqlz_default_own.ll + SEQLZ_LEN_SYMBOLS));
-    CHECK(t.ml == std::vector<unsigned char>(seqlz_default_own.ml, seqlz_default_own.ml + SEQLZ_LEN_SYMBOLS));
+    CHECK(t.token ==
+          std::vector<unsigned char>(seqlz_default_lengths.token, seqlz_default_lengths.token + SEQLZ_TOKEN_SYMBOLS + 1));
+    CHECK(t.ll == std::vector<unsigned char>(seqlz_default_lengths.ll, seqlz_default_lengths.ll + SEQLZ_LEN_SYMBOLS));
+    CHECK(t.ml == std::vector<unsigned char>(seqlz_default_lengths.ml, seqlz_default_lengths.ml + SEQLZ_LEN_SYMBOLS));
     REQUIRE(t.lit.size() == SEQLZ_LIT_SETS);
     for (unsigned k = 0; k < SEQLZ_LIT_SETS; ++k) {
         CAPTURE(k);

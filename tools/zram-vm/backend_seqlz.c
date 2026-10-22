@@ -11,6 +11,7 @@ extern int zram_prefetch;
 
 #include "backend_seqlz.h"
 #include "seqlz.h"
+#include "seqlz_internal.h"
 
 /* zram-prefetch.patch, after backend_seqlz.h for the zcomp types */
 extern void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
@@ -39,40 +40,34 @@ static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what
 	struct sz_ctx *c = ctx->context;
 
 	if (what == 1) {
-		const volatile unsigned char *p = params->drv_data;
+		const volatile unsigned char *p = (const void *)&seqlz_tables;
 		unsigned long k, sum = 0;
 
 		/* one byte of each cache line of 64 bytes */
-		for (k = 0; k < seqlz_tables_size(); k += 64)
+		for (k = 0; k < sizeof(seqlz_tables); k += 64)
 			sum += p[k];
 		for (k = 0; k < SEQLZ_SCRATCH; k += 64)
 			sum += ((volatile unsigned char *)c->scratch)[k];
 		(void)sum;
 	} else if (what == 2 && warm_len) {
-		seqlz_decode(params->drv_data, warm_src, warm_len, warm_dst, c->scratch);
+		seqlz_decode(warm_src, warm_len, warm_dst, c->scratch);
 	} else if (what == 5 && size <= sizeof(warm_prev)) {
 		if (warm_prev_len)
-			seqlz_decode(params->drv_data, warm_prev, warm_prev_len, warm_dst, c->scratch);
+			seqlz_decode(warm_prev, warm_prev_len, warm_dst, c->scratch);
 		memcpy(warm_prev, src, size);
 		warm_prev_len = size;
 	} else if (what == 7) {
-		seqlz_decode(params->drv_data, src, size, warm_dst, c->scratch);
+		seqlz_decode(src, size, warm_dst, c->scratch);
 	}
 }
 
 static int sz_setup_params(struct zcomp_params *params)
 {
-	struct seqlz_tables *t = kzalloc(seqlz_tables_size(), GFP_KERNEL);
 	struct seqlz_state *st;
 	unsigned int k;
 
-	if (!t)
-		return -ENOMEM;
-	if (seqlz_tables_init(t, &seqlz_default_own) || !seqlz_all_symbols(t)) {
-		kfree(t);
+	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
 		return -EINVAL;
-	}
-	params->drv_data = t;
 	/*
 	 * the warm-up page: random letters, skewed, and spaces: about 100 sequences and coded literals. x is
 	 * the generator of the C standard's example rand(), its upper 16 bits used: one byte in 5 a space,
@@ -87,7 +82,7 @@ static int sz_setup_params(struct zcomp_params *params)
 			warm_dst[k] = (x >> 16) % 5 == 0 ? ' ' :
 				      "etaoinshrdlucmfwypvbgkqjxz"[((x >> 16) % 89) % 26 % (1 + (x >> 28))];
 		}
-		warm_len = seqlz_compress(t, st, warm_dst, warm_src, sizeof(warm_src), 2);
+		warm_len = seqlz_compress(st, warm_dst, warm_src, sizeof(warm_src), 2);
 		kfree(st);
 	}
 	zram_warm_fn = sz_warm;
@@ -96,8 +91,6 @@ static int sz_setup_params(struct zcomp_params *params)
 
 static void sz_release_params(struct zcomp_params *params)
 {
-	kfree(params->drv_data);
-	params->drv_data = NULL;
 }
 
 static int sz_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
@@ -138,7 +131,7 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 
 	if (req->src_len != SEQLZ_PAGE)
 		return -EINVAL;
-	len = seqlz_compress(params->drv_data, &((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
+	len = seqlz_compress(&((struct sz_ctx *)ctx->context)->st, req->src, req->dst,
 			     req->dst_len, level);
 	if (!len)
 		return -EINVAL;
@@ -153,7 +146,7 @@ static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, str
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			prefetch((const char *)req->src + q);
-	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(params->drv_data, req->src, req->src_len, req->dst,
+	if (req->dst_len < SEQLZ_PAGE || seqlz_decode(req->src, req->src_len, req->dst,
 							      ((struct sz_ctx *)ctx->context)->scratch))
 		return -EINVAL;
 	return 0;

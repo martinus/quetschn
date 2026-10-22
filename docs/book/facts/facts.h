@@ -63,24 +63,27 @@ static inline void facts_end(void) {
     printf(fact_n ? "\n}\n" : "{}\n");
 }
 
-static inline struct seqlz_tables* fact_tables(void) {
-    static struct seqlz_tables* t;
+static inline const struct seqlz_tables* fact_tables(void) {
+    static int built;
 
-    if (!t) {
-        t = malloc(seqlz_tables_size());
-        if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (!built) {
+        if (seqlz_tables_init(&seqlz_default_lengths))
             exit(1);
+        built = 1;
     }
-    return t;
+    return &seqlz_tables;
 }
 
 /* the page compressed as seqlz_compress() writes it at a level, 1 to SEQLZ_LEVELS, and decoded again */
 static inline unsigned int fact_compress_level(const unsigned char* page, unsigned char* dst, unsigned int level) {
     static struct seqlz_state st;
-    unsigned int n = seqlz_compress(fact_tables(), &st, page, dst, 2 * SEQLZ_PAGE, level);
     static unsigned char out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    unsigned int n;
 
-    if (!n || seqlz_decode(fact_tables(), dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+    fact_tables(); /* built once, for seqlz_compress() and seqlz_decode() */
+    n = seqlz_compress(&st, page, dst, 2 * SEQLZ_PAGE, level);
+
+    if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
         fprintf(stderr, "facts: a page does not come back\n");
         exit(1);
     }

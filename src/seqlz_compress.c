@@ -79,7 +79,6 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
 #define ENC_ROOM 32U
 
 struct seqlz_encoder {
-	const struct seqlz_tables *t;
 	u64 acc; /* the bits not yet written, the newest in the low bits */
 	unsigned int cnt; /* how many bits of acc count */
 	u8 *p; /* the next byte of the bitstream goes right below p */
@@ -155,16 +154,15 @@ static __always_inline void put_len_value(struct seqlz_encoder *e,
  * The code of a token and its length. A token without a code, whose enc[] entry
  * is 0, is the escape's code followed by the token in SEQLZ_ESCAPE_BITS bits.
  */
-static __always_inline u32 token_code(const struct seqlz_tables *t,
-				      unsigned int tok, unsigned int *len)
+static __always_inline u32 token_code(unsigned int tok, unsigned int *len)
 {
-	u32 te = t->token.enc[tok], ee;
+	u32 te = seqlz_tables.token.enc[tok], ee;
 
 	if (te != 0) {
 		*len = te >> TOK_ENC_LEN_AT;
 		return te & TOK_ENC_CODE_MASK;
 	}
-	ee = t->token.enc[SEQLZ_ESCAPE];
+	ee = seqlz_tables.token.enc[SEQLZ_ESCAPE];
 	*len = (ee >> TOK_ENC_LEN_AT) + SEQLZ_ESCAPE_BITS;
 	return (ee & TOK_ENC_CODE_MASK) << SEQLZ_ESCAPE_BITS | tok;
 }
@@ -180,7 +178,6 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 				       unsigned int ll, unsigned int ml,
 				       unsigned int off, bool rec)
 {
-	const struct seqlz_tables *t = e->t;
 	unsigned int k = 0, tlen, raw_bits, cls;
 	unsigned int n_rec = rec && e->rec && ll ? LIT_REC : 0;
 	u32 code;
@@ -224,7 +221,7 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 		return;
 	/* token and offset in one put, the length values after them */
 	cls = seqlz_off_class(off, e->last, &raw_bits);
-	code = token_code(t, seqlz_token(ll, ml, cls), &tlen);
+	code = token_code(seqlz_token(ll, ml, cls), &tlen);
 	/*
 	 * The offset's bits right after the token's code. Classes 1 to 5 send
 	 * all bits off has. Class 0 sends none, so there off is masked to 0.
@@ -234,11 +231,11 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 			((off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0))),
 		tlen + raw_bits);
 	if (ll >= SEQLZ_LL_CAP) {
-		put_len_value(e, &t->ll, ll - SEQLZ_LL_CAP);
+		put_len_value(e, &seqlz_tables.ll, ll - SEQLZ_LL_CAP);
 		enc_flush(e);
 	}
 	if (ml - 4 >= SEQLZ_ML_CAP)
-		put_len_value(e, &t->ml, ml - 4 - SEQLZ_ML_CAP);
+		put_len_value(e, &seqlz_tables.ml, ml - 4 - SEQLZ_ML_CAP);
 	enc_flush(e);
 	e->last = off;
 }
@@ -258,13 +255,11 @@ static __always_inline void encode_emit_rec(void *ctx, const u8 *in,
 	encode_seq(ctx, in, ll, ml, off, true);
 }
 
-static __always_inline void encoder_init(struct seqlz_encoder *e,
-					 const struct seqlz_tables *t, u8 *d,
+static __always_inline void encoder_init(struct seqlz_encoder *e, u8 *d,
 					 unsigned int dst_cap,
 					 const u8 *src_end)
 {
-	*e = (struct seqlz_encoder){ .t = t,
-				     .p = d + dst_cap,
+	*e = (struct seqlz_encoder){ .p = d + dst_cap,
 				     .lit = d + SEQLZ_HEADER,
 				     .src_end = src_end,
 				     .last = 1 };
@@ -384,8 +379,7 @@ static __always_inline u64 sub_bytes(u64 a, u64 b)
  * DELTA_STEP. The bits of the fixed tables also tell which delta suits a table
  * of the page's own.
  */
-static unsigned int delta_literals(const struct seqlz_tables *t,
-				   struct seqlz_encoder *e, u8 *d,
+static unsigned int delta_literals(struct seqlz_encoder *e, u8 *d,
 				   const u8 *page, u8 *deltas)
 {
 	u64 s[4] = { 0 }, even[4][LIT_COST_WORDS] = { { 0 } },
@@ -413,10 +407,13 @@ static unsigned int delta_literals(const struct seqlz_tables *t,
 				delta_spill(s, even, odd);
 				n = 0;
 			}
-			s[0] += t->lit_cost[b][0];
-			s[SEQLZ_DELTA_4] += t->lit_cost[(u8)(b - b4)][0];
-			s[SEQLZ_DELTA_8] += t->lit_cost[(u8)(b - b8)][0];
-			s[SEQLZ_DELTA_LAST] += t->lit_cost[(u8)(b - bl)][0];
+			s[0] += seqlz_tables.lit_cost[b][0];
+			s[SEQLZ_DELTA_4] +=
+				seqlz_tables.lit_cost[(u8)(b - b4)][0];
+			s[SEQLZ_DELTA_8] +=
+				seqlz_tables.lit_cost[(u8)(b - b8)][0];
+			s[SEQLZ_DELTA_LAST] +=
+				seqlz_tables.lit_cost[(u8)(b - bl)][0];
 			n++;
 		}
 		/* the next sequence's literals go on with the step */
@@ -489,8 +486,7 @@ static unsigned int delta_literals(const struct seqlz_tables *t,
 }
 
 /* seqlz_encode() up to the coded literals, with the compressor's encoder */
-static unsigned int encode_raw(const struct seqlz_tables *t,
-			       const struct seqlz_sequence *seq, unsigned int n,
+static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 			       const u8 *literals, unsigned int n_literals,
 			       const u8 *page, u8 *deltas, unsigned int *delta,
 			       void *dst, unsigned int dst_cap)
@@ -499,8 +495,8 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 	struct seqlz_encoder e;
 	unsigned int i, pos = 0, lits = 0;
 
-	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols || n == 0 ||
-	    n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_PAGE)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols ||
+	    n == 0 || n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_PAGE)
 		return 0;
 	/*
 	 * Only sequences that make a page, checked as the decoder checks them,
@@ -522,7 +518,7 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 	}
 	if (pos != SEQLZ_PAGE || lits != n_literals)
 		return 0;
-	encoder_init(&e, t, dst, dst_cap, literals + n_literals);
+	encoder_init(&e, dst, dst_cap, literals + n_literals);
 	/* with a page, the records for the deltas, as compress_own() */
 	e.rec = page != NULL;
 	for (;;) {
@@ -536,10 +532,10 @@ static unsigned int encode_raw(const struct seqlz_tables *t,
 		/* encoder_init() clears rec: the pass without records is the last */
 		if (e.p != e.lit || !e.rec)
 			break;
-		encoder_init(&e, t, dst, dst_cap, literals + n_literals);
+		encoder_init(&e, dst, dst_cap, literals + n_literals);
 		in = literals;
 	}
-	*delta = e.rec ? delta_literals(t, &e, dst, page, deltas) : 0;
+	*delta = e.rec ? delta_literals(&e, dst, page, deltas) : 0;
 	return encoder_finish(&e, dst, dst_cap);
 }
 
@@ -606,10 +602,11 @@ static __always_inline u8 *lit_flush(u8 *p, const u8 *end, u64 acc,
  * hist[0], the odd ones in hist[1], so that a run of one byte does not wait for
  * its own count.
  */
-static __always_inline void
-lit_cost(const struct seqlz_tables *t, const u8 *literals,
-	 unsigned int n_literals, u64 even[][LIT_COST_WORDS],
-	 u64 odd[][LIT_COST_WORDS], u16 (*hist)[256])
+static __always_inline void lit_cost(const u8 *literals,
+				     unsigned int n_literals,
+				     u64 even[][LIT_COST_WORDS],
+				     u64 odd[][LIT_COST_WORDS],
+				     u16 (*hist)[256])
 {
 	/* every second byte: splits 8 lanes of 8 bits into 2 * 4 of 16 bits */
 	const u64 lanes = 0x00ff00ff00ff00ffULL;
@@ -625,15 +622,15 @@ lit_cost(const struct seqlz_tables *t, const u8 *literals,
 		for (; k + SEQLZ_LIT_STREAMS <= end; k += SEQLZ_LIT_STREAMS)
 			for (j = 0; j < SEQLZ_LIT_STREAMS; j++) {
 				for (w = 0; w < LIT_COST_WORDS; w++)
-					x[j][w] +=
-						t->lit_cost[literals[k + j]][w];
+					x[j][w] += seqlz_tables.lit_cost
+							   [literals[k + j]][w];
 				if (hist)
 					hist[j & 1U][literals[k + j]]++;
 			}
 		for (; k < end; k++) {
 			for (w = 0; w < LIT_COST_WORDS; w++)
 				x[k % SEQLZ_LIT_STREAMS][w] +=
-					t->lit_cost[literals[k]][w];
+					seqlz_tables.lit_cost[literals[k]][w];
 			if (hist)
 				hist[k & 1U][literals[k]]++;
 		}
@@ -877,8 +874,8 @@ static __always_inline void own_put(struct own_work *w, u64 *acc,
  * smallest header, say it cannot save OWN_SAVES_MIN bytes against limit, the
  * bytes of the best fixed table with its header.
  */
-static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
-			     unsigned int n_literals, unsigned int limit)
+static unsigned int own_code(struct own_work *w, unsigned int n_literals,
+			     unsigned int limit)
 {
 	/* the low 15 bits of each lane */
 	const u64 low = 0x7fff7fff7fff7fffULL;
@@ -954,13 +951,13 @@ static unsigned int own_code(const struct seqlz_tables *t, struct own_work *w,
 			unsigned int nb =
 				32U - (unsigned int)__builtin_clz(run);
 
-			e = t->own.enc[SEQLZ_OWN_RUN + nb];
+			e = seqlz_tables.own.enc[SEQLZ_OWN_RUN + nb];
 			own_put(w, &acc, &cnt, &out,
 				(e & 0xffU) << (nb - 1U) |
 					(run & ((1U << (nb - 1U)) - 1U)),
 				(e >> 8) + nb - 1U);
 		}
-		e = t->own.enc[(w->len[b] - 1U) & 15U];
+		e = seqlz_tables.own.enc[(w->len[b] - 1U) & 15U];
 		own_put(w, &acc, &cnt, &out, e & 0xffU, e >> 8);
 		prev = b;
 	}
@@ -1050,9 +1047,9 @@ static __always_inline unsigned int size_width(const unsigned int *sizes)
  * which are coded instead, and the header says so; if they stay raw, d keeps
  * them as they are.
  */
-static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
-				  unsigned int len, const u8 *raw, u8 *spare,
-				  struct own_work *own, unsigned int delta)
+static unsigned int code_literals(u8 *d, unsigned int len, const u8 *raw,
+				  u8 *spare, struct own_work *own,
+				  unsigned int delta)
 {
 	const unsigned int n_literals = get_unaligned_le16(d),
 			   bitstream = len - SEQLZ_HEADER - n_literals;
@@ -1073,7 +1070,7 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 		own = NULL;
 	if (own)
 		memset(own->freq, 0, sizeof(own->freq));
-	lit_cost(t, literals, n_literals, even, odd, own ? own->freq : NULL);
+	lit_cost(literals, n_literals, even, odd, own ? own->freq : NULL);
 	/* the table with the fewest bits */
 	for (k = 0; k < SEQLZ_LIT_SETS; k++) {
 		unsigned int b = 0;
@@ -1091,9 +1088,9 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	}
 	width = size_width(sizes);
 	header = SEQLZ_LIT_HEADER(width) + delta_byte;
-	enc = t->lit[set].enc;
+	enc = seqlz_tables.lit[set].enc;
 	if (own) {
-		unsigned int n = own_code(t, own, n_literals, header + coded),
+		unsigned int n = own_code(own, n_literals, header + coded),
 			     own_coded, own_width;
 
 		if (n) {
@@ -1162,21 +1159,20 @@ static struct own_work *own_work(struct seqlz_state *st)
  * left them in the matcher's state, unless that is none or they would stay
  * raw; else as they are.
  */
-static unsigned int code_own(const struct seqlz_tables *t, u8 *d,
-			     unsigned int len, struct seqlz_state *st,
+static unsigned int code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 			     unsigned int delta)
 {
 	if (delta) {
-		unsigned int n = code_literals(t, d, len, st->literals, NULL,
+		unsigned int n = code_literals(d, len, st->literals, NULL,
 					       own_work(st), delta);
 
 		if (n != len)
 			return n;
 	}
-	return code_literals(t, d, len, NULL, st->literals, own_work(st), 0);
+	return code_literals(d, len, NULL, st->literals, own_work(st), 0);
 }
 
-unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
+unsigned int seqlz_encode(struct seqlz_state *st,
 			  const struct seqlz_sequence *seq, unsigned int n,
 			  const u8 *literals, unsigned int n_literals,
 			  const void *page, void *dst, unsigned int dst_cap,
@@ -1187,25 +1183,24 @@ unsigned int seqlz_encode(const struct seqlz_tables *t, struct seqlz_state *st,
 	if (level < 1 || level > SEQLZ_LEVELS ||
 	    (level >= SEQLZ_LEVEL_OWN && !st))
 		return 0;
-	len = encode_raw(t, seq, n, literals, n_literals,
+	len = encode_raw(seq, n, literals, n_literals,
 			 level >= SEQLZ_LEVEL_OWN ? page : NULL,
 			 st ? st->literals : NULL, &delta, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
 	if (level < SEQLZ_LEVEL_OWN)
-		return code_literals(t, dst, len, literals, NULL, NULL, 0);
-	return code_own(t, dst, len, st, delta);
+		return code_literals(dst, len, literals, NULL, NULL, 0);
+	return code_own(dst, len, st, delta);
 }
 
-static unsigned int compress_page(const struct seqlz_tables *t,
-				  struct seqlz_state *st, const u8 *src,
+static unsigned int compress_page(struct seqlz_state *st, const u8 *src,
 				  void *dst, unsigned int dst_cap)
 {
 	struct seqlz_encoder e;
 
-	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)
 		return 0;
-	encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
+	encoder_init(&e, dst, dst_cap, src + SEQLZ_PAGE);
 	seqlz_match_page(st->table, src, false, encode_emit, &e);
 	return encoder_finish(&e, dst, dst_cap);
 }
@@ -1216,32 +1211,30 @@ static unsigned int compress_page(const struct seqlz_tables *t,
  * gets the delta. A function of its own, so that the other levels' code stays
  * as it is without it: inlined next to it, their pages were slower to write.
  */
-static noinline unsigned int compress_own(const struct seqlz_tables *t,
-					  struct seqlz_state *st, const u8 *src,
+static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 					  void *dst, unsigned int dst_cap,
 					  unsigned int *delta)
 {
 	struct seqlz_encoder e;
 
 	*delta = 0;
-	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !t->all_symbols)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)
 		return 0;
-	encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
+	encoder_init(&e, dst, dst_cap, src + SEQLZ_PAGE);
 	e.rec = true;
 	for (;;) {
 		seqlz_match_page(st->table, src, true, encode_emit_rec, &e);
 		/* encoder_init() clears rec: the pass without records is the last */
 		if (e.p != e.lit || !e.rec)
 			break;
-		encoder_init(&e, t, dst, dst_cap, src + SEQLZ_PAGE);
+		encoder_init(&e, dst, dst_cap, src + SEQLZ_PAGE);
 	}
 	if (e.rec)
-		*delta = delta_literals(t, &e, dst, src, st->literals);
+		*delta = delta_literals(&e, dst, src, st->literals);
 	return encoder_finish(&e, dst, dst_cap);
 }
 
-unsigned int seqlz_compress(const struct seqlz_tables *t,
-			    struct seqlz_state *st, const void *src, void *dst,
+unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,
 			    unsigned int dst_cap, unsigned int level)
 {
 	unsigned int len, delta;
@@ -1249,11 +1242,11 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 	if (level < 1 || level > SEQLZ_LEVELS)
 		return 0;
 	if (level >= SEQLZ_LEVEL_OWN) {
-		len = compress_own(t, st, src, dst, dst_cap, &delta);
-		return len ? code_own(t, dst, len, st, delta) : 0;
+		len = compress_own(st, src, dst, dst_cap, &delta);
+		return len ? code_own(dst, len, st, delta) : 0;
 	}
-	len = compress_page(t, st, src, dst, dst_cap);
+	len = compress_page(st, src, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
-	return code_literals(t, dst, len, NULL, st->literals, NULL, 0);
+	return code_literals(dst, len, NULL, st->literals, NULL, 0);
 }

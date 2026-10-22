@@ -37,8 +37,8 @@ static void token_lines(unsigned int s) {
     unsigned int l, c = 0, rev = 0, k, n, idx, lines = 0, last_line = ~0U;
     char key[64];
 
-    fact_canonical(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, code);
-    l = seqlz_default_own.token[s];
+    fact_canonical(seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, code);
+    l = seqlz_default_lengths.token[s];
     if (!l) {
         fprintf(stderr, "facts/ch03_05.c: token %u has no code\n", s);
         exit(1);

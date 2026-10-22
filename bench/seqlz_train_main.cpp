@@ -359,9 +359,7 @@ int main(int argc, char** argv) {
         counts.ml.assign(SEQLZ_LEN_SYMBOLS, 0.0);
         counts.own.assign(SEQLZ_OWN_SYMBOLS, 0.0);
         // the tables compiled in, for the pages level 3 writes, whose own literal tables are counted
-        auto tables = std::unique_ptr<seqlz_tables, void (*)(void*)>(
-            static_cast<seqlz_tables*>(std::malloc(seqlz_tables_size())), std::free);
-        if (!tables || seqlz_tables_init(tables.get(), &seqlz_default_own) != 0) {
+        if (seqlz_tables_init(&seqlz_default_lengths) != 0) {
             throw std::runtime_error("cannot build the tables compiled in");
         }
         auto compressed = std::vector<unsigned char>(2 * SEQLZ_PAGE);
@@ -377,12 +375,8 @@ int main(int argc, char** argv) {
             }
             ++pages;
             if (!counts_out.empty() || !own_out.empty()) {
-                auto const len = seqlz_compress(tables.get(),
-                                                state.get(),
-                                                src.data(),
-                                                compressed.data(),
-                                                static_cast<unsigned>(compressed.size()),
-                                                SEQLZ_LEVELS);
+                auto const len = seqlz_compress(
+                    state.get(), src.data(), compressed.data(), static_cast<unsigned>(compressed.size()), SEQLZ_LEVELS);
                 own_pages += count_own(std::span(compressed.data(), len), counts.own);
             }
             if (!own_out.empty()) {

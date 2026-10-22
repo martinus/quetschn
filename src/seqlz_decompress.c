@@ -469,8 +469,7 @@ static noinline const u8 *own_table(const struct own_table *own, const u8 *p,
  * valid. Not inlined: inside the loop over the sequences its registers made
  * pages with raw literals slower too.
  */
-static noinline const u8 *decode_literals(const struct seqlz_tables *t,
-					  const u8 *s, unsigned int src_len,
+static noinline const u8 *decode_literals(const u8 *s, unsigned int src_len,
 					  unsigned int n_lit, u8 *out, u8 *page,
 					  unsigned int *delta)
 {
@@ -510,13 +509,13 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 		 */
 		u16 *own = (u16 *)(page + ((unsigned long)page & 1U));
 
-		q = own_table(&t->own, q, end, own, out);
+		q = own_table(&seqlz_tables.own, q, end, own, out);
 		if (!q)
 			return NULL;
 		lt = own;
 	} else {
-		lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
-		prefetch_lines(lt, sizeof(t->lit[0].decode));
+		lt = seqlz_tables.lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
+		prefetch_lines(lt, sizeof(seqlz_tables.lit[0].decode));
 	}
 	total = lit_stream_sizes(s + SEQLZ_LIT_HEADER(0) + deltas, width, q, sz,
 				 start);
@@ -751,8 +750,7 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
  * that a page without deltas runs none of their code. A check of it for every
  * sequence made those pages slower to read.
  */
-static __always_inline int decode_page(const struct seqlz_tables *t,
-				       const void *src, unsigned int src_len,
+static __always_inline int decode_page(const void *src, unsigned int src_len,
 				       void *dst, void *scratch, bool deltas)
 {
 	const u8 *s = src;
@@ -771,9 +769,10 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 	 * The decoder's tables first, so that their cache misses overlap. An
 	 * in-order core stops at every miss it did not see coming.
 	 */
-	prefetch_lines(t->token.decode, sizeof(t->token.decode));
-	prefetch_lines(t->ll.decode, sizeof(t->ll.decode));
-	prefetch_lines(t->ml.decode, sizeof(t->ml.decode));
+	prefetch_lines(seqlz_tables.token.decode,
+		       sizeof(seqlz_tables.token.decode));
+	prefetch_lines(seqlz_tables.ll.decode, sizeof(seqlz_tables.ll.decode));
+	prefetch_lines(seqlz_tables.ml.decode, sizeof(seqlz_tables.ml.decode));
 	n_lit = get_unaligned_le16(s);
 	if (n_lit & SEQLZ_LIT_CODED) {
 		/* decoded into the scratch first, the bitstream follows them */
@@ -782,7 +781,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		n_lit &= SEQLZ_LIT_CODED - 1U;
 		if (!scratch)
 			return -EINVAL;
-		q = decode_literals(t, s, src_len, n_lit, scratch, d, &delta);
+		q = decode_literals(s, src_len, n_lit, scratch, d, &delta);
 		if (!q)
 			return -EINVAL;
 		br = (struct seqlz_bit_reader){ .p = q, .end = s_end };
@@ -822,7 +821,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 	/* a page of literals only has no sequence with a match, no token */
 	if (n_lit == SEQLZ_PAGE)
 		goto last_literals;
-	tok = next_token(&br, &t->token);
+	tok = next_token(&br, &seqlz_tables.token);
 	for (;;) {
 		unsigned int nl, len, off, back, raw;
 
@@ -862,7 +861,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		if (!(tok & (1U << TOK_VALUE_AT)) && d <= d_fast &&
 		    (unsigned long)lit <= lit_fast &&
 		    (unsigned long)br.p <= in_fast) {
-			tok = next_token_fast(&br, &t->token, &skip);
+			tok = next_token_fast(&br, &seqlz_tables.token, &skip);
 			/*
 			 * No check of nl against the literals left, which saved
 			 * 3 instructions per sequence. The 16 bytes read are
@@ -886,7 +885,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		/* the slow path: length values, and every check */
 		if (nl == SEQLZ_LL_CAP) {
 			seqlz_br_refill(&br);
-			nl += seqlz_br_value(&br, &t->ll);
+			nl += seqlz_br_value(&br, &seqlz_tables.ll);
 		}
 		if (lit > lit_end || nl > (unsigned int)(lit_end - lit) ||
 		    nl > (unsigned int)(d_end - d))
@@ -898,7 +897,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		lit += nl;
 		if (len == SEQLZ_ML_CAP + 4U) {
 			seqlz_br_refill(&br);
-			len += seqlz_br_value(&br, &t->ml);
+			len += seqlz_br_value(&br, &seqlz_tables.ml);
 		}
 		last = off;
 		/* off must point into the page; off - 1 wraps for 0 */
@@ -914,7 +913,7 @@ static __always_inline int decode_page(const struct seqlz_tables *t,
 		 */
 		if ((unsigned long)d - (unsigned long)lit == end_gap)
 			break;
-		tok = next_token(&br, &t->token);
+		tok = next_token(&br, &seqlz_tables.token);
 		skip = 0;
 	}
 last_literals:
@@ -934,8 +933,8 @@ last_literals:
 	return 0;
 }
 
-int seqlz_decode(const struct seqlz_tables *t, const void *src,
-		 unsigned int src_len, void *dst, void *scratch)
+int seqlz_decode(const void *src, unsigned int src_len, void *dst,
+		 void *scratch)
 {
 	const u8 *s = src;
 
@@ -943,6 +942,6 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 	if (src_len > SEQLZ_HEADER &&
 	    (get_unaligned_le16(s) & SEQLZ_LIT_CODED) &&
 	    s[2] >> SEQLZ_LIT_DELTA_AT)
-		return decode_page(t, src, src_len, dst, scratch, true);
-	return decode_page(t, src, src_len, dst, scratch, false);
+		return decode_page(src, src_len, dst, scratch, true);
+	return decode_page(src, src_len, dst, scratch, false);
 }

@@ -105,7 +105,7 @@ static unsigned long long instructions(void) {
 }
 
 #ifndef COST_CODEC
-static struct seqlz_tables* tables;
+static int tables_built;
 #endif
 static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
 #ifndef COST_CODEC
@@ -130,8 +130,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         if (insn_fd < 0)
             abort();
 #ifndef COST_CODEC
-        tables = malloc(seqlz_tables_size());
-        if (!tables || seqlz_tables_init(tables, &seqlz_default_own))
+        tables_built = 1;
+        if (seqlz_tables_init(&seqlz_default_lengths))
             abort();
 #endif
     }
@@ -184,7 +184,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     if (size != SEQLZ_PAGE)
         return 0;
     i0 = instructions();
-    len = seqlz_compress(tables, &st, data, c, sizeof c, 2);
+    len = seqlz_compress(&st, data, c, sizeof c, 2);
     i1 = instructions();
     if (!len)
         abort();
@@ -192,7 +192,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     /* zram stores larger pages as they are and never decodes them */
     if (len < 3625U) {
         i0 = instructions();
-        if (seqlz_decode(tables, c, len, out, scratch))
+        if (seqlz_decode(c, len, out, scratch))
             abort();
         i1 = instructions();
         if (memcmp(out, data, SEQLZ_PAGE))
@@ -253,7 +253,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     while (pos < SEQLZ_PAGE)
         page[pos++] = lits[n_lit++] = (unsigned char)(rng += 0x9e37);
     n++;
-    len = seqlz_encode(tables, NULL, seq, n, lits, n_lit, NULL, c, sizeof c, 2);
+    len = seqlz_encode(NULL, seq, n, lits, n_lit, NULL, c, sizeof c, 2);
     if (!len)
         abort();
     /* COST_DUMP=<file>: the compressed page this input makes, for quetschn-seqlz-worst count-streams */
@@ -264,7 +264,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             abort();
     }
     i0 = instructions();
-    if (seqlz_decode(tables, c, len, out, scratch))
+    if (seqlz_decode(c, len, out, scratch))
         abort();
     i1 = instructions();
     if (memcmp(out, page, SEQLZ_PAGE))
@@ -275,7 +275,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         return 0;
     memcpy(c, data, size);
     i0 = instructions();
-    if (seqlz_decode(tables, c, (unsigned int)size, out, scratch) == 0) {
+    if (seqlz_decode(c, (unsigned int)size, out, scratch) == 0) {
         i1 = instructions();
         mark(i1 - i0, 0, 2048);
     }
