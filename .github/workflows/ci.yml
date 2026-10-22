@@ -51,14 +51,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
-      # Only the files the kernel codecs need, from the commit docs/plan.md was verified against. About 3s.
-      - name: fetch kernel lz4, lzo and zstd sources
+      # Only the files the kernel codecs need, from the commit docs/plan.md was verified against: from the
+      # cache, which KERNEL_COMMIT keys, else from github.com, about 3s. Each try at most 5 minutes, 3
+      # tries: on 22nd October 2026 github.com's torvalds/linux answered 504, and a fetch hung for 20.
+      - name: kernel lz4, lzo and zstd sources from the cache
         if: matrix.page_bits == 12
+        id: kernel
+        uses: actions/cache@v6
+        with:
+          path: kernel
+          key: kernel-codecs-${{ env.KERNEL_COMMIT }}
+      - name: fetch kernel lz4, lzo and zstd sources
+        if: matrix.page_bits == 12 && steps.kernel.outputs.cache-hit != 'true'
+        timeout-minutes: 20
         run: |
           git init -q kernel && cd kernel
           git remote add origin https://github.com/torvalds/linux.git
           git sparse-checkout set --no-cone /lib/lz4/ /lib/lzo/ /lib/zstd/ /lib/xxhash.c /include/linux/lz4.h /include/linux/lzo.h /include/linux/zstd.h /include/linux/zstd_lib.h /include/linux/zstd_errors.h /include/linux/xxhash.h
-          git fetch -q --depth 1 --filter=blob:none origin ${{ env.KERNEL_COMMIT }}
+          for i in 1 2 3; do timeout 300 git fetch -q --depth 1 --filter=blob:none origin ${{ env.KERNEL_COMMIT }} && break; sleep 30; done
           git checkout -q FETCH_HEAD
       - run: >
           cmake -S . -B build -G Ninja
@@ -191,11 +201,20 @@ jobs:
         run: >-
           sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev ${{ matrix.make && 'clang lld llvm' || '' }}
           ${{ matrix.name == 'arm64' && 'qemu-system-arm' || '' }}
+      # from the cache, else from github.com, each try at most 5 minutes, as the kernel sources of test
+      - name: the kernel tree from the cache
+        id: kernel
+        uses: actions/cache@v6
+        with:
+          path: kernel
+          key: kernel-tree-${{ env.KERNEL_COMMIT }}
       - name: fetch the kernel tree
+        if: steps.kernel.outputs.cache-hit != 'true'
+        timeout-minutes: 20
         run: |
           git init -q kernel && cd kernel
           git remote add origin https://github.com/torvalds/linux.git
-          git fetch -q --depth 1 origin ${{ env.KERNEL_COMMIT }}
+          for i in 1 2 3; do timeout 300 git fetch -q --depth 1 origin ${{ env.KERNEL_COMMIT }} && break; sleep 30; done
           git checkout -q FETCH_HEAD
       - name: port, build and check
         run: tools/kernel-port/check.sh kernel ${{ matrix.make }}
