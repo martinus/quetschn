@@ -10,27 +10,26 @@
 #include "seqlz.h"
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     int i;
     unsigned int level;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     for (i = 1; i < argc; i++) {
         FILE* f = fopen(argv[i], "rb");
 
-        if (!f || fread(page, 1, SEQLZ_PAGE, f) != SEQLZ_PAGE) {
+        if (!f || fread(page, 1, SEQLZ_BLOCK_SIZE, f) != SEQLZ_BLOCK_SIZE) {
             fprintf(stderr, "%s: not a page\n", argv[i]);
             return 1;
         }
         fclose(f);
         for (level = 1; level <= SEQLZ_LEVELS; level++) {
-            unsigned int n = seqlz_compress(t, &st, page, dst, sizeof dst, level);
+            unsigned int n = seqlz_compress(&st, page, dst, sizeof dst, level);
             char name[4096];
 
-            if (!n || seqlz_decode(t, dst, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+            if (!n || seqlz_decode(dst, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
                 fprintf(stderr, "%s: the roundtrip failed\n", argv[i]);
                 return 1;
             }
@@ -43,6 +42,5 @@ int main(int argc, char** argv) {
             printf("%s: %u bytes\n", name, n);
         }
     }
-    free(t);
     return 0;
 }

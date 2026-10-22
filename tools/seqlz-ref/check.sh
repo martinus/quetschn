@@ -6,7 +6,7 @@
 # pages that src/ compressed, with raw and with coded literals: each must give the page back.
 # A retrain of the tables without new hashes in docs/format.md fails here, and so does a format change
 # that the spec does not describe. The pages are made up, never from a dump: tools/seqlz-worst/pages/,
-# and six written here, three of them with deltas, one for each. First, the tables in src/ must be what tools/kernel-port/gen-seqlz-tables.py
+# and six written here, three of them with deltas, one for each. First, the tables in src/ must be what tools/kernel-port/gen-seqlz-lengths.py
 # makes from the counts in bench/, byte for byte. Needs cc and python3.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,16 +17,16 @@ mkdir -p "$out"
 for s in 4k 16k; do
     for t in "--lengths seqlz_default_tables" "--lit-sets seqlz_lit_sets"; do
         set -- $t
-        if ! (cd "$repo" && tools/kernel-port/gen-seqlz-tables.py "$1" "bench/seqlz_counts_$s.txt" |
+        if ! (cd "$repo" && tools/kernel-port/gen-seqlz-lengths.py "$1" "bench/seqlz_counts_$s.txt" |
             cmp -s - "src/${2}_$s.inc"); then
-            echo "src/${2}_$s.inc is not what tools/kernel-port/gen-seqlz-tables.py $1 makes" >&2
+            echo "src/${2}_$s.inc is not what tools/kernel-port/gen-seqlz-lengths.py $1 makes" >&2
             exit 1
         fi
     done
 done
 # and it refuses lengths that seqlz_tables_init() refuses, so the kernel's tables built from what it writes
 # cannot fail
-python3 - "$repo/tools/kernel-port/gen-seqlz-tables.py" <<'EOF'
+python3 - "$repo/tools/kernel-port/gen-seqlz-lengths.py" <<'EOF'
 import importlib.util
 import sys
 
@@ -40,11 +40,11 @@ for lengths, every in [([1, 2, 2, 2], True), ([1, 2, 3], True), ([1, 2, 4, 4, 4,
         gen.check(str(lengths), lengths, 3, every)
     except SystemExit:
         continue
-    sys.exit(f"gen-seqlz-tables.py takes the lengths {lengths}, which seqlz_tables_init() refuses")
+    sys.exit(f"gen-seqlz-lengths.py takes the lengths {lengths}, which seqlz_tables_init() refuses")
 EOF
 
 ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-compress/compress.c" \
-    "$repo/src/seqlz_codes.c" "$repo/src/seqlz_compress.c" "$repo/src/seqlz_decompress.c" \
+    "$repo/src/seqlz_codes.c" "$repo/src/seqlz_compress.c" "$repo/src/seqlz_compress_literals.c" "$repo/src/seqlz_decompress.c" "$repo/src/seqlz_decompress_literals.c" \
     "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c"
 cp "$repo"/tools/seqlz-worst/pages/*.page "$out/"
 python3 - "$out" "$repo/docs/format.md" <<'EOF'
@@ -78,7 +78,7 @@ EOF
 "$out/compress" "$out"/*.page >/dev/null
 
 # The 16 KiB tables: only their hashes. Loading them checks them, the empty file is no page.
-python3 "$here/seqlz_ref.py" --page-bits 14 /dev/null >/dev/null
+python3 "$here/seqlz_ref.py" --block-bits 14 /dev/null >/dev/null
 
 pages=0
 wrong=0

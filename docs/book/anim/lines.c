@@ -12,6 +12,7 @@
 
 #include "pages.h"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 /* the bitstream from q to end, read most significant bit first, zeros after its end */
 static const u8* g_q;
@@ -41,19 +42,18 @@ static unsigned int value(unsigned long* pos, const struct value_table* vt) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], comp[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
-    static unsigned int idx[SEQLZ_PAGE], len[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
+    static unsigned int idx[SEQLZ_BLOCK_SIZE], len[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int n, n_lit, matched = 0, seqs = 0, i, dt = 0;
     unsigned long pos = 0;
     const u8* q;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     slab_page(page);
-    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 2);
-    if (!n || seqlz_decode(t, comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+    n = seqlz_compress(&st, page, comp, sizeof(comp), 2);
+    if (!n || seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
         fprintf(stderr, "lines.c: the page does not decode to itself\n");
         return 1;
     }
@@ -64,7 +64,7 @@ int main(void) {
     }
     n_lit &= SEQLZ_LIT_CODED - 1U;
     /* where the bitstream starts, as seqlz_decode() gets it; level 2 writes no deltas */
-    q = decode_literals(t, comp, n, n_lit, scratch, out, &dt);
+    q = seqlz_decode_literals(comp, n, n_lit, scratch, out, &dt);
     if (q && dt) {
         fprintf(stderr, "lines.c: the page has literals as deltas\n");
         return 1;
@@ -79,9 +79,9 @@ int main(void) {
      * cover all bytes but the literals, and the literals left are the last sequence, which has no
      * token
      */
-    while (matched != SEQLZ_PAGE - n_lit && seqs < SEQLZ_PAGE) {
+    while (matched != SEQLZ_BLOCK_SIZE - n_lit && seqs < SEQLZ_BLOCK_SIZE) {
         unsigned int ix = peek(pos, SEQLZ_TOKEN_BITS);
-        u32 tok = t->token.decode[ix];
+        u32 tok = seqlz_tables.token.decode[ix];
         unsigned int ml;
 
         idx[seqs] = ix;
@@ -101,13 +101,13 @@ int main(void) {
         pos += TOK_DROP(tok);
         ml = TOK_ML(tok);
         if (TOK_LL(tok) == SEQLZ_LL_CAP)
-            value(&pos, &t->ll);
+            value(&pos, &seqlz_tables.ll);
         if (ml == SEQLZ_ML_CAP + 4U)
-            ml += value(&pos, &t->ml);
+            ml += value(&pos, &seqlz_tables.ml);
         matched += ml;
     }
     /* the walk must end where the bits end: fewer than 8 bits left, in the last byte */
-    if (matched != SEQLZ_PAGE - n_lit || pos > g_nbits || g_nbits - pos >= 8) {
+    if (matched != SEQLZ_BLOCK_SIZE - n_lit || pos > g_nbits || g_nbits - pos >= 8) {
         fprintf(stderr, "lines.c: walk ends at bit %lu of %lu, %u bytes matched\n", pos, g_nbits, matched);
         return 1;
     }

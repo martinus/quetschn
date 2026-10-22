@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * accum.c: the encoder's accumulator for the first sequences of chapter 16's page. The page is
- * compressed as compress_page() does; for the first SEQS sequences a copy of the encoder does the
+ * compressed as compress_block() does; for the first SEQS sequences a copy of the encoder does the
  * puts and flushes of encode_emit() one at a time with the helpers of seqlz_compress.c, and prints
  * each: the value put and its parts, acc and cnt before and after, the word a flush stores and
  * where. Fails if the copy does not end where encode_emit() ends: the same acc, cnt, p and bytes.
@@ -12,9 +12,10 @@
 
 #include "pages.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 
 #define SEQS 4
-#define CAP (2 * SEQLZ_PAGE)
+#define CAP (2 * SEQLZ_BLOCK_SIZE)
 
 struct drv {
     struct seqlz_encoder e; /* the copy, writing into shadow */
@@ -96,15 +97,14 @@ static void len_value(struct drv* D, const struct value_table* t, const char* wh
 /* encode_emit()'s puts and flushes for a sequence with a match, one at a time, on the copy */
 static void traced(struct drv* D, unsigned int ll, unsigned int ml, unsigned int off) {
     struct seqlz_encoder* e = &D->e;
-    const struct seqlz_tables* t = e->t;
     unsigned int tlen, raw_bits, cls, tok, esc, offv, np = 0;
     struct part pt[3];
     u32 code;
 
     cls = seqlz_off_class(off, e->last, &raw_bits);
     tok = seqlz_token(ll, ml, cls);
-    esc = t->token.enc[tok] == 0;
-    code = token_code(t, tok, &tlen);
+    esc = seqlz_tables.token.enc[tok] == 0;
+    code = token_code(tok, &tlen);
     offv = (off >> SEQLZ_OFF_SHIFT(cls)) & (0U - (cls != 0));
     printf("%s{\"seq\":%u,\"op\":\"seq\",\"ll\":%u,\"ml\":%u,\"off\":%u,\"cls\":%u,\"tok\":%u,"
            "\"esc\":%u,\"tlen\":%u,\"raw\":%u,\"shift\":%u}",
@@ -129,11 +129,11 @@ static void traced(struct drv* D, unsigned int ll, unsigned int ml, unsigned int
         pt[np++] = (struct part){"offset", raw_bits, offv};
     put(D, "token", (u64)code << raw_bits | offv, tlen + raw_bits, pt, np);
     if (ll >= SEQLZ_LL_CAP) {
-        len_value(D, &t->ll, "ll", ll - SEQLZ_LL_CAP);
+        len_value(D, &seqlz_tables.ll, "ll", ll - SEQLZ_LL_CAP);
         flush(D);
     }
     if (ml - 4 >= SEQLZ_ML_CAP)
-        len_value(D, &t->ml, "ml", ml - 4 - SEQLZ_ML_CAP);
+        len_value(D, &seqlz_tables.ml, "ml", ml - 4 - SEQLZ_ML_CAP);
     flush(D);
     e->last = off;
 }
@@ -158,21 +158,20 @@ static void drv_emit(void* ctx, const u8* in, unsigned int ll, unsigned int ml, 
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], ref[CAP];
+    static u8 page[SEQLZ_BLOCK_SIZE], ref[CAP];
     static struct seqlz_state st;
     static struct drv D;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int len, ref_len;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     slab_page(page);
-    encoder_init(&real, t, real_dst, CAP, page + SEQLZ_PAGE);
-    encoder_init(&D.e, t, shadow, CAP, page + SEQLZ_PAGE);
+    encoder_init(&real, real_dst, CAP, page + SEQLZ_BLOCK_SIZE);
+    encoder_init(&D.e, shadow, CAP, page + SEQLZ_BLOCK_SIZE);
     printf("{\"ops\":[");
-    seqlz_match_page(st.table, page, false, drv_emit, &D);
+    seqlz_match_block(st.table, page, false, drv_emit, &D);
     len = encoder_finish(&real, real_dst, CAP);
-    ref_len = seqlz_compress(t, &st, page, ref, CAP, 1);
+    ref_len = seqlz_compress(&st, page, ref, CAP, 1);
     if (!len || len != ref_len || memcmp(real_dst, ref, len)) {
         fprintf(stderr, "accum.c: the page is not what seqlz_compress() writes\n");
         return 1;

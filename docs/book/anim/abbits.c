@@ -34,17 +34,16 @@ static const char* code_of(const u8* len, unsigned int n, unsigned int s) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int len, n, raw, cls, tok, extra, sym, v, k, n_lit;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
     ab_page(page);
-    len = seqlz_compress(t, &st, page, dst, sizeof dst, 1);
-    if (!len || seqlz_decode(t, dst, len, out, NULL) || memcmp(out, page, SEQLZ_PAGE))
+    len = seqlz_compress(&st, page, dst, sizeof dst, 1);
+    if (!len || seqlz_decode(dst, len, out, NULL) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         return 1;
     n = seqlz_find(&st, page, seq, 2);
     n_lit = get_unaligned_le16(dst);
@@ -61,11 +60,12 @@ int main(void) {
     for (k = 0; k < len; k++)
         printf("%s%u", k ? "," : "", dst[k]);
     printf("],\"tok\":%u,", tok);
-    if (seqlz_default_own.token[tok]) {
-        printf("\"escCode\":\"\",\"tokCode\":\"%s\",", code_of(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, tok));
+    if (seqlz_default_lengths.token[tok]) {
+        printf("\"escCode\":\"\",\"tokCode\":\"%s\",", code_of(seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, tok));
     } else {
         /* the escape's code, then the token's number in SEQLZ_ESCAPE_BITS plain bits */
-        printf("\"escCode\":\"%s\",\"tokCode\":\"", code_of(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_ESCAPE));
+        printf("\"escCode\":\"%s\",\"tokCode\":\"",
+               code_of(seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_ESCAPE));
         for (k = SEQLZ_ESCAPE_BITS; k-- > 0;)
             putchar('0' + ((tok >> k) & 1));
         printf("\",");
@@ -81,7 +81,7 @@ int main(void) {
            seq[0].offset);
     printf("\"mlSym\":%u,\"mlCode\":\"%s\",\"extra\":%u,\"extraVal\":%u,\"value\":%u,\"ml\":%u}\n",
            sym,
-           code_of(seqlz_default_own.ml, SEQLZ_LEN_SYMBOLS, sym),
+           code_of(seqlz_default_lengths.ml, SEQLZ_LEN_SYMBOLS, sym),
            extra,
            v - (1U << extra),
            v,

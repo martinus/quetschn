@@ -1,30 +1,33 @@
-# seqlz.h: the format in constants {#ch-header}
+# seqlz_format.h and seqlz.h: the format in constants {#ch-header}
 
-`src/seqlz.h` is the header every file of the codec includes, and the one the tests, the benchmarks
-and the zram glue include to call it. It has the format as `#define`s, three small functions that turn
-a sequence into the numbers the format stores, `seqlz_len_symbol()`, `seqlz_off_class()` and
-`seqlz_token()`, and the interface: the structs and functions that build the tables, compress a page
-and decompress one. [Chapter 4](#ch-format) has the format in words, so this chapter spends its words
-on why each number has its value. How the tables lie in memory is `seqlz_internal.h`,
-[chapter 7](#ch-internal); a caller never sees it.
+`src/seqlz_format.h` has the format as `#define`s, and two small functions that turn a sequence into
+the numbers the format stores, `seqlz_len_symbol()` and `seqlz_off_class()`. Every file of the codec
+includes it, through `seqlz_tables.h` and `seqlz_internal.h`. `src/seqlz.h` is the interface for the
+tests, the benchmarks and the zram glue of this repository: the functions that build the tables,
+compress a block and decompress one. This chapter also has the parts of `seqlz_internal.h` that are
+constants of the encoder and the decoder, and its `seqlz_token()`, which the encoder uses and the tools
+see through `seqlz.h`; the tables' layout,
+`seqlz_tables.h`, is [chapter 7](#ch-internal). [Chapter 4](#ch-format) has the format in words, so
+this chapter spends its words on why each number has its value.
 
 ## The top of the file: the format in a comment {#ch-header--summary}
 
-@listing src/seqlz.h 1-27
+@listing src/seqlz_format.h 1-27
 
-The guard `_LINUX_SEQLZ_H` is the kernel's convention for a header in `include/linux/`. The kernel's
-copy has two headers: `include/linux/seqlz.h`, the interface zram calls, which `port.py` writes from
-`tools/kernel-port/seqlz.h`, and `lib/seqlz/seqlz.h`, made from this file, with the guard
-`_LIB_SEQLZ_SEQLZ_H` and `asm/page.h`, `linux/minmax.h` and `linux/types.h` in place of
-`seqlz_compat.h`.
+The kernel's copy has four headers: `include/linux/seqlz.h`, the interface zram calls, which
+`port.py` writes from `tools/kernel-port/seqlz.h`, and in `lib/seqlz/` this file, `seqlz_tables.h` and
+`seqlz_internal.h`. The guards there are `_LIB_SEQLZ_SEQLZ_FORMAT_H` and so on, after the files'
+place, and this file includes `linux/build_bug.h` and `linux/types.h` in place of `seqlz_compat.h`:
+a program that runs on the build machine includes it too ([chapter 8](#ch-codes--kernel)), so it may
+only use headers that the kernel has for such programs.
 
 The comment is the format short enough to keep in your head while reading the code. Two of its
-details are easy to read past. "1 to the page size" for the offset is generous: a match needs at least
-one byte before it, so 4095 is the largest offset on a 4 KiB page, which is what class 3's 12 bits
+details are easy to read past. "1 to the block size" for the offset is generous: a match needs at least
+one byte before it, so 4095 is the largest offset in a 4 KiB block, which is what class 3's 12 bits
 hold. And the token's formula in line 24 is exactly what `seqlz_token()` computes at the end of the
 file.
 
-@listing src/seqlz.h 28-58
+@listing src/seqlz_format.h 28-58
 
 The classes are the table of [chapter 4](#ch-format--offsets), which also has the numbers for offset
 2. The multiples of 8 have numbers too: on the zram pages of a desktop, 64% of the offsets from 16 to
@@ -34,12 +37,12 @@ The last sequence has no bits at all, which [chapter 4](#ch-format--end) explain
 copy line 57 says "Documentation/staging/seqlz.rst specifies the format.": `port.py` writes that file
 from `docs/format.md`, and the kernel's copy may not name the repository.
 
-@listing src/seqlz.h 60-69
+@listing src/seqlz_internal.h 1-21
 
 The kernel has `__ffs64()`, `__fls()` and `fls()` for what the two bit builtins do, but on x86-64 they
 are inline assembly, and the compiler can neither fold a constant through assembly nor merge it with
-the code around it. With the kernel's `__ffs()` and `fls()`, gcc wrote `decode_literals()` and
-`code_literals()` "in another shape" in a kernel build (commit `e814b1c`).
+the code around it. With the kernel's `__ffs()` and `fls()`, gcc wrote `seqlz_decode_literals()` and
+`seqlz_code_literals()` "in another shape" in a kernel build (commit `e814b1c`).
 
 `__builtin_memcpy()` is for the fixed copies of 8 and 16 bytes. A kernel built with
 `CONFIG_FORTIFY_SOURCE` replaces `memcpy()` with a version that checks sizes, and not every compiler
@@ -48,13 +51,14 @@ inlines it: on the Mi 9T's 4.14 kernel, built with clang, a module of the codec 
 1 (commit `48a7043`). `__builtin_bswap64()` turns a literal stream's bits around once per flush, in
 `lit_flush()` ([chapter 11](#ch-literals-enc)).
 
-## The page size and the token {#ch-header--token}
+## The block size and the token {#ch-header--token}
 
-@listing src/seqlz.h 71-86
+@listing src/seqlz_format.h 60-81
 
 `QUETSCHN_PAGE_BITS` is the codec's one setting, 12 for 4 KiB pages and 14 for 16 KiB, where CMake
-passes `-DQUETSCHN_PAGE_BITS=14`. The kernel's copy uses `PAGE_SHIFT` instead and stops with `#error`
-if it is not 12: the format for 16 KiB pages is not fixed yet
+passes `-DQUETSCHN_PAGE_BITS=14`; `SEQLZ_BLOCK_BITS` takes it, so a block is one page. The kernel's
+copy has `#define SEQLZ_BLOCK_BITS 12U`, whatever the kernel's page size is: it compresses blocks of
+4 KiB, and the format for 16 KiB pages is not fixed yet
 ([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 
 The two longest codes set the sizes of the decode tables. A table-driven decoder looks up the next $L$
@@ -83,7 +87,7 @@ That gain went when the bitstream became most significant bit first: a code's en
 each other, and a page touches fewer lines of the table anyway ([chapter 3](#ch-cpu--msb-first)). So
 10 bits pays only on the in-order core, and 11 bits stay.
 
-@listing src/seqlz.h 87-103
+@listing src/seqlz_format.h 82-98
 
 A length value after the token costs a second lookup, in another table, so the fewer sequences need
 one, the better. With 4 bits for `ml - 4` a match length value followed 18.7% of the matches, with 5
@@ -110,7 +114,7 @@ one more select the Mi 9T's A55 wrote 1.0% and read warm pages 1.7% slower, its 
 
 ## The escape and the caps {#ch-header--escape}
 
-@listing src/seqlz.h 104-123
+@listing src/seqlz_format.h 99-120
 
 A code of $l$ bits uses $2^{-l}$ of the code space, and the sum may not exceed 1
 ([chapter 2](#ch-compression--complete)), so codes of at most 11 bits have room for 2048 codes, and
@@ -141,7 +145,7 @@ more", and `ll - 15` follows as a length value.
 
 ## Length values {#ch-header--length-values}
 
-@listing src/seqlz.h 124-143
+@listing src/seqlz_format.h 121-140
 
 A length value of 16 or more, with its highest set bit at position $b$, is the symbol $12 + b$ and the
 $b$ bits below that bit. $b$ is at least 4, so the first such symbol is 16, and the base of 12 makes
@@ -166,12 +170,12 @@ most 4 KiB of literals".
 
 ## The tables as code lengths {#ch-header--lengths}
 
-@listing src/seqlz.h 145-173
+@listing src/seqlz_format.h 142-170
 
 The canonical code follows from the code lengths alone
 ([chapter 2](#ch-compression--canonical-codes)), so `struct seqlz_lengths`, one byte per symbol, is
 all the format fixes for the sequences: {{size.lengths}} bytes on 4 KiB pages, {{k16.size.lengths}} on
-16 KiB pages. The set compiled in, `seqlz_default_own` from `seqlz_default_tables.c`, is part of the
+16 KiB pages. The set compiled in, `seqlz_default_lengths` from `seqlz_default_tables.c`, is part of the
 format, and `docs/format.md` lists its SHA-256 so that a decoder written from the spec can check it has
 the right one. The 8 literal tables are `seqlz_lit_sets[][]`, further down.
 
@@ -188,7 +192,7 @@ example ([chapter 4](#ch-format--example)) has `ml - 35 = 4059`, symbol {{ch06.l
 
 ## Offset classes without a branch {#ch-header--offsets}
 
-@listing src/seqlz.h 175-192
+@listing src/seqlz_format.h 172-190
 
 Class 5 holds the multiples of 8 below `8 << 8`, {{ch06.class5_end}}, on both page sizes. On 16 KiB
 pages 10 bits could reach 8 KiB back, but that made the pages no smaller on average
@@ -205,16 +209,16 @@ nibble:    8  5  C  8  1  0     SEQLZ_RAW_NIBBLES = 0x85C810 on 4 KiB pages, 0x8
 ```
 @assert ch06.RAW_NIBBLES == "0x85C810" and k16.ch06.RAW_NIBBLES == "0x85E810"
 
-For class 3, `0x85C810 >> 12` is `0x85C`, and `& 15` leaves `0xC`, 12. The page size goes into the
-fourth nibble as `QUETSCHN_PAGE_BITS << 12`, and the compiler folds the whole expression into one
+For class 3, `0x85C810 >> 12` is `0x85C`, and `& 15` leaves `0xC`, 12. The block size goes into the
+fourth nibble as `SEQLZ_BLOCK_BITS << 12`, and the compiler folds the whole expression into one
 constant: gcc's code for `seqlz_off_class()` loads `${{ch06.RAW_NIBBLES_dec}}`. When class 3's bits were
-computed from `QUETSCHN_PAGE_BITS` in code, gcc branched on the class; a shift and a mask cannot become
+computed from the block's bits in code, gcc branched on the class; a shift and a mask cannot become
 a branch. `SEQLZ_SHIFT_NIBBLES` is the same trick for how far the offset is shifted right before it is
 sent: `0x330010`, 1 for class 1 and 3 for classes 4 and 5. The token's decode table entry has 2 bits
 for that shift ([chapter 7](#ch-internal--token-entry)).
 @assert ch06.OFF_SHIFT == k16.ch06.OFF_SHIFT == "0, 1, 0, 0, 3, 3"
 
-@listing src/seqlz.h 194-215
+@listing src/seqlz_format.h 192-213
 
 The encoder calls `seqlz_off_class()` once per match, and the classes of consecutive matches follow no
 pattern a branch predictor could learn ([chapter 3](#ch-cpu--branches)), so it is arithmetic:
@@ -266,49 +270,48 @@ int main(void)
 With `-DQUETSCHN_PAGE_BITS=14` the first line is `{{k16.ch06.RAW_NIBBLES}} {{k16.ch06.LEN_SYMBOLS}} {{k16.ch06.MAX_ESCAPE_LEN}}`, class 3 has {{k16.ch06.RAW_BITS3}} bits, and class 5 keeps its {{k16.ch06.RAW_BITS5}}.
 :::
 
-## The tables, behind a pointer {#ch-header--tables}
+## The userspace interface, and one global table {#ch-header--tables}
 
-@listing src/seqlz.h 217-235
+@listing src/seqlz.h 1-17
 
-`struct seqlz_sequence`, three `u16`, is a sequence for code outside the compressor: `seqlz_find()`
-fills an array of them, `seqlz_encode()` writes a page from one. The compressor itself does not use it;
-its matcher hands each sequence to the encoder as three arguments, as soon as it is found
-([chapter 9](#ch-matcher)).
+`seqlz.h` is for code outside the codec: the harness, the tests and the tools of this repository. It
+includes `seqlz_internal.h` ([chapter 7](#ch-internal)), so a test reaches every constant and table.
+The kernel does not get this file; its interface is `include/linux/seqlz.h`, two functions
+([chapter 15](#ch-zram-glue--interface)). `struct seqlz_sequence`, three `u16`, is a sequence for code
+outside the compressor: `seqlz_find()` fills an array of them, `seqlz_encode()` writes a block from one.
+The compressor itself does not use it; its matcher hands each sequence to the encoder as three
+arguments, as soon as it is found ([chapter 9](#ch-matcher)).
 
-`struct seqlz_tables` is opaque here; `seqlz_internal.h` defines it ([chapter 7](#ch-internal)): the
-codes for the encoder and the decode tables, {{size.tables|grp}} bytes on both page sizes. They are
-built once and then only read, by every CPU. In the kernel they are one global struct, built at boot
-or when the module loads and marked `__ro_after_init`, which makes the memory read-only after
-initialization ([chapter 15](#ch-zram-glue--init)), so they are no part of the per-CPU work memory.
-Outside the kernel a caller allocates `seqlz_tables_size()` bytes, as the benchmark's zram glue does.
-The `/**` comments are kernel-doc, the kernel's format for documenting a function
-([chapter 15](#ch-zram-glue--interface)).
+No function here takes the tables as a parameter. The codes for the encoder and the decode tables,
+{{size.tables|grp}} bytes on both block sizes, are one global struct, `seqlz_tables`
+([chapter 7](#ch-internal--tables)), built once and then only read, by every CPU, so they are no
+part of the per-CPU work memory. In userspace `seqlz_tables_init()` builds them when a program starts.
+In the kernel they are `const`, written as C by a program that runs when the kernel is built
+([chapter 15](#ch-zram-glue--init)). The `/**` comments are kernel-doc, the kernel's format for
+documenting a function ([chapter 15](#ch-zram-glue--interface)).
 @assert size.tables == k16.size.tables
 
-The kernel's copy leaves out what only the harness uses: `struct seqlz_sequence`,
-`seqlz_tables_size()`, `seqlz_all_symbols()`, `seqlz_encode()`, `seqlz_find()` and
-`SEQLZ_MAX_SEQUENCES`.
-
-@listing src/seqlz.h 237-258
+@listing src/seqlz.h 19-41
 
 The decoder needs only a complete prefix code ([chapter 2](#ch-compression--complete)): every pattern
-of bits then starts with a code, and a symbol without one cannot be in a valid page. The encoder needs a
-code for every symbol it may have to write, as it cannot refuse a page for a rare token: for a token a
+of bits then starts with a code, and a symbol without one cannot be in a valid block. The encoder needs a
+code for every symbol it may have to write, as it cannot refuse a block for a rare token: for a token a
 code or the escape, for a length value and a literal a code. `seqlz_tables_init()` checks that and
 stores the answer that `seqlz_all_symbols()` returns; `seqlz_encode()` and `seqlz_compress()` return 0
-when it is false. The kernel's copy has no such check: since commit `4c42cc5` the script that writes
-the kernel's tables checks the lengths, so building them at boot cannot fail.
+when it is false. The kernel's copy has no such check per block: the program that writes the kernel's
+tables fails the build instead ([chapter 8](#ch-codes--kernel)).
 
 The four failures of `seqlz_tables_init()` are the ways lengths are no complete prefix code: a code
 longer than its table, e.g. a token code of 12 bits; a sum of $2^{-l}$ above 1, where codes would share
 entries; below 1, a gap; or no code at all. `-EINVAL` is the kernel's convention, a negative error
-number, 0 for success. The tests pass made-up lengths to check that bad ones are refused. In the
-kernel's copy the function is `static` and `__init`, code the kernel frees after boot, and `port.py`
-moves its kernel-doc to the definition, as for `seqlz_decode()` and `seqlz_compress()`.
+number, 0 for success. The tests pass made-up lengths to check that bad ones are refused, and then build
+the real tables again: `seqlz_tables_init()` replaces the one global, so nothing may compress or
+decompress meanwhile.
 
 ## The literal tables and their header {#ch-header--literals}
 
-@listing src/seqlz.h 260-281
+@listing src/seqlz_format.h 215-230
+@listing src/seqlz_internal.h 23-27
 
 A literal table codes the 256 byte values. With codes of at most 10 bits its decode table has 1024
 entries of 2 bytes, 2 KiB; with 9 bits it would be half the cache lines on a cold read, but on the
@@ -326,7 +329,7 @@ already and one bit is the decoder's marker of where the valid bits end
 ([chapter 13](#ch-literals-dec)), so $64 - 7 - 1 = 56$ bits are left: 5 codes of 10 bits, 40
 literals for all 8 streams per refill.
 
-@listing src/seqlz.h 282-302
+@listing src/seqlz_format.h 231-252
 
 ```text
 byte 2:      bit 7 | bit 6  bit 5  bit 4 | bit 3  bit 2  bit 1  bit 0
@@ -347,16 +350,16 @@ them
 ([`docs/explored-designs.md`](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#stream-sizes-in-as-many-bits-as-the-largest-needs-kept)).
 The code has 4 bits for 9 values: 0 to 7 are the fixed tables, `SEQLZ_LIT_OWN` below. The codes 9
 to 15 are invalid, so that a future format could tell itself apart
-([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
+([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-block)).
 Bit 7 was such a free bit too, which had to be 0, until level 3 began to store its literals as
 deltas on 21st October 2026. E.g. the text page of [chapter 4](#ch-format--own) at level 3 has byte 2
 `{{own.text.t}}`: code {{own.text.lcode}} in bits 0 to 3, $w - 5 = {{own.text.w5}}$ in bits 4 to 6,
 and bit 7 0, its literals are as they are. `SEQLZ_LIT_CODE_MASK`, `SEQLZ_LIT_WIDTH_AT` and
-`SEQLZ_LIT_DELTA_AT` are the masks and shifts that pick the fields, and `seqlz_internal.h` checks with
+`SEQLZ_LIT_DELTA_AT` are the masks and shifts that pick the fields, and `seqlz_tables.h` checks with
 `static_assert`s that they fit together ([chapter 7](#ch-internal--byte2)).
 @assert own.text.lcode == own.lit_own and own.text.w5 + 5 == own.text.w and int(own.text.t, 16) < 128
 
-@listing src/seqlz.h 303-319
+@listing src/seqlz_format.h 253-269
 
 The encoder subtracts the earlier byte from the literal, the decoder adds it back, both modulo 256,
 with the byte the encoder used, which the decoder has written to the page by then. What the delta is
@@ -395,7 +398,7 @@ smallest multiple of the offset that is 4 or more, 4 for an offset of 1 or 2 and
 for the decoder: it adds 4 or 8 bytes at a time, which only works if every byte it adds lies before
 the word it writes, at least 4 bytes back. After a match with an offset of 3 the bytes repeat every 3
 bytes, so the byte 6 back is the byte 3 back. `seqlz_delta_last()` in [chapter 7](#ch-internal--byte2)
-computes that distance, the encoder picks the delta in `delta_literals()`
+computes that distance, the encoder picks the delta in `seqlz_delta_literals()`
 ([chapter 11](#ch-literals-enc--deltas)), and the decoder adds the bytes back in `undelta_literals()`
 ([chapter 13](#ch-literals-dec--undelta)). On ten samples of 20 000 pages, level 3 stores 869.7 bytes
 per page with deltas, 915.6 without, 5.0% less, measured on 21st and 22nd October 2026
@@ -403,7 +406,8 @@ per page with deltas, 915.6 without, 5.0% less, measured on 21st and 22nd Octobe
 [one rule](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept));
 [chapter 17](#ch-decisions--deltas) has what it costs in time.
 
-@listing src/seqlz.h 320-344
+@listing src/seqlz_format.h 270-295
+@listing src/seqlz.h 43-49
 
 The comment is the format of [a page's own table](#ch-format--own) in a few lines. "A run of k bits"
 means a run whose number has `k` bits: a run of 32 is `0b100000`, 6 bits, so it is symbol
@@ -420,14 +424,14 @@ decode table of 1024 entries, 2 KiB, for the literals, and work memory is what t
 into the scratch first, and only then does the loop over the sequences write the page
 ([chapter 13](#ch-literals-dec--own)).
 
-@listing src/seqlz.h 345-359
+@listing src/seqlz_internal.h 28-51
 
 The rule of `SEQLZ_LIT_CODED_MIN` in the encoder is `d + coded + 51 < n - n / 16`, with `coded` the
 bytes of the 8 streams, `d` those of a page's own table, 0 for a fixed one, and `n` the literals. With 1000 literals and a fixed table the streams may take at most 886 bytes,
 11.4% less than the raw literals; with 100 they must stay below 43 bytes, and few pages with so few
 literals get there. [Chapter 11](#ch-literals-enc--rule) has the measurements behind the 51 bytes.
 They also cover the larger header, at most 13 bytes more than the raw page's 2, which a `static_assert`
-in `seqlz_compress.c` checks, because the coded literals are written over the raw ones in place
+in `seqlz_compress_literals.c` checks, because the coded literals are written over the raw ones in place
 ([chapter 11](#ch-literals-enc--in-place)).
 <!-- undated: arithmetic on the rule of SEQLZ_LIT_CODED_MIN, no measurement -->
 @assert ch06.LIT_CODED_MIN == 51
@@ -436,15 +440,15 @@ The scratch is the decoder's buffer for coded literals, one per CPU and part of 
 {{const.SCRATCH}} bytes on 4 KiB pages and {{k16.const.SCRATCH|grp}} on 16 KiB pages. The loop over the
 sequences then reads the literals from there as if they were raw, and its fast path copies 16 bytes at
 a time ([chapter 14](#ch-decode)): the 16 bytes more are what the last copy may read past the last
-literal, and what the last step of `decode_literals()` may write
+literal, and what the last step of `seqlz_decode_literals()` may write
 ([chapter 13](#ch-literals-dec)). For raw literals the bytes after them in the compressed page play
 that part.
 
 ## Decoding a page {#ch-header--encode-decode}
 
-@listing src/seqlz.h 361-376
+@listing src/seqlz.h 51-65
 
-Lines 369 to 371 are the most important lines of this header. zram stores no checksum, so a page
+Lines 58 to 60 are the most important lines of this header. zram stores no checksum, so a page
 damaged in memory, or by a bug elsewhere, reaches the decoder as it is, and a decoder that wrote outside
 its buffers would turn a damaged page into a damaged kernel. [Chapter 14](#ch-decode--safety) has the
 checks and the fuzzing that keep the promise. The page does not say which tables wrote it. `scratch` may
@@ -452,10 +456,10 @@ be `NULL` for a device at level 1, `seqlz-1`, whose compressor never codes liter
 memory per CPU ([chapter 15](#ch-zram-glue--backend)). There is no partial result: either the page is
 valid and `dst` holds it, or `-EINVAL`.
 
-@listing src/seqlz.h 378-387
+@listing src/seqlz_internal.h 77-86
 
-Only a sequence with a match has a token, so `ml` is at least 4; the last sequence's `ml` of 0 would
-wrap, and `min()` would make it 31. Until 11th October 2026 the last sequence had a token, and the line
+Only a sequence with a match has a token, so `ml` is at least `SEQLZ_MIN_MATCH`, 4; the last
+sequence's `ml` of 0 would wrap, and `min()` would make it 31. Until 11th October 2026 the last sequence had a token, and the line
 was `ml ? min(ml - 4, SEQLZ_ML_CAP) : 0`. Two tokens:
 
 | `ll` | `ml` | class | token |
@@ -471,7 +475,8 @@ conditional move per cap and no branch.
 
 ## The compressor's state {#ch-header--compressor}
 
-@listing src/seqlz.h 389-401
+@listing src/seqlz_internal.h 53-63
+@listing src/seqlz.h 66-68
 
 The first comment is the compressor's design: the matcher and the encoder are one loop over the page
 ([chapter 9](#ch-matcher), [chapter 10](#ch-encoder)). Each entry of the hash table is the position of
@@ -483,7 +488,7 @@ measurements of 2048 and 8192 entries. The kernel's copy has `12U` in place of t
 {{k16.const.MAX_SEQUENCES}} on 16 KiB pages. `seqlz_encode()` rejects more, `seqlz_find()` needs room
 for that many, and the decoder's work per page is bounded by the same count.
 
-@listing src/seqlz.h 403-414
+@listing src/seqlz_internal.h 64-75
 
 A **level** is what zram calls the knob a user sets per device, `level=` in
 `/sys/block/zram0/algorithm_params` ([chapter 15](#ch-zram-glue--backend)). seqlz's three levels write
@@ -505,14 +510,15 @@ before the deltas, which made level 3's writes about 4 µs slower on the A76 in 
 ([chapter 17](#ch-decisions--deltas)).
 @assert ch09.lazy_len == 20
 
-@listing src/seqlz.h 416-428
+@listing src/seqlz_internal.h 88-100
+@listing src/seqlz_internal.h 148-161
 
 `struct seqlz_state` is the compressor's work memory, one per CPU, as zram compresses on every CPU at
-once. Once the matcher is through the page, the hash table is free, and `code_literals()` keeps a copy
+once. Once the matcher is through the page, the hash table is free, and `seqlz_code_literals()` keeps a copy
 of the raw literals there while it writes the coded ones over their old place in the output
 ([chapter 11](#ch-literals-enc--in-place)); at level 3 with deltas the copy is the deltas,
-which `delta_literals()` writes there. A `static_assert` in `seqlz_compress.c` checks that the
-table alone has room for a page, so the union is {{size.state}} bytes, no more than the table, and
+which `seqlz_delta_literals()` writes there. A `static_assert` in `seqlz_compress_literals.c` checks
+that the table alone has room for a page, so the union is {{size.state}} bytes, no more than the table, and
 {{k16.size.state|grp}} on 16 KiB pages. `work` is the same bytes again as `u64`, for level 3:
 `struct own_work`, what the encoder needs for a page's own table, lies at byte {{own.enc.work_at}},
 behind the copy of the literals, which on a page that gets such a table is never longer
@@ -522,13 +528,13 @@ What it adds is the alignment of 8: a union of `u16` and `u8` alone could start 
 and `struct own_work` has `u32` members. In the kernel the hash table and the decoder's scratch share
 one allocation of 8 KiB per CPU ([chapter 15](#ch-zram-glue--backend)).
 
-@listing src/seqlz.h 430-443
+@listing src/seqlz.h 70-83
 
 `seqlz_find()` runs the matcher alone, e.g. to compare matchers or to feed `seqlz_encode()`, with the
 matcher of the level it is given: at level 3 the sequences are other ones. It does not copy the
 literals; a tool takes them from the page.
 
-@listing src/seqlz.h 445-476
+@listing src/seqlz.h 85-115
 
 `seqlz_encode()` writes a page from sequences it is given. It needs the state only at level 3, as work
 memory for a page's own table ([chapter 11](#ch-literals-enc--own)) and for the deltas; below
@@ -540,13 +546,13 @@ gives a page that decodes to something else.
 
 `seqlz_encode()` is for the tests, the fuzzer that feeds the encoder raw sequences, and
 `tools/seqlz-worst/`, which writes valid pages from sequences the matcher would never find, to search
-for the pages slowest to decode. It checks the rules of lines 463 to 466, the ones the decoder checks,
+for the pages slowest to decode. It checks the rules of lines 102 to 105, the ones the decoder checks,
 before it writes anything. It did not always: a match shorter than 4 bytes made `ml - 4` wrap to near
 $2^{32}$, its length value took more than 31 bits, and 1025 such sequences wrote past the two pages of
 `dst`. `fuzz/seqlz_encode_fuzz.c` came with the fix (commit `256768e`). 0 can mean failure because
 every page has at least its 2-byte header.
 
-@listing src/seqlz.h 478-508
+@listing src/seqlz.h 117-142
 
 `seqlz_compress()`'s size contract: zram's buffer of two pages is always enough, also for random data,
 which [chapter 10](#ch-encoder) proves with the 31 bits of `SEQLZ_MAX_ESCAPE_LEN`. A smaller buffer
@@ -555,10 +561,10 @@ a swap device. A page that does not fit is then an error up to 32 bytes early, b
 sequence the encoder checks for its literals plus `ENC_ROOM`, 32 bytes, not for the exact bytes. The
 page has to fit with raw literals even where its coded form would be smaller, since the coded literals
 go over the raw ones afterwards. At level 3 the encoder needs {{delta.rec}} bytes more per sequence with
-literals, for a record that `delta_literals()` reads ([chapter 10](#ch-encoder--records)); in a
+literals, for a record that `seqlz_delta_literals()` reads ([chapter 10](#ch-encoder--records)); in a
 `dst` too small for those the page is matched a second time without them, and stored without deltas. The tests check that `seqlz_compress()` writes the same bytes as
 `seqlz_encode()` for the sequences of `seqlz_find()`, at each level.
 
-In the kernel's copy this function is `seqlz_compress_page()`, `static`; the public `seqlz_compress()`
-of `include/linux/seqlz.h` calls it with the kernel's tables, returns `-EINVAL` for a level outside 1
-to 3, and `-E2BIG` instead of 0 ([chapter 15](#ch-zram-glue)).
+In the kernel's copy this function is `seqlz_compress_block()`, `static`; the public `seqlz_compress()`
+of `include/linux/seqlz.h` calls it, returns `-EINVAL` for a level outside 1 to 3, and `-E2BIG`
+instead of 0 ([chapter 15](#ch-zram-glue--interface)).

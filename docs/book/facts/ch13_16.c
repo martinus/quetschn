@@ -11,6 +11,7 @@
 #include "facts.h"
 
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 
 static int ch14_on;
 static unsigned int ch14_seq(unsigned int d,
@@ -43,6 +44,7 @@ static void ch14_slow(void);
 #define SEQLZ_LL_CAP (ch14_on ? ch14_slow() : (void)0, (1U << SEQLZ_LL_BITS) - 1U)
 
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 /* a key made with printf's format */
 static inline const char* key(const char* fmt, ...) {
@@ -116,7 +118,7 @@ static void ch14_constants(void) {
     fact_num("ch14.fast_two_bits", 2 * (SEQLZ_TOKEN_BITS + off));
     fact_num("ch14.fast_left", 56 - 2 * (SEQLZ_TOKEN_BITS + off));
     fact_num("ch14.fast_after_one", 56 - (SEQLZ_TOKEN_BITS + off));
-    fact_num("ch14.room.page", FAST_PAGE_ROOM);
+    fact_num("ch14.room.page", FAST_BLOCK_ROOM);
     fact_num("ch14.room.lit", FAST_LIT_ROOM);
     fact_num("ch14.room.input", FAST_IN_ROOM);
     fact_num("ch14.fast_nl", SEQLZ_LL_CAP - 1);
@@ -175,7 +177,7 @@ static void ch14_constants(void) {
     }
     fact_num("ch14.max_value", max_value);
     fact_num("ch14.max_len", max_value + SEQLZ_ML_CAP + 4);
-    fact_num("ch14.max_rounds", SEQLZ_PAGE / 4);
+    fact_num("ch14.max_rounds", SEQLZ_BLOCK_SIZE / 4);
 }
 
 static struct ch14_rec {
@@ -216,7 +218,8 @@ static void ch14_slow(void) {
 /* ---- chapter 13: the literal streams of chapter 11's page */
 
 static void ch13(void) {
-    static u8 page[SEQLZ_PAGE], src[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH], mine[SEQLZ_SCRATCH];
+    static u8 page[SEQLZ_BLOCK_SIZE], src[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH],
+        mine[SEQLZ_SCRATCH];
     const struct seqlz_tables* t = fact_tables();
     unsigned int n = fact_compress((letters_page(page), page), src, 1), n_lit, width, sz[8], i, j, k, rest, steps, r, ks[64],
                  nk = 0, starts[8], round0_bits = 0, last7 = 0;
@@ -259,7 +262,7 @@ static void ch13(void) {
     fact_num("ch13.max_load_byte", 7 * SEQLZ_SIZE_BITS_MAX / 8);
     fact_num("ch13.max_load_bit", 7 * SEQLZ_SIZE_BITS_MAX);
 
-    /* decode_literals(), its steps as they are, with the record of stream 0's first two refills */
+    /* seqlz_decode_literals(), its steps as they are, with the record of stream 0's first two refills */
     for (i = 0; i < 8; i++) {
         ip[i] = start[i];
         b[i] = 1;
@@ -371,7 +374,7 @@ static void ch13(void) {
 
     /* the same as the real decoder, also the bytes behind the literals */
     memset(scratch, 0, sizeof scratch);
-    if (seqlz_decode(t, src, n, out, scratch) || memcmp(scratch, mine, k + 8) || memcmp(out, page, SEQLZ_PAGE))
+    if (seqlz_decode(src, n, out, scratch) || memcmp(scratch, mine, k + 8) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         die("ch13: the replica differs from seqlz_decode()");
 
     fact_num("ch13.n", n);
@@ -414,7 +417,7 @@ static void ch13(void) {
     {
         unsigned int used = (unsigned int)(8 * (ip[0] - start[0])) + (unsigned int)__builtin_ctzll(b[0]);
         unsigned int last = starts[0] + sz[0] - 1, left = 8 * sz[0] - used, d;
-        static u8 bad[2 * SEQLZ_PAGE];
+        static u8 bad[2 * SEQLZ_BLOCK_SIZE];
 
         fact_num("ch13.e.size", sz[0]);
         fact_num("ch13.e.size_bits", 8 * sz[0]);
@@ -447,7 +450,7 @@ static void ch13(void) {
                 fact_num(key("ch13.e.size%u_bits", d), 8 * nsz);
                 fact_num(key("ch13.e.left%u", d), (long long)(8 * nsz) - used);
             }
-            if (seqlz_decode(t, bad, n, out, scratch) != -EINVAL)
+            if (seqlz_decode(bad, n, out, scratch) != -EINVAL)
                 die("ch13: a damaged page is accepted");
         }
     }
@@ -462,7 +465,7 @@ static void ch13(void) {
         fact_num("ch13.lt.loop_prefetches", sizeof(t->lit[0].decode) / L1_CACHE_BYTES);
         fact_num("ch13.lt.last_entry", (sizeof(t->lit[0].decode) - mod) / 2);
     }
-    fact_num("ch13.max_write", SEQLZ_PAGE + SEQLZ_LIT_STREAMS - 1);
+    fact_num("ch13.max_write", SEQLZ_BLOCK_SIZE + SEQLZ_LIT_STREAMS - 1);
 }
 
 /* ---- chapter 14: tokens, the page of ab, the trace of chapter 16's page */
@@ -516,7 +519,7 @@ static void ch14_token(const char* name, unsigned int s, unsigned int off) {
 }
 
 static void ch14(void) {
-    static u8 page[SEQLZ_PAGE], src[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static u8 page[SEQLZ_BLOCK_SIZE], src[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     const struct seqlz_tables* t = fact_tables();
     unsigned int n, s, i, fast = 0, slow = 0;
     u32 e;
@@ -550,7 +553,7 @@ static void ch14(void) {
         br = (struct seqlz_bit_reader){.p = src + 2 + 2, .end = src + n};
         if (get_unaligned_le16(src) != 2)
             die("ch14: ab has not 2 literals");
-        fact_num("ch14.ab.dfast", SEQLZ_PAGE - FAST_PAGE_ROOM);
+        fact_num("ch14.ab.dfast", SEQLZ_BLOCK_SIZE - FAST_BLOCK_ROOM);
         fact_num("ch14.ab.lit_fast_below", FAST_LIT_ROOM - n);
         seqlz_br_refill(&br);
         kstr("ch14.ab.bits", "0x%016llx", (unsigned long long)br.bits);
@@ -611,11 +614,11 @@ static void ch14(void) {
         fact_num("ch14.ab.count3", br.count);
         len = (((e) >> TOK_ML_AT) & 63U) + v;
         fact_num("ch14.ab.len", len);
-        fact_num("ch14.ab.room", SEQLZ_PAGE - TOK_LL(e));
+        fact_num("ch14.ab.room", SEQLZ_BLOCK_SIZE - TOK_LL(e));
         /* copy_match() with off < 8: stores while 8 bytes fit, then byte by byte */
-        fact_num("ch14.ab.store_end", (SEQLZ_PAGE - TOK_LL(e)) / 8 * 8 - 1);
-        fact_num("ch14.ab.bytewise", len - (SEQLZ_PAGE - TOK_LL(e)) / 8 * 8);
-        if (len != SEQLZ_PAGE - TOK_LL(e) || tok_s == SEQLZ_TOKEN_SYMBOLS || br.count >= 8)
+        fact_num("ch14.ab.store_end", (SEQLZ_BLOCK_SIZE - TOK_LL(e)) / 8 * 8 - 1);
+        fact_num("ch14.ab.bytewise", len - (SEQLZ_BLOCK_SIZE - TOK_LL(e)) / 8 * 8);
+        if (len != SEQLZ_BLOCK_SIZE - TOK_LL(e) || tok_s == SEQLZ_TOKEN_SYMBOLS || br.count >= 8)
             die("ch14: the page of ab");
     }
 
@@ -624,9 +627,9 @@ static void ch14(void) {
     n = fact_compress(page, src, 1);
     ch14_n = 0;
     ch14_on = 1;
-    s = (unsigned int)seqlz_decode(t, src, n, out, scratch);
+    s = (unsigned int)seqlz_decode(src, n, out, scratch);
     ch14_on = 0;
-    if (s || memcmp(out, page, SEQLZ_PAGE))
+    if (s || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         die("ch14: chapter 16's page");
     for (i = 0; i < ch14_n; i++) {
         const struct ch14_rec* r = &ch14_recs[i];
@@ -695,7 +698,7 @@ static void ch14(void) {
 
             if (seq[ns - 1].match || ns != ch14_n + 1)
                 die("ch14: the last sequence");
-            snprintf(end, sizeof end, "END  d=%u", SEQLZ_PAGE - left);
+            snprintf(end, sizeof end, "END  d=%u", SEQLZ_BLOCK_SIZE - left);
             kstr(key("ch14.trace.%u", lines++),
                  "%-35s%u literals left for %u bytes: the last sequence, no token",
                  end,
@@ -824,7 +827,7 @@ static unsigned int stream_bits(const u8* lits, unsigned int n, unsigned int k, 
 }
 
 static void ch16(void) {
-    static u8 page[SEQLZ_PAGE], raw[2 * SEQLZ_PAGE], coded[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], raw[2 * SEQLZ_BLOCK_SIZE], coded[2 * SEQLZ_BLOCK_SIZE];
     static struct ch16_seq q[SEQLZ_MAX_SEQUENCES];
     static const unsigned int show[] = {0, 1, 2, 5, 6, 7, 8, 11, 12, 13, 24, 98, 99, 177, 178, 179};
     const struct seqlz_tables* t = fact_tables();
@@ -833,13 +836,13 @@ static void ch16(void) {
     unsigned int part_seqs[4] = {0}, part_lits[4] = {0}, part_bits[4] = {0}, text_end, c4_offs[16], n_c4 = 0;
     unsigned int c5_ptr = 0, c5_mode = 0, c5_mode_n = 0, lines = 0;
     unsigned long long lit_part_bits[4] = {0};
-    static const unsigned int part_start[5] = {0, 64, 64 + 32 * 48, 0, SEQLZ_PAGE};
+    static const unsigned int part_start[5] = {0, 64, 64 + 32 * 48, 0, SEQLZ_BLOCK_SIZE};
     unsigned int pstart[5];
 
     slab_page(page);
     n = ch16_seqs(page, q);
     memcpy(pstart, part_start, sizeof pstart);
-    for (text_end = SEQLZ_PAGE; text_end > 0 && !page[text_end - 1]; text_end--)
+    for (text_end = SEQLZ_BLOCK_SIZE; text_end > 0 && !page[text_end - 1]; text_end--)
         ;
     pstart[3] = text_end;
     for (i = pstart[2]; i < text_end; i++)
@@ -850,7 +853,7 @@ static void ch16(void) {
     fact_num("ch16.page.text_last", text_end - 1);
     fact_num("ch16.page.text_len", text_end - pstart[2]);
     fact_num("ch16.page.text_lines", lines);
-    fact_num("ch16.page.zeros", SEQLZ_PAGE - text_end);
+    fact_num("ch16.page.zeros", SEQLZ_BLOCK_SIZE - text_end);
     /* the figure of the page, 680 units for 4096 bytes from x = 20 */
     kstr("ch16.fig.p.64", "%.1f", 20 + 64 * 680.0 / 4096);
     kstr("ch16.fig.p.w0", "%.1f", 64 * 680.0 / 4096);
@@ -858,16 +861,16 @@ static void ch16(void) {
     kstr("ch16.fig.p.x2", "%.1f", 20 + pstart[2] * 680.0 / 4096);
     kstr("ch16.fig.p.w2", "%.1f", (text_end - pstart[2]) * 680.0 / 4096);
     kstr("ch16.fig.p.x3", "%.1f", 20 + text_end * 680.0 / 4096);
-    kstr("ch16.fig.p.w3", "%.1f", (SEQLZ_PAGE - text_end) * 680.0 / 4096);
+    kstr("ch16.fig.p.w3", "%.1f", (SEQLZ_BLOCK_SIZE - text_end) * 680.0 / 4096);
     kstr("ch16.fig.p.c1", "%.0f", 20 + (64 + pstart[2]) / 2 * 680.0 / 4096);
     kstr("ch16.fig.p.c2", "%.1f", 20 + (pstart[2] + text_end) / 2.0 * 680.0 / 4096);
-    kstr("ch16.fig.p.c3", "%.1f", 20 + (text_end + SEQLZ_PAGE) / 2.0 * 680.0 / 4096);
+    kstr("ch16.fig.p.c3", "%.1f", 20 + (text_end + SEQLZ_BLOCK_SIZE) / 2.0 * 680.0 / 4096);
 
     for (i = 0, n_lit = 0; i < n; i++) {
         unsigned int p;
 
         n_lit += q[i].ll;
-        for (p = 0; p < 3 && (q[i].pos >= SEQLZ_PAGE ? SEQLZ_PAGE - 1 : q[i].pos) >= pstart[p + 1]; p++)
+        for (p = 0; p < 3 && (q[i].pos >= SEQLZ_BLOCK_SIZE ? SEQLZ_BLOCK_SIZE - 1 : q[i].pos) >= pstart[p + 1]; p++)
             ;
         part_seqs[p]++;
         part_lits[p] += q[i].ll;
@@ -999,7 +1002,7 @@ static void ch16(void) {
         kstr("ch16.e0.top", "0x%02x", word >> ((esc >> TOK_ENC_LEN_AT) + SEQLZ_ESCAPE_BITS - 8) & 0xff);
         kstr("ch16.e0.next", "0x%02x", word & 0xff);
         fact_num("ch16.e0.lit_end", SEQLZ_HEADER + q[0].ll);
-        fact_num("ch16.e0.room", 2 * SEQLZ_PAGE - SEQLZ_HEADER);
+        fact_num("ch16.e0.room", 2 * SEQLZ_BLOCK_SIZE - SEQLZ_HEADER);
         fact_num("ch16.enc_min", SEQLZ_HEADER + ENC_ROOM);
         fact_num("ch16.hash_entries", 1U << SEQLZ_HASH_BITS);
         fact_num("ch16.hash_bytes", sizeof(((struct seqlz_state*)0)->table));
@@ -1013,18 +1016,18 @@ static void ch16(void) {
     /* raw literals */
     n_raw = fact_compress(page, raw, 0);
     fact_num("ch16.raw.len", n_raw);
-    kstr("ch16.raw.pct", "%.1f", 100.0 * n_raw / SEQLZ_PAGE);
+    kstr("ch16.raw.pct", "%.1f", 100.0 * n_raw / SEQLZ_BLOCK_SIZE);
     fact_num("ch16.raw.lit_end", SEQLZ_HEADER + n_lit);
     fact_hex("ch16.raw.u16", raw, 2);
-    fact_num("ch16.raw.gap", 2 * SEQLZ_PAGE - (bits + 7) / 8 - (SEQLZ_HEADER + n_lit));
+    fact_num("ch16.raw.gap", 2 * SEQLZ_BLOCK_SIZE - (bits + 7) / 8 - (SEQLZ_HEADER + n_lit));
     fact_num("ch16.raw.copies", (bits + 7) / 8 / 8);
     fact_num("ch16.raw.singles", (bits + 7) / 8 % 8);
     fact_hex("ch16.raw.b4", raw + SEQLZ_HEADER + n_lit, 4);
-    fact_num("ch16.raw.buf_start", 2 * SEQLZ_PAGE - (bits + 7) / 8);
+    fact_num("ch16.raw.buf_start", 2 * SEQLZ_BLOCK_SIZE - (bits + 7) / 8);
     if (n_raw != SEQLZ_HEADER + n_lit + (bits + 7) / 8)
         die("ch16: raw length");
 
-    /* the literal tables as code_literals() weighs them */
+    /* the literal tables as seqlz_code_literals() weighs them */
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         unsigned int b = stream_bits(raw + SEQLZ_HEADER, n_lit, k, &bytes, NULL);
 
@@ -1080,7 +1083,7 @@ static void ch16(void) {
     /* coded literals */
     n_coded = fact_compress(page, coded, 1);
     fact_num("ch16.coded.len", n_coded);
-    kstr("ch16.coded.pct", "%.1f", 100.0 * n_coded / SEQLZ_PAGE);
+    kstr("ch16.coded.pct", "%.1f", 100.0 * n_coded / SEQLZ_BLOCK_SIZE);
     kstr("ch16.coded.u16", "0x%04x", get_unaligned_le16(coded));
     kstr("ch16.coded.nlit_hex", "0x%04x", get_unaligned_le16(coded) & (SEQLZ_LIT_CODED - 1U));
     fact_hex("ch16.coded.u16_bytes", coded, 2);
@@ -1192,7 +1195,7 @@ static void ch16(void) {
         static struct ch16_seq q2[SEQLZ_MAX_SEQUENCES];
         unsigned int n2, lits = 0, b2 = 0, best2 = ~0U, set2 = 0, bytes2 = 0, len2, len2c;
 
-        memset(page + pstart[2], 0, SEQLZ_PAGE - pstart[2]);
+        memset(page + pstart[2], 0, SEQLZ_BLOCK_SIZE - pstart[2]);
         n2 = ch16_seqs(page, q2);
         for (i = 0; i < n2; i++) {
             lits += q2[i].ll;

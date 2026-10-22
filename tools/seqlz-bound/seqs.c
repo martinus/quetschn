@@ -6,7 +6,8 @@
  * match, the last sequence has no token: min(ll, 15) + 16 * min(ml - 4, 31), the offset, the offset
  * before it, and 1 for the first sequence of a page. Build from the repository's root:
  *   cc -O2 -Isrc -o seqs tools/seqlz-bound/seqs.c src/seqlz_codes.c src/seqlz_compress.c \
- *      src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
+ *      src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c \
+ *      src/seqlz_default_tables.c src/seqlz_lit_sets.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,24 +15,22 @@
 #include "seqlz.h"
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     FILE *f, *o;
     unsigned int pages = 0, i, k;
 
-    if (argc != 3 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb")) || !t ||
-        seqlz_tables_init(t, &seqlz_default_own)) {
+    if (argc != 3 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb")) || seqlz_tables_init(&seqlz_default_lengths)) {
         fprintf(stderr, "usage: seqs <pages file> <output>\n");
         return 1;
     }
-    while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
+    while (fread(page, 1, SEQLZ_BLOCK_SIZE, f) == SEQLZ_BLOCK_SIZE) {
         unsigned int n, last = 1;
 
-        for (k = 1; k < SEQLZ_PAGE && page[k] == page[0]; k++)
+        for (k = 1; k < SEQLZ_BLOCK_SIZE && page[k] == page[0]; k++)
             ;
-        if (k == SEQLZ_PAGE || seqlz_compress(t, &st, page, dst, sizeof dst, 2) >= 3625)
+        if (k == SEQLZ_BLOCK_SIZE || seqlz_compress(&st, page, dst, sizeof dst, 2) >= 3625)
             continue;
         n = seqlz_find(&st, page, seq, 2);
         for (i = 0; i + 1 < n; i++) {

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
-"""seqlz_ref.py <compressed page>...: a decoder written from docs/format.md alone, slow on purpose, to check
-the spec against src/. Prints per file "invalid" or "valid <sha256 of the page>".
---page-bits 14 for 16 KiB pages. The tables are read from the files docs/format.md names, and checked
+"""seqlz_ref.py <compressed block>...: a decoder written from docs/format.md alone, slow on purpose, to check
+the spec against src/. Prints per file "invalid" or "valid <sha256 of the block>".
+--block-bits 14 for 16 KiB blocks. The tables are read from the files docs/format.md names, and checked
 against the SHA-256 docs/format.md gives for them."""
 
 import argparse
@@ -26,9 +26,9 @@ def spec_hashes():
     return dict(re.findall(r"^\| `(\w+)` \| `([0-9a-f]{64})` \|", (REPO / "docs" / "format.md").read_text(), re.MULTILINE))
 
 
-def load_tables(page_bits):
+def load_tables(block_bits):
     """canonical codes of TOK, LL, ML, the 8 literal tables and OWN, after checking the lengths' SHA-256"""
-    codec, size = REPO / "src", f"{4 if page_bits == 12 else 16}k"
+    codec, size = REPO / "src", f"{4 if block_bits == 12 else 16}k"
     src = (codec / f"seqlz_default_tables_{size}.inc").read_text()
 
     def field(name):
@@ -39,7 +39,7 @@ def load_tables(page_bits):
     own_at = lit_src.index("seqlz_own_lengths[SEQLZ_OWN_SYMBOLS] =")
     lit = numbers(lit_src[lit_src.index("seqlz_lit_sets[SEQLZ_LIT_SETS][256] =") : own_at].split("=", 1)[1])
     own = numbers(lit_src[own_at:].split("=", 1)[1])
-    assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 12 + page_bits
+    assert len(tables["TOK"]) == 3073 and len(tables["LL"]) == len(tables["ML"]) == 12 + block_bits
     assert len(lit) == 8 * 256 and len(own) == 19
     hashes = spec_hashes()
     for name, lengths in [*tables.items(), ("LIT", lit), ("OWN", own)]:
@@ -95,7 +95,7 @@ class Bits:
         return v
 
     def ends_here(self, end):
-        """"The end of a page": fewer than 8 bits left before bit end, and they are 0"""
+        """"The end of a block": fewer than 8 bits left before bit end, and they are 0"""
         return 0 <= end - self.pos < 8 and self.read(end - self.pos) == 0
 
     def symbol(self, codes):
@@ -105,9 +105,9 @@ class Bits:
         return codes[(length, code)]
 
 
-def own_table(page, at, own_codes):
-    """docs/format.md's "A page's own literal table", from byte at: its codes, and its bytes d"""
-    r = Bits(page, at)
+def own_table(block, at, own_codes):
+    """docs/format.md's "A block's own literal table", from byte at: its codes, and its bytes d"""
+    r = Bits(block, at)
     lengths, value, space = [0] * 256, 0, 0  # space in units of 2^-10
     while space < 1024:
         sym = r.symbol(own_codes)
@@ -121,50 +121,50 @@ def own_table(page, at, own_codes):
             k = sym - 9
             value += (1 << (k - 1)) + r.read(k - 1)
     d = (r.pos - 8 * at + 7) // 8
-    if space > 1024 or at + d > len(page) or not r.ends_here(8 * (at + d)):
+    if space > 1024 or at + d > len(block) or not r.ends_here(8 * (at + d)):
         raise Invalid
     return canonical(lengths, 10), d
 
 
-def decode(page, tables, page_bits):
+def decode(block, tables, block_bits):
     tok_codes, ll_codes, ml_codes, lit_codes, own_codes = tables
-    size = 1 << page_bits
-    offset_bits = [0, 1, 8, page_bits, 5, 8]
+    size = 1 << block_bits
+    offset_bits = [0, 1, 8, block_bits, 5, 8]
     offset_scale = [1, 2, 1, 1, 8, 8]
-    if len(page) < 2:
+    if len(block) < 2:
         raise Invalid
-    h = page[0] | page[1] << 8
+    h = block[0] | block[1] << 8
     n = h & 0x7FFF
     dt = 0
     if h & 0x8000:
-        t = page[2] if len(page) > 2 else 0
+        t = block[2] if len(block) > 2 else 0
         w, code, e = 5 + (t >> 4 & 7), t & 15, t >> 7
-        if len(page) < 3 + w + e or code > 8 or n > size:
+        if len(block) < 3 + w + e or code > 8 or n > size:
             raise Invalid
         if e:
-            dt = page[3]
+            dt = block[3]
             if dt not in (1, 2, 3):
                 raise Invalid
-        codes, d = own_table(page, 3 + w + e, own_codes) if code == 8 else (lit_codes[code], 0)
-        sizes = int.from_bytes(page[3 + e : 3 + e + w], "little")
+        codes, d = own_table(block, 3 + w + e, own_codes) if code == 8 else (lit_codes[code], 0)
+        sizes = int.from_bytes(block[3 + e : 3 + e + w], "little")
         start = [3 + w + e + d]
         for j in range(8):
             start.append(start[-1] + (sizes >> (j * w) & ((1 << w) - 1)))
-        if start[8] > len(page):
+        if start[8] > len(block):
             raise Invalid
         lits = [0] * n
         for j in range(8):
-            r = Bits(page, start[j])
+            r = Bits(block, start[j])
             for k in range(j, n, 8):
                 lits[k] = r.symbol(codes)
             if not r.ends_here(8 * start[j + 1]):
                 raise Invalid
-        bits = Bits(page[start[8] :])
+        bits = Bits(block[start[8] :])
     else:
-        if 2 + n > len(page):
+        if 2 + n > len(block):
             raise Invalid
-        lits = list(page[2 : 2 + n])
-        bits = Bits(page[2 + n :])
+        lits = list(block[2 : 2 + n])
+        bits = Bits(block[2 + n :])
 
     def value(codes):
         sym = bits.symbol(codes)
@@ -218,13 +218,13 @@ def decode(page, tables, page_bits):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--page-bits", type=int, default=12, choices=[12, 14])
+    ap.add_argument("--block-bits", type=int, default=12, choices=[12, 14])
     ap.add_argument("files", nargs="+")
     args = ap.parse_args()
-    tables = load_tables(args.page_bits)
+    tables = load_tables(args.block_bits)
     for f in args.files:
         try:
-            print(f"{f} valid {hashlib.sha256(decode(Path(f).read_bytes(), tables, args.page_bits)).hexdigest()}")
+            print(f"{f} valid {hashlib.sha256(decode(Path(f).read_bytes(), tables, args.block_bits)).hexdigest()}")
         except Invalid:
             print(f"{f} invalid")
 

@@ -1,5 +1,5 @@
 /*
- * The step-through of seqlz_match_page(): plays a trace that a copy of the real function recorded at
+ * The step-through of seqlz_match_block(): plays a trace that a copy of the real function recorded at
  * build time (instrument.py match, trace_match.c). Each step is the state in front of one statement:
  * the line, pos, anchor, last, h, cand, rep_hit, cand_hit, m and len. The bytes at pos and at the
  * candidates, the hash table and the sequences follow from the page and the steps before.
@@ -43,7 +43,7 @@
       emits = [];
       steps.forEach(function (s, k) {
         ops[k] = is(s, 'u64 v_next') ? OP.top : is(s, 'table[seqlz_hash5') ? OP.insert
-          : is(s, 'emit(ctx, src + anchor, SEQLZ_PAGE') ? OP.last : is(s, 'emit(') ? OP.emit : 0;
+          : is(s, 'emit(ctx, src + anchor, SEQLZ_BLOCK_SIZE') ? OP.last : is(s, 'emit(') ? OP.emit : 0;
         if (ops[k] === OP.emit || ops[k] === OP.last) emits.push(k);
       });
       cache = null;
@@ -79,7 +79,7 @@
       }
       if (t.indexOf('m = rep_hit') === 0) return (s[F.rep] ? 'The repeat offset hit' + (s[F.chit] ? ', and the table\u2019s candidate too, but the repeat offset is taken whenever it hits' : '') + ': the match starts at ' + rp + ', offset ' + s[F.last] + ', the same as the sequence before, which a token of class 0 sends in no bits at all.' : 'The match starts at the table\u2019s candidate, ' + s[F.cand] + ': offset ' + (pos - s[F.cand]) + '.');
       if (t.indexOf('len = 4U') === 0) return 'The first 4 bytes match, seqlz_match_len() compares from pos + 4, 8 bytes at a time with one XOR each. The match is ' + n[F.len] + ' bytes, at offset ' + (s[F.pos] - s[F.m]) + '.';
-      if (t.indexOf('emit(ctx, src + anchor, SEQLZ_PAGE') === 0) return 'pos = ' + pos + ' reached ' + C.LIMIT + ', 8 bytes before the end, where a try would read past the page: the loop stops. The rest, ' + (C.PAGE - s[F.anchor]) + ' bytes from ' + s[F.anchor] + ', is the last sequence, literals and no match.';
+      if (t.indexOf('emit(ctx, src + anchor, SEQLZ_BLOCK_SIZE') === 0) return 'pos = ' + pos + ' reached ' + C.LIMIT + ', 8 bytes before the end, where a try would read past the page: the loop stops. The rest, ' + (C.PAGE - s[F.anchor]) + ' bytes from ' + s[F.anchor] + ', is the last sequence, literals and no match.';
       if (t.indexOf('emit(') === 0) return 'A sequence: ' + (pos - s[F.anchor]) + ' literal' + (pos - s[F.anchor] === 1 ? '' : 's') + ' from ' + s[F.anchor] + ', then a match of ' + s[F.len] + ' bytes at offset ' + s[F.last] + '. The encoder writes it at once (chapter 10); the matcher keeps no list.';
       if (t.indexOf('table[seqlz_hash5') === 0) return 'The positions inside the match were skipped, none of them is in the table. One goes in: ' + (pos - 2) + ', 2 bytes before the match’s end, into slot ' + s[F.h2] + '. Then the loop goes on at ' + pos + '.';
       return '';
@@ -146,7 +146,7 @@
       }
       if (!is(s, 'memset')) {
         var src = is(s, 'u64 v_next') || is(s, 'if (!(') ? s[F.cand] : s[F.m];
-        if (!is(s, 'emit(ctx, src + anchor, SEQLZ_PAGE')) { box(src, 4, col.match); box(pos, 4, col.ink); }
+        if (!is(s, 'emit(ctx, src + anchor, SEQLZ_BLOCK_SIZE')) { box(src, 4, col.match); box(pos, 4, col.ink); }
       }
     }
 

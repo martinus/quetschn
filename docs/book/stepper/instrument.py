@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""A copy of src/seqlz_decompress.c whose decode_page(), the body of seqlz_decode(), records each step, for the step-through of
-chapter 14, or of src/page_lz.h whose seqlz_match_page() does, for chapter 9. A hook goes in front
+"""A copy of src/seqlz_decompress.c whose decode_block(), the body of seqlz_decode(), records each step, for the step-through of
+chapter 14, or of src/seqlz_match.h whose seqlz_match_block() does, for chapter 9. A hook goes in front
 of the statements below, on the same line, so __LINE__ is the line in src/. build.py compiles the copy
 with -ftrivial-auto-var-init=zero, so that a step before a variable's first assignment records 0 and
 not whatever was on the stack. Fails if a statement is not found: then the list below has to follow
 src/.
 
 instrument.py decode <src/seqlz_decompress.c> <out.c>   prints the function's first and last line
-instrument.py match <src/page_lz.h> <out.h>
+instrument.py match <src/seqlz_match.h> <out.h>
 """
 import sys
 
-# decode_page(): statements a step stops in front of, as their line starts after the indentation.
+# decode_block(): statements a step stops in front of, as their line starts after the indentation.
 # The hook is STEP_IN() inside the loop over the sequences, where its variables exist, else STEP_OUT().
 # Never the body of an if without braces: the hook would become the body; the script fails on one.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
-    "q = decode_literals(t, s, src_len, n_lit, scratch, d, &delta);",
+    "q = seqlz_decode_literals(s, src_len, n_lit, scratch, d,",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
-    "d_fast = d_end - FAST_PAGE_ROOM;",
+    "d_fast = d_end - FAST_BLOCK_ROOM;",
     "end_gap = (unsigned long)d_end - (unsigned long)lit_end;",
-    "if (n_lit == SEQLZ_PAGE)",
-    "tok = next_token(&br, &t->token);",
+    "if (n_lit == SEQLZ_BLOCK_SIZE)",
+    "tok = next_token(&br, &seqlz_tables.token);",
     "if (tok >> TOK_ESCAPE_AT) {",
     "idx = (unsigned int)(br.bits >>",
     "tok = token_entry(idx, 0);",
@@ -33,7 +33,7 @@ DECODE_STOPS = [
     "nl = TOK_LL(tok);",
     "len = TOK_ML(tok);",
     "if (!(tok & (1U << TOK_VALUE_AT)) && d <= d_fast &&",
-    "tok = next_token_fast(&br, &t->token, &skip);",
+    "tok = next_token_fast(&br, &seqlz_tables.token, &skip);",
     "copy16(d, lit);",
     "d += nl;",
     "lit += nl;",
@@ -43,12 +43,12 @@ DECODE_STOPS = [
     "d += len;",
     "continue;",
     "if (nl == SEQLZ_LL_CAP) {",
-    "nl += seqlz_br_value(&br, &t->ll);",
+    "nl += seqlz_br_value(&br, &seqlz_tables.ll);",
     "if (lit > lit_end || nl > (unsigned int)(lit_end - lit) ||",
     "copy_literals(d, d_end, lit, lit_bound, nl);",
     "copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));",
-    "if (len == SEQLZ_ML_CAP + 4U) {",
-    "len += seqlz_br_value(&br, &t->ml);",
+    "if (len == SEQLZ_ML_CAP + SEQLZ_MIN_MATCH) {",
+    "len += seqlz_br_value(&br, &seqlz_tables.ml);",
     "if (off - 1U >= (unsigned int)(d - (u8 *)dst) ||",
     "copy_match(d, d_end, off, len);",
     "if ((unsigned long)d - (unsigned long)lit == end_gap)",
@@ -57,7 +57,7 @@ DECODE_STOPS = [
     "return 0;",
 ]
 
-# seqlz_match_page(): STEP_A() where only the variables of the whole function exist, STEP_B() after
+# seqlz_match_block(): STEP_A() where only the variables of the whole function exist, STEP_B() after
 # the loop's own variables are declared
 MATCH_STOPS = [
     ("memset(table, 0, sizeof(u16) << SEQLZ_HASH_BITS);", "STEP_A"),
@@ -67,11 +67,11 @@ MATCH_STOPS = [
     ("len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, end);", "STEP_B"),
     ("emit(ctx, src + anchor, pos - anchor, len, last);", "STEP_B"),
     ("table[seqlz_hash5(get_unaligned_le64(src + pos - 2))] =", "STEP_B"),
-    ("emit(ctx, src + anchor, SEQLZ_PAGE - anchor, 0, 0);", "STEP_A"),
+    ("emit(ctx, src + anchor, SEQLZ_BLOCK_SIZE - anchor, 0, 0);", "STEP_A"),
 ]
 
 # the function and its last line: the first "}" at the start of a line after it
-FUNCTIONS = {"decode": "static __always_inline int decode_page(", "match": "static __always_inline void seqlz_match_page("}
+FUNCTIONS = {"decode": "static __always_inline int decode_block(", "match": "seqlz_match_block("}
 
 
 

@@ -19,7 +19,7 @@ sense given here.
   [Chapter 11](#ch-literals-enc)
 - **complete**: a prefix code whose codes use up every bit pattern, Kraft sum 1, so a decode table has no
   empty entry. [Chapter 2](#ch-compression--complete)
-- **decoder, encoder, matcher**: the matcher finds the matches of a page (`src/page_lz.h`), the encoder
+- **decoder, encoder, matcher**: the matcher finds the matches of a page (`src/seqlz_match.h`), the encoder
   writes them in the format, the decoder turns a compressed page back into the page.
   [Chapters 9 to 14](#ch-matcher)
 - **delta, `dt`**: at level 3, a literal stored as the literal minus an earlier byte of the page,
@@ -78,7 +78,7 @@ sense given here.
 - **prefix code**: codes of which none is the start of another, so a decoder knows where each ends.
   [Chapter 2](#ch-compression--prefix-codes)
 - **record**: at level 3, the {{delta.rec}} bytes the encoder writes in front of a sequence's literals, its position,
-  `ll` and the offset before, for `delta_literals()`. [Chapter 10](#ch-encoder--records)
+  `ll` and the offset before, for `seqlz_delta_literals()`. [Chapter 10](#ch-encoder--records)
 - **repeat offset**: the offset of the match before, used again for 0 bits; 1 at the start of a page.
   [Chapter 4](#ch-format--offsets)
 - **scratch**: the per-CPU buffer the decoder decodes coded literals into, a page plus 16 bytes.
@@ -114,8 +114,8 @@ sense given here.
   make each a call; seqlz's short copies use `__builtin_memcpy()`. [Chapter 6](#ch-header--summary)
 - **fuzz target**: a function's entry point for a fuzzer, libFuzzer or AFL++, which feeds it millions of
   mutated inputs. [Chapter 15](#ch-zram-glue--fuzzing)
-- **`__init`, initcall**: `__init` code runs while the kernel starts and is freed after; an initcall,
-  e.g. `subsys_initcall()`, is such a function the kernel calls at boot. [Chapter 8](#ch-codes--kernel),
+- **host program**: a program that the kernel's build compiles for the build machine and runs, e.g. to
+  write tables as C; the kernel copy's tables come from one. [Chapter 8](#ch-codes--kernel),
   [chapter 15](#ch-zram-glue--init)
 - **KASAN**: the kernel's address sanitizer. [Chapter 15](#ch-zram-glue--check)
 - **kernel copy**: the code `tools/kernel-port/port.py` writes into a kernel tree from `src/`, generated,
@@ -135,8 +135,8 @@ sense given here.
   swapped out. [Chapter 1](#ch-zram--swap)
 - **per-CPU**: data the kernel keeps once per CPU; zram's streams, with the codec's work memory, are.
   [Chapter 1](#ch-zram--work-memory)
-- **`__ro_after_init`**: data written while the kernel starts and read-only after, as the kernel copy's
-  tables. [Chapter 8](#ch-codes--kernel)
+- **read-only data**: `const` data, which the kernel maps read-only, so that a stray write faults; the
+  kernel copy's tables are such data. [Chapter 15](#ch-zram-glue--init)
 - **same-filled page**: a page of one repeated 8-byte value, which zram stores without the codec.
   [Chapter 1](#ch-zram)
 - **size class**: one of zsmalloc's fixed slot sizes; bytes saved within a class save nothing, and from

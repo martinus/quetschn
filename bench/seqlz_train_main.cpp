@@ -4,7 +4,7 @@
 // matcher on every page, split into seqlz's symbols, counted, and turned into code lengths of at most
 // SEQLZ_MAX_BITS bits. Writes a C initializer of the code lengths, by the page size of the build, with
 // --lit-sets the literal tables. src/seqlz_default_tables_4k.inc and the others are made by
-// tools/kernel-port/gen-seqlz-tables.py from the counts that --counts writes, the same tables.
+// tools/kernel-port/gen-seqlz-lengths.py from the counts that --counts writes, the same tables.
 // --counts also writes the counts the tables are built from, --from-counts builds them from such a file
 // instead of a corpus: bench/seqlz_counts_4k.txt and _16k.txt are the ones of the tables in src/.
 // --own-counts counts only the symbols of the description of a page's own literal table, from the pages
@@ -349,9 +349,9 @@ int main(int argc, char** argv) {
             return 0;
         }
         auto const c = quetschn::load_corpus(base);
-        if (c.page_size != SEQLZ_PAGE) {
+        if (c.page_size != SEQLZ_BLOCK_SIZE) {
             throw std::invalid_argument("the corpus has pages of " + std::to_string(c.page_size) + " bytes, this build " +
-                                        std::to_string(SEQLZ_PAGE));
+                                        std::to_string(SEQLZ_BLOCK_SIZE));
         }
         auto counts = quetschn::seqlz_counts{};
         counts.token.assign(SEQLZ_TOKEN_SYMBOLS, 0.0);
@@ -359,12 +359,10 @@ int main(int argc, char** argv) {
         counts.ml.assign(SEQLZ_LEN_SYMBOLS, 0.0);
         counts.own.assign(SEQLZ_OWN_SYMBOLS, 0.0);
         // the tables compiled in, for the pages level 3 writes, whose own literal tables are counted
-        auto tables = std::unique_ptr<seqlz_tables, void (*)(void*)>(
-            static_cast<seqlz_tables*>(std::malloc(seqlz_tables_size())), std::free);
-        if (!tables || seqlz_tables_init(tables.get(), &seqlz_default_own) != 0) {
+        if (seqlz_tables_init(&seqlz_default_lengths) != 0) {
             throw std::runtime_error("cannot build the tables compiled in");
         }
-        auto compressed = std::vector<unsigned char>(2 * SEQLZ_PAGE);
+        auto compressed = std::vector<unsigned char>(2 * SEQLZ_BLOCK_SIZE);
         auto own_pages = std::size_t{0};
         auto state = std::make_unique<seqlz_state>();
         auto buffer = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
@@ -377,12 +375,8 @@ int main(int argc, char** argv) {
             }
             ++pages;
             if (!counts_out.empty() || !own_out.empty()) {
-                auto const len = seqlz_compress(tables.get(),
-                                                state.get(),
-                                                src.data(),
-                                                compressed.data(),
-                                                static_cast<unsigned>(compressed.size()),
-                                                SEQLZ_LEVELS);
+                auto const len = seqlz_compress(
+                    state.get(), src.data(), compressed.data(), static_cast<unsigned>(compressed.size()), SEQLZ_LEVELS);
                 own_pages += count_own(std::span(compressed.data(), len), counts.own);
             }
             if (!own_out.empty()) {
@@ -456,7 +450,7 @@ int main(int argc, char** argv) {
             counts.lit = lit.sources;
             counts.lit_pages = lit.pages;
             counts.comments = {
-                "The symbol counts seqlz's tables for " + std::to_string(SEQLZ_PAGE / 1024) +
+                "The symbol counts seqlz's tables for " + std::to_string(SEQLZ_BLOCK_SIZE / 1024) +
                     " KiB pages are built from: quetschn-seqlz-train --from-counts <this file>",
                 "[--lit-sets] gives the code lengths. Made by quetschn-seqlz-train --corpus " + base + " --counts,",
                 std::to_string(pages) + " pages, " + std::to_string(page_lits.size()) +

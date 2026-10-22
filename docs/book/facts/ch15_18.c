@@ -8,7 +8,9 @@
 // facts: also 16k
 #include "facts.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 /* the repository's root, from this file's path: <root>/docs/book/facts/ch15_18.c */
 static const char* repo_path(const char* rel) {
@@ -139,8 +141,8 @@ static void kernel_port(void) {
     fact_num("ch15.kport.seqlz_h", lines_of_file());
     load("tools/kernel-port/api_compress.c");
     fact_num("ch15.kport.api_compress", lines_of_file());
-    load("tools/kernel-port/api_codes.c");
-    fact_num("ch15.kport.api_codes", lines_of_file());
+    load("tools/kernel-port/gen_tables_main.c");
+    fact_num("ch15.kport.gen_main", lines_of_file());
 
     load("tools/kernel-port/backend_seqlz.c");
     fact_num("ch15.backend.head.a", find_line("#define pr_fmt(fmt) \"seqlz: \" fmt", 1));
@@ -211,7 +213,7 @@ static void kernel_port(void) {
  * KMALLOC_MAX_CACHE_SIZE, in caches of powers of 2, a larger one in pages, a power of 2 of them
  */
 static unsigned int allocated(unsigned int n) {
-    unsigned int a = n <= 2 * SEQLZ_PAGE ? 8 : SEQLZ_PAGE;
+    unsigned int a = n <= 2 * SEQLZ_BLOCK_SIZE ? 8 : SEQLZ_BLOCK_SIZE;
 
     while (a < n)
         a *= 2;
@@ -219,7 +221,7 @@ static unsigned int allocated(unsigned int n) {
 }
 
 int main(void) {
-    const unsigned char* tok = seqlz_default_own.token;
+    const unsigned char* tok = seqlz_default_lengths.token;
     unsigned int s, own = 0, shortest = 99, longest = 0;
     char buf[32];
 

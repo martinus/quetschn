@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 /* n bytes of v, little endian */
 static inline void le(u8* p, unsigned long long v, unsigned int n) {
@@ -36,7 +36,7 @@ static inline void slab_page(u8* p) {
                                     "Every table is fixed, so a page carries none of its own.\n";
     unsigned int i;
 
-    memset(p, 0, SEQLZ_PAGE);
+    memset(p, 0, SEQLZ_BLOCK_SIZE);
     memcpy(p, "TASKSLAB", 8);
     le(p + 8, 48, 4);
     le(p + 12, 32, 4);
@@ -64,20 +64,20 @@ static inline void pointer_page(u8* p) {
 static inline void ab_page(u8* p) {
     unsigned int i;
 
-    for (i = 0; i < SEQLZ_PAGE; i++)
+    for (i = 0; i < SEQLZ_BLOCK_SIZE; i++)
         p[i] = i & 1 ? 'b' : 'a';
 }
 
 /* chapter 2's page: two records of a cat and a dog, then zeros */
 static inline void cat_page(u8* p) {
-    memset(p, 0, SEQLZ_PAGE);
+    memset(p, 0, SEQLZ_BLOCK_SIZE);
     memcpy(p, "cat=1,dog=2;cat=3,dog=4;", 24);
 }
 
 /* chapter 4's second page: three matches of three kinds of offset, then z to the end */
 static inline void second_page(u8* p) {
     memcpy(p, "abcdefghijklllllxycdefghi", 25);
-    memset(p + 25, 'z', SEQLZ_PAGE - 25);
+    memset(p + 25, 'z', SEQLZ_BLOCK_SIZE - 25);
 }
 
 /*
@@ -87,7 +87,7 @@ static inline void second_page(u8* p) {
 static inline void letters_page(u8* p) {
     unsigned int k, seed = 1;
 
-    memset(p, 0, SEQLZ_PAGE);
+    memset(p, 0, SEQLZ_BLOCK_SIZE);
     for (k = 0; k < 200; k++) {
         seed = seed * 1103515245U + 12345U;
         p[k] = (u8) "etaoinshrdlu "[(seed >> 16) % 13];
@@ -101,14 +101,14 @@ static inline void letters_page(u8* p) {
 static inline void words_page(u8* p) {
     unsigned int at = 0, seed = 1, k, n;
 
-    while (at < SEQLZ_PAGE) {
+    while (at < SEQLZ_BLOCK_SIZE) {
         seed = seed * 1103515245U + 12345U;
         n = 2 + (seed >> 16) % 8;
-        for (k = 0; k < n && at < SEQLZ_PAGE; k++) {
+        for (k = 0; k < n && at < SEQLZ_BLOCK_SIZE; k++) {
             seed = seed * 1103515245U + 12345U;
             p[at++] = (u8) "etaoinshrdlu"[(seed >> 16) % 12];
         }
-        if (at < SEQLZ_PAGE)
+        if (at < SEQLZ_BLOCK_SIZE)
             p[at++] = ' ';
     }
 }

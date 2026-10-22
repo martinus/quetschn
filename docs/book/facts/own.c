@@ -2,7 +2,7 @@
 /*
  * own.c: the facts of a page's own literal table, level 3, for chapters 4, 6, 7, 8, 11 and 13. It
  * includes seqlz_compress.c and seqlz_decompress.c to reach own_code(), own_lengths(), log2_256()
- * and own_table():
+ * and read_own_table():
  *   own.len.S, own.code.S     the fixed code OWN that describes a table, symbol S
  *   own.q.XX.*                quad[] for the 8 bits XX, field by field
  *   own.text.*                chapter 4's text page at level 3: its header, its table's
@@ -10,13 +10,15 @@
  *                             and the codes of its bytes
  *   own.enc.*                 the encoder on that page: counts, the entropy estimate, the lengths
  *                             before and after own_lengths() makes the code complete, the choice
- *   own.dec.*                 own_table() on that page, step by step, checked against its result
+ *   own.dec.*                 read_own_table() on that page, step by step, checked against its result
  */
 #include <stdarg.h>
 
 #include "facts.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 static char key_buf[128];
 
@@ -209,13 +211,13 @@ static unsigned int read_description(const u8* p, u8* len, unsigned int* rows) {
 
 /* chapter 4's text page at level 3, and what the encoder did for it */
 static const u8* text_facts(const struct seqlz_tables* t, unsigned int* d_out) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], len[256];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], len[256];
     static struct seqlz_state st;
     struct own_work* w = own_work(&st);
     unsigned int n, h, b2, wdt, d, rows, used, k, nb = 0, sum = 0, s[SEQLZ_LIT_STREAMS];
 
     words_page(page);
-    n = seqlz_compress(t, &st, page, dst, sizeof dst, SEQLZ_LEVEL_OWN);
+    n = seqlz_compress(&st, page, dst, sizeof dst, SEQLZ_LEVEL_OWN);
     h = get_unaligned_le16(dst);
     b2 = dst[2];
     if (!n || !(h & SEQLZ_LIT_CODED) || (b2 & SEQLZ_LIT_CODE_MASK) != SEQLZ_LIT_OWN)
@@ -267,23 +269,23 @@ static const u8* text_facts(const struct seqlz_tables* t, unsigned int* d_out) {
 
 /* own_code() and own_lengths() on the text page, step by step */
 static void encoder_facts(const struct seqlz_tables* t) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static const u8 shown[] = {' ', 'a', 'd', 'e', 'l', 'n', 'u'};
     struct own_work* w = own_work(&st);
-    u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}}, odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}};
+    u64 even[SEQLZ_LIT_STREAMS] = {0}, odd[SEQLZ_LIT_STREAMS] = {0};
     unsigned int n_lit, bits = ~0U, set = 0, j, k, coded = 0, sizes[SEQLZ_LIT_STREAMS], width, header, d, est;
     unsigned int h = 0, n = 0, space0 = 0, own_coded, own_width, init_len[256] = {0}, own_bits = 0;
     const u8* lits;
 
     words_page(page);
-    if (!seqlz_compress(t, &st, page, dst, sizeof dst, 1))
+    if (!seqlz_compress(&st, page, dst, sizeof dst, 1))
         fail("the text page does not compress");
     n_lit = get_unaligned_le16(dst);
     lits = dst + SEQLZ_HEADER;
-    /* code_literals()' first steps, with the counts for the page's own table */
+    /* seqlz_code_literals()' first steps, with the counts for the page's own table */
     memset(w->freq, 0, sizeof w->freq);
-    lit_cost(t, lits, n_lit, even, odd, w->freq);
+    lit_cost(lits, n_lit, even, odd, w->freq);
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         unsigned int b = 0;
 
@@ -330,7 +332,7 @@ static void encoder_facts(const struct seqlz_tables* t) {
         fact_str("own.enc.pr.nibble", bin(m * 0x0001000200040008ULL >> 48 & 15U, 4));
     }
     /* own_code() itself */
-    d = own_code(t, w, n_lit, header + coded);
+    d = own_code(w, n_lit, header + coded);
     if (!d)
         fail("own_code() gives the text page no table");
     for (k = 0; k < 256; k++)
@@ -431,11 +433,11 @@ static void encoder_facts(const struct seqlz_tables* t) {
 }
 
 /*
- * own_table() on the text page's description, step by step: the same steps again, recorded, and the
- * decode table they give must be the one own_table() builds
+ * read_own_table() on the text page's description, step by step: the same steps again, recorded, and the
+ * decode table they give must be the one read_own_table() builds
  */
 static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned int d) {
-    static u8 page[SEQLZ_PAGE], bucket[SEQLZ_SCRATCH], dt_page[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], bucket[SEQLZ_SCRATCH], dt_page[SEQLZ_BLOCK_SIZE];
     const unsigned int full = 1U << SEQLZ_LIT_BITS;
     unsigned int at = 0, b = 0, space = 0, step = 0, k, i, pos = 0, count[OWN_QUAD_NONE + 1] = {0};
     u8 order[OWN_QUAD_NONE + 1][256];
@@ -489,10 +491,10 @@ static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned
     fact_num("own.dec.steps", step);
     fact_num("own.dec.bits", pos);
     /* the real one */
-    end = own_table(&t->own, desc, desc + d + 64, (u16*)page, bucket);
+    end = read_own_table(&t->own, desc, desc + d + 64, (u16*)page, bucket);
     if (end != desc + d)
-        fail("own_table() ends elsewhere");
-    /* the canonical table from the steps' buckets, as own_table() writes it */
+        fail("read_own_table() ends elsewhere");
+    /* the canonical table from the steps' buckets, as read_own_table() writes it */
     for (i = 1, at = 0; i <= SEQLZ_LIT_BITS; i++)
         for (k = 0; k < count[i]; k++) {
             unsigned int r;
@@ -504,7 +506,7 @@ static void decoder_facts(const struct seqlz_tables* t, const u8* desc, unsigned
             str(key("own.dt.%02x.entry", order[i][k]), "0x%04x", i | order[i][k] << 8);
         }
     if (at != full || memcmp(lt, page, sizeof(u16) * full))
-        fail("the replay of own_table() gives another decode table");
+        fail("the replay of read_own_table() gives another decode table");
     fact_num("own.dt.bytes", sizeof(u16) * full);
     fact_num("own.dt.bucket_bytes", (OWN_QUAD_NONE + 1U) * 256U);
     fact_num("own.dec.step_max", OWN_STEP_MAX);

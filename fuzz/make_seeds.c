@@ -26,42 +26,42 @@ static void make_page(int kind, unsigned char* p) {
     static const char* const words[] = {"the ", "page ", "swap ", "memory ", "of ", "zram ", "kernel ", "and "};
     unsigned int k = 0;
 
-    memset(p, 0, SEQLZ_PAGE);
+    memset(p, 0, SEQLZ_BLOCK_SIZE);
     switch (kind) {
     case 0: /* zeros */
         break;
     case 1: /* text */
-        while (k < SEQLZ_PAGE) {
+        while (k < SEQLZ_BLOCK_SIZE) {
             const char* w = words[next() % (sizeof(words) / sizeof(words[0]))];
-            while (*w && k < SEQLZ_PAGE)
+            while (*w && k < SEQLZ_BLOCK_SIZE)
                 p[k++] = (unsigned char)*w++;
         }
         break;
     case 2: /* pointers close to each other */
-        for (; k + 8 <= SEQLZ_PAGE; k += 8) {
+        for (; k + 8 <= SEQLZ_BLOCK_SIZE; k += 8) {
             uint64_t v = 0x00007f3a12340000ULL + (next() % 4096) * 16;
             memcpy(p + k, &v, 8);
         }
         break;
     case 3: /* random, nothing to compress */
-        for (; k < SEQLZ_PAGE; k++)
+        for (; k < SEQLZ_BLOCK_SIZE; k++)
             p[k] = (unsigned char)next();
         break;
     case 4: /* 16 different bytes: no matches, but literals worth coding */
-        for (; k < SEQLZ_PAGE; k++)
+        for (; k < SEQLZ_BLOCK_SIZE; k++)
             p[k] = (unsigned char)(0x40 + next() % 16);
         break;
     case 5: /* half text, half random */
         make_page(1, p);
-        for (k = SEQLZ_PAGE / 2; k < SEQLZ_PAGE; k++)
+        for (k = SEQLZ_BLOCK_SIZE / 2; k < SEQLZ_BLOCK_SIZE; k++)
             p[k] = (unsigned char)next();
         break;
     case 6: /* short periods, matches with offsets below 8 */
-        for (; k < SEQLZ_PAGE; k++)
+        for (; k < SEQLZ_BLOCK_SIZE; k++)
             p[k] = (unsigned char)((unsigned char)"abcabcxyzxyzxyz"[(k / 64) % 3 * 3 + k % 3] + k / 512);
         break;
     default: /* 32-bit counters */
-        for (; k + 4 <= SEQLZ_PAGE; k += 4) {
+        for (; k + 4 <= SEQLZ_BLOCK_SIZE; k += 4) {
             uint32_t v = 1000 + k / 4;
             memcpy(p + k, &v, 4);
         }
@@ -82,13 +82,12 @@ static void write_file(const char* dir, const char* name, int i, const void* p, 
 }
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], in[SEQLZ_PAGE + 1], dst[2 * SEQLZ_PAGE];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], in[SEQLZ_BLOCK_SIZE + 1], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     int kind;
     unsigned int level;
 
-    if (argc != 3 || !t || seqlz_tables_init(t, &seqlz_default_own)) {
+    if (argc != 3 || seqlz_tables_init(&seqlz_default_lengths)) {
         fprintf(stderr, "usage: make_seeds <decode dir> <roundtrip dir>\n");
         return 1;
     }
@@ -96,12 +95,12 @@ int main(int argc, char** argv) {
         make_page(kind, page);
         for (level = 1; level <= SEQLZ_LEVELS; level++) {
             static const char* const prefix[] = {"", "level1-", "level2-", "level3-"};
-            unsigned int len = seqlz_compress(t, &st, page, dst, sizeof(dst), level);
+            unsigned int len = seqlz_compress(&st, page, dst, sizeof(dst), level);
             if (!len)
                 return 1;
             write_file(argv[1], prefix[level], kind, dst, len);
         }
-        memcpy(in + 1, page, SEQLZ_PAGE);
+        memcpy(in + 1, page, SEQLZ_BLOCK_SIZE);
         write_file(argv[2], "page-", kind, in, sizeof(in));
     }
     /* a short input repeated over the page */
@@ -110,6 +109,5 @@ int main(int argc, char** argv) {
      * limit for the inputs it makes */
     memset(dst, 0xff, sizeof(dst));
     write_file(argv[1], "long-", 0, dst, sizeof(dst));
-    free(t);
     return 0;
 }

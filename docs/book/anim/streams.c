@@ -2,7 +2,7 @@
 /*
  * streams.c: the data of the animation "streams" in chapter 13. Compresses chapter 16's page with
  * coded literals and prints, as JSON, its literals in page order with the code length each has in the
- * page's literal table, the stream sizes of the header, and what decode_literals() writes after the
+ * page's literal table, the stream sizes of the header, and what seqlz_decode_literals() writes after the
  * literals in its last step. Fails if anything disagrees with seqlz_decode().
  */
 #include <stdio.h>
@@ -18,19 +18,18 @@ static int fail(const char* what) {
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], raw[2 * SEQLZ_PAGE], comp[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], raw[2 * SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE];
     static u8 scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int n, n_raw, n_lit, set, width, i, k, bits[SEQLZ_LIT_STREAMS] = {0};
     unsigned int sz[SEQLZ_LIT_STREAMS];
     unsigned long long h = 0;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return fail("tables");
     slab_page(page);
-    n_raw = seqlz_compress(t, &st, page, raw, sizeof(raw), 1);
-    n = seqlz_compress(t, &st, page, comp, sizeof(comp), 2);
+    n_raw = seqlz_compress(&st, page, raw, sizeof(raw), 1);
+    n = seqlz_compress(&st, page, comp, sizeof(comp), 2);
     if (!n || !n_raw)
         return fail("compress");
     n_lit = get_unaligned_le16(comp);
@@ -47,22 +46,22 @@ int main(void) {
     for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
         sz[i] = (unsigned int)(h >> (i * width)) & ((1U << width) - 1U);
     memset(scratch, 0xaa, sizeof(scratch));
-    if (seqlz_decode(t, comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE))
+    if (seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
         return fail("the page does not decode to itself");
     /* the decoder's literals are the encoder's raw literals */
     if (memcmp(scratch, raw + SEQLZ_HEADER, n_lit))
         return fail("decoded literals differ from the raw ones");
     /* literal k in stream k % 8: each stream's code lengths fill exactly its size */
     for (k = 0; k < n_lit; k++)
-        bits[k % SEQLZ_LIT_STREAMS] += t->lit[set].enc[scratch[k]] & 63U;
+        bits[k % SEQLZ_LIT_STREAMS] += seqlz_tables.lit[set].enc[scratch[k]] & 63U;
     for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
         if ((bits[i] + 7U) / 8U != sz[i])
             return fail("a stream's codes do not fill its size");
     /* the decode table gives the same length as the encoder's entry */
     for (k = 0; k < 256; k++) {
-        u32 e = t->lit[set].enc[k];
+        u32 e = seqlz_tables.lit[set].enc[k];
         u32 code = e >> 8, len = e & 63U;
-        u16 d = t->lit[set].decode[code << (SEQLZ_LIT_BITS - len)];
+        u16 d = seqlz_tables.lit[set].decode[code << (SEQLZ_LIT_BITS - len)];
 
         if ((d & 63U) != len || d >> 8 != k)
             return fail("decode and enc disagree");
@@ -72,7 +71,7 @@ int main(void) {
         printf("%s%u", k ? "," : "", scratch[k]);
     printf("],\"len\":[");
     for (k = 0; k < n_lit; k++)
-        printf("%s%u", k ? "," : "", t->lit[set].enc[scratch[k]] & 63U);
+        printf("%s%u", k ? "," : "", seqlz_tables.lit[set].enc[scratch[k]] & 63U);
     printf("],\"sz\":[");
     for (i = 0; i < SEQLZ_LIT_STREAMS; i++)
         printf("%s%u", i ? "," : "", sz[i]);
@@ -81,6 +80,5 @@ int main(void) {
     for (k = n_lit; k < n_lit - n_lit % 40U % 8U + 8U; k++)
         printf("%s%u", k > n_lit ? "," : "", scratch[k]);
     printf("]}\n");
-    free(t);
     return 0;
 }

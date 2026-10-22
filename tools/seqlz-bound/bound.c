@@ -6,7 +6,8 @@
  * size. Same-filled pages are left out, as zram does; pages zram stores raw, of 3625 bytes and more,
  * are counted apart. Build from the repository's root:
  *   cc -O2 -Isrc -o bound tools/seqlz-bound/bound.c src/seqlz_codes.c src/seqlz_compress.c \
- *      src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
+ *      src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c \
+ *      src/seqlz_default_tables.c src/seqlz_lit_sets.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,25 +30,24 @@ static void arr(const char* name, const double* a, unsigned int n) {
 }
 
 int main(int argc, char** argv) {
-    static unsigned char page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
-    const struct seqlz_lengths* L = &seqlz_default_own;
+    const struct seqlz_lengths* L = &seqlz_default_lengths;
     FILE* f = fopen(argv[1], "rb");
     unsigned int i;
 
-    if (!t || !f || seqlz_tables_init(t, L))
+    if (!f || seqlz_tables_init(L))
         return 1;
-    while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
-        unsigned int len = seqlz_compress(t, &st, page, dst, sizeof dst, 2), n = seqlz_find(&st, page, seq, 2);
+    while (fread(page, 1, SEQLZ_BLOCK_SIZE, f) == SEQLZ_BLOCK_SIZE) {
+        unsigned int len = seqlz_compress(&st, page, dst, sizeof dst, 2), n = seqlz_find(&st, page, seq, 2);
         unsigned int coded = dst[1] >> 7, set = dst[2] & 7U, last = 1, extra, k, in = 0, nlit = 0;
         double bits = 0, sbits[8] = {0};
 
         /* zram's same-filled pages never reach the codec */
-        for (k = 1; k < SEQLZ_PAGE && page[k] == page[0]; k++)
+        for (k = 1; k < SEQLZ_BLOCK_SIZE && page[k] == page[0]; k++)
             ;
-        if (k == SEQLZ_PAGE)
+        if (k == SEQLZ_BLOCK_SIZE)
             continue;
         if (len >= 3625) {
             huge++;

@@ -337,7 +337,7 @@ The lengths that pages' own tables have most, 7 to 10 bits, get the shortest cod
 description is in the order of the byte values, so a byte value costs no bits of its own, only its
 length does; `docs/format.md` gives about 0.45 bytes per byte value with a code, 60 to 120 bytes on
 most pages that have a table of their own
-([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#a-pages-own-literal-table)).
+([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#a-blocks-own-literal-table)).
 A run of 256 to 511 can never be valid, as a table has only 256 byte values; it is there so that `OWN`
 is complete too. Sent in byte order, with runs, the descriptions made pages 0.5% smaller than the ones
 of 9th October, which listed the bytes by code length, each as its distance to the one before
@@ -825,10 +825,10 @@ and for each of the 8 literal tables, how often each byte value occurred as a li
 table codes best; k-means put pages whose literals look alike into one group for each table. Its line
 `own` has how often each symbol of `OWN` occurred in the tables of the {{own.counts.pages|grp}} training
 pages that level 3 gave a table of their own; the lengths 7 to 10 are {{own.counts.share_7_10}}% of them.
-`tools/kernel-port/gen-seqlz-tables.py` turns the counts into length-limited Huffman code lengths and
+`tools/kernel-port/gen-seqlz-lengths.py` turns the counts into length-limited Huffman code lengths and
 writes `src/seqlz_default_tables_4k.inc` and `src/seqlz_lit_sets_4k.inc`; CI checks that the files in
 `src/` are its output, byte for byte, and `quetschn-seqlz-train --from-counts` does the same in C++.
-The kernel's copy gets the generator, as `scripts/gen-seqlz-tables.py`, and the 4 KiB counts.
+The kernel's copy gets the generator, as `scripts/gen-seqlz-lengths.py`, and the 4 KiB counts.
 
 The 4 KiB tables of 13th October 2026 are counted on {{ch02.train_pages|grp}} pages: three sessions
 of a Xiaomi Mi 9T under memory pressure, the resident pages of a desktop and 200 000 pages of its zram

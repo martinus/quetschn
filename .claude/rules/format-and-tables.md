@@ -7,7 +7,7 @@ paths:
   - "bench/seqlz_counts_*.txt"
   - "bench/seqlz_train*.cpp"
   - "tools/retrain-tables.py"
-  - "tools/kernel-port/gen-seqlz-tables.py"
+  - "tools/kernel-port/gen-seqlz-lengths.py"
   - "tools/kernel-port/format_rst.py"
   - "tools/seqlz-ref/**"
 ---
@@ -22,7 +22,7 @@ paths:
   them exact. Retrained tables need new hashes there (else `check.sh` fails) and new
   `bench/seqlz_counts_*.txt` (`quetschn-seqlz-train --counts`, else test `seqlz_train` fails).
 - `.inc` tables: not format-checked, never clang-format or hand-edit. Written by
-  `tools/kernel-port/gen-seqlz-tables.py` from `bench/seqlz_counts_*.txt` (command in each file's
+  `tools/kernel-port/gen-seqlz-lengths.py` from `bench/seqlz_counts_*.txt` (command in each file's
   head); `tools/seqlz-ref/check.sh` fails if they differ from its output.
 - Retrain: `tools/retrain-tables.py --page-bits 12|14 --train <Release build> --corpus <base>
   --name <name>` (counts, lit lines in committed order, `.inc`, SHA-256 rows of format.md). 4 KiB:

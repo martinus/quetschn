@@ -128,12 +128,12 @@
         return 'The header, bytes 0 and 1 little endian: 0x' + hex(h, 4) + '. The top bit is ' + (h >> 15) + ': ' +
           (h >> 15 ? 'the literals are Huffman coded' : 'the literals are raw') + ', and there are ' + (h & 0x7fff) + ' of them.';
       }
-      if (t.indexOf('q = decode_literals') === 0) return 'decode_literals() decodes the ' + page.nLit + ' coded literals into the scratch buffer, 8 streams side by side (chapter 13). The sequences’ bitstream starts right after the streams, at byte ' + page.bitStart + '.';
+      if (t.indexOf('q = seqlz_decode_literals') === 0) return 'seqlz_decode_literals() decodes the ' + page.nLit + ' coded literals into the scratch buffer, 8 streams side by side (chapter 13). The sequences’ bitstream starts right after the streams, at byte ' + page.bitStart + '.';
       if (t.indexOf('lit = scratch') === 0) return 'From now on the literals come from the scratch buffer, and the bit reader starts at byte ' + page.bitStart + '.';
       if (t.indexOf('lit = s + SEQLZ_HEADER') === 0) return 'Raw literals: they are bytes 2 to ' + (C.HEADER + page.nLit - 1) + ', and the bitstream starts after them, at byte ' + page.bitStart + '.';
       if (t.indexOf('end_gap =') === 0) return 'end_gap = d_end − lit_end, as numbers. When d − lit is end_gap, the literals left, lit_end − lit, are exactly the bytes the page still needs, d_end − d: one compare per slow sequence tells the end.';
-      if (t.indexOf('if (n_lit == SEQLZ_PAGE)') === 0) return page.nLit === C.PAGE ? 'The page is all literals: no token, straight to the copy at the end.' : page.nLit + ' literals for a page of ' + C.PAGE + ' bytes: there are matches, so the loop over the sequences starts.';
-      if (t.indexOf('d_fast =') === 0) return 'The fast path copies without checks, so it runs only while there is room: d at most ' + (C.PAGE - C.FAST_PAGE_ROOM) + ' (' + C.FAST_PAGE_ROOM + ' bytes before the end of the page), ' + C.FAST_LIT_ROOM + ' literal bytes left, ' + C.FAST_IN_ROOM + ' bytes of input left.';
+      if (t.indexOf('if (n_lit == SEQLZ_BLOCK_SIZE)') === 0) return page.nLit === C.PAGE ? 'The page is all literals: no token, straight to the copy at the end.' : page.nLit + ' literals for a page of ' + C.PAGE + ' bytes: there are matches, so the loop over the sequences starts.';
+      if (t.indexOf('d_fast =') === 0) return 'The fast path copies without checks, so it runs only while there is room: d at most ' + (C.PAGE - C.FAST_BLOCK_ROOM) + ' (' + C.FAST_BLOCK_ROOM + ' bytes before the end of the page), ' + C.FAST_LIT_ROOM + ' literal bytes left, ' + C.FAST_IN_ROOM + ' bytes of input left.';
       if (t.indexOf('tok = next_token(&br') === 0) {
         var nb = bitsOf(n), idx = Number(nb >> BigInt(64 - C.TOKEN_BITS));
         return 'next_token(): ' + cnt + ' bits in the register' + (cnt < C.TOKEN_BITS + 12 ? ', fewer than ' + (C.TOKEN_BITS + 12) + ', so it refills first; then' : ', enough, no refill;') +
@@ -161,7 +161,7 @@
         var litFast = page.coded ? C.SCRATCH - C.FAST_LIT_ROOM : page.comp.length - C.HEADER - C.FAST_LIT_ROOM;
         var inFast = page.comp.length >= C.FAST_IN_ROOM ? page.comp.length - C.FAST_IN_ROOM : 0;
         if (e.value) why.push('a length value follows');
-        if (d > C.PAGE - C.FAST_PAGE_ROOM) why.push('d = ' + d + ' is within ' + C.FAST_PAGE_ROOM + ' bytes of the end');
+        if (d > C.PAGE - C.FAST_BLOCK_ROOM) why.push('d = ' + d + ' is within ' + C.FAST_BLOCK_ROOM + ' bytes of the end');
         if (s[F.lit] > litFast) why.push('fewer than ' + C.FAST_LIT_ROOM + ' literal bytes are left');
         if (s[F.p] > inFast) why.push('fewer than ' + C.FAST_IN_ROOM + ' bytes of input are left');
         return taken ? 'The fast path: no length value, and room for its copies without checks.' : 'Not the fast path: ' + why.join(', ') + '.';

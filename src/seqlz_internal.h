@@ -3,186 +3,158 @@
 #define SEQLZ_INTERNAL_H
 
 /*
- * What the compressor, the decompressor and the code that builds their tables
- * share: the tables' layout and the token table's entries.
+ * What the files of the compressor and of the decompressor share, besides the
+ * tables of seqlz_tables.h.
  */
 
-#include "seqlz.h"
+#include "seqlz_tables.h"
 
 /*
- * A decode table is indexed by the next bits of the bitstream, as many as the
- * longest code has. A code of l bits fills every entry whose index starts with
- * its bits, so one lookup finds the code, whatever bits come after it.
- *
- * An entry of a table of length values has the code's length in bits 0..3, the
- * number of extra bits in bits 4..7 and the base value in bits 8..23. The value
- * is the base plus the extra bits. The token table's entries are described at
- * token_entry().
- *
- * The encoder's shift counts are masked, e.g. with & 63U, and so is its index
- * into the length values' enc[], which has a power of 2 entries for that.
- * CONFIG_UBSAN_BOUNDS and CONFIG_UBSAN_SHIFT, which distributions enable, add
- * a compare and a branch to every index and shift that the compiler cannot
- * prove in range; with the mask it can.
+ * The bit operations and the short copies are the compiler's builtins, as in
+ * lib/lz4 and lib/zstd. __builtin_ctzll() and __builtin_clz() instead of
+ * __ffs64(), __fls() and fls(), which are inline assembly on x86-64 that the
+ * compiler cannot look into.
+ * __builtin_memcpy() for copies of 8 and 16 bytes, as LZ4_memcpy() and
+ * ZSTD_memcpy(): it is always inlined, and memcpy() is not with every
+ * CONFIG_FORTIFY_SOURCE, which makes each copy a call. __builtin_bswap64()
+ * turns a literal stream's bits around once, in a register, see lit_flush().
  */
-#define ENC_LEN_SYMBOLS 32U
-static_assert(SEQLZ_LEN_SYMBOLS <= ENC_LEN_SYMBOLS,
-	      "the length values' enc[] is too small");
-static_assert((SEQLZ_TOKEN_BITS < 16U && SEQLZ_MAX_BITS < 16U &&
-	       SEQLZ_LIT_BITS < 16U),
-	      "first_codes() has arrays of 16 code lengths");
-
-struct value_table {
-	u32 decode[1U << SEQLZ_MAX_BITS];
-	u32 enc[ENC_LEN_SYMBOLS]; /* the encoder's code | length << 16 */
-};
-
-struct token_table {
-	u32 decode[1U << SEQLZ_TOKEN_BITS]; /* token_entry() */
-	/*
-	 * The encoder's code | length << TOK_ENC_LEN_AT, 2 bytes per token:
-	 * 6 KiB, which stay in the L1 cache next to the matcher's hash table.
-	 */
-	u16 enc[SEQLZ_TOKEN_SYMBOLS + 1];
-};
-
-/* a token's code is below 1 << SEQLZ_TOKEN_BITS, its length above, 4 bits */
-#define TOK_ENC_LEN_AT 12U
-#define TOK_ENC_CODE_MASK ((1U << TOK_ENC_LEN_AT) - 1U)
-static_assert(SEQLZ_TOKEN_BITS <= TOK_ENC_LEN_AT,
-	      "a token's code fits below its length");
-static_assert(SEQLZ_TOKEN_BITS < 16U && TOK_ENC_LEN_AT + 4U <= 16U,
-	      "a token's length fits enc[]'s u16 in 4 bits");
-
-struct lit_table {
-	u16 decode[1U << SEQLZ_LIT_BITS]; /* code length | byte << 8 */
-	u32 enc[256]; /* code length | code << 8, see lit_put() */
-};
 
 /*
- * To pick the literal table that codes a page's literals in the fewest bits,
- * the encoder sums their code lengths in all 8 tables. lit_cost has, for each
- * byte value, its code length in all 8 tables in one u64, 8 bits each, so one
- * add per literal sums all tables at once. A lane of 8 bits overflows after
- * LIT_COST_RUN literals of 10 bits; then the sums move to wider lanes.
+ * How many literals the decoder takes from each stream after loading 8 bytes
+ * of it: at least 56 bits are then left, enough for 5 codes of 10 bits.
  */
-#define LIT_COST_WORDS ((SEQLZ_LIT_SETS + 7U) / 8U)
-#define LIT_COST_RUN (255U / SEQLZ_LIT_BITS) /* 25 */
-/* byte 2 of a page with coded literals, see SEQLZ_LIT_HEADER */
-static_assert((SEQLZ_LIT_SETS == 8U && SEQLZ_LIT_OWN == 8U &&
-	       SEQLZ_LIT_CODE_MASK == 15U && SEQLZ_LIT_WIDTH_AT == 4),
-	      "byte 2: the fixed tables, then the page's own, in 4 bits");
-static_assert((SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U &&
-	       SEQLZ_LIT_DELTA_AT - SEQLZ_LIT_WIDTH_AT == 3),
-	      "byte 2 has 3 bits for the width");
+#define SEQLZ_LIT_ROUNDS (56U / SEQLZ_LIT_BITS)
 /*
- * How far before a literal the byte is that SEQLZ_DELTA_LAST takes its delta
- * to, for the offset last of the sequence before: the smallest multiple of last
- * that is 4 or more, see SEQLZ_LIT_DELTA_AT
+ * The encoder codes a block's literals only where that saves more than 1/16 of
+ * them plus this many bytes. Decoding coded literals has a cost that does not
+ * depend on how many there are: the literal table has to be read from memory,
+ * and the literals decoded into a buffer first. A smaller minimum made blocks a
+ * few bytes smaller and writes slower, most on in-order cores.
  */
-static inline unsigned int seqlz_delta_last(unsigned int last)
-{
-	return last < 4U ? (last == 3U ? 6U : 4U) : last;
-}
-
-/* the largest stream: every 8th literal of a page, all with the longest code */
+#define SEQLZ_LIT_CODED_MIN 51U
+/*
+ * The buffer the decoder decodes coded literals into, one per CPU. 16 bytes
+ * more than a block: the decoder copies literals 16 bytes at a time and may
+ * read past the last one, and the last step of seqlz_decode_literals() writes
+ * up to 8 decoded bytes past it.
+ */
+#define SEQLZ_SCRATCH (SEQLZ_BLOCK_SIZE + 16U)
+/*
+ * the largest stream: every 8th literal of a block, all with the longest code
+ */
 #define LIT_STREAM_MAX \
-	((SEQLZ_PAGE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)
+	((SEQLZ_BLOCK_SIZE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)
 static_assert(LIT_STREAM_MAX < 1U << SEQLZ_SIZE_BITS_MAX,
 	      "the widest size holds the largest stream");
-static_assert(SEQLZ_LIT_STREAMS == 8U,
-	      "the literal coder is written out for 8 streams");
+static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_BLOCK_SIZE,
+	      "class 5's offsets are inside the block");
 
 /*
- * The code of a page's own literal table, see SEQLZ_LIT_OWN. quad[] decodes the
- * lengths whose codes the next 8 bits hold whole, at most two, each with the
- * run before it where that fits too, with one lookup:
- *   bits  0..3:  the first length
- *   bits  4..7:  the second, or OWN_QUAD_NONE
- *   bits  8..11: the bits up to the end of the first, run and length
- *   bits 12..15: the same up to the end of the second
- *   bits 16..18: the run before the first, at most 7
- *   bits 19..21: the run before the second
- *   bit  31:     the 8 bits start with a run that does not fit like that;
- *                decode[] has its symbol
+ * The compressor finds the matches with its own matcher and writes each
+ * sequence as soon as it is found, in one pass over the block.
  */
-#define OWN_QUAD_NONE 11U
-#define OWN_QUAD_END1_AT 8
-#define OWN_QUAD_END2_AT 12
-#define OWN_QUAD_RUN1_AT 16
-#define OWN_QUAD_RUN2_AT 19
-#define OWN_QUAD_RUN_MAX 7U
-#define OWN_QUAD_ALONE_AT 31
-struct own_table {
-	u16 decode[1U << SEQLZ_OWN_CODE_BITS]; /* symbol | code length << 8 */
-	u16 enc[SEQLZ_OWN_SYMBOLS]; /* code | code length << 8 */
-	u32 quad[1U << SEQLZ_OWN_CODE_BITS];
-};
-
-struct seqlz_tables {
-	struct token_table token;
-	struct lit_table lit[SEQLZ_LIT_SETS];
-	u64 lit_cost[256][LIT_COST_WORDS];
-	struct own_table own;
-	struct value_table ll, ml;
-	bool all_symbols; /* see seqlz_all_symbols() */
-};
-
-static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
-	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&
-	       SEQLZ_LL_CAP <= 15U && SEQLZ_ML_CAP + 4U <= 63U &&
-	       SEQLZ_OFF_SHIFT(1) <= 3U && SEQLZ_OFF_SHIFT(4) <= 3U &&
-	       SEQLZ_OFF_SHIFT(5) <= 3U),
-	      "token_entry's fields are too narrow");
-static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_PAGE,
-	      "class 5's offsets are inside the page");
-static_assert(SEQLZ_TOKEN_SYMBOLS <= 1U << SEQLZ_ESCAPE_BITS,
-	      "an escaped token has SEQLZ_ESCAPE_BITS bits");
 /*
- * The token table's entry for token s with a code of n bits. It holds what the
- * decoder needs, ready to use, so that it never takes the token apart:
- *   bits  0..5:  n. The bitstream shifted left by n has the offset's bits on
- *                top.
- *   bits  6..11: 64 - the offset's bits, mod 64. The bitstream shifted right
- *                by this then is the offset. 0 for class 0, which has none.
- *   bits 12..13: the class's SEQLZ_OFF_SHIFT(), 1 for class 1 and 3 for
- *                classes 4 and 5, whose offset is sent divided by 2 and 8
- *   bits 14..18: n + the offset's bits, how far the bitstream moves on
- *   bits 19..22: ll, at most 15
- *   bits 23..28: ml, at most 35
- *   bit  30:     a length value follows, for ll or ml
- *   bit  31:     the escape; then only bits 14..18 are set, to n
- * Taking the token apart in the decoder cost many instructions per sequence,
- * which in-order cores run at most two per cycle.
+ * The matcher's hash table has 1 << SEQLZ_HASH_BITS entries of 2 bytes, 8 KiB
+ * for blocks of 4 KiB. With 2048 entries blocks were larger and the compressor
+ * no faster; with 8192 in-order cores wrote blocks slower. For blocks of 16 KiB
+ * it is 16 KiB, as lz4's table.
  */
-#define TOK_BACK_AT 6
-#define TOK_SHIFT_AT 12
-#define TOK_DROP_AT 14
-#define TOK_LL_AT 19
-#define TOK_ML_AT 23
-#define TOK_VALUE_AT 30
-#define TOK_ESCAPE_AT 31
-/* the fields of an entry e, as listed above */
-#define TOK_N(e) ((e) & 63U)
-#define TOK_BACK(e) (((e) >> TOK_BACK_AT) & 63U)
-#define TOK_SHIFT(e) (((e) >> TOK_SHIFT_AT) & 3U)
-#define TOK_DROP(e) (((e) >> TOK_DROP_AT) & 31U)
-#define TOK_LL(e) (((e) >> TOK_LL_AT) & 15U)
-#define TOK_ML(e) (((e) >> TOK_ML_AT) & 63U)
+#define SEQLZ_HASH_BITS (SEQLZ_BLOCK_BITS == 12 ? 12U : 13U)
+/*
+ * The levels of seqlz_compress(), 1 to SEQLZ_LEVELS, from the fastest to the
+ * one with the smallest blocks. Level 1 keeps the literals raw. From
+ * SEQLZ_LEVEL_CODED on they are Huffman coded where that saves enough, with
+ * one of the fixed tables. SEQLZ_LEVEL_OWN looks one position ahead before it
+ * takes a short match, extends matches backwards, gives a block a literal
+ * table of its own where that saves enough, and codes the literals as deltas
+ * where that looks like it saves bits, see SEQLZ_LIT_DELTA_AT.
+ */
+#define SEQLZ_LEVELS 3U
+#define SEQLZ_LEVEL_CODED 2U
+#define SEQLZ_LEVEL_OWN 3U
 
-static inline u32 token_entry(unsigned int s, unsigned int n)
+/* the token of a sequence with a match, see the top of seqlz_format.h */
+static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
+				       unsigned int cls)
 {
-	unsigned int cls = s >> (SEQLZ_LL_BITS + SEQLZ_ML_BITS),
-		     raw_bits = SEQLZ_RAW_BITS(cls);
-	unsigned int drop = n + raw_bits, ll = s & SEQLZ_LL_CAP,
-		     ml = (s >> SEQLZ_LL_BITS) & SEQLZ_ML_CAP;
+	unsigned int a = min(ll, SEQLZ_LL_CAP);
+	unsigned int b = min(ml - SEQLZ_MIN_MATCH, SEQLZ_ML_CAP);
 
-	if (s == SEQLZ_ESCAPE)
-		return 1U << TOK_ESCAPE_AT | n << TOK_DROP_AT;
-	return n | ((64U - raw_bits) & 63U) << TOK_BACK_AT |
-	       SEQLZ_OFF_SHIFT(cls) << TOK_SHIFT_AT | drop << TOK_DROP_AT |
-	       ll << TOK_LL_AT | (ml + 4U) << TOK_ML_AT |
-	       (u32)(ll == SEQLZ_LL_CAP || ml == SEQLZ_ML_CAP) << TOK_VALUE_AT;
+	return a + (b << SEQLZ_LL_BITS) +
+	       (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
 }
+
+/*
+ * The matcher's hash table, one per CPU, cleared for each block. Once the
+ * matcher is done it holds the raw literals or their deltas while they are
+ * coded, and at SEQLZ_LEVEL_OWN, at its end, what the encoder needs for a
+ * table of the block's own, see seqlz_code_literals().
+ */
+struct seqlz_state {
+	union {
+		u16 table[1U << SEQLZ_HASH_BITS];
+		u8 literals[SEQLZ_BLOCK_SIZE];
+		u64 work[(2U << SEQLZ_HASH_BITS) / 8U];
+	};
+};
+
+/*
+ * At SEQLZ_LEVEL_OWN the encoder writes LIT_REC bytes before each sequence's
+ * literals: where they start in the block, how many there are and the offset of
+ * the sequence before, a u16 each, little endian. Once the block is matched,
+ * seqlz_delta_literals() picks the literals' delta from them, see
+ * SEQLZ_LIT_DELTA_AT, and moves the literals down over them. They take room in
+ * dst: a block that does not fit with them is matched again without them,
+ * without deltas.
+ */
+#define LIT_REC 6U
+
+/*
+ * Prefetches every cache line of [p, p + size); size is a multiple of
+ * PREFETCH_STEP. In a swap-in the decoder's tables are often no longer in
+ * the cache: asking for all of their lines at once lets the misses overlap,
+ * instead of one after the other as the decoder runs into them. 512 bytes per
+ * iteration, 8 lines where they have 64 bytes: with one line per iteration,
+ * the loop took more instructions than the prefetches.
+ *
+ * A table need not start a cache line: struct seqlz_tables is aligned to 8
+ * bytes, and the literal and length tables are not at a multiple of 64 in it.
+ * Then the loop misses the line of the table's last bytes, and the prefetch of
+ * end - 1 asks for it. Where p starts a line, the loop asked for it already.
+ */
+#define PREFETCH_STEP 512U
+
+static inline void prefetch_lines(const void *p, unsigned long size)
+{
+	const u8 *q = (const u8 *)p; /* a cast for the C++ of the harness */
+	const u8 *const end = q + size;
+	unsigned int k;
+
+	for (; q < end; q += PREFETCH_STEP)
+		for (k = 0; k < PREFETCH_STEP; k += L1_CACHE_BYTES)
+			prefetch(q + k);
+	prefetch(end - 1);
+}
+
+/* prefetch_lines() takes multiples of PREFETCH_STEP */
+static_assert(sizeof_field(struct token_table, decode) % PREFETCH_STEP == 0,
+	      "the token table");
+static_assert(sizeof_field(struct value_table, decode) % PREFETCH_STEP == 0,
+	      "the length values' tables");
+static_assert(sizeof_field(struct lit_table, decode) % PREFETCH_STEP == 0,
+	      "the literal tables");
+
+/* the coded literals, see seqlz_compress_literals.c */
+unsigned int seqlz_delta_literals(u8 *d, u8 **lit_end, const u8 *block,
+				  u8 *deltas);
+unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare);
+unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
+			    unsigned int delta);
+
+/* the coded literals, see seqlz_decompress_literals.c */
+const u8 *seqlz_decode_literals(const u8 *s, unsigned int src_len,
+				unsigned int n_lit, u8 *out, u8 *block,
+				unsigned int *delta);
 
 #endif

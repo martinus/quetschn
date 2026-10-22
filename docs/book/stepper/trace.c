@@ -60,7 +60,7 @@ static void stepper_step(int line,
 }
 
 int main(void) {
-    static u8 page[SEQLZ_PAGE], comp[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static u8 page[SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
     static const struct {
         const char* id;
@@ -70,16 +70,15 @@ int main(void) {
         {"ab", ab_page, 0},
         {"slab", slab_page, 1},
     };
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
     unsigned int k;
 
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+    if (seqlz_tables_init(&seqlz_default_lengths))
         return 1;
-    printf("{\"consts\":{\"PAGE\":%u,\"SCRATCH\":%u,\"FAST_PAGE_ROOM\":%u,\"FAST_LIT_ROOM\":%u,"
+    printf("{\"consts\":{\"PAGE\":%u,\"SCRATCH\":%u,\"FAST_BLOCK_ROOM\":%u,\"FAST_LIT_ROOM\":%u,"
            "\"FAST_IN_ROOM\":%u,\"TOKEN_BITS\":%u,\"LL_CAP\":%u,\"ML_CAP\":%u,\"HEADER\":%u},\"pages\":{",
-           SEQLZ_PAGE,
+           SEQLZ_BLOCK_SIZE,
            SEQLZ_SCRATCH,
-           FAST_PAGE_ROOM,
+           FAST_BLOCK_ROOM,
            FAST_LIT_ROOM,
            FAST_IN_ROOM,
            SEQLZ_TOKEN_BITS,
@@ -91,7 +90,7 @@ int main(void) {
         int coded;
 
         pages[k].make(page);
-        n = seqlz_compress(t, &st, page, comp, sizeof(comp), pages[k].coded ? 2U : 1U);
+        n = seqlz_compress(&st, page, comp, sizeof(comp), pages[k].coded ? 2U : 1U);
         if (!n)
             return 1;
         n_lit = get_unaligned_le16(comp);
@@ -104,19 +103,19 @@ int main(void) {
         memset(out, 0, sizeof(out));
         printf("%s\"%s\":{\"coded\":%d,", k ? "," : "", pages[k].id, coded);
         printf("\"steps\":[");
-        if (seqlz_decode(t, comp, n, out, scratch) || memcmp(out, page, SEQLZ_PAGE)) {
+        if (seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {
             fprintf(stderr, "trace.c: page %s does not decode to itself\n", pages[k].id);
             return 1;
         }
         printf("],");
-        array("page", page, SEQLZ_PAGE);
+        array("page", page, SEQLZ_BLOCK_SIZE);
         printf(",");
         array("comp", comp, n);
         printf(",");
         array("lit", g_lit, n_lit);
         if (coded) {
             /* the length of each literal's code in the page's table, byte 2's low 3 bits */
-            const struct lit_table* lt = &t->lit[comp[2] & 7U];
+            const struct lit_table* lt = &seqlz_tables.lit[comp[2] & 7U];
             unsigned int j;
 
             printf(",\"litlen\":[");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * ch07_09.c: the facts of chapters 7 (seqlz_internal.h), 8 (seqlz_codes.c) and
- * 9 (page_lz.h): the entries of the tables as seqlz_tables_init() builds them,
+ * 9 (seqlz_match.h): the entries of the tables as seqlz_tables_init() builds them,
  * first_codes() on the real lengths, the layout of struct seqlz_tables, the
  * files' lines, the counts the tables were trained on, and the matcher's steps
  * on the pages of chapter 9.
@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #include "facts.h"
-#include "page_lz.h"
+#include "seqlz_match.h"
 
 /* first_codes() and length_entry() are static: the file is included, and
  * build.py does not link it */
@@ -152,7 +152,7 @@ static void fact_u64_bin(const char* k, u64 v, unsigned int n) {
 
 static void token_facts(unsigned int s) {
     const struct seqlz_tables* t = fact_tables();
-    unsigned int n = seqlz_default_own.token[s];
+    unsigned int n = seqlz_default_lengths.token[s];
     u32 e = token_entry(s, n);
 
     fact_fmt(K("ch07.tok.%u.enc", s), "%#llx", t->token.enc[s]);
@@ -190,9 +190,9 @@ static void ch07(void) {
     static const unsigned int tokens[] = {34, 49, 1552, 1567, 1797, 2032, 2097, 2098, SEQLZ_ESCAPE};
     const struct seqlz_tables* t = fact_tables();
     unsigned int k, j, best = 0, s, c, n;
-    u64 sum = t->lit_cost[0][0] + t->lit_cost[0x65][0], reg, e;
+    u64 sum = t->lit_cost[0] + t->lit_cost[0x65], reg, e;
 
-    fact_num("ch07.lines", lines_of("src/seqlz_internal.h"));
+    fact_num("ch07.lines", lines_of("src/seqlz_tables.h"));
     for (k = 0; k < sizeof tokens / sizeof tokens[0]; k++)
         token_facts(tokens[k]);
     /* the escaped token 1797 and its offset 1000: the entry with n = 0 */
@@ -204,14 +204,14 @@ static void ch07(void) {
     fact_num("ch07.esc1797.ML", TOK_ML(e));
     fact_field("ch07.esc1797.bits", 1797, 0, SEQLZ_ESCAPE_BITS);
     /* the decoder's top 11 bits: the escape's code, then the token */
-    n = seqlz_default_own.token[SEQLZ_ESCAPE];
+    n = seqlz_default_lengths.token[SEQLZ_ESCAPE];
     c = (t->token.enc[SEQLZ_ESCAPE] & TOK_ENC_CODE_MASK) << (SEQLZ_TOKEN_BITS - n) |
         1797 >> (SEQLZ_ESCAPE_BITS - (SEQLZ_TOKEN_BITS - n));
     fact_num("ch07.esc1797.index", c);
     fact_field("ch07.esc1797.index_bits", c, 0, SEQLZ_TOKEN_BITS);
 
     /* token 2098's code, then its offset 16 / 8 = 2 in 5 bits, then ones */
-    n = seqlz_default_own.token[2098];
+    n = seqlz_default_lengths.token[2098];
     c = t->token.enc[2098] & TOK_ENC_CODE_MASK;
     reg = (u64)c << (64 - n) | (u64)2 << (64 - n - 5) | ((1ULL << (64 - n - 5)) - 1);
     e = token_entry(2098, n);
@@ -229,7 +229,7 @@ static void ch07(void) {
 
     /* symbol 18 of the ll table: values 64 to 127 */
     s = 18;
-    n = seqlz_default_own.ll[s];
+    n = seqlz_default_lengths.ll[s];
     c = t->ll.enc[s] & 0xffffU;
     fact_num("ch07.ll18.c", c);
     fact_fmt("ch07.ll18.enc", "%#llx", t->ll.enc[s]);
@@ -255,14 +255,14 @@ static void ch07(void) {
     }
 
     /* lit_cost of the bytes 0x00 and 0x65, and their sum */
-    fact_fmt("ch07.lit_cost.0", "%#018llx", t->lit_cost[0][0]);
-    fact_fmt("ch07.lit_cost.101", "%#018llx", t->lit_cost[0x65][0]);
+    fact_fmt("ch07.lit_cost.0", "%#018llx", t->lit_cost[0]);
+    fact_fmt("ch07.lit_cost.101", "%#018llx", t->lit_cost[0x65]);
     fact_fmt("ch07.lit_cost.sum", "%#018llx", sum);
     for (j = 0; j < SEQLZ_LIT_SETS; j++) {
         unsigned int lane = (unsigned int)(sum >> (8 * j)) & 255;
 
         fact_num(K("ch07.lit_sum.%u", j), lane);
-        fact_fmt(K("ch07.lit_lane.101.%u", j), "%02llx", (t->lit_cost[0x65][0] >> (8 * j)) & 255);
+        fact_fmt(K("ch07.lit_lane.101.%u", j), "%02llx", (t->lit_cost[0x65] >> (8 * j)) & 255);
         if (lane < ((sum >> (8 * best)) & 255))
             best = j;
     }
@@ -331,32 +331,32 @@ static void ch08(void) {
 
     /* the ll table: its lengths, the sum k of first_codes(), next[] */
     for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
-        w += sprintf(w, "%s%u", k ? " " : "", seqlz_default_own.ll[k]);
+        w += sprintf(w, "%s%u", k ? " " : "", seqlz_default_lengths.ll[k]);
     fact_str("ch08.ll.lengths", lengths);
     for (k = 0; k < SEQLZ_LEN_SYMBOLS; k++)
-        sum[seqlz_default_own.ll[k]] += 1U << (SEQLZ_MAX_BITS - seqlz_default_own.ll[k]);
+        sum[seqlz_default_lengths.ll[k]] += 1U << (SEQLZ_MAX_BITS - seqlz_default_lengths.ll[k]);
     for (l = 3; l <= SEQLZ_MAX_BITS; l++)
         fact_num(K("ch08.ll.fill.%u", l), sum[l]);
-    next_facts("ll", seqlz_default_own.ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS);
-    next_facts("tok", seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS);
+    next_facts("ll", seqlz_default_lengths.ll, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS);
+    next_facts("tok", seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS);
 
     /* the token table: how many entries the codes of each length fill */
     for (l = 1; l <= SEQLZ_TOKEN_BITS; l++) {
         unsigned int count = 0;
 
         for (k = 0; k <= SEQLZ_TOKEN_SYMBOLS; k++)
-            count += seqlz_default_own.token[k] == l;
+            count += seqlz_default_lengths.token[k] == l;
         fact_num(K("ch08.tok.fill.%u", l), count << (SEQLZ_TOKEN_BITS - l));
     }
     for (k = 0; k < SEQLZ_TOKEN_SYMBOLS; k++)
-        n16 += seqlz_default_own.token[k] != 0;
+        n16 += seqlz_default_lengths.token[k] != 0;
     fact_num("ch08.tok.coded", n16);
     fact_num("ch08.tok.coded_64", n16 / 64);
     fact_num("ch08.tok.escaped", SEQLZ_TOKEN_SYMBOLS - n16);
     /* token 49's entries in bytes of the decode table, and in cache lines of 64
      * bytes */
     {
-        unsigned int c = fact_tables()->token.enc[49] & TOK_ENC_CODE_MASK, n = seqlz_default_own.token[49];
+        unsigned int c = fact_tables()->token.enc[49] & TOK_ENC_CODE_MASK, n = seqlz_default_lengths.token[49];
         unsigned int first = (c << (SEQLZ_TOKEN_BITS - n)) * 4, end = ((c + 1) << (SEQLZ_TOKEN_BITS - n)) * 4;
 
         fact_num("ch08.tok49.byte_first", first);
@@ -366,7 +366,7 @@ static void ch08(void) {
     /* the entries of the 4-bit codes, the first of the table, in bytes and cache
      * lines */
     for (k = 0, j = 0; k <= SEQLZ_TOKEN_SYMBOLS; k++)
-        j += seqlz_default_own.token[k] == 4;
+        j += seqlz_default_lengths.token[k] == 4;
     fact_num("ch08.tok.len4.last", (j << (SEQLZ_TOKEN_BITS - 4)) - 1);
     fact_num("ch08.tok.len4.bytes", 4 * (j << (SEQLZ_TOKEN_BITS - 4)));
     fact_num("ch08.tok.len4.lines", 4 * (j << (SEQLZ_TOKEN_BITS - 4)) / 64);
@@ -411,7 +411,7 @@ static void ch08(void) {
 static void random_page(u8* p) {
     unsigned int k, seed = 12345;
 
-    for (k = 0; k < SEQLZ_PAGE; k++) {
+    for (k = 0; k < SEQLZ_BLOCK_SIZE; k++) {
         seed = seed * 1103515245U + 12345U;
         p[k] = (u8)(seed >> 16);
     }
@@ -420,7 +420,7 @@ static void random_page(u8* p) {
 }
 
 /*
- * The loop of seqlz_match_page() again, with what each position sees: its hash,
+ * The loop of seqlz_match_block() again, with what each position sees: its hash,
  * the table's candidate, the repeat offset and the two hits. The sequences it
  * finds must be those of seqlz_find(), or this program fails, so the steps are
  * those of the real matcher.
@@ -436,8 +436,8 @@ static void replay(const u8* src, struct step* at) {
     unsigned int pos = 1, anchor = 0, last = 1, n = seqlz_find(&st, src, seq, 2), i = 0;
 
     memset(table, 0, sizeof table);
-    memset(at, 0, SEQLZ_PAGE * sizeof *at);
-    while (pos < SEQLZ_PAGE - 8U) {
+    memset(at, 0, SEQLZ_BLOCK_SIZE * sizeof *at);
+    while (pos < SEQLZ_BLOCK_SIZE - 8U) {
         u32 cur = get_unaligned_le32(src + pos);
         unsigned int h = seqlz_hash5(get_unaligned_le64(src + pos)), cand = table[h], m, len;
         unsigned int rep_hit = get_unaligned_le32(src + pos - last) == cur;
@@ -450,7 +450,7 @@ static void replay(const u8* src, struct step* at) {
             continue;
         }
         m = rep_hit ? pos - last : cand;
-        len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, src + SEQLZ_PAGE);
+        len = 4U + seqlz_match_len(src + pos + 4, src + m + 4, src + SEQLZ_BLOCK_SIZE);
         last = pos - m;
         if (i >= n || seq[i].literals != pos - anchor || seq[i].match != len || seq[i].offset != last) {
             fprintf(stderr, "facts/ch07_09.c: the replay of the matcher differs at sequence %u\n", i);
@@ -459,7 +459,7 @@ static void replay(const u8* src, struct step* at) {
         i++;
         pos += len;
         anchor = pos;
-        if (pos < SEQLZ_PAGE - 8U)
+        if (pos < SEQLZ_BLOCK_SIZE - 8U)
             table[seqlz_hash5(get_unaligned_le64(src + pos - 2))] = (u16)(pos - 2);
     }
     if (i + 1 != n) {
@@ -505,16 +505,16 @@ static void ch09(void) {
     static const unsigned int ptr_seq[] = {0, 1, 13, 14, 15, 29, 30};
     static const u8 h1[8] = {0x10, 0x00, 0x56, 0x34, 0x12, 0x7f, 0, 0}, h2[8] = {0x20, 0x00, 0x56, 0x34, 0x12, 0x7f, 0, 0};
     static const u8 p[] = "ABCDEFGHIJKLMNOP", q[] = "ABCDEFGHIJKxMNOP";
-    static u8 page[SEQLZ_PAGE];
-    static struct step at[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE];
+    static struct step at[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int k, n, pos, odd = 0, cand0 = 0, first = 0;
     u64 x2 = get_unaligned_le64(p + 8) ^ get_unaligned_le64(q + 8);
 
-    fact_num("ch09.lines", lines_of("src/page_lz.h"));
-    fact_num("ch09.limit", SEQLZ_PAGE - 8);
-    fact_num("ch09.limit_last", SEQLZ_PAGE - 9);
+    fact_num("ch09.lines", lines_of("src/seqlz_match.h"));
+    fact_num("ch09.limit", SEQLZ_BLOCK_SIZE - 8);
+    fact_num("ch09.limit_last", SEQLZ_BLOCK_SIZE - 9);
     fact_num("ch09.table_bytes", sizeof(u16) << SEQLZ_HASH_BITS);
     hash_facts("ch09.h1", h1);
     hash_facts("ch09.h2", h2);
@@ -604,7 +604,7 @@ static void ch09(void) {
      * byte 0x5a and the 4 bytes at 21, 105 not the byte at 25; at 199 the byte 0x5a, then the 31
      * bytes of 21 to 51
      */
-    for (k = 0, pos = 12345; k < SEQLZ_PAGE; k++) {
+    for (k = 0, pos = 12345; k < SEQLZ_BLOCK_SIZE; k++) {
         pos = pos * 1103515245U + 12345U;
         page[k] = (u8)(pos >> 16);
     }

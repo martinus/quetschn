@@ -43,8 +43,11 @@ much closer it gets, not by whether it arrives.
 ## Layout
 
 ```text
-src/            codec, freestanding C11, kernel rules: seqlz_compress.c + page_lz.h (matcher),
-                seqlz_decompress.c, seqlz_codes.c (table codes), seqlz_internal.h, seqlz.h,
+src/            codec, freestanding C11, kernel rules: seqlz_compress.c + seqlz_match.h (matcher),
+                seqlz_compress_literals.c, seqlz_decompress.c, seqlz_decompress_literals.c,
+                seqlz_codes.c (builds the tables; in the kernel a host program at build time),
+                headers seqlz_format.h (format), seqlz_tables.h (tables' layout), seqlz_internal.h
+                (what the codec's files share), seqlz.h (userspace API: harness, tests, tools),
                 seqlz_default_tables*.{c,inc} + seqlz_lit_sets*.{c,inc} (trained tables = format),
                 zram_seqlz.c (zram call shape, harness), seqlz_compat.h (kernel names: u8,
                 get_unaligned_le64(), ... outside the kernel)
@@ -78,7 +81,7 @@ cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # ctest 2/2 wit
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
-gcc -O2 -Isrc -o le test/seqlz_endian.c src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
+gcc -O2 -Isrc -o le test/seqlz_endian.c src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
 python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decoder, checks table hashes
 tools/seqlz-ref/check.sh && tools/check-links.py                    # before pushing docs or tables
 K=/home/martinus/gra/linux/finehill   # src/ or tools/kernel-port/ changed:

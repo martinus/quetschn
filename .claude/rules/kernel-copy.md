@@ -10,7 +10,7 @@ Reviewers read the copy `tools/kernel-port/port.py` writes into a kernel tree, n
 follows these rules; open gaps in existing code: issues #151 to #157 (review of 10 Oct 2026).
 
 - Generated, never edited: fix `src/` or `tools/kernel-port/`. To read it: `git archive` the kernel
-  tree's `drivers/block/zram lib/Kconfig lib/Makefile MAINTAINERS
+  tree's `drivers/block/zram lib/Kconfig lib/Kconfig.debug lib/Makefile MAINTAINERS
   Documentation/admin-guide/blockdev/zram.rst` into a dir, run `port.py <dir>`.
 - Kernel helpers, not own ones: `get_unaligned_le16()`, `sizeof_field()`, `prefetch()`,
   `L1_CACHE_BYTES`, `BIT()`. No inline assembly, not even per architecture: fix a kernel gap with its
@@ -34,9 +34,9 @@ follows these rules; open gaps in existing code: issues #151 to #157 (review of 
   allocations = 16 KiB, as one union = 8 KiB (#154).
 - `tools/kernel-port/check.sh`: W=1 warning-free on x86-64, arm64, arm, s390; no new checkpatch
   `--strict` finding; stack frames < 1024 bytes (older kernels' 32-bit `FRAME_WARN`; now 1280, 2048 on
-  64-bit). It prints the three deepest and fails at 1024; deepest are `decode_literals()` and
-  `code_literals()`, near 1000 with KASAN+UBSan as `stress.sh` sets them; `own_table()` is `noinline`
-  to keep its locals out of `decode_literals()`.
+  64-bit). It prints the three deepest and fails at 1024; deepest are `seqlz_decode_literals()` and
+  `seqlz_code_literals()`, near 1000 with KASAN+UBSan as `stress.sh` sets them; `read_own_table()` is `noinline`
+  to keep its locals out of `seqlz_decode_literals()`.
 - The copy never names this repo, our machines, phones or dumps. `port.py` fails on names
   (`FORBIDDEN`), not on wording like "on pages of a phone"; also on a `REWRITES` entry that matches no
   comment any more (change or remove it with its comment).

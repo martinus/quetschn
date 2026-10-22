@@ -16,7 +16,7 @@
 #include "seqlz.h"
 #include "unwritten.h"
 
-static struct seqlz_tables* tables;
+static int tables_built;
 static unsigned char *with, *without, *scratch;
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
@@ -26,14 +26,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     int r_with, r_without;
 
     /* zram never stores more than a page; twice that covers lengths the decoder has to reject */
-    if (size > 2U * SEQLZ_PAGE)
+    if (size > 2U * SEQLZ_BLOCK_SIZE)
         return 0;
-    if (!tables) {
-        tables = malloc(seqlz_tables_size());
-        with = malloc(SEQLZ_PAGE);
-        without = malloc(SEQLZ_PAGE);
+    if (!tables_built) {
+        tables_built = 1;
+        with = malloc(SEQLZ_BLOCK_SIZE);
+        without = malloc(SEQLZ_BLOCK_SIZE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!tables || !with || !without || !scratch || seqlz_tables_init(tables, &seqlz_default_own))
+        if (!with || !without || !scratch || seqlz_tables_init(&seqlz_default_lengths))
             abort();
     }
     src = malloc(size ? size : 1);
@@ -42,18 +42,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     memcpy(src, data, size);
     /* the same bytes before every input, so that a decoder that reads what it did not write behaves
      * the same when the input is run again */
-    memset(with, 0xa5, SEQLZ_PAGE);
-    memset(without, 0x5a, SEQLZ_PAGE);
+    memset(with, 0xa5, SEQLZ_BLOCK_SIZE);
+    memset(without, 0x5a, SEQLZ_BLOCK_SIZE);
     memset(scratch, 0x3c, SEQLZ_SCRATCH);
-    unwritten(with, SEQLZ_PAGE);
-    unwritten(without, SEQLZ_PAGE);
+    unwritten(with, SEQLZ_BLOCK_SIZE);
+    unwritten(without, SEQLZ_BLOCK_SIZE);
     unwritten(scratch, SEQLZ_SCRATCH);
 
-    r_with = seqlz_decode(tables, src, (unsigned int)size, with, scratch);
-    r_without = seqlz_decode(tables, src, (unsigned int)size, without, NULL);
+    r_with = seqlz_decode(src, (unsigned int)size, with, scratch);
+    r_without = seqlz_decode(src, (unsigned int)size, without, NULL);
     if (r_with != 0 && r_with != -EINVAL)
         abort();
-    if (r_without == 0 && (r_with != 0 || memcmp(with, without, SEQLZ_PAGE) != 0))
+    if (r_without == 0 && (r_with != 0 || memcmp(with, without, SEQLZ_BLOCK_SIZE) != 0))
         abort();
     free(src);
     return 0;

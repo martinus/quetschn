@@ -11,7 +11,7 @@
 
 #define MAX_CODE 15U    /* longer than the codes of any table, see "The tables" */
 #define TOKENS 3072U    /* "Tokens": 16 * 32 * 6, the escape is the symbol after them */
-#define OWN_SYMBOLS 19U /* "A page's own literal table": the 10 lengths, then runs of 1 to 9 bits */
+#define OWN_SYMBOLS 19U /* "A block's own literal table": the 10 lengths, then runs of 1 to 9 bits */
 #define OWN_FULL 1024U  /* "the code space", in units of 2^-10 */
 
 /* "Prefix codes", rules 1 to 3; 0, or -1 if the lengths are no complete prefix code */
@@ -39,14 +39,14 @@ static int make_code(struct seqlz_ref_code* c, const unsigned char* len, unsigne
     return space == 1UL << MAX_CODE ? 0 : -1;
 }
 
-int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsigned int page_bits) {
+int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsigned int block_bits) {
     unsigned int k;
 
-    if (page_bits != 12U && page_bits != 14U)
+    if (block_bits != 12U && block_bits != 14U)
         return -1;
-    r->page_bits = page_bits;
-    if (make_code(&r->tok, t->tok, TOKENS + 1U) || make_code(&r->ll, t->ll, 12U + page_bits) ||
-        make_code(&r->ml, t->ml, 12U + page_bits))
+    r->block_bits = block_bits;
+    if (make_code(&r->tok, t->tok, TOKENS + 1U) || make_code(&r->ll, t->ll, 12U + block_bits) ||
+        make_code(&r->ml, t->ml, 12U + block_bits))
         return -1;
     for (k = 0; k < 8U; k++)
         if (make_code(&r->lit[k], t->lit[k], 256U))
@@ -54,7 +54,7 @@ int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsign
     return make_code(&r->own, t->own, OWN_SYMBOLS);
 }
 
-/* bits read most significant bit first, at most nbits of them; reading more makes the page invalid */
+/* bits read most significant bit first, at most nbits of them; reading more makes the block invalid */
 struct bits {
     const unsigned char* p;
     size_t nbits, pos;
@@ -68,7 +68,7 @@ static int bit(struct bits* b, unsigned int* v) {
     return 0;
 }
 
-/* "The end of a page": fewer than 8 bits left, and they are 0; 0 if so, else -1 */
+/* "The end of a block": fewer than 8 bits left, and they are 0; 0 if so, else -1 */
 static int ends_here(struct bits* b) {
     unsigned int v;
 
@@ -125,7 +125,7 @@ static int value(struct bits* b, const struct seqlz_ref_code* c, unsigned int* v
     return 0;
 }
 
-/* "A page's own literal table", from byte at: its code into c, its bytes into d; 0, or -1 if it is invalid */
+/* "A block's own literal table", from byte at: its code into c, its bytes into d; 0, or -1 if it is invalid */
 static int
 own_table(const struct seqlz_ref* r, const unsigned char* src, size_t len, size_t at, struct seqlz_ref_code* c, size_t* d) {
     unsigned char lengths[256] = {0};
@@ -179,19 +179,19 @@ static unsigned char undelta(unsigned int dt, unsigned char v, const unsigned ch
 
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out) {
     unsigned char lits[1U << 14];
-    const unsigned int P = r->page_bits, page = 1U << P;
+    const unsigned int P = r->block_bits, block = 1U << P;
     /* "Offsets": the offset bits of each class, and what the number read is multiplied by */
     const unsigned int class_bits[6] = {0, 1, 8, P, 5, 8};
     const unsigned int class_scale[6] = {0, 2, 1, 1, 8, 8};
     struct bits b;
     unsigned int h, n, used = 0, size = 0, last = 1, dt = 0, k;
 
-    /* "Layout of a compressed page" */
+    /* "Layout of a compressed block" */
     if (len < 2U)
         return -1;
     h = src[0] | (unsigned int)src[1] << 8;
     n = h & 0x7fffU;
-    if (n > page)
+    if (n > block)
         return -1;
     if (!(h & 0x8000U)) {
         if (2U + (size_t)n > len)
@@ -256,8 +256,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         b = (struct bits){src + start, 8U * (len - start), 0};
     }
 
-    /* "Decoding": until the literals left fill the rest of the page */
-    while (n - used != page - size) {
+    /* "Decoding": until the literals left fill the rest of the block */
+    while (n - used != block - size) {
         unsigned int tk, ll, mlf, c, x, off, ml;
 
         /* "Tokens" */
@@ -276,7 +276,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
                 return -1;
             ll = 15U + x;
         }
-        if (ll > n - used || ll > page - size)
+        if (ll > n - used || ll > block - size)
             return -1;
         for (k = 0; k < ll; k++, size++)
             out[size] = undelta(dt, lits[used++], out, size, last);
@@ -287,7 +287,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
             ml = 35U + x;
         }
         last = off;
-        if (off == 0 || off > size || ml > page - size)
+        if (off == 0 || off > size || ml > block - size)
             return -1;
         /* one byte at a time, so that a match can repeat what it writes */
         for (k = 0; k < ml; k++, size++)

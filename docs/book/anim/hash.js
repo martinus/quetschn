@@ -2,7 +2,7 @@
  * A greedy matcher with a hash table of 16 slots on a short text: at each position the hash of the
  * next 5 bytes picks a slot, the slot gives a candidate, 4 bytes are compared, and the position goes
  * into the slot. A match is measured, emitted as a sequence, and the cursor jumps behind it. The hash
- * is seqlz_hash5() of src/page_lz.h cut to 4 bits; everything is computed here.
+ * is seqlz_hash5() of src/seqlz_match.h cut to 4 bits; everything is computed here.
  */
 BookAnim.define('hash', function (ctx) {
   var TEXTS = [

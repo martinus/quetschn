@@ -48,7 +48,7 @@ Say a thing once: no summary of what a listing showed, no repeat of what another
 ## Listings
 
 ```text
-@listing src/page_lz.h 13-22
+@listing src/seqlz_match.h 13-22
 ```
 
 on a line of its own inserts lines 13 to 22 of that file, with real line numbers, taken from the
@@ -146,7 +146,7 @@ Martin's voice, blog-post register. These rules are hard:
   utilize, facilitate, robust (rarely), crucial (rarely), "it's worth noting", "not just X but Y",
   "Let's", "dive", "journey", "under the hood", "magic".
 - No judgment of other projects' code; report the numbers.
-- Backticks on every code token: function names with `()`, `SEQLZ_PAGE`, file names, numbers in code
+- Backticks on every code token: function names with `()`, `SEQLZ_BLOCK_SIZE`, file names, numbers in code
   form when they are code (`0x8000`).
 - Numbers as digits. Dates as "8th October 2026". Units: "8 KiB", "4096 bytes", "2.7 µs", "11 bits".
 - Headings state the point when they can: "The hash keeps 5 bytes, not 4" beats "The hash".

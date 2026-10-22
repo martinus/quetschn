@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
- * The literal tables a page with coded literals chooses one of, part of the
- * format (docs/format.md): for 4 KiB pages in seqlz_lit_sets_4k.inc, for 16 KiB
- * pages in seqlz_lit_sets_16k.inc. Made by k-means over the literal histograms
- * of the training pages, with the compressor's matcher: each page goes to the
- * table that codes its literals in the fewest bits, then each table becomes the
- * Huffman code of its pages' literals. Of 32 runs from other starting tables,
- * the one with the fewest bits is kept. The most used table comes first.
- * tools/kernel-port/gen-seqlz-tables.py makes the .inc files from the counts
- * the training ended with, in bench/seqlz_counts_4k.txt and _16k.txt.
+ * The literal tables a block with coded literals chooses one of, part of the
+ * format (docs/format.md): for blocks of 4 KiB in seqlz_lit_sets_4k.inc, for
+ * 16 KiB blocks in seqlz_lit_sets_16k.inc. Made by k-means over the literal
+ * histograms of the training pages, with the compressor's matcher: each page
+ * goes to the table that codes its literals in the fewest bits, then each table
+ * becomes the Huffman code of its pages' literals. Of 32 runs from other
+ * starting tables, the one with the fewest bits is kept. The most used table
+ * comes first. tools/kernel-port/gen-seqlz-lengths.py makes the .inc files from
+ * the counts the training ended with, in bench/seqlz_counts_4k.txt and
+ * _16k.txt.
  */
 #include "seqlz.h"
 

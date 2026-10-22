@@ -105,9 +105,9 @@ static unsigned long long instructions(void) {
 }
 
 #ifndef COST_CODEC
-static struct seqlz_tables* tables;
+static int tables_built;
 #endif
-static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE];
+static unsigned char c[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE];
 #ifndef COST_CODEC
 static unsigned char scratch[SEQLZ_SCRATCH];
 #endif
@@ -130,8 +130,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         if (insn_fd < 0)
             abort();
 #ifndef COST_CODEC
-        tables = malloc(seqlz_tables_size());
-        if (!tables || seqlz_tables_init(tables, &seqlz_default_own))
+        tables_built = 1;
+        if (seqlz_tables_init(&seqlz_default_lengths))
             abort();
 #endif
     }
@@ -143,20 +143,20 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         static struct quetschn_params params;
         static struct quetschn_stream stream, dstream;
         static int ready;
-        unsigned int clen = sizeof c, dlen = SEQLZ_PAGE;
+        unsigned int clen = sizeof c, dlen = SEQLZ_BLOCK_SIZE;
 
         if (!ready) {
             params.level = QUETSCHN_LEVEL_DEFAULT;
-            params.page_size = SEQLZ_PAGE;
+            params.page_size = SEQLZ_BLOCK_SIZE;
             if (COST_CODEC.setup_params(&params) || COST_CODEC.create_cctx(&params, &stream) ||
                 (COST_CODEC.create_dctx && COST_CODEC.create_dctx(&params, &dstream)))
                 abort();
             ready = 1;
         }
-        if (size != SEQLZ_PAGE)
+        if (size != SEQLZ_BLOCK_SIZE)
             return 0;
         i0 = instructions();
-        if (COST_CODEC.compress(&params, &stream, data, SEQLZ_PAGE, c, &clen))
+        if (COST_CODEC.compress(&params, &stream, data, SEQLZ_BLOCK_SIZE, c, &clen))
             abort();
         i1 = instructions();
         /* COST_DUMP=<file>: what the codec wrote */
@@ -172,7 +172,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             if (COST_CODEC.decompress(&params, COST_CODEC.create_dctx ? &dstream : &stream, c, clen, out, &dlen))
                 abort();
             i1 = instructions();
-            if (dlen != SEQLZ_PAGE || memcmp(out, data, SEQLZ_PAGE))
+            if (dlen != SEQLZ_BLOCK_SIZE || memcmp(out, data, SEQLZ_BLOCK_SIZE))
                 abort();
             mark(i1 - i0, 1, 512);
         }
@@ -181,10 +181,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     static struct seqlz_state st;
     unsigned int len;
 
-    if (size != SEQLZ_PAGE)
+    if (size != SEQLZ_BLOCK_SIZE)
         return 0;
     i0 = instructions();
-    len = seqlz_compress(tables, &st, data, c, sizeof c, 2);
+    len = seqlz_compress(&st, data, c, sizeof c, 2);
     i1 = instructions();
     if (!len)
         abort();
@@ -192,10 +192,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     /* zram stores larger pages as they are and never decodes them */
     if (len < 3625U) {
         i0 = instructions();
-        if (seqlz_decode(tables, c, len, out, scratch))
+        if (seqlz_decode(c, len, out, scratch))
             abort();
         i1 = instructions();
-        if (memcmp(out, data, SEQLZ_PAGE))
+        if (memcmp(out, data, SEQLZ_BLOCK_SIZE))
             abort();
         mark(i1 - i0, 1, 512);
     }
@@ -203,7 +203,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     /* byte 0: the literals, random bytes or ones with long codes; then per sequence 4 bytes: ll, ml - 4,
      * and how the offset is chosen with its value */
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    static unsigned char page[SEQLZ_PAGE], lits[SEQLZ_PAGE], pool[256];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], lits[SEQLZ_BLOCK_SIZE], pool[256];
     static unsigned int n_pool;
     unsigned int n = 0, n_lit = 0, pos = 0, last = 1, k, len;
     uint64_t rng = 0x9e3779b97f4a7c15ULL;
@@ -220,7 +220,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
         if (pos + ll == 0)
             ll = 1;
-        if (pos + ll + ml > SEQLZ_PAGE - 1U)
+        if (pos + ll + ml > SEQLZ_BLOCK_SIZE - 1U)
             break;
         if (sel == 0 && last <= pos + ll)
             off = last;
@@ -247,13 +247,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         last = off;
     }
     /* the last sequence: literals to the end of the page */
-    seq[n].literals = (unsigned short)(SEQLZ_PAGE - pos);
+    seq[n].literals = (unsigned short)(SEQLZ_BLOCK_SIZE - pos);
     seq[n].match = 0;
     seq[n].offset = 0;
-    while (pos < SEQLZ_PAGE)
+    while (pos < SEQLZ_BLOCK_SIZE)
         page[pos++] = lits[n_lit++] = (unsigned char)(rng += 0x9e37);
     n++;
-    len = seqlz_encode(tables, NULL, seq, n, lits, n_lit, NULL, c, sizeof c, 2);
+    len = seqlz_encode(NULL, seq, n, lits, n_lit, NULL, c, sizeof c, 2);
     if (!len)
         abort();
     /* COST_DUMP=<file>: the compressed page this input makes, for quetschn-seqlz-worst count-streams */
@@ -264,18 +264,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             abort();
     }
     i0 = instructions();
-    if (seqlz_decode(tables, c, len, out, scratch))
+    if (seqlz_decode(c, len, out, scratch))
         abort();
     i1 = instructions();
-    if (memcmp(out, page, SEQLZ_PAGE))
+    if (memcmp(out, page, SEQLZ_BLOCK_SIZE))
         abort();
     mark(i1 - i0, 0, 2048);
 #else
-    if (size > 2U * SEQLZ_PAGE)
+    if (size > 2U * SEQLZ_BLOCK_SIZE)
         return 0;
     memcpy(c, data, size);
     i0 = instructions();
-    if (seqlz_decode(tables, c, (unsigned int)size, out, scratch) == 0) {
+    if (seqlz_decode(c, (unsigned int)size, out, scratch) == 0) {
         i1 = instructions();
         mark(i1 - i0, 0, 2048);
     }
@@ -288,7 +288,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
  * objective, for compress the compressor's and the decoder's on its output. A file of more than two pages
  * is a corpus of pages, one line per page. */
 int main(int argc, char** argv) {
-    static unsigned char buf[2 * SEQLZ_PAGE + 1];
+    static unsigned char buf[2 * SEQLZ_BLOCK_SIZE + 1];
     int i;
 
     for (i = 1; i < argc; i++) {
@@ -299,15 +299,15 @@ int main(int argc, char** argv) {
         if (!f)
             continue;
         n = fread(buf, 1, sizeof buf, f);
-        if (n <= 2 * SEQLZ_PAGE) {
+        if (n <= 2 * SEQLZ_BLOCK_SIZE) {
             cost_last[0] = cost_last[1] = 0;
             LLVMFuzzerTestOneInput(buf, n);
             printf("%llu\t%llu\t%s\n", cost_last[0], cost_last[1], argv[i]);
         } else {
             fseek(f, 0, SEEK_SET);
-            while (fread(buf, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
+            while (fread(buf, 1, SEQLZ_BLOCK_SIZE, f) == SEQLZ_BLOCK_SIZE) {
                 cost_last[0] = cost_last[1] = 0;
-                LLVMFuzzerTestOneInput(buf, SEQLZ_PAGE);
+                LLVMFuzzerTestOneInput(buf, SEQLZ_BLOCK_SIZE);
                 printf("%llu\t%llu\t%s:%u\n", cost_last[0], cost_last[1], argv[i], page++);
             }
         }

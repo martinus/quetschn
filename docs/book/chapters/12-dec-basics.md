@@ -1,10 +1,12 @@
 # The decoder's tools: prefetches, copies and a bit reader {#ch-dec-basics}
 
-`src/seqlz_decompress.c` is the decoder, {{ch12.lines}} lines. Its first 249 lines, this chapter, are
-what every decoder of an LZ format needs in some form: a prefetch of the tables, copies of 8 and 16
-bytes, a copy for the literals, one for matches that overlap the bytes they write, and a reader for the
-bitstream. Lines 251 to 433 decode the coded literals ([chapter 13](#ch-literals-dec)), the rest is
-`seqlz_decode()`, the loop over the sequences of a page ([chapter 14](#ch-decode)).
+`src/seqlz_decompress.c` is the decoder, {{ch12.lines}} lines. Its first 213 lines, this chapter, are
+what every decoder of an LZ format needs in some form: copies of 8 and 16 bytes, a copy for the
+literals, one for matches that overlap the bytes they write, and a reader for the bitstream; the
+prefetch of the tables is in `seqlz_internal.h`, which the decoder of the coded literals uses too.
+Lines 215 to 300 turn deltas back into literals ([chapter 13](#ch-literals-dec--undelta)), the rest is
+`seqlz_decode()`, the loop over the sequences of a page ([chapter 14](#ch-decode)). The coded literals
+are decoded in a file of their own, `seqlz_decompress_literals.c` ([chapter 13](#ch-literals-dec)).
 
 @listing src/seqlz_decompress.c 1-5
 
@@ -21,7 +23,7 @@ caches. Then each first lookup into a line is a miss of about 100 ns, and prefet
 let these misses overlap instead of one after the other ([chapter 3](#ch-cpu--prefetch)).
 <!-- undated: a typical latency, explained in chapter 3 -->
 
-@listing src/seqlz_decompress.c 7-32
+@listing src/seqlz_internal.h 113-138
 
 `L1_CACHE_BYTES` is the kernel's size of a cache line, 64 on x86-64 and arm64. `prefetch()` is `prfm` on
 arm64 and `prefetcht0` on x86-64, the latter with a patch to the kernel ([chapter 5](#ch-compat--prefetch)).
@@ -52,7 +54,7 @@ two runs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
 
 ::: warn The line of end - 1
-The loop prefetches the line of `p` and the lines 64, 128, ... bytes on. Where `p` is not at the start
+The loop prefetches the line of `p` and the lines 64, 139, ... bytes on. Where `p` is not at the start
 of a line, the table touches one line more than the loop reaches. In `struct seqlz_tables` on a 64-bit
 build the token table is at offset {{ch12.tok.off}}, `ll.decode` and `ml.decode` at
 {{ch12.ll.off|grp}} and {{ch12.ml.off|grp}}, {{ch12.ll.mod}} bytes past a multiple of 64, and the
@@ -72,7 +74,7 @@ tools that get it from `malloc()` do not have. On x86-64 the extra prefetch made
 bench; it was not measured on the phone (commit `bafef14`).
 :::
 
-@listing src/seqlz_decompress.c 34-40
+@listing src/seqlz_internal.h 140-146
 
 The loop forms the pointers `q + k` up to `q + size - 64` only when `size` is a multiple of 512;
 otherwise its last round would form pointers past `end` and prefetch lines behind the table. These
@@ -81,7 +83,7 @@ asserts stop the build when a table stops being one, e.g. length codes of at mos
 
 ## Copies of 8 and 16 bytes, and what overlap each allows {#ch-dec-basics--copies}
 
-@listing src/seqlz_decompress.c 42-64
+@listing src/seqlz_decompress.c 7-29
 
 `__builtin_memcpy()` of a constant size is one load and one store of any alignment. It is the builtin and
 not `memcpy()` because with `CONFIG_FORTIFY_SOURCE` the kernel's `memcpy()` can become a call
@@ -111,7 +113,7 @@ Offsets below 8 avoid it: they store one register again and again, with no load 
 
 ## copy_literals(): 16 bytes at a time, also past the end {#ch-dec-basics--literals}
 
-@listing src/seqlz_decompress.c 66-94
+@listing src/seqlz_decompress.c 31-59
 
 The caller, the slow path of `seqlz_decode()`, has checked that the `nl` literals are there and fit into
 the page. `s_end` is not the end of the literals but of the memory behind them that may be read,
@@ -131,9 +133,9 @@ A match may start fewer bytes back than it is long and then repeats what it just
 an `a` with length 6 writes `aaaaaa`, which is how a run of zeros compresses to a few bits. `copy8()` is
 right only from offset 8 on. For offsets 1 to 7 the decoder builds the repeated pattern in a register.
 
-@listing src/seqlz_decompress.c 96-100
+@listing src/seqlz_decompress.c 61-65
 
-@listing src/seqlz_decompress.c 102-121
+@listing src/seqlz_decompress.c 67-86
 
 `repeat_pattern(d, off)` returns the 8 bytes a byte-by-byte copy would write at `d`. The load takes 8
 bytes from `d - off`; the first `off` are the pattern, the rest are at `d` and after, not written yet.
@@ -190,7 +192,7 @@ multiply needs the pattern's first byte in the lowest byte ([chapter 3](#ch-cpu-
 with a length value, up to a page long, and those near the end of the page. The fast path has its own
 copy, `copy_match_fast()`.
 
-@listing src/seqlz_decompress.c 123-140
+@listing src/seqlz_decompress.c 88-105
 
 The caller has checked that `d - off` is inside the page and `d + len` at most `d_end`. The last sentence
 of the first paragraph has a measurement behind it: the first decoder of seqlz, in September 2026,
@@ -199,12 +201,12 @@ run of zeros that is up to 4000 single bytes with offset 1, each load waiting fo
 and the slowest 1% of pages took 5700 ns, where `lz4` took 500
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables)).
 
-@listing src/seqlz_decompress.c 141-158
+@listing src/seqlz_decompress.c 106-123
 
 `off & 7U` changes nothing, `off` is below 8 here. It is left from the older
 `step = off >= 8 ? 8U : repeat_step[off & 7U]`, which commit `b163902` moved into this branch. With
 fewer than 8 bytes left in the page, the byte loop at the end copies all of the match. The comment on
-lines 146 to 149 bounds the load of `repeat_pattern()`: it reads up to `d - off + 7`, at most `d + 6`,
+lines 111 to 114 bounds the load of `repeat_pattern()`: it reads up to `d - off + 7`, at most `d + 6`,
 inside the page also when the page is nearly full. For `off = 3, len = 20` the stores are at `k = 0, 6,
 12, 18`, as in the figure. For the example page's match of [chapter 4](#ch-format--example),
 `off = 2, len = 4094`, the loop stops at `k = 4088`, where 8 more bytes would not fit, and the byte loop
@@ -222,7 +224,7 @@ single-byte stores waits for them
 The format has changed since; the numbers say which way the change went, not what it is worth now.
 :::
 
-@listing src/seqlz_decompress.c 159-180
+@listing src/seqlz_decompress.c 124-145
 
 From offset 8 on, `copy8()` is right: each load ends at `d + k - off + 7`, before the bytes its store
 writes. The second of the first two copies reads what the first wrote, e.g. `d - 2` to `d + 5` for
@@ -256,7 +258,7 @@ another address does
 After the literals, a compressed page has the bitstream: per sequence the token's code, the offset bits
 and the length values, with no alignment to bytes ([chapter 4](#ch-format--layout)).
 
-@listing src/seqlz_decompress.c 182-196
+@listing src/seqlz_decompress.c 147-161
 
 `bits` is **left-aligned**: the next bit of the stream is bit 63, so the next `n` bits as a number are
 `bits >> (64 - n)`, and a code indexes its table with the register's top bits. `count` says how many of
@@ -270,9 +272,11 @@ and offsets but never a wrong memory access, because each is checked against the
 
 ### seqlz_br_refill(): one load of 8 bytes, and count ends at 56 to 63
 
-@listing src/seqlz_decompress.c 198-221
+@listing src/seqlz_decompress.c 163-185
 
-While 8 bytes of the stream are left, the refill loads 8 at once; in the last 7 it goes byte by byte,
+While 8 bytes of the stream are left, the refill loads 8 at once, `seqlz_br_refill_8()`, which the
+fast path of [chapter 14](#ch-decode--next-token) calls by itself, as it knows that 8 bytes are there; in the last 7
+it goes byte by byte,
 because zram hands the decoder a buffer of exactly the compressed size, and the byte after it may belong
 to another allocation. `get_unaligned_be64()` puts the byte at `p` into the top 8 bits, the stream's
 order; on x86-64 and arm64 it is a load and a byte swap. `v >> count` puts it right below the `count`
@@ -317,14 +321,14 @@ below -7, by 64 or more. The example page of [chapter 4](#ch-format--example) ha
 
 ### seqlz_br_drop(): taking bits
 
-@listing src/seqlz_decompress.c 223-228
+@listing src/seqlz_decompress.c 187-192
 
 The `(int)n` keeps the subtraction signed, so `count` can go negative. `n` is never 64: the largest drop
 is a token's code with its offset bits, $11 + 14$ bits with 16 KiB pages.
 
 ### seqlz_br_value(): a length value, with two shifts where one would do
 
-@listing src/seqlz_decompress.c 230-249
+@listing src/seqlz_decompress.c 194-213
 
 A length value is a symbol of the `ll` or `ml` table and then `x` extra bits, added to a base
 ([chapter 4](#ch-format--length-values)). One lookup with the next 8 bits gives the code's length `n` in
@@ -337,7 +341,7 @@ The match length value of the example page, with the 4 KiB tables: after the esc
 12 bits and the offset, {{ch12.ab.tokdrop}} bits, the register is `{{ch12.ab.bits2}}` with
 `count = {{ch12.ab.count2}}`.
 
-- The index is the top 8 bits, {{ch12.ab.idx}}, and `t->ml.decode[{{ch12.ab.idx}}]` is `{{ch12.ab.entry}}`.
+- The index is the top 8 bits, {{ch12.ab.idx}}, and with `t` the `ml` table, `t->decode[{{ch12.ab.idx}}]` is `{{ch12.ab.entry}}`.
 - `n = {{ch12.ab.n}}`: the code `{{ch12.ab.code}}`, symbol {{ch12.ab.sym}}. `x = {{ch12.ab.x}}`, and the
   base is {{ch12.ab.base}}, $2^{ {{ch12.ab.x}} }$.
 - `bits << {{ch12.ab.n}}` is `{{ch12.ab.shl}}`, `>> 1` is `{{ch12.ab.shr1}}`, `>> {{ch12.ab.shr2}}` is
@@ -348,11 +352,11 @@ The match length value of the example page, with the 4 KiB tables: after the esc
 
 `seqlz_decode()` adds the token's {{ch12.ml_tok}}, and the match is {{ch12.ab.match}} bytes, as the
 format's example says. A direct symbol: the code `{{ch12.ml0.code}}` gives
-`t->ml.decode[{{ch12.ml0.index}}] = {{ch12.ml0.entry}}`, `n = {{ch12.ml0.n}}`, `x = 0`, and the value
+`t->decode[{{ch12.ml0.index}}] = {{ch12.ml0.entry}}`, `n = {{ch12.ml0.n}}`, `x = 0`, and the value
 {{ch12.ml0.base}}, the shift by 63 gives 0 for the extra bits.
 @assert ch12.ml0.x == 0 and ml.code[ch12.ml0.base] == ch12.ml0.code and ch12.ab.match == 4094
 
-The comment's bound, `SEQLZ_MAX_BITS + QUETSCHN_PAGE_BITS`, 20 or 22 bits, has a bit to spare: a code
+The comment's bound, `SEQLZ_MAX_BITS + SEQLZ_BLOCK_BITS`, 20 or 22 bits, has a bit to spare: a code
 has at most 8 bits, a value at most {{ch10.len_extra_max}} extra bits with 4 KiB pages and
 {{k16.ch10.len_extra_max}} with 16 KiB pages, and the caller refills before, which leaves at least 56.
 The largest base, {{k16.ch12.base_max|grp}} with 16 KiB pages, fits the entry's 16 bits.

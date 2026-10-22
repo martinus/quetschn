@@ -65,14 +65,14 @@ static const char* const kinds[] = {
 static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
     unsigned int k, i;
 
-    memset(p, 0, SEQLZ_PAGE);
+    memset(p, 0, SEQLZ_BLOCK_SIZE);
     switch (kind) {
     case 0:
-        for (k = 0; k < SEQLZ_PAGE; k++)
+        for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
             p[k] = (unsigned char)next();
         break;
     case 1:
-        for (k = 0; k < SEQLZ_PAGE; k++)
+        for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
             p[k] = (unsigned char)below(v);
         break;
     case 2: {
@@ -80,28 +80,28 @@ static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
 
         for (i = 0; i < v; i++)
             words[i] = (uint32_t)next();
-        for (k = 0; k + 4 <= SEQLZ_PAGE; k += 4)
+        for (k = 0; k + 4 <= SEQLZ_BLOCK_SIZE; k += 4)
             memcpy(p + k, &words[below(v)], 4);
         break;
     }
     case 3:
-        for (k = 0; k < SEQLZ_PAGE;) {
+        for (k = 0; k < SEQLZ_BLOCK_SIZE;) {
             unsigned int run = 8 + below(56);
 
             p[k++] = (unsigned char)next();
-            for (i = 0; i < run && k < SEQLZ_PAGE; i++, k++)
+            for (i = 0; i < run && k < SEQLZ_BLOCK_SIZE; i++, k++)
                 p[k] = k >= v ? p[k - v] : (unsigned char)next();
         }
         break;
     case 4:
-        for (k = 0; k < SEQLZ_PAGE; k++) {
+        for (k = 0; k < SEQLZ_BLOCK_SIZE; k++) {
             unsigned int z = (unsigned int)__builtin_ctzll(next() | 1ULL << 40);
 
             p[k] = (unsigned char)(32U + (z < 30 ? z : 30) * 3U + below(3));
         }
         break;
     case 5:
-        for (k = 0; k < SEQLZ_PAGE; k += 8) {
+        for (k = 0; k < SEQLZ_BLOCK_SIZE; k += 8) {
             if (k >= 64 && below(v) == 0)
                 memcpy(p + k, p + 8 * below(k / 8), 8);
             else
@@ -111,7 +111,7 @@ static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
         break;
     case 6:
         for (i = 0; i < v; i++)
-            p[below(SEQLZ_PAGE)] = (unsigned char)next();
+            p[below(SEQLZ_BLOCK_SIZE)] = (unsigned char)next();
         break;
     case 7: {
         /* bytes with weight 2^(-0.9 * their code length in literal table 5): coded, but as many bits as
@@ -123,16 +123,16 @@ static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
             sum += w[i] = seqlz_lit_sets[5][i] ? pow(2.0, -0.9 * seqlz_lit_sets[5][i]) : 0;
         for (i = 0; i < 4; i++)
             magic[i] = (unsigned char)next();
-        for (k = 0; k < SEQLZ_PAGE;) {
+        for (k = 0; k < SEQLZ_BLOCK_SIZE;) {
             unsigned int j;
 
-            for (j = 0; j < v && k < SEQLZ_PAGE; j++) {
+            for (j = 0; j < v && k < SEQLZ_BLOCK_SIZE; j++) {
                 x = (double)(next() >> 11) / 9007199254740992.0 * sum;
                 for (i = 0; i < 255 && x >= w[i]; i++)
                     x -= w[i];
                 p[k++] = (unsigned char)i;
             }
-            for (j = 0; j < 4 && k < SEQLZ_PAGE; j++)
+            for (j = 0; j < 4 && k < SEQLZ_BLOCK_SIZE; j++)
                 p[k++] = magic[j];
         }
         break;
@@ -142,10 +142,10 @@ static void make_page(unsigned int kind, unsigned int v, unsigned char* p) {
 
         for (k = 0; k < 16; k++)
             p[k] = (unsigned char)text[below(64)];
-        while (k < SEQLZ_PAGE) {
-            for (i = 0; i < 5 && k < SEQLZ_PAGE; i++, k++)
+        while (k < SEQLZ_BLOCK_SIZE) {
+            for (i = 0; i < 5 && k < SEQLZ_BLOCK_SIZE; i++, k++)
                 p[k] = p[k - v];
-            for (i = 0; i < 6 && k < SEQLZ_PAGE; i++)
+            for (i = 0; i < 6 && k < SEQLZ_BLOCK_SIZE; i++)
                 p[k++] = (unsigned char)text[below(64)];
         }
     }
@@ -167,7 +167,7 @@ static int write_pages(const char* base) {
     };
     static const unsigned int n_params[] = {1, 6, 4, 6, 1, 3, 4, 4, 3};
     char path[4096];
-    unsigned char page[SEQLZ_PAGE];
+    unsigned char page[SEQLZ_BLOCK_SIZE];
     unsigned int kind, j, s, n = 0;
     FILE *pages, *tsv;
 
@@ -177,12 +177,12 @@ static int write_pages(const char* base) {
     tsv = fopen(path, "w");
     if (!pages || !tsv)
         return 1;
-    fprintf(tsv, "# page_size=%u\npage\tkind\tparameter\n", SEQLZ_PAGE);
+    fprintf(tsv, "# page_size=%u\npage\tkind\tparameter\n", SEQLZ_BLOCK_SIZE);
     for (kind = 0; kind < sizeof kinds / sizeof kinds[0]; kind++)
         for (j = 0; j < n_params[kind]; j++)
             for (s = 0; s < 16; s++) {
                 make_page(kind, params[kind][j], page);
-                if (fwrite(page, 1, SEQLZ_PAGE, pages) != SEQLZ_PAGE)
+                if (fwrite(page, 1, SEQLZ_BLOCK_SIZE, pages) != SEQLZ_BLOCK_SIZE)
                     return 1;
                 fprintf(tsv, "%u\t%s\t%u\n", n++, kinds[kind], params[kind][j]);
             }
@@ -193,8 +193,8 @@ static int write_pages(const char* base) {
 /* ---- valid pages the matcher never writes, for the decoder ---- */
 
 struct built {
-    unsigned char page[SEQLZ_PAGE];
-    unsigned char lits[SEQLZ_PAGE];
+    unsigned char page[SEQLZ_BLOCK_SIZE];
+    unsigned char lits[SEQLZ_BLOCK_SIZE];
     struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int n_seq, n_lit, pos, last;
 };
@@ -250,7 +250,7 @@ static int escaped_token(unsigned int cls, unsigned int* ll, unsigned int* ml) {
 
     for (l = 0; l < 15; l++)
         for (m = 0; m < 31; m++)
-            if (seqlz_default_own.token[seqlz_token(l, m + 4, cls)] == 0 && l + m + 4 < best) {
+            if (seqlz_default_lengths.token[seqlz_token(l, m + 4, cls)] == 0 && l + m + 4 < best) {
                 best = l + m + 4;
                 *ll = l;
                 *ml = m + 4;
@@ -267,17 +267,17 @@ static const char* build(unsigned int kind, struct built* b) {
     switch (kind) {
     case 0: /* as many sequences as fit, ml 4, offsets at random */
         add(b, 4, 4, 1 + below(4), lit_random);
-        while (b->pos + 4 < SEQLZ_PAGE)
+        while (b->pos + 4 < SEQLZ_BLOCK_SIZE)
             add(b, 0, 4, 1 + below(b->pos), lit_random);
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_random);
         return "most sequences, ml 4";
     case 1: /* the same with offsets of class 3, 12 raw bits, where there are such */
         add(b, 4, 4, 1, lit_random);
-        while (b->pos + 4 < SEQLZ_PAGE) {
+        while (b->pos + 4 < SEQLZ_BLOCK_SIZE) {
             off = offset_of_class(b, 3);
             add(b, 0, 4, off ? off : 1 + below(b->pos), lit_random);
         }
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_random);
         return "most sequences, offsets of 12 bits";
     case 2: /* every token escaped: the token of class 3 without a code that takes fewest bytes */
         if (escaped_token(3, &ll, &ml))
@@ -286,42 +286,42 @@ static const char* build(unsigned int kind, struct built* b) {
         add(b, 4, 4, 1, lit_random);
         while (b->pos < 300)
             add(b, 0, 4, 1 + below(b->pos), lit_random);
-        while (b->pos + ll + ml < SEQLZ_PAGE && (off = offset_of_class(b, 3)) != 0)
+        while (b->pos + ll + ml < SEQLZ_BLOCK_SIZE && (off = offset_of_class(b, 3)) != 0)
             add(b, ll, ml, off, lit_random);
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_random);
         return "every token escaped";
     case 3: /* offsets 1 to 7 by turns, ml 4: the decoder's pattern copy for each, and escaped tokens for
              * offset 2, as no token of class 1 with ml 4 has a code */
         add(b, 8, 4, 1, lit_random);
-        for (off = 2; b->pos + 4 < SEQLZ_PAGE; off = off % 7 + 1)
+        for (off = 2; b->pos + 4 < SEQLZ_BLOCK_SIZE; off = off % 7 + 1)
             add(b, 0, 4, off, lit_random);
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_random);
         return "offsets below 8, ml 4, escaped";
     case 4: /* all literals, coded with long codes */
-        add(b, SEQLZ_PAGE, 0, 0, lit_long_code);
+        add(b, SEQLZ_BLOCK_SIZE, 0, 0, lit_long_code);
         return "only literals, long codes";
     case 5: /* half the page literals with long codes, the rest sequences of ml 4 */
         add(b, 4, 4, 1, lit_long_code);
-        while (b->pos + 8 < SEQLZ_PAGE)
+        while (b->pos + 8 < SEQLZ_BLOCK_SIZE)
             add(b, 4, 4, 1 + below(b->pos), lit_long_code);
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_long_code);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_long_code);
         return "4 coded literals, then ml 4";
     case 6: /* lengths that need a length value each, the shortest such */
         add(b, 15, 35, 1 + below(8), lit_random);
-        while (b->pos + 50 < SEQLZ_PAGE)
+        while (b->pos + 50 < SEQLZ_BLOCK_SIZE)
             add(b, 15, 35, 1 + below(b->pos), lit_random);
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_random);
         return "length values for ll and ml";
     case 7: /* each sequence's shape at random, for the branches: ll 0 to 2, ml 4 to 6, offsets below 8
              * or not, escaped tokens or not */
         add(b, 8, 4, 1, lit_random);
-        while (b->pos + 8 < SEQLZ_PAGE) {
+        while (b->pos + 8 < SEQLZ_BLOCK_SIZE) {
             unsigned int l = below(3), m = 4 + below(3);
 
             off = below(2) ? 1 + below(7) : 1 + below(b->pos + l);
             add(b, l, m, off > b->pos + l ? b->pos + l : off, lit_random);
         }
-        add(b, SEQLZ_PAGE - b->pos, 0, 0, lit_random);
+        add(b, SEQLZ_BLOCK_SIZE - b->pos, 0, 0, lit_random);
         return "short sequences of random shape";
     default:
         return 0;
@@ -395,7 +395,6 @@ static struct cost measure(const struct counters* c, int (*f)(void*), void* arg)
 }
 
 struct job {
-    const struct seqlz_tables* t;
     struct seqlz_state* st;
     const unsigned char* page;
     unsigned char *c, *out, *scratch;
@@ -405,14 +404,14 @@ struct job {
 static int do_compress(void* arg) {
     struct job* j = arg;
 
-    j->len = seqlz_compress(j->t, j->st, j->page, j->c, 2 * SEQLZ_PAGE, 2);
+    j->len = seqlz_compress(j->st, j->page, j->c, 2 * SEQLZ_BLOCK_SIZE, 2);
     return j->len ? 0 : -1;
 }
 
 static int do_decode(void* arg) {
     struct job* j = arg;
 
-    return seqlz_decode(j->t, j->c, j->len, j->out, j->scratch);
+    return seqlz_decode(j->c, j->len, j->out, j->scratch);
 }
 
 static int do_nothing(void* arg) {
@@ -426,30 +425,29 @@ static int cmp_u64(const void* a, const void* b) {
     return (x > y) - (x < y);
 }
 
-static struct seqlz_tables* tables(void) {
-    struct seqlz_tables* t = malloc(seqlz_tables_size());
-
-    if (!t || seqlz_tables_init(t, &seqlz_default_own))
+/* the tables compiled in, for seqlz_compress(), seqlz_encode() and seqlz_decode() */
+static void tables(void) {
+    if (seqlz_tables_init(&seqlz_default_lengths))
         abort();
-    return t;
 }
 
 /* The decoder on the made-up streams, per kind the most instructions and branch misses of its 16 pages,
  * and the median of their cycles: a single run's cycles can be far off on a phone. */
 static int count_decode(void) {
     static struct built b;
-    static unsigned char c[3 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
-    struct job j = {tables(), 0, 0, c, out, scratch, 0};
+    static unsigned char c[3 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
+    struct job j = {0, 0, c, out, scratch, 0};
     struct counters ctr;
     struct cost empty;
     unsigned int kind, k;
 
+    tables();
     if (counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);
     /* one decode first, so that the first page measured does not pay for the code and tables alone */
     build(0, &b);
-    j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+    j.len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
     if (!j.len || do_decode(&j))
         return 1;
     printf(
@@ -466,8 +464,8 @@ static int count_decode(void) {
 
             if (k)
                 build(kind, &b);
-            j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
-            if (!j.len || do_decode(&j) || memcmp(out, b.page, SEQLZ_PAGE)) {
+            j.len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+            if (!j.len || do_decode(&j) || memcmp(out, b.page, SEQLZ_BLOCK_SIZE)) {
                 fprintf(stderr, "%s: page %u does not come back\n", name, k);
                 return 1;
             }
@@ -495,22 +493,23 @@ static int count_decode(void) {
 /* Each page of a corpus compressed and decoded as zram would, one line per page: compressed length,
  * instructions and branch misses of the compression and of the decode. */
 static int count_pages(const char* path) {
-    static unsigned char page[SEQLZ_PAGE], c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
+    static unsigned char page[SEQLZ_BLOCK_SIZE], c[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
     static struct seqlz_state st;
-    struct job j = {tables(), &st, page, c, out, scratch, 0};
+    struct job j = {&st, page, c, out, scratch, 0};
     struct counters ctr;
     struct cost empty;
     FILE* f = fopen(path, "rb");
     unsigned int n = 0;
 
+    tables();
     if (!f || counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);
     printf("page\tlength\tcompress_insn\tcompress_miss\tcompress_cycles\tdecode_insn\tdecode_miss\tdecode_cycles\n");
-    while (fread(page, 1, SEQLZ_PAGE, f) == SEQLZ_PAGE) {
+    while (fread(page, 1, SEQLZ_BLOCK_SIZE, f) == SEQLZ_BLOCK_SIZE) {
         struct cost cc = measure(&ctr, do_compress, &j), dc = measure(&ctr, do_decode, &j);
 
-        if (memcmp(out, page, SEQLZ_PAGE))
+        if (memcmp(out, page, SEQLZ_BLOCK_SIZE))
             return 1;
         printf("%u\t%u\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\n",
                n++,
@@ -528,17 +527,18 @@ static int count_pages(const char* path) {
 /* the made-up streams, one file per page, as seeds for seqlz_decode_cost_fuzz */
 static int write_streams(const char* dir) {
     static struct built b;
-    static unsigned char c[3 * SEQLZ_PAGE];
-    const struct seqlz_tables* t = tables();
+    static unsigned char c[3 * SEQLZ_BLOCK_SIZE];
     unsigned int kind, k, len;
     char path[4096];
+
+    tables();
 
     for (kind = 0; build(kind, &b); kind++)
         for (k = 0; k < 4; k++) {
             FILE* f;
 
             build(kind, &b);
-            len = seqlz_encode(t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+            len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
             snprintf(path, sizeof path, "%s/stream-%u-%u", dir, kind, k);
             if (!len || !(f = fopen(path, "wb")) || fwrite(c, 1, len, f) != len || fclose(f))
                 return 1;
@@ -549,12 +549,13 @@ static int write_streams(const char* dir) {
 /* the decoder on compressed pages in files, as the fuzzer found them: instructions, branch misses and
  * cycles, or invalid */
 static int count_streams(int n, char** paths) {
-    static unsigned char c[2 * SEQLZ_PAGE], out[SEQLZ_PAGE], scratch[SEQLZ_SCRATCH];
-    struct job j = {tables(), 0, 0, c, out, scratch, 0};
+    static unsigned char c[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE], scratch[SEQLZ_SCRATCH];
+    struct job j = {0, 0, c, out, scratch, 0};
     struct counters ctr;
     struct cost empty;
     int i;
 
+    tables();
     if (counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);

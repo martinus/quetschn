@@ -258,7 +258,7 @@ kernel backend is written for both forms
 The benchmarks call seqlz through a copy of this interface in C, `src/zram_seqlz.c`
 ([chapter 15](#ch-zram-glue)). Its decompress function is the whole contract:
 
-@listing src/zram_seqlz.c 129-139
+@listing src/zram_seqlz.c 123-133
 
 `quetschn_prefetch_page()` asks the CPU to start loading the compressed bytes and the output page
 before the decoder needs them ([chapter 3](#ch-cpu--prefetch)); it stands for what the project's
@@ -340,7 +340,7 @@ be slow decodes in 1.33 times the p99 time of real pages; for `lz4` the same is 
 - **A small stack.** A kernel thread has 16 KiB of stack on x86-64 and arm64. The build warns about a
   frame above `CONFIG_FRAME_WARN`, 2048 bytes on 64-bit and 1280 on most 32-bit builds in the kernel
   of September 2026, 1024 in older ones. Every frame of seqlz's kernel copy stays below 1024; the
-  deepest, `code_literals()` and `decode_literals()`, are 640 bytes with gcc for x86-64
+  deepest, `seqlz_decode_literals()` and `code_literals()`, are 640 and 600 bytes with gcc for x86-64
   ([chapter 15](#ch-zram-glue--check)).
 - **No sleeping in compress and decompress.** zram called the codec with preemption disabled, older
   kernels such as the phone's 4.14 still do, and a fix proposed in August 2026 would bring that back

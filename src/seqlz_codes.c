@@ -3,12 +3,7 @@
  * The codes and decode tables, built from the code lengths:
  * seqlz_tables_init().
  */
-#include "seqlz_internal.h"
-
-size_t seqlz_tables_size(void)
-{
-	return sizeof(struct seqlz_tables);
-}
+#include "seqlz.h"
 
 /*
  * The decode entry of length value symbol s: its base value and how many extra
@@ -35,9 +30,9 @@ static u32 length_entry(unsigned int s)
  * exactly: too many of them, gaps, or none at all.
  */
 static int first_codes(const u8 *len, unsigned int n, unsigned int bits,
-		       unsigned int next[16])
+		       unsigned int next[CODE_LENGTHS])
 {
-	unsigned int of_len[16] = { 0 }, s, l, k = 0, c = 0;
+	unsigned int of_len[CODE_LENGTHS] = { 0 }, s, l, k = 0, c = 0;
 
 	for (s = 0; s < n; s++) {
 		if (len[s] > bits)
@@ -63,7 +58,7 @@ static int first_codes(const u8 *len, unsigned int n, unsigned int bits,
  */
 static int build_token(const u8 *len, struct token_table *t)
 {
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(len, SEQLZ_TOKEN_SYMBOLS + 1, SEQLZ_TOKEN_BITS, next))
 		return -EINVAL;
@@ -84,7 +79,7 @@ static int build_token(const u8 *len, struct token_table *t)
 /* the same for the length values, with length_entry() */
 static int build_values(const u8 *len, struct value_table *t)
 {
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(len, SEQLZ_LEN_SYMBOLS, SEQLZ_MAX_BITS, next))
 		return -EINVAL;
@@ -108,7 +103,7 @@ static int build_values(const u8 *len, struct value_table *t)
  */
 static int build_lit(const u8 *len, struct lit_table *t)
 {
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(len, 256, SEQLZ_LIT_BITS, next))
 		return -EINVAL;
@@ -126,9 +121,9 @@ static int build_lit(const u8 *len, struct lit_table *t)
 	return 0;
 }
 
-bool seqlz_all_symbols(const struct seqlz_tables *t)
+bool seqlz_all_symbols(void)
 {
-	return t->all_symbols;
+	return seqlz_tables.all_symbols;
 }
 
 /*
@@ -143,14 +138,13 @@ static int build_lit_sets(struct seqlz_tables *t)
 		if (build_lit(seqlz_lit_sets[k], &t->lit[k]))
 			return -EINVAL;
 	for (k = 0; k < 256U * SEQLZ_LIT_SETS; k++)
-		t->lit_cost[k % 256][k / 256 / 8] |=
-			(u64)seqlz_lit_sets[k / 256][k % 256]
-			<< (8U * (k / 256 % 8));
+		t->lit_cost[k % 256] |= (u64)seqlz_lit_sets[k / 256][k % 256]
+					<< (8U * (k / 256));
 	return 0;
 }
 
 /*
- * The fixed code of a page's own literal table, seqlz_own_lengths: its codes,
+ * The fixed code of a block's own literal table, seqlz_own_lengths: its codes,
  * its decode table, and quad[], see struct own_table. For quad[], the symbols
  * at the start of each 8 bits are decoded one after the other, as long as
  * their codes and extra bits end within the 8 bits: at most one run, then a
@@ -160,13 +154,16 @@ static int build_lit_sets(struct seqlz_tables *t)
 static int build_own(struct own_table *t)
 {
 	const unsigned int bits = SEQLZ_OWN_CODE_BITS;
-	unsigned int next[16], s, k;
+	unsigned int next[CODE_LENGTHS], s, k;
 
 	if (first_codes(seqlz_own_lengths, SEQLZ_OWN_SYMBOLS, bits, next))
 		return -EINVAL;
 	for (s = 0; s < SEQLZ_OWN_SYMBOLS; s++) {
-		unsigned int l = seqlz_own_lengths[s], c = next[l]++;
+		unsigned int l = seqlz_own_lengths[s], c;
 
+		if (l == 0) /* the encoder needs a code for every symbol */
+			return -EINVAL;
+		c = next[l]++;
 		t->enc[s] = (u16)(c | l << 8);
 		for (k = c << (bits - l); k < (c + 1U) << (bits - l); k++)
 			t->decode[k] = (u16)(s | l << 8);
@@ -217,7 +214,7 @@ static int build_own(struct own_table *t)
 }
 
 /*
- * Whether the encoder can write every page: every token has a code or the
+ * Whether the encoder can write every block: every token has a code or the
  * escape has one, every length value and every literal has one.
  */
 static bool has_all_symbols(const struct seqlz_lengths *lengths)
@@ -236,8 +233,14 @@ static bool has_all_symbols(const struct seqlz_lengths *lengths)
 	return all;
 }
 
-int seqlz_tables_init(struct seqlz_tables *t,
-		      const struct seqlz_lengths *lengths)
+struct seqlz_tables seqlz_tables;
+
+/*
+ * The codes and decode tables of lengths, seqlz_lit_sets and seqlz_own_lengths
+ * in t; -EINVAL if one of them is not a complete prefix code
+ */
+static int build_tables(struct seqlz_tables *t,
+			const struct seqlz_lengths *lengths)
 {
 	/*
 	 * zero, so that symbols without a code have code 0, and so have the
@@ -250,5 +253,16 @@ int seqlz_tables_init(struct seqlz_tables *t,
 	    build_own(&t->own))
 		return -EINVAL;
 	t->all_symbols = has_all_symbols(lengths);
+	return 0;
+}
+
+int seqlz_tables_init(const struct seqlz_lengths *lengths)
+{
+	/* built aside: lengths that fail leave the tables as they were */
+	static struct seqlz_tables t;
+
+	if (build_tables(&t, lengths))
+		return -EINVAL;
+	seqlz_tables = t;
 	return 0;
 }

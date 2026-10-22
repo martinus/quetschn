@@ -1,7 +1,6 @@
-/* ---- the kernel's interface, include/linux/seqlz.h ---- */
-
-static_assert(SEQLZ_LEVEL_MIN == 1 && SEQLZ_LEVEL_MAX == SEQLZ_LEVELS,
-	      "the interface's levels are the codec's");
+/* the interface's work memory is the matcher's state, its levels from 1 on */
+static_assert(sizeof(struct seqlz_state) == SEQLZ_MEM_COMPRESS);
+static_assert(SEQLZ_LEVEL_MIN == 1);
 
 int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 		   void *wrkmem, int level)
@@ -10,8 +9,7 @@ int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 
 	if (level < SEQLZ_LEVEL_MIN || level > SEQLZ_LEVEL_MAX)
 		return -EINVAL;
-	len = seqlz_compress_page(&seqlz_fixed_tables, wrkmem, src, dst,
-				  dst_len, level);
+	len = seqlz_compress_block(wrkmem, src, dst, dst_len, level);
 	return len ? (int)len : -E2BIG;
 }
 EXPORT_SYMBOL_GPL(seqlz_compress);

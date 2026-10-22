@@ -186,7 +186,7 @@ Each row is a decision of [chapter 4](#ch-format), against the other way in the 
 | only complete prefix codes | a check for invalid codes | 6% of the decoder's instructions | | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
 | trained codes for length values | the symbol in 5 plain bits | 2.2 bytes per page | two more tables in the format | [5 plain bits again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#length-values-in-5-plain-bits-again-02-to-03-more-memory-no-read-faster-not-kept) |
 | a page ends exactly where its bits end | trailing bytes ignored | a damaged page is rejected | 0.07 to 0.10 µs per warm read on the A55 | [strict end](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept) |
-| no version in the page | a version byte | none needed | a format change needs a new kernel | [format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page) |
+| no version in the page | a version byte | none needed | a format change needs a new kernel | [format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-block) |
 
 ### The token: 4 bits, 5 bits and 6 classes
 
@@ -285,7 +285,7 @@ per page, 0.12% of zsmalloc memory, at no time the VM or the phone could measure
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 zram's pages never outlive the kernel that wrote them, so a new format needs a new kernel, not a version
 byte, and the codes 9 to 15 in byte 2 and the values of the delta's byte other than 1 to 3 stay free for
-a format that has to tell itself apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
+a format that has to tell itself apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-block)).
 
 
 ## The literals {#ch-decisions--literals}
@@ -567,7 +567,7 @@ to 180 ns slower, 740 to 810 ns at p99
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)).
 @assert ch17.len_lines * 2 == 32
 
-### `decode_literals()` is not inlined
+### `seqlz_decode_literals()` is not inlined
 
 Inside the loop over the sequences, its 8 stream accumulators would take registers that loop needs, also
 on pages without coded literals ([chapter 13](#ch-literals-dec--main)).
@@ -625,8 +625,8 @@ cold reads 0.08 to 0.22 µs slower on 4 KiB pages in the kernel VM, for memory t
 zram's own buffer of two pages per stream, unused while reading and half unused while writing, is not
 tried yet
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#not-evaluated-yet)).
-Until that is decided, and until there is a phone with 16 KiB pages, their format is not fixed and the
-kernel copy is for 4 KiB pages only
+Until that is decided, and until there is a phone with 16 KiB pages, their format is not fixed, the
+kernel copy compresses blocks of 4 KiB, and its zram backend is for 4 KiB pages only
 ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 @assert k16.ch15.mem.cctx_gets <= 32768 and k16.ch15.mem.dctx_gets <= 32768 and k16.ch15.mem.split_gets == 48 * 1024
 
@@ -705,7 +705,7 @@ decoders. This time it came together with the lazy matcher as one level, and the
 changed the decision: `zstd` 3's memory, one end of the project's goal
 ([plan.md §1.1](https://github.com/martinus/quetschn/blob/main/docs/plan.md#11-the-score-memory-against-time-not-bars)).
 The cost is in the code: `own_code()`, `own_lengths()` and their helpers in the encoder, `build_own()`,
-and `own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
+and `read_own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
 the reference decoders cover it like the rest.
 
 ## Level 3 stores its literals as deltas, first as XORs {#ch-decisions--deltas}
@@ -764,7 +764,7 @@ within the noise
 
 The cost is in the code as much as in the time: a second copy of the decoder's loop, `undelta_literals()`,
 `undelta_fast()`, `add4()` and `add8()`, one more field of untrusted input, and in the encoder the
-records, `delta_literals()`, `sub_bytes()` and a second matching pass for a page that does not fit with
+records, `seqlz_delta_literals()`, `sub_bytes()` and a second matching pass for a page that does not fit with
 its records. zram in the phone's kernel has not measured the deltas yet.
 
 ## Tried and not kept {#ch-decisions--not-kept}

@@ -97,15 +97,15 @@ static void fact_list(const char* key, const unsigned int* v, unsigned int n) {
 static char tok_code[SEQLZ_TOKEN_SYMBOLS + 1][17], ll_code[SEQLZ_LEN_SYMBOLS][17], ml_code[SEQLZ_LEN_SYMBOLS][17];
 
 static void codes(void) {
-    fact_canonical(seqlz_default_own.token, SEQLZ_TOKEN_SYMBOLS + 1, tok_code);
-    fact_canonical(seqlz_default_own.ll, SEQLZ_LEN_SYMBOLS, ll_code);
-    fact_canonical(seqlz_default_own.ml, SEQLZ_LEN_SYMBOLS, ml_code);
+    fact_canonical(seqlz_default_lengths.token, SEQLZ_TOKEN_SYMBOLS + 1, tok_code);
+    fact_canonical(seqlz_default_lengths.ll, SEQLZ_LEN_SYMBOLS, ll_code);
+    fact_canonical(seqlz_default_lengths.ml, SEQLZ_LEN_SYMBOLS, ml_code);
 }
 
 /* ---- chapter 4 ---- */
 
 static void text_facts(void) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     const char* P = "ch04.text";
     unsigned int raw, len, h, n, t, set, w, j, sum = 0, s[SEQLZ_LIT_STREAMS], best = 0, cost[SEQLZ_LIT_SETS] = {0};
     char buf[64], *b;
@@ -130,7 +130,7 @@ static void text_facts(void) {
     }
     /* the literal table that codes them in the fewest bits */
     {
-        static u8 lits[SEQLZ_PAGE];
+        static u8 lits[SEQLZ_BLOCK_SIZE];
         static struct seqlz_state st;
         static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
         unsigned int ns = seqlz_find(&st, page, seq, 2), i, at = 0, m = 0, k;
@@ -193,9 +193,9 @@ static void walk_facts(void) {
     char key[64];
 
     for (s = 0; s <= SEQLZ_TOKEN_SYMBOLS; s++)
-        count[seqlz_default_own.token[s]]++;
+        count[seqlz_default_lengths.token[s]]++;
     for (s = 0; s < SEQLZ_TOKEN_SYMBOLS; s++)
-        coded += seqlz_default_own.token[s] != 0;
+        coded += seqlz_default_lengths.token[s] != 0;
     count[0] = 0;
     for (l = 1; l <= 11; l++) {
         c = (c + count[l - 1]) << 1;
@@ -207,14 +207,14 @@ static void walk_facts(void) {
         snprintf(key, sizeof key, "ch04.first_bin.%u", l);
         fact_str(key, bin(first[l], l));
         for (s = m = 0; s <= SEQLZ_TOKEN_SYMBOLS && m < 16; s++)
-            if (seqlz_default_own.token[s] == l)
+            if (seqlz_default_lengths.token[s] == l)
                 syms[m++] = s;
         snprintf(key, sizeof key, "ch04.syms.%u", l);
         fact_list(key, syms, m);
     }
     for (l = 4; l <= 4; l++)
         for (s = m = 0; s <= SEQLZ_TOKEN_SYMBOLS; s++)
-            if (seqlz_default_own.token[s] == l) {
+            if (seqlz_default_lengths.token[s] == l) {
                 snprintf(key, sizeof key, "ch04.short.%u.ll", m);
                 fact_num(key, s & 15);
                 snprintf(key, sizeof key, "ch04.short.%u.ml", m);
@@ -223,7 +223,7 @@ static void walk_facts(void) {
                 fact_num(key, s >> 9);
             }
     fact_num("ch04.tok_coded", coded);
-    fact_num("ch04.esc_bits", seqlz_default_own.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS);
+    fact_num("ch04.esc_bits", seqlz_default_lengths.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS);
     fact_num("ch04.lens_unit", 1U << SEQLZ_TOKEN_BITS);
 }
 
@@ -257,10 +257,10 @@ static void value_facts(const char* P, const char* name, char (*code)[17], unsig
  * page's bitstream.
  */
 static void page_walk(const char* name, void (*make)(u8*)) {
-    static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    static char all[8 * 2 * SEQLZ_PAGE], want[8 * 2 * SEQLZ_PAGE];
+    static char all[8 * 2 * SEQLZ_BLOCK_SIZE], want[8 * 2 * SEQLZ_BLOCK_SIZE];
     unsigned int len, n, i, last = 1, n_lit, nb, k;
     char P[64], key[64];
 
@@ -294,8 +294,8 @@ static void page_walk(const char* name, void (*make)(u8*)) {
         snprintf(Q, sizeof Q, "%s.s.%u", P, i);
         fact_num(K(Q, "tok"), tok);
         /* .code is the token's code, or the escape's code and the token in 12 bits */
-        fact_num(K(Q, "escaped"), !seqlz_default_own.token[tok]);
-        if (seqlz_default_own.token[tok]) {
+        fact_num(K(Q, "escaped"), !seqlz_default_lengths.token[tok]);
+        if (seqlz_default_lengths.token[tok]) {
             fact_str(K(Q, "code"), tok_code[tok]);
             strcat(all, tok_code[tok]);
         } else {
@@ -341,7 +341,7 @@ static void page_walk(const char* name, void (*make)(u8*)) {
 
 /* the pointer page of chapter 9: which tokens its sequences have */
 static void pointer_facts(void) {
-    static u8 page[SEQLZ_PAGE];
+    static u8 page[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int n, i, last = 1, raw, t49 = 0, t34 = 0;
@@ -384,11 +384,11 @@ static void sha_facts(void) {
     char hex[65];
     unsigned int k;
 
-    sha256(seqlz_default_own.token, sizeof seqlz_default_own.token, hex);
+    sha256(seqlz_default_lengths.token, sizeof seqlz_default_lengths.token, hex);
     fact_str("ch04.sha.TOK", hex);
-    sha256(seqlz_default_own.ll, sizeof seqlz_default_own.ll, hex);
+    sha256(seqlz_default_lengths.ll, sizeof seqlz_default_lengths.ll, hex);
     fact_str("ch04.sha.LL", hex);
-    sha256(seqlz_default_own.ml, sizeof seqlz_default_own.ml, hex);
+    sha256(seqlz_default_lengths.ml, sizeof seqlz_default_lengths.ml, hex);
     fact_str("ch04.sha.ML", hex);
     for (k = 0; k < SEQLZ_LIT_SETS; k++)
         memcpy(lit + 256 * k, seqlz_lit_sets[k], 256);
@@ -403,10 +403,10 @@ static void longest_facts(void) {
     unsigned int s, k, tok = 0, ll = 0, ml = 0, lit = 0;
 
     for (s = 0; s <= SEQLZ_TOKEN_SYMBOLS; s++)
-        tok = seqlz_default_own.token[s] > tok ? seqlz_default_own.token[s] : tok;
+        tok = seqlz_default_lengths.token[s] > tok ? seqlz_default_lengths.token[s] : tok;
     for (s = 0; s < SEQLZ_LEN_SYMBOLS; s++) {
-        ll = seqlz_default_own.ll[s] > ll ? seqlz_default_own.ll[s] : ll;
-        ml = seqlz_default_own.ml[s] > ml ? seqlz_default_own.ml[s] : ml;
+        ll = seqlz_default_lengths.ll[s] > ll ? seqlz_default_lengths.ll[s] : ll;
+        ml = seqlz_default_lengths.ml[s] > ml ? seqlz_default_lengths.ml[s] : ml;
     }
     for (k = 0; k < SEQLZ_LIT_SETS; k++)
         for (s = 0; s < 256; s++)
@@ -425,7 +425,7 @@ static void header_facts(void) {
     unsigned int extra;
     char buf[64];
 
-    fact_num(K(P, "PAGE"), SEQLZ_PAGE);
+    fact_num(K(P, "PAGE"), SEQLZ_BLOCK_SIZE);
     fact_num(K(P, "MAX_ESCAPE_LEN"), SEQLZ_MAX_ESCAPE_LEN);
     fact_num(K(P, "LEN_SYMBOLS"), SEQLZ_LEN_SYMBOLS);
     snprintf(buf, sizeof buf, "0x%X", SEQLZ_RAW_NIBBLES);
@@ -452,10 +452,10 @@ static void header_facts(void) {
     fact_num(K(P, "lengths"), sizeof(struct seqlz_lengths));
     fact_num(K(P, "state"), sizeof(struct seqlz_state));
     /* the largest length values: ll before a match of 4, a match after 1 literal */
-    fact_num(K(P, "max_ll_value"), SEQLZ_PAGE - 4U - SEQLZ_LL_CAP);
-    fact_num(K(P, "max_ml_value"), SEQLZ_PAGE - 1U - 4U - SEQLZ_ML_CAP);
-    fact_num(K(P, "max_ll_sym"), seqlz_len_symbol(SEQLZ_PAGE - 4U - SEQLZ_LL_CAP, &extra));
-    fact_num(K(P, "max_ml_sym"), seqlz_len_symbol(SEQLZ_PAGE - 1U - 4U - SEQLZ_ML_CAP, &extra));
+    fact_num(K(P, "max_ll_value"), SEQLZ_BLOCK_SIZE - 4U - SEQLZ_LL_CAP);
+    fact_num(K(P, "max_ml_value"), SEQLZ_BLOCK_SIZE - 1U - 4U - SEQLZ_ML_CAP);
+    fact_num(K(P, "max_ll_sym"), seqlz_len_symbol(SEQLZ_BLOCK_SIZE - 4U - SEQLZ_LL_CAP, &extra));
+    fact_num(K(P, "max_ml_sym"), seqlz_len_symbol(SEQLZ_BLOCK_SIZE - 1U - 4U - SEQLZ_ML_CAP, &extra));
     fact_num(K(P, "last_sym"), SEQLZ_LEN_SYMBOLS - 1U);
 }
 
@@ -506,8 +506,8 @@ static void ch06_facts(void) {
     fact_num("ch06.DELTA_8", SEQLZ_DELTA_8);
     fact_num("ch06.DELTA_LAST", SEQLZ_DELTA_LAST);
     fact_num("ch06.sequence", sizeof(struct seqlz_sequence));
-    fact_num("ch06.esc_len", seqlz_default_own.token[SEQLZ_ESCAPE]);
-    fact_num("ch06.esc_pair", seqlz_default_own.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS + SEQLZ_RAW_BITS(3));
+    fact_num("ch06.esc_len", seqlz_default_lengths.token[SEQLZ_ESCAPE]);
+    fact_num("ch06.esc_pair", seqlz_default_lengths.token[SEQLZ_ESCAPE] + SEQLZ_ESCAPE_BITS + SEQLZ_RAW_BITS(3));
     for (k = 0; k < sizeof lens / sizeof lens[0]; k++) {
         sym = seqlz_len_symbol(lens[k], &extra);
         snprintf(P, sizeof P, "ch06.lensym.%u", lens[k]);

@@ -11,8 +11,8 @@ extern "C" {
 /* The tables of docs/format.md, "The tables": code lengths, one byte per symbol. */
 struct seqlz_ref_tables {
     const unsigned char* tok;        /* 3073 symbols, the escape last */
-    const unsigned char* ll;         /* 12 + page_bits symbols */
-    const unsigned char* ml;         /* 12 + page_bits symbols */
+    const unsigned char* ll;         /* 12 + block_bits symbols */
+    const unsigned char* ml;         /* 12 + block_bits symbols */
     const unsigned char (*lit)[256]; /* the 8 literal tables */
     const unsigned char* own;        /* OWN, 19 symbols */
 };
@@ -25,22 +25,22 @@ struct seqlz_ref_code {
     unsigned short sym[3073]; /* the symbols with a code, by length, then by number */
 };
 
-/* Everything the decoder needs: the page size and the codes of all tables. */
+/* Everything the decoder needs: the block size and the codes of all tables. */
 struct seqlz_ref {
-    unsigned int page_bits;
+    unsigned int block_bits;
     struct seqlz_ref_code tok, ll, ml, lit[8], own;
 };
 
 /*
- * The codes of the tables t for pages of 1 << page_bits bytes; page_bits is 12 or 14. Returns 0, or -1
- * for another page_bits or a table that is no complete prefix code of at most 15 bits.
+ * The codes of the tables t for blocks of 1 << block_bits bytes; block_bits is 12 or 14. Returns 0, or -1
+ * for another block_bits or a table that is no complete prefix code of at most 15 bits.
  */
-int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsigned int page_bits);
+int seqlz_ref_init(struct seqlz_ref* r, const struct seqlz_ref_tables* t, unsigned int block_bits);
 
 /*
- * Decodes the compressed page src of len bytes into out, 1 << page_bits bytes, as docs/format.md says, bit
+ * Decodes the compressed block src of len bytes into out, 1 << block_bits bytes, as docs/format.md says, bit
  * by bit and without anything from src/: a second decoder to check seqlz_decode() against. Returns
- * 0 for a valid page, -1 for an invalid one; out is undefined then.
+ * 0 for a valid block, -1 for an invalid one; out is undefined then.
  */
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out);
 

@@ -60,9 +60,8 @@ passes the rule for coded literals.
 ## The tables: seqlz_tables_init() {#ch-trace--tables}
 
 ```c
-struct seqlz_tables *t = malloc(seqlz_tables_size());   /* {{size.tables|grp}} bytes */
-seqlz_tables_init(t, &seqlz_default_own);
-seqlz_all_symbols(t);                                    /* true */
+seqlz_tables_init(&seqlz_default_lengths);  /* seqlz_tables, {{size.tables|grp}} bytes */
+seqlz_all_symbols();                        /* true */
 ```
 
 `seqlz_tables_init()` ([chapter 8](#ch-codes)) builds the codes and decode tables. Some we meet below:
@@ -74,10 +73,10 @@ for this page, which gives `0x00` {{lit.3.len.0}} bits.
 
 ## seqlz_compress(), and the matcher's first sequence {#ch-trace--matcher}
 
-The backend calls `seqlz_compress(t, st, page, dst, 8192, 2)`: the per-CPU state of {{size.state}}
-bytes, an output buffer of 2 pages, and level 2, the default. `compress_page()` checks that `dst_cap` is at
+The backend calls `seqlz_compress(st, page, dst, 8192, 2)`: the per-CPU state of {{size.state}}
+bytes, an output buffer of 2 pages, and level 2, the default. `compress_block()` checks that `dst_cap` is at
 least {{ch16.enc_min}} bytes, sets up the encoder with the bitstream growing down from `dst + 8192` and
-the literals up from `dst + 2` ([chapter 10](#ch-encoder--layout)), and runs `seqlz_match_page()`
+the literals up from `dst + 2` ([chapter 10](#ch-encoder--layout)), and runs `seqlz_match_block()`
 ([chapter 9](#ch-matcher)) with `encode_emit()` as its callback. The matcher clears its
 {{ch16.hash_entries}} entries of hash table and starts at position 1.
 
@@ -188,9 +187,9 @@ count, `{{ch16.raw.u16}}`, and moves the bitstream to right after the literals, 
 $2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$ bytes, the page as `seqlz-1` stores it.
 @assert ch16.pad_bits > 0 and ch16.raw.gap >= ch16.bytes
 
-## code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
+## seqlz_code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
 
-`code_literals()` ([chapter 11](#ch-literals-enc)) prices the {{ch16.lits}} literals in all 8 tables,
+`seqlz_code_literals()` ([chapter 11](#ch-literals-enc)) prices the {{ch16.lits}} literals in all 8 tables,
 in chunks of {{ch16.lt.chunk}}. The trace program recomputes it one literal at a time:
 
 @output ch16-trace 27-35
@@ -289,10 +288,10 @@ one, {{ch16.zs.lower}}.
 
 ## seqlz_decode(): the literals first {#ch-trace--decode}
 
-The backend calls `seqlz_decode(t, src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of
+The backend calls `seqlz_decode(src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of
 {{const.SCRATCH}} bytes ([chapter 14](#ch-decode)). Bit 7 of byte 2 is 0, so it runs the copy of
-`decode_page()` without deltas. That prefetches the token and length tables, finds the
-top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `decode_literals()`
+`decode_block()` without deltas. That prefetches the token and length tables, finds the
+top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `seqlz_decode_literals()`
 ([chapter 13](#ch-literals-dec)) reads table {{ch16.lt.set}} and width {{ch16.lt.width}} from byte 2,
 prefetches the literal table, and reads the sizes, {{ch16.lt.sizes_sp}}. {{ch16.lits}} literals are
 {{ch16.d.rounds}} full rounds of 40 and a rest of {{ch16.d.rest}}: {{ch16.d.steps}} steps of all 8 streams
@@ -346,8 +345,8 @@ the zero padding of the last byte ([chapter 4](#ch-format--validity)). `seqlz_de
 `trace.c` builds the page, runs `seqlz_find()` for the sequences, the same ones the compressor finds (a
 test in `test/seqlz_test.cpp` checks that `seqlz_encode()` of them gives the compressor's bytes),
 computes each sequence's bits from the tables' `enc[]` arrays, compresses with raw and with coded
-literals, and decodes. It includes `seqlz_internal.h` to read the codes, so it depends on the tables'
-layout. Its whole output, as the build of this book printed it; the compressed bytes are the same on
+literals, and decodes. It reads the codes from `seqlz_tables`, whose layout `seqlz.h` brings along
+through `seqlz_tables.h`, so it depends on the tables' layout. Its whole output, as the build of this book printed it; the compressed bytes are the same on
 every CPU, so the output is too:
 
 @output ch16-trace
@@ -358,14 +357,14 @@ every CPU, so the output is too:
 #include <stdlib.h>
 #include <string.h>
 
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 #define N_REC 48 /* records of 32 bytes from byte 64 on */
 
 /* from dec_counted.c, seqlz_decompress.c with two counters */
 extern unsigned int n_fast, n_slow;
-int seqlz_decode_counted(const struct seqlz_tables *t, const void *src,
-			 unsigned int src_len, void *dst, void *scratch);
+int seqlz_decode_counted(const void *src, unsigned int src_len, void *dst,
+			 void *scratch);
 
 /* n bytes of v, little endian */
 static void le(u8 *p, unsigned long long v, unsigned int n)
@@ -394,7 +393,7 @@ static void make_page(u8 *p)
 		"Every table is fixed, so a page carries none of its own.\n";
 	unsigned int i;
 
-	memset(p, 0, SEQLZ_PAGE);
+	memset(p, 0, SEQLZ_BLOCK_SIZE);
 	memcpy(p, "TASKSLAB", 8);
 	le(p + 8, N_REC, 4);
 	le(p + 12, 32, 4);
@@ -442,18 +441,17 @@ static unsigned int value_bits(const struct value_table *vt, unsigned int v,
 
 int main(void)
 {
-	static u8 page[SEQLZ_PAGE], dst[2 * SEQLZ_PAGE], out[SEQLZ_PAGE],
+	static u8 page[SEQLZ_BLOCK_SIZE], dst[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE],
 		scratch[SEQLZ_SCRATCH];
 	static struct seqlz_state st;
 	static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-	struct seqlz_tables *t = malloc(seqlz_tables_size());
 	unsigned int n, i, k, pos = 0, last = 1, total = 0, n_lit = 0;
 	unsigned int per_class[SEQLZ_OFF_CLASSES] = { 0 }, escapes = 0;
 	unsigned int values = 0, len0, len1, set = 0, best = ~0U;
 
 	make_page(page);
-	if (!t || seqlz_tables_init(t, &seqlz_default_own) ||
-	    !seqlz_all_symbols(t))
+	if (seqlz_tables_init(&seqlz_default_lengths) ||
+	    !seqlz_all_symbols())
 		return 1;
 
 	/* the sequences, and the bits each one takes in the bitstream */
@@ -474,14 +472,14 @@ int main(void)
 		}
 		cls = seqlz_off_class(off, last, &raw);
 		tok = seqlz_token(ll, ml, cls);
-		te = t->token.enc[tok];
+		te = seqlz_tables.token.enc[tok];
 		if (te) {
 			clen = te >> TOK_ENC_LEN_AT;
 			if (show)
 				printf("seq %u: token code %s", i,
 				       binary(te & TOK_ENC_CODE_MASK, clen));
 		} else {
-			unsigned int ee = t->token.enc[SEQLZ_ESCAPE];
+			unsigned int ee = seqlz_tables.token.enc[SEQLZ_ESCAPE];
 
 			clen = (ee >> TOK_ENC_LEN_AT) + SEQLZ_ESCAPE_BITS;
 			escapes++;
@@ -497,13 +495,13 @@ int main(void)
 		if (ll >= SEQLZ_LL_CAP) {
 			if (show)
 				printf(", ll");
-			vbits += value_bits(&t->ll, ll - SEQLZ_LL_CAP, show);
+			vbits += value_bits(&seqlz_tables.ll, ll - SEQLZ_LL_CAP, show);
 			values++;
 		}
 		if (ml - 4 >= SEQLZ_ML_CAP) {
 			if (show)
 				printf(", ml");
-			vbits += value_bits(&t->ml, ml - 4 - SEQLZ_ML_CAP, show);
+			vbits += value_bits(&seqlz_tables.ml, ml - 4 - SEQLZ_ML_CAP, show);
 			values++;
 		}
 		if (show)
@@ -529,14 +527,14 @@ int main(void)
 	printf(", escapes %u, length values %u\n", escapes, values);
 
 	/* seqlz-1: raw literals */
-	len0 = seqlz_compress(t, &st, page, dst, sizeof dst, 1);
+	len0 = seqlz_compress(&st, page, dst, sizeof dst, 1);
 	printf("raw literals: %u bytes = 2 + %u + %u\n", len0, n_lit,
 	       len0 - 2 - n_lit);
-	if (seqlz_decode(t, dst, len0, out, NULL) ||
-	    memcmp(out, page, SEQLZ_PAGE))
+	if (seqlz_decode(dst, len0, out, NULL) ||
+	    memcmp(out, page, SEQLZ_BLOCK_SIZE))
 		return 2;
 
-	/* the 8 literal tables as code_literals() weighs them */
+	/* the 8 literal tables as seqlz_code_literals() weighs them */
 	for (k = 0; k < SEQLZ_LIT_SETS; k++) {
 		unsigned int bits = 0, bytes = 0, j, m;
 
@@ -544,7 +542,7 @@ int main(void)
 			unsigned int sb = 0;
 
 			for (m = j; m < n_lit; m += SEQLZ_LIT_STREAMS)
-				sb += t->lit[k].enc[dst[SEQLZ_HEADER + m]] & 255U;
+				sb += seqlz_tables.lit[k].enc[dst[SEQLZ_HEADER + m]] & 255U;
 			bits += sb;
 			bytes += (sb + 7) / 8;
 		}
@@ -558,7 +556,7 @@ int main(void)
 	printf("fewest bits: table %u\n", set);
 
 	/* seqlz-2: coded literals where that saves enough */
-	len1 = seqlz_compress(t, &st, page, dst, sizeof dst, 2);
+	len1 = seqlz_compress(&st, page, dst, sizeof dst, 2);
 	printf("coded literals: %u bytes, u16 0x%04x\n", len1,
 	       get_unaligned_le16(dst));
 	if (get_unaligned_le16(dst) & SEQLZ_LIT_CODED) {
@@ -592,15 +590,14 @@ int main(void)
 	printf("\n");
 
 	/* back again: not without the scratch, the same page with it */
-	if (seqlz_decode(t, dst, len1, out, NULL) != -EINVAL)
+	if (seqlz_decode(dst, len1, out, NULL) != -EINVAL)
 		return 3;
 	memset(out, 0, sizeof out);
-	if (seqlz_decode_counted(t, dst, len1, out, scratch) ||
-	    memcmp(out, page, SEQLZ_PAGE))
+	if (seqlz_decode_counted(dst, len1, out, scratch) ||
+	    memcmp(out, page, SEQLZ_BLOCK_SIZE))
 		return 4;
 	printf("round trip ok, %u sequences on the fast path, %u on the slow path\n",
 	       n_fast, n_slow);
-	free(t);
 	return 0;
 }
 ```
@@ -612,12 +609,12 @@ and gcc, `trace.c` in the current directory:
 
 ```text
 R=/path/to/quetschn
-sed -e 's/^#include "seqlz_internal.h"$/&\nunsigned int n_fast, n_slow;\n#define seqlz_decode seqlz_decode_counted/' \
+sed -e 's/^#include "seqlz.h"$/&\nunsigned int n_fast, n_slow;\n#define seqlz_decode seqlz_decode_counted/' \
     -e 's/^\t\t\ttok = next_token_fast(/\t\t\tn_fast++;\n&/' \
     -e 's|^\t\t/\* the slow path: length values, and every check \*/$|&\n\t\tn_slow++;|' \
     $R/src/seqlz_decompress.c > dec_counted.c
 gcc -O2 -Wall -Wextra -I$R/src -o trace trace.c dec_counted.c \
-    $R/src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
+    $R/src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
 ./trace
 ```
 
