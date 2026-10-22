@@ -76,6 +76,20 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  */
 #define ENC_ROOM 32U
 
+struct seqlz_encoder {
+	u64 acc; /* the bits not yet written, the newest in the low bits */
+	unsigned int cnt; /* how many bits of acc count */
+	u8 *p; /* the next byte of the bitstream goes right below p */
+	u8 *lit; /* where the next literal goes */
+	const u8 *src_end; /* copies of 16 literals may read up to here */
+	unsigned int last; /* the offset of the sequence before, class 0 */
+	/*
+	 * at SEQLZ_LEVEL_OWN: write a record before the literals, see LIT_REC
+	 */
+	bool rec;
+	unsigned int pos; /* with rec: where the next sequence starts */
+};
+
 /* appends the n bits of v; n < 64 - cnt */
 static __always_inline void enc_put(struct seqlz_encoder *e, u64 v,
 				    unsigned int n)
@@ -344,7 +358,7 @@ static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 		encoder_init(&e, dst, dst_cap, literals + n_literals);
 		in = literals;
 	}
-	*delta = e.rec ? seqlz_delta_literals(&e, dst, block, deltas) : 0;
+	*delta = e.rec ? seqlz_delta_literals(dst, &e.lit, block, deltas) : 0;
 	return encoder_finish(&e, dst, dst_cap);
 }
 
@@ -365,7 +379,7 @@ unsigned int seqlz_encode(struct seqlz_state *st,
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
 	if (level < SEQLZ_LEVEL_OWN)
-		return seqlz_code_literals(dst, len, literals, NULL, NULL, 0);
+		return seqlz_code_literals(dst, len, literals, NULL);
 	return seqlz_code_own(dst, len, st, delta);
 }
 
@@ -408,8 +422,13 @@ static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 			break;
 		encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	}
-	if (e.rec)
-		*delta = seqlz_delta_literals(&e, dst, src, st->literals);
+	if (e.rec) {
+		/* not &e.lit: e would leave the function, out of its registers */
+		u8 *lit = e.lit;
+
+		*delta = seqlz_delta_literals(dst, &lit, src, st->literals);
+		e.lit = lit;
+	}
 	return encoder_finish(&e, dst, dst_cap);
 }
 
@@ -427,5 +446,5 @@ unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,
 	len = compress_block(st, src, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
-	return seqlz_code_literals(dst, len, NULL, st->literals, NULL, 0);
+	return seqlz_code_literals(dst, len, NULL, st->literals);
 }

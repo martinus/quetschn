@@ -88,20 +88,6 @@ struct seqlz_state {
 	};
 };
 
-struct seqlz_encoder {
-	u64 acc; /* the bits not yet written, the newest in the low bits */
-	unsigned int cnt; /* how many bits of acc count */
-	u8 *p; /* the next byte of the bitstream goes right below p */
-	u8 *lit; /* where the next literal goes */
-	const u8 *src_end; /* copies of 16 literals may read up to here */
-	unsigned int last; /* the offset of the sequence before, class 0 */
-	/*
-	 * at SEQLZ_LEVEL_OWN: write a record before the literals, see LIT_REC
-	 */
-	bool rec;
-	unsigned int pos; /* with rec: where the next sequence starts */
-};
-
 /*
  * At SEQLZ_LEVEL_OWN the encoder writes LIT_REC bytes before each sequence's
  * literals: where they start in the block, how many there are and the offset of
@@ -149,12 +135,10 @@ static_assert(sizeof_field(struct lit_table, decode) % PREFETCH_STEP == 0,
 	      "the literal tables");
 
 /* the coded literals, see seqlz_compress_literals.c */
-struct own_work;
-unsigned int seqlz_delta_literals(struct seqlz_encoder *e, u8 *d,
-				  const u8 *block, u8 *deltas);
+unsigned int seqlz_delta_literals(u8 *d, u8 **lit_end, const u8 *block,
+				  u8 *deltas);
 unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,
-				 u8 *spare, struct own_work *own,
-				 unsigned int delta);
+				 u8 *spare);
 unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 			    unsigned int delta);
 

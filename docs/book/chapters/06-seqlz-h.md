@@ -509,7 +509,7 @@ before the deltas, which made level 3's writes about 4 µs slower on the A76 in 
 @assert ch09.lazy_len == 20
 
 @listing src/seqlz_internal.h 77-89
-@listing src/seqlz_internal.h 151-166
+@listing src/seqlz_internal.h 137-151
 
 `struct seqlz_state` is the compressor's work memory, one per CPU, as zram compresses on every CPU at
 once. Once the matcher is through the page, the hash table is free, and `seqlz_code_literals()` keeps a copy

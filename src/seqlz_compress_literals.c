@@ -17,7 +17,7 @@
 /*
  * The bits of sum j in literal table k, from its lane of 16 bits in even or
  * odd, as lit_cost() sums them: even has tables 0, 2, 4 and 6. Sum j is
- * stream j in seqlz_code_literals(), delta j in seqlz_delta_literals().
+ * stream j in code_literals(), delta j in seqlz_delta_literals().
  */
 static __always_inline unsigned int lit_bits(const u64 *even, const u64 *odd,
 					     unsigned int j, unsigned int k)
@@ -57,18 +57,20 @@ static __always_inline u64 sub_bytes(u64 a, u64 b)
 /*
  * Picks the delta of the literals from the records before them, see LIT_REC and
  * SEQLZ_LIT_DELTA_AT, and moves the literals down over the records, to right
- * after the u16; e->lit is then their end. With a delta, their deltas are also
+ * after the u16; *lit_end, their end, moves down with them. With a delta, their
+ * deltas are also
  * written to deltas. Returns the delta, 0 for none.
  *
- * Each delta is priced as seqlz_code_literals() prices the fixed tables, with
+ * Each delta is priced as code_literals() prices the fixed tables, with
  * sums of lit_cost: the delta whose best table takes the fewest bits, with the
  * 8 bits of the byte that says which delta scaled as the sums are,
  * 8 / DELTA_STEP. The bits of the fixed tables also tell which delta suits a
  * table of the block's own.
  */
-unsigned int seqlz_delta_literals(struct seqlz_encoder *e, u8 *d,
-				  const u8 *block, u8 *deltas)
+unsigned int seqlz_delta_literals(u8 *d, u8 **lit_end, const u8 *block,
+				  u8 *deltas)
 {
+	u8 *const end = *lit_end;
 	u64 s[4] = { 0 }, even[4] = { 0 }, odd[4] = { 0 };
 	unsigned int k, x, j = 0, n = 0, pos, ll, last, best = ~0U, pick = 0;
 	u8 *p, *out = d + SEQLZ_HEADER, *to = deltas;
@@ -78,7 +80,7 @@ unsigned int seqlz_delta_literals(struct seqlz_encoder *e, u8 *d,
 	 * with each delta, in the 8-bit lanes of s, LIT_COST_RUN at a time,
 	 * then in the 16-bit lanes
 	 */
-	for (p = d + SEQLZ_HEADER; p < e->lit; p += LIT_REC + ll) {
+	for (p = d + SEQLZ_HEADER; p < end; p += LIT_REC + ll) {
 		pos = get_unaligned_le16(p);
 		ll = get_unaligned_le16(p + 2);
 		last = seqlz_delta_last(get_unaligned_le16(p + 4));
@@ -124,17 +126,17 @@ unsigned int seqlz_delta_literals(struct seqlz_encoder *e, u8 *d,
 	 * every sequence, and a loop over the last bytes mispredicted.
 	 */
 	p = d + SEQLZ_HEADER;
-	if (p < e->lit) {
+	if (p < end) {
 		pos = get_unaligned_le16(p);
 		ll = get_unaligned_le16(p + 2);
 		last = seqlz_delta_last(get_unaligned_le16(p + 4));
 	}
-	while (p < e->lit) {
+	while (p < end) {
 		const u8 *in = p + LIT_REC, *pin = block + pos;
 		const unsigned int n_lit = ll, at = pos, dist = last;
 
 		p += LIT_REC + n_lit;
-		if (p < e->lit) {
+		if (p < end) {
 			pos = get_unaligned_le16(p);
 			ll = get_unaligned_le16(p + 2);
 			last = seqlz_delta_last(get_unaligned_le16(p + 4));
@@ -168,7 +170,7 @@ unsigned int seqlz_delta_literals(struct seqlz_encoder *e, u8 *d,
 		}
 		to += n_lit;
 	}
-	e->lit = out;
+	*lit_end = out;
 	return pick;
 }
 
@@ -208,7 +210,7 @@ static void store_tail(u8 *p, u64 w, unsigned int n)
  * the last flush, the low byte of sum the bits added since. 8 bytes at once
  * while the stream has room for them; it ends at end, where the next stream
  * starts. The bytes are swapped once, before the branch: put_unaligned_be64()
- * in both branches gave seqlz_code_literals() other code on arm64.
+ * in both branches gave code_literals() other code on arm64.
  */
 static __always_inline u8 *lit_flush(u8 *p, const u8 *end, u64 acc,
 				     unsigned int *cnt, unsigned int *sum)
@@ -549,7 +551,7 @@ static unsigned int own_code(struct own_work *w, unsigned int n_literals,
 	/*
 	 * Only where the entropy and a description of about 0.45 bytes per byte
 	 * with a code leave the code at least OWN_SAVES_MIN bytes smaller than
-	 * limit, and small enough not to stay raw, see seqlz_code_literals(),
+	 * limit, and small enough not to stay raw, see code_literals(),
 	 * is the code built. On many blocks it is not.
 	 */
 	h = n_literals * log2_256(n_literals) - h;
@@ -677,9 +679,9 @@ static __always_inline unsigned int size_width(const unsigned int *sizes)
  * which are coded instead, and the header says so; if they stay raw, d keeps
  * them as they are.
  */
-unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,
-				 u8 *spare, struct own_work *own,
-				 unsigned int delta)
+static unsigned int code_literals(u8 *d, unsigned int len, const u8 *raw,
+				  u8 *spare, struct own_work *own,
+				  unsigned int delta)
 {
 	const unsigned int n_literals = get_unaligned_le16(d),
 			   bitstream = len - SEQLZ_HEADER - n_literals;
@@ -785,7 +787,7 @@ static struct own_work *own_work(struct seqlz_state *st)
 }
 
 /*
- * seqlz_code_literals() at SEQLZ_LEVEL_OWN: the literals' deltas, as
+ * The literals at SEQLZ_LEVEL_OWN: the literals' deltas, as
  * seqlz_delta_literals() left them in the matcher's state, unless that is none
  * or they would stay raw; else as they are.
  */
@@ -793,11 +795,21 @@ unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 			    unsigned int delta)
 {
 	if (delta) {
-		unsigned int n = seqlz_code_literals(d, len, st->literals, NULL,
-						     own_work(st), delta);
+		unsigned int n = code_literals(d, len, st->literals, NULL,
+					       own_work(st), delta);
 
 		if (n != len)
 			return n;
 	}
-	return seqlz_code_literals(d, len, NULL, st->literals, own_work(st), 0);
+	return code_literals(d, len, NULL, st->literals, own_work(st), 0);
+}
+
+/*
+ * The literals with the fixed tables only, below SEQLZ_LEVEL_OWN. Two entry
+ * points, so that code_literals() is compiled for the arguments of each.
+ */
+unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,
+				 u8 *spare)
+{
+	return code_literals(d, len, raw, spare, NULL, 0);
 }

@@ -164,7 +164,7 @@ int main(void) {
             }
         }
     }
-    x = seqlz_delta_literals(&e, dst, page, st.literals);
+    x = seqlz_delta_literals(dst, &e.lit, page, st.literals);
     if (x != pick)
         fail("seqlz_delta_literals() picks another delta than the prices");
     fact_num("delta.ptr.pick", pick);

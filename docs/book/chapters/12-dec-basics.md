@@ -21,7 +21,7 @@ caches. Then each first lookup into a line is a miss of about 100 ns, and prefet
 let these misses overlap instead of one after the other ([chapter 3](#ch-cpu--prefetch)).
 <!-- undated: a typical latency, explained in chapter 3 -->
 
-@listing src/seqlz_internal.h 116-141
+@listing src/seqlz_internal.h 102-127
 
 `L1_CACHE_BYTES` is the kernel's size of a cache line, 64 on x86-64 and arm64. `prefetch()` is `prfm` on
 arm64 and `prefetcht0` on x86-64, the latter with a patch to the kernel ([chapter 5](#ch-compat--prefetch)).
@@ -72,7 +72,7 @@ tools that get it from `malloc()` do not have. On x86-64 the extra prefetch made
 bench; it was not measured on the phone (commit `bafef14`).
 :::
 
-@listing src/seqlz_internal.h 143-149
+@listing src/seqlz_internal.h 129-135
 
 The loop forms the pointers `q + k` up to `q + size - 64` only when `size` is a multiple of 512;
 otherwise its last round would form pointers past `end` and prefetch lines behind the table. These
