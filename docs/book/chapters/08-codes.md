@@ -5,20 +5,22 @@ compiled into the codec: {{tok.symbols}} for the token table, {{ll.symbols}} eac
 length values, 256 for each of the 8 literal tables, and {{own.symbols}} for `OWN`, the code a page's own
 literal table is written in. `src/seqlz_codes.c` turns them into
 `struct seqlz_tables`, the {{size.tables|grp}} bytes of codes and decode tables of
-[chapter 7](#ch-internal). It runs once, at boot in the kernel. `first_codes()` computes the
+[chapter 7](#ch-internal). It runs once, when a program starts, and for the kernel when the kernel
+is built ([below](#ch-codes--kernel)). `first_codes()` computes the
 [canonical codes](#ch-compression--canonical-codes) and checks that the lengths are a complete prefix
 code; `build_token()`, `build_values()`, `build_lit()` and `build_own()` write each code into the
 encoder's table and into the range of decode entries that starts with it; `seqlz_tables_init()` calls
 them all. The second
 half of the chapter is where the lengths come from.
 
-## The size, for callers that cannot see the struct {#ch-codes--size}
+## The head of the file {#ch-codes--size}
 
 @listing src/seqlz_codes.c 1-6
 
-`seqlz.h` only declares `struct seqlz_tables`, so a file that includes only it, e.g.
-`src/zram_seqlz.c` or the C++ test harness, cannot write `sizeof` and asks this function. The kernel's
-copy has one global struct and no caller, and `port.py` cuts it out.
+The file includes `seqlz.h`, the userspace interface ([chapter 6](#ch-header--tables)), for the two
+functions it defines there, `seqlz_tables_init()` and `seqlz_all_symbols()`. In the kernel's copy it
+includes `seqlz_tables.h` and the generated `seqlz_lengths.h` instead, and the C library's headers,
+as it is a program for the build machine ([below](#ch-codes--kernel)).
 
 ## length_entry(): a length value's base and extra bits {#ch-codes--length-entry}
 
@@ -133,14 +135,14 @@ literals, so the codes go into the tables as `first_codes()` numbers them
 
 @listing src/seqlz_codes.c 124-144
 
-`seqlz_tables_init()` takes the token and length tables as a parameter, so that the tests can build
-tables from other lengths, but the literal tables always come from the global `seqlz_lit_sets[8][256]`.
-The second loop fills `lit_cost` ([chapter 7](#ch-internal--lit-cost)) in one pass over all 2048
-pairs: `k % 256` is the byte value, `k / 256` the table, `k / 256 / 8` the word, always 0 with 8
-tables, and `8U * (k / 256 % 8)` the lane. The `(u64)` cast matters: the `u8` is promoted to `int`,
-and shifting an `int` by 56 for table 7 is undefined. For byte `0x65` the 8 lanes are
-`{{ch08.lit101_row}}`, which gives `lit_cost[0x65][0] = {{ch07.lit_cost.101}}`, table 7 in the top
-byte.
+`seqlz_all_symbols()` returns what `build_tables()` found below; the encoder reads the field
+itself. `seqlz_tables_init()` takes the token and length tables as a parameter, so that the tests can
+build tables from other lengths, but the literal tables always come from the global
+`seqlz_lit_sets[8][256]`. The second loop fills `lit_cost` ([chapter 7](#ch-internal--lit-cost)) in
+one pass over all 2048 pairs: `k % 256` is the byte value, `k / 256` the table and `8U * (k / 256)`
+its lane. The `(u64)` cast matters: the `u8` is promoted to `int`, and shifting an `int` by 56 for
+table 7 is undefined. For byte `0x65` the 8 lanes are `{{ch08.lit101_row}}`, which gives
+`lit_cost[0x65] = {{ch07.lit_cost.101}}`, table 7 in the top byte.
 
 ## build_own(): the code of OWN, and quad[] by decoding every byte {#ch-codes--own}
 
@@ -180,7 +182,7 @@ Two lengths, so the loop ends, and the entry is `{{own.q.d1.entry}}`. With no le
 0`, the entry is only the bit that sends the decoder to `decode[]`. With one, `end[1]` is set to
 `end[0]`: the decoder reads the second end whenever the first length leaves room in the code space,
 also where the entry has no second length, and then it must move by the first's bits. 256 entries are
-256 runs of this loop at boot, once.
+256 runs of this loop, once per build of the tables.
 
 ## has_all_symbols(): can the encoder write every page {#ch-codes--all-symbols}
 
@@ -202,8 +204,10 @@ last symbol has no code: the tables build, the decoder can use them, and `seqlz_
 The `memset()` does more than the comment says: tokens without a code need `enc[]` 0, the encoder's
 masked index could reach the entries behind the last length symbol, `lit_cost` is built with `|=`,
 and when the tests build tables twice on the same memory, nothing of the first set survives. The `||`
-stops at the first table that fails, and the struct is then half built: `src/zram_seqlz.c` frees it
-and fails the zram device's setup. A complete code that leaves symbols out returns 0 with
+stops at the first table that fails, and the struct is then half built: `src/zram_seqlz.c` fails the
+zram device's setup. `build_tables()` takes the struct as a parameter, `t`, and
+`seqlz_tables_init()` hands it the global; the kernel's generator hands it a struct of its own
+([below](#ch-codes--kernel)). A complete code that leaves symbols out returns 0 with
 `all_symbols` false, tables the decoder can use and the encoder cannot; `seqlz_compress()` and
 `seqlz_encode()` then return 0 for every page. With the tables of the format that never happens,
 because the generator checks it, see below.
