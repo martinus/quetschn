@@ -11,7 +11,9 @@ time per page written, the mean over several zram dumps.
 The inputs are the output of quetschn-score, one per dump: bytes per page and µs per page written,
 write + r * read as docs/plan.md §1.1, here a swap-out and a cold swap-in, r as quetschn-score's header
 says, all inputs with the same r. The chart shows the mean
-over the dumps of both, memory as % of a 4 KiB page. Needs matplotlib and the Noto Sans font.
+over the dumps of both, memory as % of a 4 KiB page, and the hull of the means: the codecs that have
+the lowest bytes + lambda * µs for some lambda, from the fastest to the smallest, each segment with its
+lambda in bytes per µs. Needs matplotlib and the Noto Sans font.
 """
 
 import argparse
@@ -31,7 +33,6 @@ CODECS = {
     "seqlz-2": ("seqlz-2", "#3a87c8", "v", (-10, -10), "right"),
     "seqlz-3": ("seqlz-3", "#0b4f8a", "^", (0, -18), "center"),
 }
-LEVELS = ["seqlz-1", "seqlz-2", "seqlz-3"]
 
 
 def parse(path):
@@ -47,6 +48,21 @@ def parse(path):
     if r is None:
         raise SystemExit(f"{path}: no line 'time per page written = write + r * cold read'")
     return rows, r
+
+
+def hull(points):
+    """the lower left convex hull of (µs, %) points, from the fastest to the smallest"""
+    pts = sorted(points)
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and (
+            (lower[-1][0] - lower[-2][0]) * (p[1] - lower[-2][1]) - (lower[-1][1] - lower[-2][1]) * (p[0] - lower[-2][0])
+        ) <= 0:
+            lower.pop()
+        lower.append(p)
+    # up to the point with the least memory: past it a slower point is never better
+    end = min(range(len(lower)), key=lambda i: (lower[i][1], lower[i][0]))
+    return lower[: end + 1]
 
 
 def main():
@@ -70,7 +86,10 @@ def main():
 
     plt.rcParams["font.family"] = "Noto Sans"
     fig, ax = plt.subplots(figsize=(7.2, 4.4), dpi=100)
-    ax.plot([mean[c][0] for c in LEVELS], [mean[c][1] for c in LEVELS], color="#3a87c8", lw=1.5, zorder=1)
+    h = hull(list(mean.values()))
+    ax.plot([p[0] for p in h], [p[1] for p in h], color="#9a9a9a", lw=1.2, ls="--", zorder=1)
+    name = {v: CODECS[c][0] for c, v in mean.items()}
+    steps = [f"{name[p]} to {name[q]} {(p[1] - q[1]) / 100 * 4096 / (q[0] - p[0]):.0f}" for p, q in zip(h, h[1:])]
     for c, (label, color, marker, off, ha) in CODECS.items():
         x, y = mean[c]
         ax.scatter([x], [y], s=72, color=color, marker=marker, edgecolors="white", linewidths=1.5, zorder=3)
@@ -87,14 +106,15 @@ def main():
     ax.set_axisbelow(True)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
-    ax.text(0.98, 0.04, "lower left is better", transform=ax.transAxes, ha="right", fontsize=9, color="#666666")
+    ax.text(0.98, 0.04, "lower left is better\ndashed: the hull, bytes per µs from one to the next:\n" + ", ".join(steps),
+            transform=ax.transAxes, ha="right", fontsize=9, color="#666666", linespacing=1.4)
     if a.note:
         fig.text(0.01, 0.01, a.note, fontsize=8, color="#666666", va="bottom")
     fig.tight_layout(rect=(0, 0.07 if a.note else 0, 1, 1))
     for o in a.out:
         fig.savefig(o, facecolor="white", metadata={"Date": None} if o.endswith(".svg") else None)
     for c in CODECS:
-        print(f"{c:8} {mean[c][1]:5.1f}% {mean[c][0]:6.2f} µs")
+        print(f"{c:8} {mean[c][1]:5.1f}% {mean[c][0]:6.2f} µs" + ("  hull" if mean[c] in h else ""))
 
 
 if __name__ == "__main__":

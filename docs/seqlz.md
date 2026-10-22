@@ -20,7 +20,8 @@ How to read the numbers:
 
 * **Three levels, one format.** `seqlz-1` stores the leftover bytes of a page as they are,
   `seqlz-2` also compresses them with one of 8 fixed tables, `seqlz-3` searches one position further
-  for matches and can give a page a table of its own, see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time).
+  for matches, can give a page a table of its own and stores the leftover bytes as deltas to earlier
+  bytes of the page first, see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time).
   All write the same format, and one decoder reads all of them. Numbers are for `seqlz-2` unless they
   say otherwise.
 * **Dumps.** A dump is a copy of all pages that were in zram on my desktop at one moment. The numbers
@@ -190,12 +191,23 @@ first two in part, below.
 
 ## Level 3: zstd 3's memory in less than half its time
 
-Level 3 is level 2 with two more steps. The matcher looks one position further before it takes a match
+Level 3 is level 2 with two more steps, and since 21st October a third, below. The matcher looks one position further before it takes a match
 shorter than 20 bytes, and extends a match backwards over the literals before it. And a page with 512
 literals or more gets a literal table of its own where that and the table's description save 16 bytes
 against the best of the 8 fixed tables. The description is the code length of each byte, in the order of
 the bytes, about 50 to 75 bytes; the decoder builds the table in the page it decodes into, so it needs no
 more memory ([format.md](format.md#a-pages-own-literal-table)).
+
+Since 21st October 2026 level 3 also stores each literal as its delta to an earlier byte of the page,
+the literal minus that byte, before it codes them: the byte 4 or 8 before, inside the literals of one
+sequence, or the byte as far back as the last match's offset, one choice per page, the one whose deltas
+the fixed tables code in the fewest bits. Pages are full of 4- and 8-byte fields whose high bytes
+repeat, or whose values grow by a little from one record to the next, and a literal after a match often
+differs only a little from the byte the match would have copied. On the ten 20 000-page samples level 3
+stores 5.0% less with it, 869.7 instead of 915.6 bytes per page; on the Mi 9T's big core a write takes
+about 3.5 µs more and a read 0.6 µs more, in userspace. A XOR with the same bytes, the first form, stored
+881.0 ([explored-designs.md](explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept),
+[format.md](format.md#literals-as-deltas)). The numbers below are from 15th October, before it.
 
 On the Mi 9T, zram in the phone's own kernel, the 19 775 pages of a phone session that the tables were
 not trained on, 15th October 2026, time per page written as above:
@@ -216,8 +228,9 @@ dumps of desktops and phones it stores 0.30% more than `zstd` 3 on average, betw
 more. Its reads are 0.4 and 1.1 µs slower than `seqlz-2`'s warm, 0.5 and 2.9 µs cold, and its work memory
 is the same, 16 KiB per CPU
 ([explored-designs.md](explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
-In the kernel VM, the mean over four zram dumps, it stores 25.4% of a page in 12.16 µs per page written,
-`zstd` 3 25.3% in 19.38 µs ([README](../README.md)).
+In the kernel VM on 22nd October, the mean over four zram dumps, level 3 stores 24.4% of a page in 14.42
+µs per page written with its deltas, `zstd` 3 25.3% in 20.02 µs ([README](../README.md)); without them,
+in a run of 21st October, 25.4% in 12.96 µs.
 
 ## What is not known yet
 

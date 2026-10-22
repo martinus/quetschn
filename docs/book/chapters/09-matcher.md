@@ -156,16 +156,19 @@ the matcher only reads, the decoder has to care ([chapter 14](#ch-decode)).
 
 A call through `emit_fn` once per sequence would be an indirect call, and the matcher would have to
 keep its state in memory across it. It does not happen: `seqlz_match_page()` is `__always_inline`, and
-its two callers, `seqlz_find()` and `compress_page()` in `src/seqlz_compress.c`, pass a constant
-function, `find_emit()` and `encode_emit()`, both `__always_inline` too. After inlining, the compiler
-sees which function `emit` is and inlines it as well. `gcc -O2` for x86-64 makes `seqlz_compress.o`
-without a single indirect call. So the type is for the source: one matcher with two receivers. The
-`bool lazy` of level 3 goes the same way: each caller has two calls, one with `true` and one with
-`false`, so each inlined copy of the loop sees a constant, and the one for levels 1 and 2 has no code
-of level 3 at all ([chapter 10](#ch-encoder--entry)).
+its callers in `src/seqlz_compress.c`, `seqlz_find()`, `compress_page()` and `compress_own()`, pass a
+constant function, `find_emit()`, `encode_emit()` and `encode_emit_rec()`, all `__always_inline` too.
+After inlining, the compiler sees which function `emit` is and inlines it as well. `gcc -O2` for
+x86-64 makes `seqlz_compress.o` without a single indirect call. So the type is for the source: one
+matcher with several receivers. The `bool lazy` of level 3 goes the same way: every call passes a
+constant, `seqlz_find()` has one call with `true` and one with `false`, `compress_page()` passes
+`false` and `compress_own()`, level 3's, `true`. So each inlined copy of the loop sees a constant, and
+the one for levels 1 and 2 has no code of level 3 at all ([chapter 10](#ch-encoder--entry)).
 `seqlz_find()` collects the sequences into an array for tests and tools such as the table trainer,
 which trains the tables on exactly the sequences this matcher finds. The kernel's copy has only the
-encoder, and `port.py` calls `encode_emit()` by name.
+encoder: `port.py` makes the matcher call `encode_seq()` by name, with `lazy` as its last argument,
+so the lazy copy, level 3's, is also the one that writes the records for the deltas
+([chapter 10](#ch-encoder--records)).
 
 ::: why One pass, not two
 Matching and encoding are one loop. Two passes, the matcher into an array and the encoder over it, took

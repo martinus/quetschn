@@ -158,6 +158,25 @@ own_table(const struct seqlz_ref* r, const unsigned char* src, size_t len, size_
     return make_code(c, lengths, 256U);
 }
 
+/*
+ * "Literals as deltas": the literal v as it goes to out[p], with the delta dt and the offset last of the sequence
+ * before
+ */
+static unsigned char undelta(unsigned int dt, unsigned char v, const unsigned char* out, unsigned int p, unsigned int last) {
+    unsigned int x = 0;
+
+    if (dt == 1U)
+        x = 4U;
+    if (dt == 2U)
+        x = 8U;
+    if (dt == 3U) {
+        /* the smallest multiple of last that is 4 or more */
+        for (x = last; x < 4U; x += last) {
+        }
+    }
+    return x != 0U && p >= x ? (unsigned char)(v + out[p - x]) : v;
+}
+
 int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t len, unsigned char* out) {
     unsigned char lits[1U << 14];
     const unsigned int P = r->page_bits, page = 1U << P;
@@ -165,7 +184,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
     const unsigned int class_bits[6] = {0, 1, 8, P, 5, 8};
     const unsigned int class_scale[6] = {0, 2, 1, 1, 8, 8};
     struct bits b;
-    unsigned int h, n, used = 0, size = 0, last = 1;
+    unsigned int h, n, used = 0, size = 0, last = 1, dt = 0, k;
 
     /* "Layout of a compressed page" */
     if (len < 2U)
@@ -182,38 +201,44 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
     } else {
         struct seqlz_ref_code page_own;
         const struct seqlz_ref_code* code;
-        unsigned int t, w, j, k;
+        unsigned int t, w, e, j;
         size_t sizes[8], start, total = 0, d = 0;
 
         if (len < 3U)
             return -1;
         t = src[2];
         w = 5U + ((t >> 4) & 7U);
-        if (len < 3U + w || t >> 7 || (t & 15U) > 8U)
+        e = t >> 7;
+        if (len < 3U + w + e || (t & 15U) > 8U)
             return -1;
+        if (e) {
+            dt = src[3];
+            if (dt < 1U || dt > 3U)
+                return -1;
+        }
         code = &r->lit[t & 7U];
         if ((t & 15U) == 8U) {
-            if (own_table(r, src, len, 3U + w, &page_own, &d))
+            if (own_table(r, src, len, 3U + w + e, &page_own, &d))
                 return -1;
             code = &page_own;
         }
-        /* S is the 8 * w bits from byte 3 on, little endian, s[j] = (S >> (j * w)) & ((1 << w) - 1):
-         * bit q of S is bit q mod 8 of byte 3 + q div 8. Bit by bit, as S has up to 96 bits. */
+        /* S is the 8 * w bits from byte 3 + e on, little endian, s[j] = (S >> (j * w)) & ((1 << w) - 1):
+         * bit q of S is bit q mod 8 of byte 3 + e + q div 8. Bit by bit, as S has up to 96 bits. */
         for (j = 0; j < 8U; j++) {
             unsigned int x = 0, i;
 
             for (i = 0; i < w; i++) {
                 unsigned int q = j * w + i;
 
-                x |= ((unsigned int)(src[3 + q / 8U] >> (q % 8U)) & 1U) << i;
+                x |= ((unsigned int)(src[3U + e + q / 8U] >> (q % 8U)) & 1U) << i;
             }
             sizes[j] = x;
             total += x;
         }
-        if (3U + w + d + total > len)
+        if (3U + w + e + d + total > len)
             return -1;
         /* "Coded literals": stream j holds the literals j, j + 8, ..., their codes within s[j] bytes */
-        start = 3U + w + d;
+        start = 3U + w + e + d;
         for (j = 0; j < 8U; j++) {
             struct bits s = {src + start, 8U * sizes[j], 0};
 
@@ -233,7 +258,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
 
     /* "Decoding": until the literals left fill the rest of the page */
     while (n - used != page - size) {
-        unsigned int tk, ll, mlf, c, x, off, ml, k;
+        unsigned int tk, ll, mlf, c, x, off, ml;
 
         /* "Tokens" */
         if (symbol(&b, &r->tok, &tk))
@@ -253,8 +278,8 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
         }
         if (ll > n - used || ll > page - size)
             return -1;
-        for (k = 0; k < ll; k++)
-            out[size++] = lits[used++];
+        for (k = 0; k < ll; k++, size++)
+            out[size] = undelta(dt, lits[used++], out, size, last);
         ml = mlf + 4U;
         if (mlf == 31U) {
             if (value(&b, &r->ml, &x))
@@ -269,7 +294,7 @@ int seqlz_ref_decode(const struct seqlz_ref* r, const unsigned char* src, size_t
             out[size] = out[size - off];
     }
     /* the last sequence, the literals left; B ends here, that no bit after B was used, every read checked */
-    while (used < n)
-        out[size++] = lits[used++];
+    for (k = 0; used < n; k++, size++)
+        out[size] = undelta(dt, lits[used++], out, size, last);
     return ends_here(&b) == 0 ? 0 : -1;
 }

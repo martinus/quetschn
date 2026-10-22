@@ -21,7 +21,7 @@ Directives, each on a line of its own, outside fenced code:
       facts= adds the facts under those prefixes to the data, as data.facts["ch02.cls.0.share"]
 
   @stepper decode | match
-      the step-through of seqlz_decode() or seqlz_match_page(): stepper/instrument.py puts hooks
+      the step-through of decode_page(), seqlz_decode()'s body, or seqlz_match_page(): stepper/instrument.py puts hooks
       into a copy of the real function, stepper/trace.c or trace_match.c records it on the pages,
       stepper/stepper.js or match.js plays it; needs a C compiler. The C programs of anim/ and
       stepper/ get their pages from pages.h
@@ -406,7 +406,7 @@ STEPPERS = {
         "src": "src/seqlz_decompress.c", "copy": "dec_inst.c", "trace": "trace.c",
         "link": ("codes", "compress", "default_tables", "lit_sets"),
         "pages": [("ab", "ab \u00d7 2048, 9 bytes"), ("slab", "chapter 16\u2019s page, 796 bytes")],
-        "label": "seqlz_decode() step by step", "fn": "seqlz_decode()", "js": "stepper.js",
+        "label": "decode_page() step by step", "fn": "decode_page()", "js": "stepper.js",
         "what": "decoding two pages", "seq": "a sequence",
     },
     "match": {

@@ -290,7 +290,8 @@ one, {{ch16.zs.lower}}.
 ## seqlz_decode(): the literals first {#ch-trace--decode}
 
 The backend calls `seqlz_decode(t, src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of
-{{const.SCRATCH}} bytes ([chapter 14](#ch-decode)). It prefetches the token and length tables, finds the
+{{const.SCRATCH}} bytes ([chapter 14](#ch-decode)). Bit 7 of byte 2 is 0, so it runs the copy of
+`decode_page()` without deltas. That prefetches the token and length tables, finds the
 top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `decode_literals()`
 ([chapter 13](#ch-literals-dec)) reads table {{ch16.lt.set}} and width {{ch16.lt.width}} from byte 2,
 prefetches the literal table, and reads the sizes, {{ch16.lt.sizes_sp}}. {{ch16.lits}} literals are
@@ -299,7 +300,7 @@ and one in which streams 0 to {{ch16.d.r_last}} take their literal, while stream
 {{ch16.d.first_quiet}} to 7 decode one into `scratch[{{ch16.d.extra_lo}}]` to
 `scratch[{{ch16.d.extra_hi}}]` and do not move on. All 8 streams end in their last byte with zero bits
 after their codes, and the bitstream starts at byte {{ch16.lt.end}}.
-@assert 2 <= ch16.d.r <= 6 and ch14.pf.token == 129
+@assert 2 <= ch16.d.r <= 6 and ch14.pf.token == 129 and int(ch16.coded.byte2, 16) < 128
 
 ## The loop over the sequences {#ch-trace--loop}
 
@@ -637,5 +638,6 @@ Without the text, this page gains nothing.
 At level 3, `seqlz-3`, the same page is {{slab.l3.len}} bytes, {{slab.coded.len}} at level 2. The
 matcher's lazy step and the extension backwards ([chapter 9](#ch-matcher--lazy)) make the difference;
 the literals keep table {{ch16.lt.set}}, as a table of the page's own would not save
-{{own.enc.saves_min}} bytes on them, so the text's last sentence holds for this page at both levels.
-@assert slab.l3.own == 0 and slab.l3.len < slab.coded.len
+{{own.enc.saves_min}} bytes on them, and they are not stored as deltas, so the text's last sentence holds for this
+page at both levels.
+@assert slab.l3.own == 0 and slab.l3.delta == 0 and slab.l3.len < slab.coded.len

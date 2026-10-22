@@ -449,7 +449,7 @@ static int count_decode(void) {
     empty = measure(&ctr, do_nothing, 0);
     /* one decode first, so that the first page measured does not pay for the code and tables alone */
     build(0, &b);
-    j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 2);
+    j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
     if (!j.len || do_decode(&j))
         return 1;
     printf(
@@ -466,7 +466,7 @@ static int count_decode(void) {
 
             if (k)
                 build(kind, &b);
-            j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 2);
+            j.len = seqlz_encode(j.t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
             if (!j.len || do_decode(&j) || memcmp(out, b.page, SEQLZ_PAGE)) {
                 fprintf(stderr, "%s: page %u does not come back\n", name, k);
                 return 1;
@@ -538,7 +538,7 @@ static int write_streams(const char* dir) {
             FILE* f;
 
             build(kind, &b);
-            len = seqlz_encode(t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, c, sizeof c, 2);
+            len = seqlz_encode(t, NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
             snprintf(path, sizeof path, "%s/stream-%u-%u", dir, kind, k);
             if (!len || !(f = fopen(path, "wb")) || fwrite(c, 1, len, f) != len || fclose(f))
                 return 1;

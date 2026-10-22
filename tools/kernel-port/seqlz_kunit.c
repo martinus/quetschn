@@ -133,7 +133,7 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 	const char *w;
 	u64 v;
 
-	switch (kind % 7) {
+	switch (kind % 9) {
 	case 0: /* random bytes: raw literals, few matches */
 		prandom_bytes_state(rng, p, PAGE_SIZE);
 		break;
@@ -177,6 +177,22 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 				       (prandom_u32_state(rng) % n) / n];
 		}
 		break;
+	case 7: /* fields of 4 bytes, the high 3 kept for 2: literals as deltas */
+		for (k = 0; k < PAGE_SIZE; k += 4) {
+			if (k % 8 == 0)
+				v = prandom_u32_state(rng);
+			p[k] = prandom_u32_state(rng);
+			memcpy(p + k + 1, &v, 3);
+		}
+		break;
+	case 8: /* records of 16 bytes, a bit flipped here and there: deltas */
+		prandom_bytes_state(rng, p, 16);
+		for (k = 16; k < PAGE_SIZE; k++) {
+			p[k] = p[k - 16];
+			if (prandom_u32_state(rng) % 12 == 0)
+				p[k] ^= 1U << prandom_u32_state(rng) % 8;
+		}
+		break;
 	default: /* mostly zeros, as many swapped pages */
 		memset(p, 0, PAGE_SIZE);
 		for (k = 0; k < 40; k++)
@@ -189,7 +205,7 @@ static void seqlz_test_round_trip(struct kunit *test)
 {
 	struct rnd_state rng;
 	struct bufs b;
-	int round, level, len, coded = 0, own = 0;
+	int round, level, len, coded = 0, own = 0, deltas = 0;
 
 	get_bufs(test, &b);
 	prandom_seed_state(&rng, 41);
@@ -203,6 +219,8 @@ static void seqlz_test_round_trip(struct kunit *test)
 			coded += !!(b.c[1] & 0x80);
 			own += (b.c[1] & 0x80) &&
 			       (b.c[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN;
+			deltas += (b.c[1] & 0x80) &&
+				  b.c[2] >> SEQLZ_LIT_DELTA_AT;
 			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
 					0);
 			KUNIT_ASSERT_MEMEQ(test, b.out, b.page, PAGE_SIZE);
@@ -238,9 +256,10 @@ static void seqlz_test_round_trip(struct kunit *test)
 						     2 * PAGE_SIZE - len + 1));
 		}
 	}
-	/* the pages have to give both layouts, and pages' own tables */
+	/* the pages have to give both layouts, pages' own tables and deltas */
 	KUNIT_EXPECT_GE(test, coded, 20);
 	KUNIT_EXPECT_GE(test, own, 10);
+	KUNIT_EXPECT_GE(test, deltas, 10);
 	KUNIT_EXPECT_EQ(test,
 			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
 				       SEQLZ_LEVEL_MIN - 1),
@@ -484,7 +503,9 @@ static void seqlz_test_one_sequence(struct kunit *test)
 /* what coded_literals() does to the page it makes */
 enum damage {
 	GOOD,
-	TOP_BIT, /* bit 7 of byte 2 set */
+	DELTA_0, /* deltas, their byte 0 */
+	DELTA_4, /* deltas, their byte 4 */
+	DELTA_CUT, /* deltas, the page ends 1 byte before its header does */
 	CODE_9, /* the literals' code 9, above a page's own table */
 	STREAM_0_LONGER, /* stream 0 a 0 byte longer than its codes */
 	BYTE_TO_STREAM_1, /* stream 0's last byte counted in stream 1 */
@@ -547,6 +568,9 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 	/* the bytes of each stream, and the sizes the header gives */
 	unsigned int size[SEQLZ_LIT_STREAMS], told[SEQLZ_LIT_STREAMS];
 	unsigned int width = 5, at, j, k, q;
+	/* the byte that says which delta, with deltas */
+	unsigned int e = damage == DELTA_0 || damage == DELTA_4 ||
+			 damage == DELTA_CUT;
 	u8 desc[64];
 
 	t = (struct bits){ .p = desc };
@@ -574,17 +598,19 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 
 	c[0] = n;
 	c[1] = 0x80 | n >> 8;
-	c[2] = (width - 5) << SEQLZ_LIT_WIDTH_AT | (own ? SEQLZ_LIT_OWN : 0);
-	if (damage == TOP_BIT)
-		c[2] |= 0x80;
+	c[2] = (width - 5) << SEQLZ_LIT_WIDTH_AT | (own ? SEQLZ_LIT_OWN : 0) |
+	       e << SEQLZ_LIT_DELTA_AT;
+	c[3] = damage == DELTA_0 ? 0 : damage == DELTA_4 ? 4 : SEQLZ_DELTA_4;
 	if (damage == CODE_9)
 		c[2] = (c[2] & ~SEQLZ_LIT_CODE_MASK) | 9;
 	/* the sizes are one number of 8 * width bits, little endian */
-	memset(c + 3, 0, width);
+	memset(c + 3 + e, 0, width);
 	for (q = 0; q < 8 * width; q++)
-		c[3 + q / 8] |= ((told[q / width] >> (q % width)) & 1)
-				<< (q % 8);
-	at = 3 + width;
+		c[3 + e + q / 8] |= ((told[q / width] >> (q % width)) & 1)
+				    << (q % 8);
+	at = 3 + e + width;
+	if (damage == DELTA_CUT)
+		return at - 1;
 	memcpy(c + at, desc, bytes(&t));
 	at += bytes(&t);
 	if (damage == OWN_CUT)
@@ -633,7 +659,7 @@ static void check_coded(struct maker *m, struct bufs *b, unsigned int n,
 			    "n %u arg %u", n, arg);
 	for (k = 0; k < PAGE_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b->out[k], lit(min(k, n - 1), arg));
-	for (d = TOP_BIT; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
+	for (d = DELTA_0; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
 		if ((d == PADDING_BIT && !padding) ||
 		    (d == OWN_PADDING_BIT && !m->own_padding))
 			continue;

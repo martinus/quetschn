@@ -135,14 +135,19 @@ def decode(page, tables, page_bits):
         raise Invalid
     h = page[0] | page[1] << 8
     n = h & 0x7FFF
+    dt = 0
     if h & 0x8000:
         t = page[2] if len(page) > 2 else 0
-        w, code = 5 + (t >> 4 & 7), t & 15
-        if len(page) < 3 + w or t >> 7 or code > 8 or n > size:
+        w, code, e = 5 + (t >> 4 & 7), t & 15, t >> 7
+        if len(page) < 3 + w + e or code > 8 or n > size:
             raise Invalid
-        codes, d = own_table(page, 3 + w, own_codes) if code == 8 else (lit_codes[code], 0)
-        sizes = int.from_bytes(page[3 : 3 + w], "little")
-        start = [3 + w + d]
+        if e:
+            dt = page[3]
+            if dt not in (1, 2, 3):
+                raise Invalid
+        codes, d = own_table(page, 3 + w + e, own_codes) if code == 8 else (lit_codes[code], 0)
+        sizes = int.from_bytes(page[3 + e : 3 + e + w], "little")
+        start = [3 + w + e + d]
         for j in range(8):
             start.append(start[-1] + (sizes >> (j * w) & ((1 << w) - 1)))
         if start[8] > len(page):
@@ -169,6 +174,20 @@ def decode(page, tables, page_bits):
         return (1 << b) + bits.read(b)
 
     out, used, last = bytearray(), 0, 1
+
+    def copy(k):
+        """the next k literals to out, deltas added back as "Literals as deltas" says"""
+        nonlocal used
+        for i in range(k):
+            b, p = lits[used + i], len(out)
+            x = {1: 4, 2: 8, 3: last}.get(dt, 0)
+            while 0 < x < 4:  # the smallest multiple of last that is 4 or more
+                x += last
+            if dt and p >= x:
+                b = (b + out[p - x]) & 255
+            out.append(b)
+        used += k
+
     while n - used != size - len(out):
         t = bits.symbol(tok_codes)
         if t == 3072:
@@ -182,8 +201,7 @@ def decode(page, tables, page_bits):
             ll = 15 + value(ll_codes)
         if ll > n - used or ll > size - len(out):
             raise Invalid
-        out += bytes(lits[used : used + ll])
-        used += ll
+        copy(ll)
         ml = mlf + 4
         if mlf == 31:
             ml = 35 + value(ml_codes)
@@ -192,7 +210,7 @@ def decode(page, tables, page_bits):
             raise Invalid
         for _ in range(ml):
             out.append(out[-off])
-    out += bytes(lits[used:])
+    copy(n - used)
     if not bits.ends_here(8 * len(bits.data)):
         raise Invalid
     return bytes(out)

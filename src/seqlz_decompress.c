@@ -304,12 +304,12 @@ static __always_inline u64 lit_decode(u8 *out, u64 bits, const u16 *lt,
 }
 
 /*
- * The sizes of the 8 streams of coded literals, width bits each from byte 3 of
- * the page at s, and where each starts, the first at q. Returns their sum. The
- * sizes are copied out of the page first: a 4-byte load at the last size's byte
- * would read past the header.
+ * The sizes of the 8 streams of coded literals, width bits each from p, and
+ * where each starts, the first at q. Returns their sum. The sizes are copied
+ * out of the page first: a 4-byte load at the last size's byte would read past
+ * the header.
  */
-static __always_inline u64 lit_stream_sizes(const u8 *s, unsigned int width,
+static __always_inline u64 lit_stream_sizes(const u8 *p, unsigned int width,
 					    const u8 *q, unsigned int *sz,
 					    const u8 **start)
 {
@@ -317,7 +317,7 @@ static __always_inline u64 lit_stream_sizes(const u8 *s, unsigned int width,
 	u64 total = 0;
 	unsigned int k;
 
-	__builtin_memcpy(h, s + SEQLZ_LIT_HEADER(0), width);
+	__builtin_memcpy(h, p, width);
 	for (k = 0; k < SEQLZ_LIT_STREAMS; k++) {
 		sz[k] = (get_unaligned_le32(h + k * width / 8U) >>
 			 (k * width % 8U)) &
@@ -464,18 +464,20 @@ static noinline const u8 *own_table(const struct own_table *own, const u8 *p,
 
 /*
  * Decodes the coded literals of a page into out, the scratch, see
- * SEQLZ_LIT_HEADER for the layout. Returns where the sequences' bitstream
- * starts, or NULL if the page is not valid. Not inlined: inside the loop over
- * the sequences its registers made pages with raw literals slower too.
+ * SEQLZ_LIT_HEADER for the layout, and their delta into *delta, 0 for none.
+ * Returns where the sequences' bitstream starts, or NULL if the page is not
+ * valid. Not inlined: inside the loop over the sequences its registers made
+ * pages with raw literals slower too.
  */
 static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 					  const u8 *s, unsigned int src_len,
-					  unsigned int n_lit, u8 *out, u8 *page)
+					  unsigned int n_lit, u8 *out, u8 *page,
+					  unsigned int *delta)
 {
 	const u8 *const end = s + src_len;
 	/*
 	 * byte 2: the literals' code in bits 0 to 3, width - SEQLZ_SIZE_BITS_MIN
-	 * in bits 4 to 6, bit 7 zero
+	 * in bits 4 to 6, in bit 7 whether they are deltas, then their byte
 	 */
 	const unsigned int width =
 		SEQLZ_SIZE_BITS_MIN +
@@ -483,7 +485,9 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 			 (s[2] >> SEQLZ_LIT_WIDTH_AT) &
 				 (SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN) :
 			 0U);
-	const u8 *q = s + SEQLZ_LIT_HEADER(width);
+	const unsigned int deltas = src_len > 2U ? s[2] >> SEQLZ_LIT_DELTA_AT :
+						   0U;
+	const u8 *q = s + SEQLZ_LIT_HEADER(width) + deltas;
 	const u8 *ip[SEQLZ_LIT_STREAMS];
 	const u8 *start[SEQLZ_LIT_STREAMS];
 	unsigned int sz[SEQLZ_LIT_STREAMS];
@@ -492,8 +496,12 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	u64 total = 0;
 	const u16 *lt;
 
-	if (src_len < SEQLZ_LIT_HEADER(width) || s[2] >> SEQLZ_LIT_ZERO_AT ||
+	if (src_len < SEQLZ_LIT_HEADER(width) + deltas ||
 	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN || n_lit > SEQLZ_PAGE)
+		return NULL;
+	/* the delta, SEQLZ_DELTA_4 to SEQLZ_DELTA_LAST, in byte 3 */
+	*delta = deltas ? s[SEQLZ_LIT_HEADER(0)] : 0U;
+	if (deltas && *delta - 1U >= SEQLZ_DELTA_LAST)
 		return NULL;
 	if ((s[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN) {
 		/*
@@ -510,7 +518,8 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 		lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
 		prefetch_lines(lt, sizeof(t->lit[0].decode));
 	}
-	total = lit_stream_sizes(s, width, q, sz, start);
+	total = lit_stream_sizes(s + SEQLZ_LIT_HEADER(0) + deltas, width, q, sz,
+				 start);
 	for (i = 0; i < SEQLZ_LIT_STREAMS; i++) {
 		ip[i] = start[i];
 		b[i] = 1;
@@ -559,6 +568,85 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 		if (!lit_stream_ends(start[i], sz[i], ip[i], b[i]))
 			return NULL;
 	return q + total;
+}
+
+/*
+ * Adds the 4 (8) bytes dist before p to the 4 (8) bytes at p, each byte apart,
+ * modulo 256: the top bit of each byte is added apart, so that no carry goes
+ * from one byte into the next
+ */
+static __always_inline void add4(u8 *p, unsigned int dist)
+{
+	const u32 low = 0x7f7f7f7fU; /* bits 0 to 6 of each byte */
+	u32 a = get_unaligned_le32(p), b = get_unaligned_le32(p - dist);
+
+	put_unaligned_le32(((a & low) + (b & low)) ^ ((a ^ b) & ~low), p);
+}
+
+static __always_inline void add8(u8 *p, unsigned int dist)
+{
+	const u64 low = 0x7f7f7f7f7f7f7f7fULL; /* bits 0 to 6 of each byte */
+	u64 a = get_unaligned_le64(p), b = get_unaligned_le64(p - dist);
+
+	put_unaligned_le64(((a & low) + (b & low)) ^ ((a ^ b) & ~low), p);
+}
+
+/*
+ * Turns the nl deltas just copied to d back into literals, see
+ * SEQLZ_LIT_DELTA_AT, in the page's order: the byte a delta is to is before
+ * it, so it is the page's own again by then. last is the offset of the
+ * sequence before.
+ * Whole words while a word fits before the literals' end: as the byte
+ * referred to is at least 4 (8) bytes before each byte of the word, all of
+ * them are done when it is read.
+ */
+static __always_inline void undelta_literals(unsigned int delta, u8 *d,
+					     const u8 *dst, unsigned int nl,
+					     unsigned int last)
+{
+	const unsigned int at = (unsigned int)(d - dst);
+	unsigned int dist = delta == SEQLZ_DELTA_4 ? 4U :
+			    delta == SEQLZ_DELTA_8 ? 8U :
+						     seqlz_delta_last(last);
+	/* the first delta: the first literal dist bytes or more into dst */
+	unsigned int k = at >= dist ? 0 : dist - at;
+
+	if (dist >= 8U) {
+		for (; k + 8 <= nl; k += 8)
+			add8(d + k, dist);
+	} else {
+		for (; k + 4 <= nl; k += 4)
+			add4(d + k, dist);
+	}
+	for (; k < nl; k++)
+		d[k] = (u8)(d[k] + *(d + k - dist));
+}
+
+/*
+ * undelta_literals() for the fast path, which copied 16 bytes to d, of which nl
+ * are literals: all 16 bytes, without a loop. What it writes past nl, the match
+ * after the literals overwrites, and that match reads only bytes before them.
+ * Near the page's start, the loops above.
+ */
+static __always_inline void undelta_fast(unsigned int delta, u8 *d,
+					 const u8 *dst, unsigned int nl,
+					 unsigned int last)
+{
+	unsigned int dist = delta == SEQLZ_DELTA_4 ? 4U :
+			    delta == SEQLZ_DELTA_8 ? 8U :
+						     seqlz_delta_last(last);
+
+	if ((unsigned long)(d - dst) < dist) {
+		undelta_literals(delta, d, dst, nl, last);
+	} else if (dist >= 8U) {
+		add8(d, dist);
+		add8(d + 8, dist);
+	} else {
+		add4(d, dist);
+		add4(d + 4, dist);
+		add4(d + 8, dist);
+		add4(d + 12, dist);
+	}
 }
 
 /*
@@ -657,8 +745,15 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 #define FAST_LIT_ROOM 16U
 #define FAST_IN_ROOM 8U
 
-int seqlz_decode(const struct seqlz_tables *t, const void *src,
-		 unsigned int src_len, void *dst, void *scratch)
+/*
+ * seqlz_decode() for a page whose literals are deltas, see SEQLZ_LIT_DELTA_AT,
+ * or not, deltas a constant: two copies of the loop over the sequences, so
+ * that a page without deltas runs none of their code. A check of it for every
+ * sequence made those pages slower to read.
+ */
+static __always_inline int decode_page(const struct seqlz_tables *t,
+				       const void *src, unsigned int src_len,
+				       void *dst, void *scratch, bool deltas)
 {
 	const u8 *s = src;
 	const u8 *const s_end = s + src_len;
@@ -668,7 +763,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 	u8 *d_fast;
 	unsigned long lit_fast, in_fast, end_gap;
 	struct seqlz_bit_reader br;
-	unsigned int n_lit, last = 1, tok, skip = 0;
+	unsigned int n_lit, last = 1, tok, skip = 0, delta = 0;
 
 	if (src_len < SEQLZ_HEADER)
 		return -EINVAL;
@@ -687,7 +782,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		n_lit &= SEQLZ_LIT_CODED - 1U;
 		if (!scratch)
 			return -EINVAL;
-		q = decode_literals(t, s, src_len, n_lit, scratch, d);
+		q = decode_literals(t, s, src_len, n_lit, scratch, d, &delta);
 		if (!q)
 			return -EINVAL;
 		br = (struct seqlz_bit_reader){ .p = q, .end = s_end };
@@ -777,6 +872,8 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 			 * ends, rejects the page because lit > lit_end.
 			 */
 			copy16(d, lit);
+			if (deltas)
+				undelta_fast(delta, d, dst, nl, last);
 			d += nl;
 			lit += nl;
 			last = off;
@@ -795,6 +892,8 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		    nl > (unsigned int)(d_end - d))
 			return -EINVAL;
 		copy_literals(d, d_end, lit, lit_bound, nl);
+		if (deltas)
+			undelta_literals(delta, d, dst, nl, last);
 		d += nl;
 		lit += nl;
 		if (len == SEQLZ_ML_CAP + 4U) {
@@ -821,6 +920,9 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 last_literals:
 	/* the last sequence: the literals left, as many as the page has room */
 	copy_literals(d, d_end, lit, lit_bound, (unsigned int)(lit_end - lit));
+	if (deltas)
+		undelta_literals(delta, d, dst, (unsigned int)(lit_end - lit),
+				 last);
 	/*
 	 * The page must end where its bits end: every byte read, fewer than 8
 	 * bits left in the last one, and those 0, as the compressor writes
@@ -830,4 +932,17 @@ last_literals:
 	    (br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))))
 		return -EINVAL;
 	return 0;
+}
+
+int seqlz_decode(const struct seqlz_tables *t, const void *src,
+		 unsigned int src_len, void *dst, void *scratch)
+{
+	const u8 *s = src;
+
+	/* bit 7 of byte 2, with coded literals */
+	if (src_len > SEQLZ_HEADER &&
+	    (get_unaligned_le16(s) & SEQLZ_LIT_CODED) &&
+	    s[2] >> SEQLZ_LIT_DELTA_AT)
+		return decode_page(t, src, src_len, dst, scratch, true);
+	return decode_page(t, src, src_len, dst, scratch, false);
 }

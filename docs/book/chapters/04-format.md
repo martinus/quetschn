@@ -22,7 +22,7 @@ the whole page, and `n > PAGE` makes the page invalid.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 238" role="img" aria-label="The two layouts of a compressed page: a 2-byte header, the literals, then the bitstream; with coded literals the header also has byte 2, the stream sizes, with code 8 the page's own table, and 8 streams" font-size="12">
+<svg viewBox="0 0 720 238" role="img" aria-label="The two layouts of a compressed page: a 2-byte header, the literals, then the bitstream; with coded literals the header also has byte 2, with literals as deltas the byte that says which delta, the stream sizes, with code 8 the page's own table, and 8 streams" font-size="12">
   <text x="20" y="24" text-anchor="start" font-weight="bold">raw literals: h &amp; 0x8000 is 0</text>
   <rect x="20" y="34" width="90" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="65.0" y="56" text-anchor="middle">h = n</text>
@@ -43,26 +43,28 @@ the whole page, and `n > PAGE` makes the page invalid.
   <text x="65.0" y="156" text-anchor="middle" font-size="11">h = 0x8000+n</text>
   <rect x="110" y="134" width="30" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="125.0" y="156" text-anchor="middle">t</text>
-  <rect x="140" y="134" width="110" height="34" class="fill-sheet" stroke="currentColor"/>
-  <text x="195.0" y="156" text-anchor="middle">s[0] to s[7]</text>
-  <rect x="250" y="134" width="50" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
-  <text x="275.0" y="156" text-anchor="middle">own</text>
-  <rect x="300" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="317.5" y="156" text-anchor="middle">0</text>
-  <rect x="335" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="352.5" y="156" text-anchor="middle">1</text>
-  <rect x="370" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="387.5" y="156" text-anchor="middle">2</text>
-  <rect x="405" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="422.5" y="156" text-anchor="middle">3</text>
-  <rect x="440" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="457.5" y="156" text-anchor="middle">4</text>
-  <rect x="475" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="492.5" y="156" text-anchor="middle">5</text>
-  <rect x="510" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="527.5" y="156" text-anchor="middle">6</text>
-  <rect x="545" y="134" width="35" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
-  <text x="562.5" y="156" text-anchor="middle">7</text>
+  <rect x="140" y="134" width="26" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
+  <text x="153.0" y="156" text-anchor="middle">dt</text>
+  <rect x="166" y="134" width="100" height="34" class="fill-sheet" stroke="currentColor"/>
+  <text x="216.0" y="156" text-anchor="middle">s[0] to s[7]</text>
+  <rect x="266" y="134" width="50" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
+  <text x="291.0" y="156" text-anchor="middle">own</text>
+  <rect x="316" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="332.5" y="156" text-anchor="middle">0</text>
+  <rect x="349" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="365.5" y="156" text-anchor="middle">1</text>
+  <rect x="382" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="398.5" y="156" text-anchor="middle">2</text>
+  <rect x="415" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="431.5" y="156" text-anchor="middle">3</text>
+  <rect x="448" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="464.5" y="156" text-anchor="middle">4</text>
+  <rect x="481" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="497.5" y="156" text-anchor="middle">5</text>
+  <rect x="514" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="530.5" y="156" text-anchor="middle">6</text>
+  <rect x="547" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
+  <text x="563.5" y="156" text-anchor="middle">7</text>
   <rect x="580" y="134" width="120" height="34" class="fill-acc" stroke="currentColor" fill-opacity="0.35"/>
   <text x="640.0" y="156" text-anchor="middle">B, the bitstream</text>
   <line x1="20" y1="168" x2="20" y2="176" stroke="currentColor"/>
@@ -71,19 +73,21 @@ the whole page, and `n > PAGE` makes the page invalid.
   <text x="110" y="190" text-anchor="middle" class="mut">2</text>
   <line x1="140" y1="168" x2="140" y2="176" stroke="currentColor"/>
   <text x="140" y="190" text-anchor="middle" class="mut">3</text>
-  <line x1="250" y1="168" x2="250" y2="176" stroke="currentColor"/>
-  <text x="235" y="190" text-anchor="middle" class="mut">3 + w</text>
-  <line x1="300" y1="168" x2="300" y2="176" stroke="currentColor"/>
-  <text x="316" y="190" text-anchor="middle" class="mut">+ d</text>
+  <line x1="166" y1="168" x2="166" y2="176" stroke="currentColor"/>
+  <text x="170" y="190" text-anchor="middle" class="mut">+ e</text>
+  <line x1="266" y1="168" x2="266" y2="176" stroke="currentColor"/>
+  <text x="270" y="190" text-anchor="middle" class="mut">+ w</text>
+  <line x1="316" y1="168" x2="316" y2="176" stroke="currentColor"/>
+  <text x="320" y="190" text-anchor="middle" class="mut">+ d</text>
   <line x1="580" y1="168" x2="580" y2="176" stroke="currentColor"/>
-  <text x="580" y="190" text-anchor="middle" class="mut">3 + w + d + Σs</text>
+  <text x="580" y="190" text-anchor="middle" class="mut">3 + w + e + d + Σs</text>
   <line x1="700" y1="168" x2="700" y2="176" stroke="currentColor"/>
   <text x="700" y="190" text-anchor="middle" class="mut">len</text>
-  <text x="440" y="210" text-anchor="middle">stream 0 to 7, s[j] bytes each, literal k in stream k mod 8</text>
-  <text x="275" y="228" text-anchor="middle" class="mut">own: d bytes, with code 8 only</text>
+  <text x="448" y="210" text-anchor="middle">stream 0 to 7, s[j] bytes each, literal k in stream k mod 8</text>
+  <text x="20" y="228" text-anchor="start" class="mut">dt: e bytes, 1 if the literals are deltas, else 0; own: d bytes, with code 8 only</text>
 </svg>
 </div>
-<figcaption>The two layouts. The offsets below each box are byte offsets in the compressed page of <code>len</code> bytes; the dashed box, the page's own literal table, is there only with code 8, else <code>d</code> is 0.</figcaption>
+<figcaption>The two layouts. The offsets below each box are byte offsets in the compressed page of <code>len</code> bytes; the dashed boxes are there only with literals as deltas, <code>e</code> = 1, and with code 8, the page's own literal table, else <code>e</code> and <code>d</code> are 0.</figcaption>
 </figure>
 
 **Raw literals.** With the top bit clear, the `n` literals follow as they are, in page order, and
@@ -97,7 +101,7 @@ tables or with a table that the page brings, and more fields come first. Byte 2,
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 134" role="img" aria-label="Byte 2 of a page with coded literals, {{ch04.text.t}}: a zero bit, w minus 5 in bits 4 to 6, the literals' code in bits 0 to 3" font-size="12">
+<svg viewBox="0 0 720 134" role="img" aria-label="Byte 2 of a page with coded literals, {{ch04.text.t}}: the delta bit, w minus 5 in bits 4 to 6, the literals' code in bits 0 to 3" font-size="12">
   <text x="222.0" y="30" text-anchor="middle" class="mut">bit 7</text>
   <rect x="200" y="40" width="44" height="30" class="fill-sheet" stroke="currentColor"/>
   <text x="222.0" y="60" text-anchor="middle" font-weight="bold">{{ch04.text.t_bit.7}}</text>
@@ -123,7 +127,7 @@ tables or with a table that the page brings, and more fields come first. Byte 2,
   <rect x="508" y="40" width="44" height="30" class="fill-acc" stroke="currentColor" fill-opacity="0.3"/>
   <text x="530.0" y="60" text-anchor="middle" font-weight="bold">{{ch04.text.t_bit.0}}</text>
   <path d="M203 78 V84 H241 V78" fill="none" stroke="currentColor"/>
-  <text x="222.0" y="102" text-anchor="middle" font-weight="bold">0</text>
+  <text x="222.0" y="102" text-anchor="middle" font-weight="bold">e = {{ch04.text.t_bit.7}}</text>
   <text x="222.0" y="119" text-anchor="middle">t &gt;&gt; 7</text>
   <path d="M247 78 V84 H373 V78" fill="none" stroke="currentColor"/>
   <text x="310.0" y="102" text-anchor="middle" font-weight="bold">w - 5 = {{ch04.text.w5}}</text>
@@ -141,12 +145,14 @@ tables or with a table that the page brings, and more fields come first. Byte 2,
   (`SEQLZ_LIT_OWN`) a table of the page's own ([below](#ch-format--own)), and 9 to 15 make the page
   invalid.
 - `w = 5 + ((t >> 4) & 7)` is the number of bits of each stream size, 5 to 12.
-- `t >> 7` must be 0. This bit and the codes 9 to 15 are free for a later format
+- `e = t >> 7` says whether the literals are stored as deltas to earlier bytes of the page
+  ([below](#ch-format--deltas)), which only `seqlz-3` writes. The codes 9 to 15 are free for a later format
   ([no version in the page](#ch-format--version)).
 
-The next `w` bytes, from byte 3 on, are one little-endian number `S` of `8 * w` bits with the 8 stream
-sizes, `w` bits each, the lowest first: `s[j] = (S >> (j * w)) & ((1 << w) - 1)`. With code 8 the
-page's own table follows, `d` bytes; with the codes 0 to 7, `d` is 0. Then come the 8 streams, `s[j]`
+With `e = 1` byte 3 is `dt`, which says which earlier byte each delta is to. The next `w` bytes, from
+byte $3 + e$ on, are one little-endian number `S` of `8 * w` bits with the 8 stream sizes, `w` bits
+each, the lowest first: `s[j] = (S >> (j * w)) & ((1 << w) - 1)`. With code 8 the page's own table follows,
+`d` bytes; with the codes 0 to 7, `d` is 0. Then come the 8 streams, `s[j]`
 bytes each, and after the last one `B`. The literals are dealt out to the streams like cards: stream
 $j$ holds literals $j$, $j + 8$, $j + 16$ and so on, each as a code of the table that `code` names,
 read most significant bit first like `B`. A stream's codes must end in its last byte, and the bits
@@ -171,7 +177,8 @@ followed by a space. `seqlz-1` stores it in {{ch04.text.raw}} bytes, `seqlz-2` i
   `{{ch04.text.s0_hex}} = {{ch04.text.s.0}}`, are the size of stream 0; the 8 sizes are
   {{ch04.text.s.0}}, {{ch04.text.s.1}}, {{ch04.text.s.2}}, {{ch04.text.s.3}}, {{ch04.text.s.4}},
   {{ch04.text.s.5}}, {{ch04.text.s.6}} and {{ch04.text.s.7}} bytes, {{ch04.text.sum}} together.
-- No own table, `d = 0`: the streams start at byte $3 + w = {{ch04.text.streams_at}}$, `B` at
+- No deltas and no own table, `e = 0` and `d = 0`: the streams start at byte
+  $3 + w = {{ch04.text.streams_at}}$, `B` at
   ${{ch04.text.streams_at}} + {{ch04.text.sum}} = {{ch04.text.b_at}}$, and takes the last
   {{ch04.text.b_bytes}} bytes of the page.
 @assert ch04.text.best == ch04.text.set and ch04.text.set < 8 and ch04.text.t_bit[7] == 0
@@ -243,7 +250,8 @@ many of the decoder's cache lines a page needs ([chapter 3](#ch-cpu--msb-first))
 
 ## A page's own literal table, in byte order {#ch-format--own}
 
-With code 8 the page brings its own literal table, right after the stream sizes, at byte $3 + w$. It is
+With code 8 the page brings its own literal table, right after `dt` and the stream sizes, at
+byte $3 + w + e$. It is
 read most significant bit first, like `B`. It is not a list of 256 code lengths: it is a list of
 symbols of one more fixed table, `OWN`, which goes through the byte values from 0 up and says for each
 one whether it has a code, and how long it is:
@@ -374,11 +382,50 @@ bits are the lengths.
 @assert own.text.clen["20"] == own.text.clen["6c"] == own.text.clen["75"] == 3 and own.text.with_code == 13 and own.text.b_bytes == ch04.text.b_bytes
 
 A page is invalid if the sum goes above 1, if a byte value above 255 would get a code, if a bit after
-the last symbol in its byte is not 0, or if $3 + w + d$ is beyond `len`. `seqlz_decode()` reads zeros
+the last symbol in its byte is not 0, or if $3 + w + e + d$ is beyond `len`. `seqlz_decode()` reads zeros
 past the end of the page, and a code of zeros, `{{own.code.8}}`, is a length, so a table that never
 fills the code space still ends there, and the last of those checks rejects it. How the encoder chooses the lengths and which pages get a
 table is in [chapter 11](#ch-literals-enc--own); how the decoder builds a decode table from them
 without any memory of its own, in [chapter 13](#ch-literals-dec--own).
+
+## Literals as deltas {#ch-format--deltas}
+
+With `e = 1` each literal was stored, before it was coded, as its **delta** to the byte `x` before it
+in the page: the literal minus that byte, modulo 256. The decoder adds the same byte back as it appends
+the literal, modulo 256 again, which gives the literal back. The byte `dt`, byte 3, right after `t` and
+before the stream sizes, says which `x`. One rule holds for all three: the literal `lits[used + i]`,
+which goes to byte `p = |out|` of the page, is `(lits[used + i] + out[p - x]) mod 256` if `p >= x`, else
+as it is, with
+
+| `dt` | `x` |
+| --- | --- |
+| 1 | 4 |
+| 2 | 8 |
+| 3 | the smallest multiple of `last` that is 4 or more, where `last` is the offset of the sequence before, 1 for the first: 4 for `last` 1 or 2, 6 for `last` 3, else `last` |
+
+Only the first `x` bytes of the page have no byte `x` before them; every other literal is a delta,
+the first literals of a sequence too. `out[p - x]` is a byte the decoder has already written, as it is
+in the page: a byte of the match before, of an earlier sequence, or an earlier literal of the same
+sequence; the last sequence is no different. Any other `dt` makes the page invalid. Memory pages are
+full of 4- and 8-byte fields, whose bytes are often those of the field before or differ from them by a
+little, as counters, sizes and addresses of objects in a row do, and the byte after a match often
+differs only a little from the byte the match would have copied next. As deltas, such literals become a
+few small values, which a literal table codes in fewer bits
+([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#literals-as-deltas)).
+A delta, not a XOR: a field that grows by 1 from `0x0f` to `0x10` has a delta of 1, but `0x0f` XOR
+`0x10` is `0x1f`, every bit the carry flipped. The first form of `e`, on 21st October 2026, XORed the
+literals; the subtraction replaced it the same day, before it was merged ([chapter 17](#ch-decisions--deltas)).
+
+The page of 512 pointers of [chapter 9](#ch-matcher--back) at level 3 begins with
+`{{delta.ptr.l3.head}}`: `h` says {{delta.ptr.l3.n}} coded literals, `t = {{delta.ptr.l3.t}}` is code
+{{delta.ptr.l3.code}} with `w = {{delta.ptr.l3.w}}` and `e = 1`, byte {{delta.ptr.l3.dt_at}} is
+`dt = {{delta.ptr.l3.dt}}`, so `x = 8`, and 5 bytes of sizes follow. Its first literals,
+`{{delta.ptr.plain}}`, are stored as `{{delta.ptr.deltas}}`: the first sequence is
+{{delta.ptr.rec.0.ll}} literals from byte 0, of which the first 8 have no byte 8 before them and stay as
+they are, and its last, `0x20` at byte 8, is stored minus `out[0] = 0x10`. The second sequence is 1
+literal at byte {{delta.ptr.rec.1.pos}}, the first of its sequence, and the decoded delta `0x10` is
+added to `out[8] = 0x20`, the low byte of the pointer before, which gives `0x30`.
+@assert delta.ptr.l3.w == 5 and delta.ptr.l3.dt == ch06.DELTA_8 and delta.ptr.rec[0].pos == 0 and delta.ptr.rec[1].ll == 1 and delta.ptr.rec[1].pos == 16 and delta.ptr.plain[:2] == "10" and delta.ptr.plain[24:26] == "20" and delta.ptr.deltas[24:26] == "10" and delta.ptr.plain[:23] == delta.ptr.deltas[:23] and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.ref[:2] == "20" and delta.ptr.fast.after[:2] == "30"
 
 ## One sequence: the token {#ch-format--token}
 
@@ -602,10 +649,10 @@ A page is valid for a page size and its tables if all of these hold:
 1. `len >= 2`.
 2. `n <= PAGE`.
 3. Raw literals: `2 + n <= len`.
-4. Coded literals: `len >= 3 + w`.
-5. Coded literals: `t >> 7` is 0, and `code = t & 15` is at most 8.
-6. Code 8: the page's own table is valid ([above](#ch-format--own)), and `3 + w + d <= len`.
-7. Coded literals: `3 + w + d + s[0] + ... + s[7] <= len`, with `d = 0` for the codes 0 to 7.
+4. Coded literals: `len >= 3 + w + e`.
+5. Coded literals: `code = t & 15` is at most 8, and with `e = 1`, `dt` is 1, 2 or 3.
+6. Code 8: the page's own table is valid ([above](#ch-format--own)), and `3 + w + e + d <= len`.
+7. Coded literals: `3 + w + e + d + s[0] + ... + s[7] <= len`, with `d = 0` for the codes 0 to 7.
 8. Every literal stream's codes take at most `8 * s[j]` bits and fewer than 8 bits less, and its bits
    after the last code are all 0. So a stream without literals has size 0.
 9. Every escaped token is below 3072.
@@ -625,19 +672,21 @@ decodes to.
 ## Decoding, as the spec writes it {#ch-format--decode}
 
 `lits` are the `n` literals, decoded first if they are coded, `used` is how many of them are copied,
-`out` is the page being written, `last` is 1:
+`out` is the page being written, `last` is 1. `copy(k)` appends the next `k` literals to `out` and adds
+`k` to `used`: as they are, or with `e = 1` each plus the byte of `out` that
+[literals as deltas](#ch-format--deltas) names, modulo 256.
 
 ```text
 loop:
     if n - used == PAGE - |out|:                the last sequence
-        append lits[used] to lits[n - 1] to out
+        copy(n - used)
         stop
     token: ll, mlf, c
     x = read(offset bits of class c)
     off = (c == 0) ? last : x as the offset of class c
     if ll == 15: ll = 15 + value(LL)
     if ll > n - used or ll > PAGE - |out|: invalid
-    append lits[used] to lits[used + ll - 1] to out; used = used + ll
+    copy(ll)
     ml = mlf + 4
     if mlf == 31: ml = 35 + value(ML)
     last = off
@@ -762,8 +811,9 @@ The page has no version number and no fixed bytes that mark it as seqlz. zram ke
 while the kernel that wrote them runs, also the ones it wrote back to a backing device, so no page
 ever meets a newer decoder, and a change of the format needs a new kernel, not a new algorithm name in zram. Two things
 would change that: another user of the codec that keeps pages longer, or zram's pages kept across a
-`kexec` by live update, which zram does not do in 2026. For that case the top bit of byte 2 and the
-codes 9 to 15 are invalid today, so a later format can tell itself apart. And the format is not frozen yet: until seqlz
+`kexec` by live update, which zram does not do in 2026. For that case the codes 9 to 15 and the values
+of `dt` other than 1 to 3 are invalid today, so a later format can tell itself apart. The top bit of
+byte 2 was such a free bit too, until the deltas took it on 21st October 2026. And the format is not frozen yet: until seqlz
 is in a kernel, the tables and the rules may change, together with `docs/format.md`'s hashes, its
 example and both reference decoders.
 

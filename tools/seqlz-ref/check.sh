@@ -6,7 +6,7 @@
 # pages that src/ compressed, with raw and with coded literals: each must give the page back.
 # A retrain of the tables without new hashes in docs/format.md fails here, and so does a format change
 # that the spec does not describe. The pages are made up, never from a dump: tools/seqlz-worst/pages/,
-# and three written here. First, the tables in src/ must be what tools/kernel-port/gen-seqlz-tables.py
+# and six written here, three of them with deltas, one for each. First, the tables in src/ must be what tools/kernel-port/gen-seqlz-tables.py
 # makes from the counts in bench/, byte for byte. Needs cc and python3.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -48,6 +48,7 @@ ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/to
     "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c"
 cp "$repo"/tools/seqlz-worst/pages/*.page "$out/"
 python3 - "$out" "$repo/docs/format.md" <<'EOF'
+import random
 import struct
 import sys
 
@@ -55,6 +56,24 @@ out, text = sys.argv[1], open(sys.argv[2], "rb").read()
 open(f"{out}/ab.page", "wb").write(b"ab" * 2048)
 open(f"{out}/pointers.page", "wb").write(b"".join(struct.pack("<Q", 0x7F1234560010 + 16 * i) for i in range(512)))
 open(f"{out}/text.page", "wb").write(text[:4096])
+# pages whose literals level 3 codes as deltas, one for each of the three: fields of 4 bytes whose 3 high
+# bytes every second field repeats, fields of 8 bytes whose 3 high bytes repeat, and runs of a 3-byte
+# pattern, each followed by 8 bytes a little above the byte 6 before them (the last offset 3 counts as 6)
+rng = random.Random(229)
+p = bytearray()
+while len(p) < 4096:
+    high = bytes(rng.randrange(256) for _ in range(3))
+    p += bytes([rng.randrange(256)]) + high + bytes([rng.randrange(256)]) + high
+open(f"{out}/delta4.page", "wb").write(p)
+high = bytes(rng.randrange(256) for _ in range(3))
+p = b"".join(bytes(rng.randrange(256) for _ in range(5)) + high for _ in range(512))
+open(f"{out}/delta8.page", "wb").write(p)
+p = bytearray()
+while len(p) < 4096:
+    p += bytes(rng.randrange(256) for _ in range(3)) * 4
+    for _ in range(8):
+        p.append((p[-6] + 1 + rng.randrange(3)) & 255)
+open(f"{out}/delta-last3.page", "wb").write(p[:4096])
 EOF
 "$out/compress" "$out"/*.page >/dev/null
 

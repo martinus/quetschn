@@ -6,7 +6,9 @@
  * The other targets only reach seqlz_encode() with the matcher's sequences, which are always valid.
  *
  * Byte 0: bit 0 lets the last sequence's literals fill the page, bits 1 and 2 pick the level, 1 plus
- * their value mod 3. Then 4 bytes per sequence: the literals, the match, and two bytes for the offset, each taken as it is.
+ * their value mod 3, bit 3 gives seqlz_encode() the page, where the sequences make one, for level 3's
+ * deltas, and bit 4 makes the literals grow by one every 4, which deltas code well. Then 4 bytes per
+ * sequence: the literals, the match, and two bytes for the offset, each taken as it is.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -27,8 +29,28 @@ static unsigned char *dst, *out, *scratch;
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 
+/* the page the n sequences make from literals, if they make one */
+static int make_page(unsigned int n) {
+    unsigned int k, i, pos = 0, used = 0;
+
+    for (k = 0; k < n; k++) {
+        if (pos + seq[k].literals > SEQLZ_PAGE)
+            return 0;
+        for (i = 0; i < seq[k].literals; i++)
+            page[pos++] = literals[used++];
+        if (k + 1 == n)
+            break;
+        if (seq[k].match < 4 || seq[k].offset == 0 || seq[k].offset > pos || pos + seq[k].match > SEQLZ_PAGE)
+            return 0;
+        for (i = 0; i < seq[k].match; i++, pos++)
+            page[pos] = page[pos - seq[k].offset];
+    }
+    return pos == SEQLZ_PAGE;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-    unsigned int n = 0, k, i, pos = 0, n_lit = 0, sum = 0, len;
+    unsigned int n = 0, k, n_lit = 0, sum = 0, len;
+    int made;
 
     if (size < 5)
         return 0;
@@ -57,30 +79,31 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     if (n_lit > SEQLZ_PAGE)
         n_lit = SEQLZ_PAGE;
     for (k = 0; k < n_lit; k++)
-        literals[k] = (unsigned char)(k * 0x9e3779b1U >> 24);
+        literals[k] = (unsigned char)(data[0] & 16 ? k / 4 : k * 0x9e3779b1U >> 24);
+    made = make_page(n);
 
     unwritten(dst, DST_CAP);
     unwritten(scratch, SEQLZ_SCRATCH);
-    len = seqlz_encode(tables, &state, seq, n, literals, n_lit, dst, DST_CAP, 1U + (data[0] >> 1 & 3U) % 3U);
+    len = seqlz_encode(tables,
+                       &state,
+                       seq,
+                       n,
+                       literals,
+                       n_lit,
+                       made && (data[0] & 8) ? page : NULL,
+                       dst,
+                       DST_CAP,
+                       1U + (data[0] >> 1 & 3U) % 3U);
     if (len == 0)
         return 0;
     if (len > DST_CAP || sum != SEQLZ_PAGE)
         abort();
-    /* accepted, so the sequences make a page: build it and compare */
-    n_lit = 0;
-    for (k = 0; k < n; k++) {
-        for (i = 0; i < seq[k].literals; i++)
-            page[pos++] = literals[n_lit++];
-        if (k + 1 == n)
-            break;
-        if (seq[k].match < 4 || seq[k].offset == 0 || seq[k].offset > pos)
-            abort();
-        for (i = 0; i < seq[k].match; i++, pos++)
-            page[pos] = page[pos - seq[k].offset];
-    }
+    /* accepted, so the sequences make a page: compare */
+    if (!made)
+        abort();
     memset(out, 0xa5, SEQLZ_PAGE);
     unwritten(out, SEQLZ_PAGE);
-    if (pos != SEQLZ_PAGE || seqlz_decode(tables, dst, len, out, scratch) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0)
+    if (seqlz_decode(tables, dst, len, out, scratch) != 0 || memcmp(out, page, SEQLZ_PAGE) != 0)
         abort();
     return 0;
 }

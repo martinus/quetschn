@@ -179,7 +179,7 @@ is the other way round. Nothing in the codec reads a big-endian number of 16 or 
 line 139 relies on gcc and clang defining both macros: a compiler with neither would see `0 == 0` and
 take the big-endian branch on any CPU.
 
-@listing src/seqlz_compat.h 165-203
+@listing src/seqlz_compat.h 165-209
 
 `memcpy()` into a local is the defined way to read a `u64` from any address of a byte array, and with
 a constant size gcc and clang make it one load, which is also why each accessor is `__always_inline`:
@@ -206,6 +206,7 @@ load through accessors like these, and since then `test/seqlz_endian.c` compress
 | --- | --- | --- |
 | `get_unaligned_le16()`, `put_unaligned_le16()` | the `u16` at the start of a page, in `seqlz_decode()` and the encoder | the format says little endian |
 | `get_unaligned_le32()` | the matcher's 4-byte compare of a candidate, the stream sizes of coded literals | any fixed order works for a compare; the sizes are little endian |
+| `get_unaligned_le32()`, `put_unaligned_le32()`, `get_unaligned_le64()`, `put_unaligned_le64()` | the deltas of level 3's literals, 4 or 8 bytes at a time, in `delta_literals()` and in the decoder's `add4()` and `add8()` | any order works, as long as the load and the store use the same one |
 | `get_unaligned_le64()` | the matcher's hash and match length, the decoder's pattern for offsets below 8 | the byte at `p` in the low bits, so that bit tricks find the first byte that differs at the bottom |
 | `get_unaligned_be64()` | the decoder's bit reader for the sequences, the literal streams | the bitstreams are most significant bit first |
 | `put_unaligned_le64()` | the encoder's flush of its bits, the literal coder, the decoder's pattern copy | see [chapter 10](#ch-encoder) |

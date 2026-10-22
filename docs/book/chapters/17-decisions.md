@@ -284,8 +284,8 @@ Since 11th October the last sequence has no token: the decoder knows it from the
 per page, 0.12% of zsmalloc memory, at no time the VM or the phone could measure
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-last-sequence-without-a-token-12-bytes-per-page-less-kept)).
 zram's pages never outlive the kernel that wrote them, so a new format needs a new kernel, not a version
-byte, and the values of byte 2 with its top bits set stay free for a format that has to tell itself
-apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
+byte, and the codes 9 to 15 in byte 2 and the values of the delta's byte other than 1 to 3 stay free for
+a format that has to tell itself apart ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#no-version-in-the-page)).
 
 
 ## The literals {#ch-decisions--literals}
@@ -632,8 +632,8 @@ kernel copy is for 4 KiB pages only
 
 ## Level 3: a lazy step and a literal table of the page's own {#ch-decisions--level3}
 
-Level 3 is for a device that values memory more than level 2 does. On 15th October 2026, in the Mi
-9T's own kernel, with 19 775 pages of a phone session in zram (`tools/zram-phone/run.sh`), means of 3
+Level 3 is for a device that values memory more than level 2 does. On 15th October 2026, before its
+literals were stored as deltas ([below](#ch-decisions--deltas)), in the Mi 9T's own kernel, with 19 775 pages of a phone session in zram (`tools/zram-phone/run.sh`), means of 3
 rounds in µs:
 
 | codec, Mi 9T, 15th October 2026 | zsmalloc bytes per page | A76 write | A76 warm / cold read | A55 write | A55 warm / cold read |
@@ -707,6 +707,65 @@ changed the decision: `zstd` 3's memory, one end of the project's goal
 The cost is in the code: `own_code()`, `own_lengths()` and their helpers in the encoder, `build_own()`,
 and `own_table()` in the decoder, which parses one more structure of untrusted input; the fuzzers and
 the reference decoders cover it like the rest.
+
+## Level 3 stores its literals as deltas, first as XORs {#ch-decisions--deltas}
+
+Since 21st October 2026 level 3 stores each literal as its delta to the byte 4 or 8 before it, or to
+the byte at the offset of the sequence before, the literal minus that byte modulo 256, one choice per
+page, before the literal tables code it; since 22nd October every literal at least that many bytes
+into the page is a delta ([chapter 4](#ch-format--deltas)). On ten samples of 20 000 pages level 3
+stores 869.7 bytes per page instead of 915.6, 5.0% less, and 21.1% of the pages carry deltas: 10.1% to
+the byte at the last offset, 7.9% to the byte 4 before, 3.1% to the byte 8 before. Levels 1 and 2
+write the same bytes as before. In the kernel VM on 22nd October 2026, the mean over four zram dumps,
+level 3 stores 24.4% of a page in 14.42 µs per page written, `zstd` 3 25.3% in 20.02 µs, and the hull
+is `lz4`, `seqlz-1`, `seqlz-2`, `seqlz-3`, with exchange rates of 689, 131 and 22 bytes per µs between
+them
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
+
+The first form, written and measured the same day, was a XOR with the same bytes: 881.0 bytes per page,
+3.8% less than 915.6. On the Mi 9T, in userspace with the kernel's compile flags, the mean of two phone
+dumps, it made a level 3 page about 3.6 µs (+28%) slower to write on the Cortex-A76 and 7.4 µs on the
+A55, and 0.37 µs slower to read on the A76 and 1.0 µs on the A55; levels 1 and 2 wrote and read as fast
+as before, within the run's spread
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-xors-its-literals-with-an-earlier-byte-of-the-page-38-fewer-bytes-than-seqlz-3-of-15-october-kept)).
+Before it was merged, the XOR became a subtraction. The fields of records often differ from the same
+field of the record before by a little, counters, sizes, addresses of objects in a row, and a small
+difference is a small delta, while a XOR spreads it over every bit a carry flips; the page of pointers
+shows it ([chapter 6](#ch-header--literals)). On 21st October the subtraction stored 873.6 bytes per
+page instead of the XOR's 881.0, 0.84% less. It cost reads 0.13 to 0.24 µs on the A76 and 0.34 to 0.46
+µs on the A55, as the decoder's fast path restored 16 bytes per sequence in 3 to 4 dependent steps,
+each 3 instructions longer than with the XOR ([chapter 13](#ch-literals-dec--undelta)), and writes 0.12
+to 0.27 µs on the A76. With the phone's mix of writes and reads that is about 22 bytes per µs, where
+the XOR itself bought its bytes at 9 to 12.
+
+The deltas to the byte 4 and 8 before first started inside the sequence, at its 5th and 9th literal,
+and only the delta at the last offset took every literal at least that far into the page. On 22nd
+October 2026 one rule replaced that, for 0.45% fewer bytes and a simpler spec: every literal at least
+`x` bytes into the page is a delta, for all three, so the first literals of a sequence refer to bytes
+the match before wrote. Level 3 stored 869.7 bytes per page instead of 873.6, the format says the rule
+in one sentence, the decoder lost its own branches for the byte 4 and 8 before
+([chapter 13](#ch-literals-dec--undelta)), and the encoder finds the first delta one way. On the Mi
+9T, in userspace with the kernel's compile flags, writes got about 0.2 µs faster and reads stayed
+within the noise
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
+
+| decision | instead of | why |
+| --- | --- | --- |
+| the literal minus the byte, modulo 256 | the literal XOR the byte | 873.6 bytes per page against 881.0 on 21st October, for reads 0.13 to 0.24 µs slower on the A76 |
+| every literal at least `x` bytes into the page is a delta, for all three | the byte 4 and 8 before from the 5th and 9th literal of a sequence on | 869.7 bytes per page against 873.6, a rule of one sentence, one path in `undelta_fast()` |
+| the same three choices: 4 back, 8 back, the last offset | other distances, more choices, Paeth and gradient predictors | of 131 transforms, each counted on every page, all 131 with the same pricing saved 7.6 bytes per page against the XOR, the three subtractions 7.4 |
+| one choice per page, in a byte of the header | a XOR per literal lane, with a literal table per lane ("format 3", 8 streams of lanes) | the lanes gave less, 896.5 bytes per page on the same ten samples against 880.7, both as stored after a recompression from `seqlz-1`, for more code; the size came from the XOR, not from the lanes |
+| that byte right after byte 2, before the sizes | after the sizes, as the first form had it | the header reads in order: byte 2 says whether the byte is there, and it comes next; the same bytes per page, and one add in the decoder either way |
+| priced with the fixed tables' sums of `lit_cost`, every 5th literal | every literal | every literal made pages almost no smaller and the encoder slower ([chapter 11](#ch-literals-enc--deltas)) |
+| every 5th literal | every 4th | every 4th is the same byte of each 4- or 8-byte field, and made pages 1.0 byte larger |
+| the records and the deltas in copies of the loops for level 3 | a test for every sequence in the loops all levels share | the test made levels 1 and 2 about 6% slower to write on the A76, and slower to read ([chapter 10](#ch-encoder--wrappers), [chapter 14](#ch-decode--deltas)) |
+| records in `dst` | a second buffer | no byte of work memory; the matcher's state is its hash table until the page is matched ([chapter 10](#ch-encoder--records)) |
+| for an offset below 4, the smallest multiple of it that is 4 or more, 4 or 6 | the offset as it is | the decoder adds 4 or 8 bytes at a time ([chapter 7](#ch-internal--byte2)) |
+
+The cost is in the code as much as in the time: a second copy of the decoder's loop, `undelta_literals()`,
+`undelta_fast()`, `add4()` and `add8()`, one more field of untrusted input, and in the encoder the
+records, `delta_literals()`, `sub_bytes()` and a second matching pass for a page that does not fit with
+its records. zram in the phone's kernel has not measured the deltas yet.
 
 ## Tried and not kept {#ch-decisions--not-kept}
 
@@ -833,7 +892,8 @@ cost on all pages of the desktop's and the phone's zram
    first time it was measured, mostly on pages whose literals fit the 8 tables badly
    ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
    Level 3 has one, and with it and a lazy step it stores pages as small as `zstd` 3 on the Mi 9T, in
-   less than half its time to write ([above](#ch-decisions--level3)).
+   less than half its time to write ([above](#ch-decisions--level3)); since 21st October it also stores
+   its literals as deltas, 4.6% fewer bytes on ten samples ([above](#ch-decisions--deltas)).
 3. **Adaptive sequence coding.** `zstd` codes `ll`, `ml` and the offset with three tables it can build for
    the data, three lookups per sequence; seqlz's one fixed token table keeps its decoder fast. The offsets
    are the clearest loss: as plain bits they cost 18 bytes per page, 2%, above their entropy
