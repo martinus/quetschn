@@ -7,11 +7,12 @@ first, and 16 KiB pages as a parameter from the start (§3.5). This document is 
 behind it, the phases with their gates, and where the project stands.
 
 > [!NOTE]
-> **Where it stands, 9th October 2026.** The codec, `seqlz-2`, its format and its fuzzing are
-> done. In the phone's own kernel it stores pages 28% smaller than `lz4`, and swaps them in 11% to
-> 13% slower warm and 17% to 25% slower cold. The question to the zram maintainers is
-> [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), the answer decides what comes next. The details
-> are in [§9](#9-where-the-project-stands-and-the-next-actions).
+> **Where it stands, 22nd October 2026.** The codec, its three levels, its format and its fuzzing
+> are done. In the kernel VM, over four zram dumps, `seqlz-2` stores pages 27% smaller than `lz4` for
+> 14% more time per page written, and `seqlz-3` 3.8% smaller than `zstd` 3 in 72% of its time. Sergey
+> Senozhatsky [answered](https://lore.kernel.org/linux-mm/atl35k5lvs34BIej@google.com/) the question of 9th October: a codec in `lib/`, as the other
+> compression libraries are, zram can use. So the series goes to Andrew Morton, with the library first
+> and the zram backend on top. The details are in [§9](#9-where-the-project-stands-and-the-next-actions).
 
 Last verified against mainline `v7.3-rc1-324-g986c24e0fe44` (`986c24e0fe44`) on 22nd September
 2026. zram's multi-page compression and its backend interface were checked again on 7th October 2026
@@ -429,8 +430,8 @@ are held per CPU. With 16 KiB pages that is 48 KiB, 16 KiB more than `lz4`'s 32 
 
 Adding a backend is a contained diff:
 
-- `lib/quetschn/` and `include/linux/quetschn.h`: the codec.
-- `drivers/block/zram/backend_quetschn.{c,h}`: about 150 lines, modelled on `backend_lz4.c`. With
+- `lib/seqlz/` and `include/linux/seqlz.h`: the codec, a library like `lib/lz4/` and `lib/842/`.
+- `drivers/block/zram/backend_seqlz.{c,h}`: about 150 lines, modelled on `backend_lz4.c`. With
   the October series (§3.2) it has `create_cctx` and `create_dctx` instead of `create_ctx`.
 - One entry in the `backends[]` array in `drivers/block/zram/zcomp.c`.
 - `drivers/block/zram/Kconfig` and `Makefile`, `MAINTAINERS`, `Documentation/admin-guide/blockdev/zram.rst`.
@@ -446,7 +447,19 @@ in `crypto/` plus the codec in `lib/`, and Herbert Xu's subsystem reviews it too
 
 Since then the evidence points the other way. The October series of §3.2 redesigns zcomp instead of
 removing it, and nothing in its 10 patches moves zram to acomp. On 30th September 2026 Qualcomm posted
-a new zcomp backend, `qpace-lz4` (R12). acomp stays the other possible form.
+a new zcomp backend, `qpace-lz4` (R12).
+
+On 22nd October 2026 Sergey Senozhatsky answered the question of R3
+([his reply](https://lore.kernel.org/linux-mm/atl35k5lvs34BIej@google.com/)):
+
+> If this lands in lib/ (like the rest of compression libraries) then sure we can use it in zram (we
+> are currently not on a path to acomp). But if the plan is to have it as zram's "private"
+> comrpessor, then I'm afraid I'm not equipped to make a decision on that.
+
+So the form is the one `tools/kernel-port/` writes: the codec as a library in `lib/seqlz/`, and a
+zcomp backend on top of it, no crypto API. The decision on the library is not zram's: `lib/` goes
+through Andrew Morton's mm tree, which takes zram's patches too, and the library has to stand on its
+own there (Phase 7).
 
 ### 3.5 Page size is not always 4 KiB
 
@@ -471,6 +484,15 @@ Which means that:
   but real kernels with 16 KiB pages allocate differently.
 - Larger inputs help `lz4` and `zstd` more than a word model, because their match window gets 4 times
   the history. quetschn's advantage may shrink on 16 KiB pages. That has to be measured, not assumed.
+
+A library in `lib/` that is defined by `PAGE_SIZE` and builds only with 4 KiB pages would draw the
+first review comment, and today the kernel copy is that: `seqlz_compress()` takes "the page, PAGE_SIZE bytes", and `port.py` adds an
+`#error` for any other `PAGE_SHIFT`. The library takes blocks of 4096 bytes instead, whatever the page
+size, and builds on every configuration; the zram backend depends on 4 KiB pages in the first series.
+For 16 KiB pages there are two ways: the 16 KiB tables as a second block size of the format, or the
+backend cutting a page into four blocks of 4 KiB, which needs no second format but gives up matches
+across the blocks. What that costs is measured on the 16 KiB pages of the Android 17 emulator before
+the second series.
 
 The same argument holds for multi-page compression in zram, e.g. whole large folios (mTHP) compressed
 as one unit. Tangquan Zheng (OPPO) proposed it in March 2024, "mTHP-friendly compression in zsmalloc
@@ -919,13 +941,23 @@ phase does not start from zero.
 - Then an RFC series, with a cover letter modelled on `5ee4014af99f`: where the pages come from, their
   distribution, both architectures, paired regression analysis per page, the state of the fuzzing,
   and the workspace against the other codecs.
-- The series: (1) `lib/quetschn` with its KUnit tests, the spec and `MAINTAINERS`, (2) the zram backend with Kconfig and
-  Makefile, (3) documentation, (4) selftests. 4 KiB pages only: the format for 16 KiB pages is not
-  fixed until a phone with 16 KiB pages has measured it (format.md, Status), and a second series adds
-  it then.
-- Who reads it: Sergey Senozhatsky and Minchan Kim (zram and zsmalloc, per `MAINTAINERS`), linux-mm,
-  Andrew Morton (`lib/` goes through the mm tree), Eric Biggers (reviewed zBeWalgo and will review
-  this), Dave Rodgman.
+- The series: (1) `lib/seqlz/` on blocks of 4 KiB (§3.5), with its KUnit tests, the spec as
+  `Documentation/staging/seqlz.rst` next to `lzo.rst` and `xz.rst`, and `MAINTAINERS`; (2) the zram
+  backend with Kconfig, Makefile and `zram.rst`, for 4 KiB pages. 16 KiB pages come in a second
+  series, in one of the two ways of §3.5.
+- Who decides: Andrew Morton, who takes `lib/` and zram through the mm tree, and the reviewers of a new
+  library. Sergey Senozhatsky takes the backend once the library is in `lib/` (§3.4). The series goes
+  to Andrew Morton, Cc Sergey Senozhatsky and Minchan Kim (zram and zsmalloc, per `MAINTAINERS`), Eric
+  Biggers (reviewed zBeWalgo and will review this), Dave Rodgman, linux-mm and linux-kernel.
+- The cover letter answers two questions first. Why a new library in `lib/`: the memory per page
+  against `lz4`, `lzo-rle` and `zstd` 3 in zram, the hull of §1.1, the phone; and why a better `lz4`
+  or `zstd` cannot get there, as fixed literal tables trained on pages and a page without a header to
+  carry tables are a format of their own. Why a fixed block size: no length in the page, tables
+  trained on 4 KiB pages, a decoder bounded by the block; `lib/842/` is a library for a format made for
+  memory compression too, with a zram backend of its own.
+- The base: the tree with Sergey Senozhatsky's zcomp rework of 5th October 2026 (§3.2), which
+  `backend_seqlz.c` follows. Which tree, `mm-unstable` or mainline once it is merged, is asked in the
+  reply to him.
 - A `MAINTAINERS` entry is a promise for years, and the maintainers will read it as one.
 - After the merge: propose `CONFIG_ZRAM_BACKEND_SEQLZ=y` for Android's `gki_defconfig`, with the
   phone numbers of Phase 6. Without that the codec is merged, but not on phones (§1). Vendors with
@@ -992,7 +1024,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 | --- | --- | --- | --- |
 | R1 | **No arm64 hardware.** Phones are the users, and lzo-rle was merged on arm64 data first. | a known constraint | An old rooted phone with a big and a little core is used from Phase 2 on. Phase 6 adds a current phone with 16 KiB pages and is a hard gate. Do not submit without it. |
 | R2 | **Not enough headroom over `lz4` with a dictionary.** Nobody had measured it, and the project rested on it. | the gate of Phase 2: `zstd -1` needs 16.9% less than `lzo-rle` | Answered before any codec work. The fallback would have been the benchmark, and then *a targeted improvement of `lz4` or `lzo-rle` for page-sized inputs*. That is what lzo-rle was, and it is a much easier merge. |
-| R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Ask before the kernel port. The question to Sergey Senozhatsky and Minchan Kim is [sent](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/) (9th October 2026), with the phone's numbers, and not answered yet. A "no" sends the project to the fallback of R2. |
+| R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Asked before the kernel port, [on 9th October 2026](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), with the phone's numbers. Sergey Senozhatsky [answered](https://lore.kernel.org/linux-mm/atl35k5lvs34BIej@google.com/) on 22nd October: a codec in `lib/` zram can use, one private to zram he cannot decide. So the risk moves to the library: Andrew Morton and the reviewers of `lib/` decide, and the cover letter has to win them (Phase 7). A "no" there sends the project to the fallback of R2. |
 | R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-2` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. On the Android 17 emulator they are within 0.6% of tables trained on its own pages, and its 16 KiB pages have tables of their own ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)). Open: a current phone. |
 | R5 | **The zram backend API changes.** The rewrite of 2024, the preemption series of 2025, parameter and naming changes in 2026. | `git log drivers/block/zram/`, and the split of zcomp into read and write streams posted in October 2026 (§3.2) | The codec has no kernel API dependency, `backend_quetschn.c` absorbs the changes. Rebase against mainline in CI. |
 | R6 | **A fuzzing bug or a sleep in atomic context burns the maintainers' goodwill.** | Biggers's objection, Minchan's panic | Phase 4, and the gate of Phase 5 with KASAN and `DEBUG_ATOMIC_SLEEP`, exist for this. Continuous fuzzing with ClusterFuzzLite before the submission, OSS-Fuzz if it takes the project. |
@@ -1000,14 +1032,14 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 | R8 | **Employer rules on open-source side projects**, especially kernel work with a `MAINTAINERS` entry. | checked on 23rd September 2026: side projects are fine | Resolved. |
 | R9 | **The input size changes under the codec.** Kernels with 16 KiB pages on Android, or zram compressing multi-page folios as one unit. Larger inputs favour LZ codecs with a larger window. | §3.5. Multi-page compression was proposed in 2024, is not merged at `986c24e0fe44`, and had no newer version in 2026. `zstd` 3 on blocks of 16 KiB needs 13% to 22% less than `seqlz-2` on 4 KiB pages | `PAGE_SIZE` is a parameter of the format, the cost model and the harness. Watch the zram and mm lists for multi-page compression. If it comes back, measure `seqlz-2` against `zstd` on whole folios, in time per page too, before more work on the codec. |
 | R10 | **No p99 decode win over `lz4`.** C2 rested on the argument about branch mispredictions in §3.2. | measured: `seqlz-2` decodes slower than `lz4`, 18% to 25% per swap-in, for 28% less memory | C2 is not met. The score of §1.1 replaced the bars as the target. The merge argument is memory at a small cost in time, not a faster read. |
-| R11 | **zram's backend interface goes away.** The zcomp API was to be replaced by the acomp crypto API. A series of October 2026 redesigns the zcomp API instead of removing it. | Sergey Senozhatsky, March 2026 (§3.4), not done at `986c24e0fe44`. His series of October 2026 splits zcomp's streams (§3.2), and Qualcomm posted a new zcomp backend in September 2026 (§3.4) | The codec has no kernel API dependency. Ask in the question of R3 which form the maintainers want, and port to whatever exists then. |
+| R11 | **zram's backend interface goes away.** The zcomp API was to be replaced by the acomp crypto API. | Sergey Senozhatsky, March 2026 (§3.4). His series of October 2026 splits zcomp's streams instead (§3.2), Qualcomm posted a new zcomp backend in September 2026 (§3.4), and on 22nd October 2026 he wrote that zram is "currently not on a path to acomp" (§3.4) | The zcomp backend is the form. The codec has no kernel API dependency, so if acomp comes back, `lib/seqlz/` stays and only the glue changes. A crypto wrapper would also let zswap, which compresses 4 KiB pages through acomp, use the codec: a second user of the library, in a series of its own. |
 | R12 | **Hardware `lz4` on new Qualcomm SoCs.** It makes `lz4` faster, and if it writes the bytes of software `lz4` it moves `lz4` along the time axis of the score (§1.1), not along the memory axis. | Qualcomm's QPaCE series of 30th September 2026, [series 1177021](https://patchwork.kernel.org/series/1177021/): a zcomp backend `qpace-lz4`, synchronous, the CPU polls the engine, no speed numbers. | The argument stays memory. As a what-if with the VM's swap times, `lz4` with its own time at 0 still leaves `seqlz-2` the lowest score from 3.1 to 73 and from 10.3 to 72 bytes per µs, instead of up to 155 and 211; on the phone's big core from 0.9 to 25. A faster `lz4` only lowers the upper end; to push `seqlz-2` off the hull it would need a time below 0 ([explored-designs.md](explored-designs.md#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)). Measure on a device if one becomes available. Open: does `qpace-lz4` write the lz4 block format at the ratio of `LZ4_compress_fast()` with acceleration 1? If it stores more, the gap to `seqlz-2` is larger than 28%. And does it take a dictionary? zram's `lz4` does (C4), patch 4 ignores `params->dict`. |
 
 ---
 
 ## 9. Where the project stands, and the next actions
 
-As of 9th October 2026:
+As of 22nd October 2026:
 
 - **Phases 0 to 3: done.** The harness, the collectors, zram dumps of the desktop and of the Mi 9T,
   and the design: `seqlz-2` ([seqlz.md](seqlz.md)), with every alternative that was measured in
@@ -1034,35 +1066,43 @@ As of 9th October 2026:
   of the Android 17 emulator, and with 16 KiB pages `seqlz-2` asks for twice `lz4`'s work memory
   per CPU, a cost in the score (§1.1). The first series is for 4 KiB pages only (Phase 7), so 16 KiB
   pages are for the second one.
-- **Phase 7: the question to the maintainers is sent** (R3, R11), on 9th October 2026 to linux-mm,
-  linux-block and linux-kernel, [the thread](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/). Not answered yet.
-- **Levels 3 and 4** (#139): a deeper matcher for the same format, 2.7% to 4.3% less for about twice
-  the write time, measured and not kept.
+- **Phase 7: the question to the maintainers is answered** (R3, R11). Sent on 9th October 2026 to
+  linux-mm, linux-block and linux-kernel ([the thread](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/)); Sergey Senozhatsky
+  [answered](https://lore.kernel.org/linux-mm/atl35k5lvs34BIej@google.com/) on 22nd October: a codec in `lib/` zram can use, zram is not on a path to
+  acomp, and a compressor private to zram is not his to decide (§3.4). The kernel port already writes
+  that form.
+- **Level 3**, a lazy matcher and a literal table of the page's own (15th October), stores its
+  literals as deltas to an earlier byte since 21st and 22nd October: 869.7 bytes per page on the ten
+  samples, 5.0% less than before. In the kernel VM, over four zram dumps, 24.4% of a page in 14.42 µs
+  per page written, against `zstd` 3's 25.3% in 20.02 µs
+  ([explored-designs.md](explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
 
 Next, in this order:
 
-1. The answer of Sergey Senozhatsky and Minchan Kim to [the question](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/): a new algorithm at
-   all, and as a zram backend or as an acomp algorithm (§3.4). The answer decides the form of
-   the series of Phase 7: the zram backend that `tools/kernel-port/` writes now, or another one
-   (item 5).
-2. Fewer data-dependent branches in the decoder. In a fault it mispredicts about 110 branches per page
-   that it gets right after a decode of the same page, which every benchmark before hid by decoding a
-   page more than once ([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)). The refill without its branch on
-   out-of-order cores took 63 ns off a swap-in on x86-64
-   ([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)). The fast path's condition
-   misses once per length value, and four ways to cut the misses after it were slower
-   ([explored-designs.md](explored-designs.md#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept)).
-   One copy for every offset, without the branch on an offset below 8, was slower too
-   ([explored-designs.md](explored-designs.md#the-offset-below-8-one-copy-for-every-offset-saves-12-misses-per-page-and-costs-more-not-kept)). The other choices between
-   a branch and more work hold with `MODE=swap`
-   ([explored-designs.md](explored-designs.md#a-branch-or-more-work-again-in-a-swap-in-the-old-choices-hold-and-loops-over-2000-pages-were-never-trained)).
-   The score with the swap times is in §1.1.
-3. A corpus from the Android emulator, Android 17, with 16 KiB pages and with 4 KiB pages: done. The
-   4 KiB tables fit, within 0.6% of tables trained on its pages; the 16 KiB tables are trained on its
-   16 KiB pages, 2.6% smaller on a second dump
-   ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
-4. The work memory with 16 KiB pages, 48 KiB per CPU with the contexts split, 16 KiB more than
-   `lz4`: a cost in the score of §1.1 now, priced with the 16 KiB times of a phone once there is one.
-   Not for the first series, which is for 4 KiB pages only (Phase 7).
-5. Phase 5 again if the maintainers want another form than a zram backend, e.g. an acomp algorithm:
-   `lib/seqlz/` stays, the glue changes, and `stress.sh` runs again.
+1. The reply to Sergey Senozhatsky (Martin): the codec as a library in `lib/seqlz/`, like the other
+   compression libraries, with its own Kconfig symbol and `MAINTAINERS` entry, and the zram backend
+   on top of it, no crypto API. The question in it: which tree to base the series on, as
+   `backend_seqlz.c` follows his zcomp rework of 5th October (Phase 7).
+2. The library on blocks of 4 KiB, not on `PAGE_SIZE` (§3.5): `seqlz.h` and its kernel-doc, the
+   Kconfig, `port.py` without the `#error`; `tools/kernel-port/check.sh` builds the library with 16 KiB
+   and 64 KiB pages too, with the backend off there.
+3. The numbers for today's level 3. The Mi 9T, zram in its own kernel: the phone's table in the README
+   is from 15th October, before the deltas. And on the 16 KiB pages of the Android 17 emulator, a page
+   cut into four blocks of 4 KiB against the 16 KiB tables (§3.5), which decides the form of the
+   second series.
+4. The cover letter (Martin), with the two questions of Phase 7 first: why a new library in `lib/`,
+   and why a fixed block size.
+5. The checklist of `.claude/skills/kernel-patches/SKILL.md`: a cleanup pass over the kernel files,
+   KUnit on the exact base, the newest gcc and clang, `git format-patch --base`.
+6. The series, to Andrew Morton with the Cc list of Phase 7: (1) the library with KUnit, the spec and
+   `MAINTAINERS`, (2) the zram backend.
+7. Later, each a series of its own: 16 KiB pages, in the form step 3 picks, with the work memory of
+   48 KiB per CPU priced in the score (§1.1); a crypto wrapper, so that zswap, which compresses
+   4 KiB pages through acomp, can use the library (R11); `CONFIG_ZRAM_BACKEND_SEQLZ=y` for Android's
+   `gki_defconfig` (Phase 7).
+
+Not blocking any of them: fewer data-dependent branches in the decoder. In a fault it mispredicts
+about 110 branches per page that it gets right after a decode of the same page
+([explored-designs.md](explored-designs.md#the-decoder-in-a-fault-found-110-branch-mispredictions-per-page-that-a-decode-of-the-same-page-before-hides)),
+and the ways around them measured so far were slower, except the refill without its branch
+([explored-designs.md](explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
