@@ -8,8 +8,8 @@ whole. That is a problem, because the bitstream starts after all literals, and h
 known only after the last sequence. The encoder writes from both ends of its output buffer: the
 literals from the front, the bitstream backwards from the back, and at the end it copies the
 bitstream, turned around, to right after the literals. This chapter is lines 1 to 321 of the file,
-`encode_raw()` and the functions at its end; lines 323 to 492 pick level 3's deltas of the literals,
-and lines 549 to 1155 code the literals, both in [chapter 11](#ch-literals-enc).
+`encode_raw()` and the functions at its end; lines 323 to 489 pick level 3's deltas of the literals,
+and lines 546 to 1152 code the literals, both in [chapter 11](#ch-literals-enc).
 
 ## The file's head, and seqlz_find() {#ch-encoder--find}
 
@@ -376,7 +376,7 @@ does all of this for chapter 16's page, whose smallest `dst` takes that path.
 
 ## encode_raw(): sequences from outside, checked first {#ch-encoder--raw}
 
-@listing src/seqlz_compress.c 494-527
+@listing src/seqlz_compress.c 491-524
 
 `seqlz_encode()` writes a page from sequences the caller made, for tests and tools. A `dst` below
 {{ch10.dst_min}} bytes would start `p` below `lit + 32`, or below `lit`, where the room check's cast
@@ -394,7 +394,7 @@ fuzzers had found it, because each reached `seqlz_encode()` with valid sequences
 encoder. `seqlz_compress()` was never affected: its matcher makes only valid sequences.
 :::
 
-@listing src/seqlz_compress.c 528-547
+@listing src/seqlz_compress.c 525-544
 
 `src_end` is the end of the caller's literals, so the 16-byte copies never read past them, and the
 last sequence gets `ml` 0 whatever its `match` field says. With a `page`, level 3, the encoder writes
@@ -410,7 +410,7 @@ matcher's state that `seqlz_encode()` passes; `*delta` is the delta it picked, o
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
 here because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 1157-1161
+@listing src/seqlz_compress.c 1154-1158
 
 For a table of the page's own, `code_literals()` needs `struct own_work`, {{own.enc.work_size|grp}}
 bytes of counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)),
@@ -419,7 +419,7 @@ and `own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `
 3's call of `code_literals()`, first with the deltas; it is in
 [chapter 11](#ch-literals-enc--code-own).
 
-@listing src/seqlz_compress.c 1182-1201
+@listing src/seqlz_compress.c 1179-1198
 
 `code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
 also with a table of the page's own, and returns the new length or `len` unchanged. Level 2 gets the
@@ -429,13 +429,13 @@ At level 3, `encode_raw()` gets the page and the matcher's state, writes the lit
 `SEQLZ_LEVELS`, or level 3 without the state, returns 0 as the header's kernel-doc says
 ([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 1203-1214
+@listing src/seqlz_compress.c 1200-1211
 
 `compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
 construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop of
 levels 1 and 2 once inlined, the greedy matcher with `lazy` the constant `false`.
 
-@listing src/seqlz_compress.c 1216-1244
+@listing src/seqlz_compress.c 1213-1241
 
 `compress_own()` is the same for level 3: the lazy matcher, with `encode_emit_rec`, so the records go
 in front of the literals. If the page does not fit, `e.p == e.lit`, the loop calls `encoder_init()`
@@ -446,7 +446,7 @@ then finds `dst` as it would without records. It is `noinline`: inlined into `se
 to `compress_page()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
 of its own.
 
-@listing src/seqlz_compress.c 1246-1262
+@listing src/seqlz_compress.c 1243-1259
 
 `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)), with the level of the device:
 `seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_page()`. Level 2

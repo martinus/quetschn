@@ -445,51 +445,56 @@ XOR it replaced was 1. The two loads can overlap: with `dist` 4, `add8()` would 
 to change, and the bytes it wrote would be wrong. That is why the callers use `add8()` only for a
 distance of 8 or more.
 
-@listing src/seqlz_decompress.c 594-625
+@listing src/seqlz_decompress.c 594-623
 
 `undelta_literals()` restores the `nl` literals at `d`, `at` bytes into the page. `dist` is the delta's
 distance, 4, 8, or the offset of the sequence before as `seqlz_delta_last()` makes it, at least 4
-([chapter 7](#ch-internal--byte2)). `k` is the first literal that is a delta: the 5th or the 9th of the
-sequence, or for `SEQLZ_DELTA_LAST` the first, unless the sequence starts less than `dist` bytes into
-the page, where the literals before byte `dist` have no byte to be a delta to. Then whole words, 8
-bytes for a distance of 8 or more, else 4, as long as the word ends inside the literals, and the last
-bytes one at a time, where the cast to `u8` is the modulo 256. Each word reads the word `dist` bytes
-back, which ends before the word starts: those bytes are the page's own already, earlier literals of the
-same sequence included, since the loop goes forward. That is the reason for the format's rule that an
-offset below 4 counts as 4 or 6. The code works with the index `k` and not a pointer: for a short
-sequence near the page's end, `d + dist` would be past the end of the page, and C does not allow even
-forming such a pointer.
+([chapter 7](#ch-internal--byte2)). `k` is the first literal that is a delta, by the one rule of the
+format ([chapter 4](#ch-format--deltas)), the same for all three: 0, the sequence's first literal,
+when the sequence starts `dist` or more bytes into the page, else `dist - at`, as the literals before
+byte `dist` have no byte to be a delta to. Then whole words, 8 bytes for a distance of 8 or more, else
+4, as long as the word ends inside the literals, and the last bytes one at a time, where the cast to
+`u8` is the modulo 256. Each word reads the word `dist` bytes back, which ends before the word starts,
+so its bytes are the page's own already. For the first literals of a sequence they are bytes before
+`d`: of the match before, which the loop copied in full before these literals, or of earlier
+sequences, and nothing writes there again. For the later literals some of them are earlier literals of
+the same sequence, restored by the word before, since the loop goes forward. That is the reason the
+distance of `SEQLZ_DELTA_LAST` is never below 4. The code works with the index `k` and not a pointer:
+for a short sequence near the page's end, `d + dist` would be past the end of the page, and C does not
+allow even forming such a pointer.
 
 The first sequence of the page of pointers is {{delta.ptr.rec.0.ll}} literals at the page's start, with
-`last` 1, so `dist` is 4 and `k` starts at 4. As in [chapter 11](#ch-literals-enc--deltas) they arrive
-as `{{delta.ptr.deltas}}` (the first 9 of these bytes). One `add4()` restores bytes 4 to 7, `02 7f aa cc`
-plus `10 00 56 34` = `12 7f 00 00`, where `aa + 56` and `cc + 34` are `0x100`, whose carry each byte
-drops, and the byte loop byte 8, `0e + 12 = 20`: the first pointer and the low byte of the second,
-`{{delta.ptr.plain}}`.
-@assert delta.ptr.rec[0].ll == 9 and delta.ptr.rec[0].dist == 4 and delta.ptr.plain == "10 00 56 34 12 7f 00 00 20 30 40 50" and delta.ptr.deltas == "10 00 56 34 02 7f aa cc 0e 10 10 10"
+`SEQLZ_DELTA_8`, so `dist` is 8 and `k` starts at 8. As in [chapter 11](#ch-literals-enc--deltas) they
+arrive as `{{delta.ptr.deltas}}` (the first 9 of these bytes). No word of 8 fits before the 9th
+literal, so the first 8 bytes stay as they are, the first pointer, and the byte loop restores byte 8,
+`10 + 10 = 20`, the low byte of the second pointer: `{{delta.ptr.plain}}`.
+@assert delta.ptr.rec[0].ll == 9 and delta.ptr.rec[0].pos == 0 and delta.ptr.pick == ch06.DELTA_8 and delta.ptr.plain == "10 00 56 34 12 7f 00 00 20 30 40 50" and delta.ptr.deltas == "10 00 56 34 12 7f 00 00 10 10 10 10"
 
-@listing src/seqlz_decompress.c 627-656
+@listing src/seqlz_decompress.c 625-650
 
 The fast path of the loop copies 16 bytes of literals whatever `nl` is, at most 14
 ([chapter 14](#ch-decode--fast)), and `undelta_fast()` restores all 16, with no loop and no branch on
-`nl`: three `add4()` from byte 4 on, one `add8()` from byte 8 on, or for `SEQLZ_DELTA_LAST` two `add8()`
-or four `add4()`, each word's source before it. The bytes past `nl` turn into garbage, as they were
+`nl`, one path for all three deltas: the same `dist` as `undelta_literals()`, then two `add8()` for a
+distance of 8 or more, else four `add4()`. The first word's source lies wholly before `d`, in bytes
+the match before or earlier sequences wrote, which are final; each word after it reads `dist` bytes
+back, into bytes before `d` or of a word restored before it. The bytes past `nl` turn into garbage, as they were
 after `copy16()` already; the match after the literals writes over them before anything reads them.
-Only near the page's start, where `d - dst < dist`, does `SEQLZ_DELTA_LAST` need the rule of the first
-bytes, and there it calls `undelta_literals()`. The second sequence of the page of pointers, 1 literal
-at byte {{delta.ptr.rec.1.pos}} with `last` 8, as the fast path would see it:
+Only near the page's start, where `d - dst < dist`, do the first literals have no byte to be a delta
+to, and there it calls `undelta_literals()` and its loops. The second sequence of the page of
+pointers, 1 literal at byte {{delta.ptr.rec.1.pos}}, as the fast path would see it:
 
 | bytes at `d` | plus the 8 bytes at `d - 8` | after the first `add8()` |
 | --- | --- | --- |
 | `{{delta.ptr.fast.before}}` | `{{delta.ptr.fast.ref}}` | `{{delta.ptr.fast.after}}` |
 
-The first byte is the low byte of the third pointer again, `10 + 20 = 30`; the other 7, and the 8 of
-the second `add8()`, are written over by the 7 bytes of the match and by the sequences after it.
-@assert delta.ptr.rec[1].ll == 1 and delta.ptr.rec[1].dist == 8 and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.after[:2] == "30"
+The 8 bytes at `d - 8` are the first sequence's last literal and the 7 bytes of its match. The first
+byte is the low byte of the third pointer again, `10 + 20 = 30`; the other 7, and the 8 of the second
+`add8()`, are written over by the 7 bytes of the match and by the sequences after it.
+@assert delta.ptr.rec[1].ll == 1 and delta.ptr.rec[1].pos == 16 and delta.ptr.rec[0].ll + 7 == 16 and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.after[:2] == "30"
 
 ::: measured What the deltas cost a read
 The 16 bytes for every sequence, whatever `nl` is, make the deltas cost more than their count of
-literals suggests: with `SEQLZ_DELTA_4`, or a last offset below 8, they are 3 or 4 steps through
+literals suggests: with a distance below 8 they are 4 steps through
 memory, each waiting for the store of the one before, and each step is 3 instructions longer with the
 addition than it was with the XOR. On the Mi 9T, userspace with the kernel's compile flags, 21st
 October 2026, a level 3 page read 0.13 to 0.24 µs slower with deltas than with the XOR on the A76 and

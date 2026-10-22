@@ -13,9 +13,10 @@ pays: on the Mi 9T's Cortex-A76, in the phone's own kernel on 15th October 2026,
 `zstd` 3's 36 µs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 Since 21st October 2026 level 3 also stores each literal as its delta to an earlier byte of the page,
-the literal minus that byte, before it codes them: 873.6 instead of 915.6 bytes per page on ten samples
-of 20 000 pages, 4.6% fewer, for about 4 µs more to write a page on the Mi 9T's A76, in userspace
-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept)).
+the literal minus that byte, before it codes them: 869.7 instead of 915.6 bytes per page on ten samples
+of 20 000 pages, 5.0% fewer, for about 4 µs more to write a page on the Mi 9T's A76, in userspace
+([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept),
+[one rule](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
 
 All of that is {{ch00.src_lines|grp}} lines of C in one directory, `src/`, plus the trained code
 lengths in four `.inc` files, two for each page size.

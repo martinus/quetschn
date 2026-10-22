@@ -23,9 +23,10 @@ sense given here.
   writes them in the format, the decoder turns a compressed page back into the page.
   [Chapters 9 to 14](#ch-matcher)
 - **delta, `dt`**: at level 3, a literal stored as the literal minus an earlier byte of the page,
-  modulo 256, before it is coded, one of three ways per page, which the byte `dt` after the stream
-  sizes names: the byte 4 or 8 before, or the byte at the offset of the sequence before; bit 7 of
-  byte 2 says the page has deltas. The decoder adds the byte back. [Chapter 4](#ch-format--deltas)
+  modulo 256, before it is coded, one of three ways per page, which the byte `dt` before the stream
+  sizes names: the byte 4 or 8 before, or the byte at the offset of the sequence before, for every
+  literal at least that far into the page; bit 7 of byte 2 says the page has deltas. The decoder
+  adds the byte back. [Chapter 4](#ch-format--deltas)
 - **dictionary**: data compressor and decoder share before the first byte; zram can pass one, seqlz's
   kernel backend refuses it. [Chapter 15](#ch-zram-glue--head)
 - **entropy**: the fewest bits per symbol any code can reach for given frequencies,

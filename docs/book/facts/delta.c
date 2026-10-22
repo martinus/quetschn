@@ -8,9 +8,11 @@
  *                                          every DELTA_STEP-th literal, LIT_REC
  *   delta.last.N                           seqlz_delta_last(N)
  *   delta.ptr.*                            chapter 9's page of pointers at level 3: its records, the
+ *                                          number after the first with the offset 8 before, the
  *                                          prices of the four choices, the literals plain and as
  *                                          deltas, the pages of levels 2 and 3 and of level 3 without
- *                                          deltas, and undelta_fast() on its second sequence;
+ *                                          deltas, and undelta_fast() with the picked delta on its
+ *                                          second sequence;
  *                                          delta.ptr.xor.* the same literals XORed instead
  */
 #include <stdarg.h>
@@ -53,7 +55,7 @@ int main(void) {
     static u8 deltas[SEQLZ_PAGE];
     const struct seqlz_tables* t = fact_tables();
     struct seqlz_encoder e;
-    unsigned int k, x, i, n, pick = 0, best = ~0U, n_lit, recs = 0, with_rec, distinct = 0, distinct_plain = 0;
+    unsigned int k, x, i, n, pick = 0, best = ~0U, n_lit, recs = 0, last8 = 0, with_rec, distinct = 0, distinct_plain = 0;
     unsigned int price[4], table[4], len, rec_pos[3], rec_ll[3], rec_last[3], rec_dist[3];
     char hex[64];
     u8* p;
@@ -113,9 +115,11 @@ int main(void) {
             fact_num(key("delta.ptr.rec.%u.dist", recs), seqlz_delta_last(get_unaligned_le16(p + 4)));
             fact_hex(key("delta.ptr.rec.%u.hex", recs), p, LIT_REC);
         }
+        last8 += recs > 0 && get_unaligned_le16(p + 4) == 8U;
         recs++;
     }
     fact_num("delta.ptr.recs", recs);
+    fact_num("delta.ptr.recs_last8", last8);
     fact_num("delta.ptr.with_rec", with_rec);
 
     /* the prices as delta_literals() takes them, here as plain sums of code lengths */
@@ -129,7 +133,7 @@ int main(void) {
             for (i = j; i < ll; i += DELTA_STEP) {
                 unsigned int at = pos + i, b = page[at];
                 unsigned int ref[4] = {
-                    0, i >= 4 ? page[at - 4] : 0U, i >= 8 ? page[at - 8] : 0U, at >= last ? page[at - last] : 0U};
+                    0, at >= 4 ? page[at - 4] : 0U, at >= 8 ? page[at - 8] : 0U, at >= last ? page[at - last] : 0U};
 
                 for (x = 0; x < 4; x++)
                     for (k = 0; k < SEQLZ_LIT_SETS; k++)
@@ -233,13 +237,14 @@ int main(void) {
      */
     {
         u8 buf[SEQLZ_PAGE];
+        const unsigned int dist = pick == SEQLZ_DELTA_4 ? 4U : pick == SEQLZ_DELTA_8 ? 8U : rec_dist[1];
 
         n = rec_pos[1];
         memcpy(buf, page, n);
         memcpy(buf + n, deltas + rec_ll[0], 16);
         fact_hex("delta.ptr.fast.before", buf + n, 8);
-        fact_hex("delta.ptr.fast.ref", buf + n - rec_dist[1], 8);
-        undelta_fast(SEQLZ_DELTA_LAST, buf + n, buf, rec_ll[1], rec_last[1]);
+        fact_hex("delta.ptr.fast.ref", buf + n - dist, 8);
+        undelta_fast(pick, buf + n, buf, rec_ll[1], rec_last[1]);
         fact_hex("delta.ptr.fast.after", buf + n, 8);
         if (memcmp(buf + n, page + n, rec_ll[1]))
             fail("undelta_fast() does not give the page's bytes back");

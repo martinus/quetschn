@@ -390,24 +390,27 @@ without any memory of its own, in [chapter 13](#ch-literals-dec--own).
 
 ## Literals as deltas {#ch-format--deltas}
 
-With `e = 1` each literal was stored as its **delta** to an earlier byte of the page before it was
-coded: the literal minus that byte, modulo 256. The decoder adds the same byte back as it appends the
-literal, modulo 256 again, which gives the literal back. The byte `dt`, byte 3, right after `t` and
-before the stream sizes, says which byte. For the `i`-th literal of a sequence, counted from 0, which goes to byte `p = |out|`
-of the page:
+With `e = 1` each literal was stored, before it was coded, as its **delta** to the byte `x` before it
+in the page: the literal minus that byte, modulo 256. The decoder adds the same byte back as it appends
+the literal, modulo 256 again, which gives the literal back. The byte `dt`, byte 3, right after `t` and
+before the stream sizes, says which `x`. One rule holds for all three: the literal `lits[used + i]`,
+which goes to byte `p = |out|` of the page, is `(lits[used + i] + out[p - x]) mod 256` if `p >= x`, else
+as it is, with
 
-| `dt` | the literal is `(lits[used + i] + out[p - x]) mod 256` with | literals as they are |
-| --- | --- | --- |
-| 1 | `x = 4` | `i < 4`, the first 4 of each sequence |
-| 2 | `x = 8` | `i < 8` |
-| 3 | `x = last`, the offset of the sequence before, 1 for the first; with `last` 1 or 2, `x = 4`, with `last` 3, `x = 6` | `p < x`, near the page's start |
+| `dt` | `x` |
+| --- | --- |
+| 1 | 4 |
+| 2 | 8 |
+| 3 | the smallest multiple of `last` that is 4 or more, where `last` is the offset of the sequence before, 1 for the first: 4 for `last` 1 or 2, 6 for `last` 3, else `last` |
 
-`out[p - x]` is a byte the decoder has already written, a byte of a match or an earlier literal of
-the same sequence, as it is in the page; the last sequence is no different. Any other `dt` makes the
-page invalid. Memory pages are full of 4- and 8-byte fields, whose bytes are often those of the field
-before or differ from them by a little, as counters, sizes and addresses of objects in a row do, and
-the byte after a match often differs only a little from the byte the match would have copied next. As
-deltas, such literals become a few small values, which a literal table codes in fewer bits
+Only the first `x` bytes of the page have no byte `x` before them; every other literal is a delta,
+the first literals of a sequence too. `out[p - x]` is a byte the decoder has already written, as it is
+in the page: a byte of the match before, of an earlier sequence, or an earlier literal of the same
+sequence; the last sequence is no different. Any other `dt` makes the page invalid. Memory pages are
+full of 4- and 8-byte fields, whose bytes are often those of the field before or differ from them by a
+little, as counters, sizes and addresses of objects in a row do, and the byte after a match often
+differs only a little from the byte the match would have copied next. As deltas, such literals become a
+few small values, which a literal table codes in fewer bits
 ([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#literals-as-deltas)).
 A delta, not a XOR: a field that grows by 1 from `0x0f` to `0x10` has a delta of 1, but `0x0f` XOR
 `0x10` is `0x1f`, every bit the carry flipped. The first form of `e`, on 21st October 2026, XORed the
@@ -416,10 +419,13 @@ literals; the subtraction replaced it the same day, before it was merged ([chapt
 The page of 512 pointers of [chapter 9](#ch-matcher--back) at level 3 begins with
 `{{delta.ptr.l3.head}}`: `h` says {{delta.ptr.l3.n}} coded literals, `t = {{delta.ptr.l3.t}}` is code
 {{delta.ptr.l3.code}} with `w = {{delta.ptr.l3.w}}` and `e = 1`, byte {{delta.ptr.l3.dt_at}} is
-`dt = {{delta.ptr.l3.dt}}`, and 5 bytes of sizes follow. Its second sequence is 1 literal at byte
-{{delta.ptr.rec.1.pos}} after a match at offset 8, so `x = 8`, and the decoded delta `0x10` is added
-to `out[8] = 0x20`, the low byte of the pointer before, which gives `0x30`.
-@assert delta.ptr.l3.w == 5 and delta.ptr.l3.dt == 3 and delta.ptr.rec[1].last == 8 and delta.ptr.rec[1].pos == 16 and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.ref[:2] == "20" and delta.ptr.fast.after[:2] == "30"
+`dt = {{delta.ptr.l3.dt}}`, so `x = 8`, and 5 bytes of sizes follow. Its first literals,
+`{{delta.ptr.plain}}`, are stored as `{{delta.ptr.deltas}}`: the first sequence is
+{{delta.ptr.rec.0.ll}} literals from byte 0, of which the first 8 have no byte 8 before them and stay as
+they are, and its last, `0x20` at byte 8, is stored minus `out[0] = 0x10`. The second sequence is 1
+literal at byte {{delta.ptr.rec.1.pos}}, the first of its sequence, and the decoded delta `0x10` is
+added to `out[8] = 0x20`, the low byte of the pointer before, which gives `0x30`.
+@assert delta.ptr.l3.w == 5 and delta.ptr.l3.dt == ch06.DELTA_8 and delta.ptr.rec[0].pos == 0 and delta.ptr.rec[1].ll == 1 and delta.ptr.rec[1].pos == 16 and delta.ptr.plain[:2] == "10" and delta.ptr.plain[24:26] == "20" and delta.ptr.deltas[24:26] == "10" and delta.ptr.plain[:23] == delta.ptr.deltas[:23] and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.ref[:2] == "20" and delta.ptr.fast.after[:2] == "30"
 
 ## One sequence: the token {#ch-format--token}
 
