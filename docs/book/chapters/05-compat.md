@@ -11,7 +11,7 @@ kernel's headers, and nothing else in the code changes. There are three ways `sr
 | build | who does it | where the names come from |
 | --- | --- | --- |
 | the kernel's copy | `tools/kernel-port/port.py` writes `lib/seqlz/` into a kernel tree | the kernel's headers; `seqlz_compat.h` is not in the copy |
-| `src/` as it is, inside a kernel | `tools/zram-vm/run.sh` (the kernel VM) and `tools/zram-phone/build.sh` (a kernel module for the Mi 9T's 4.14, [chapter 15](#ch-zram-glue--init)) | the first half of this header, `__KERNEL__` is defined |
+| `src/` as it is, inside a kernel | `tools/zram-vm/run.sh` (the kernel VM) and `tools/zram-phone/build.sh` (a kernel module for the Mi 9T's 4.14, [chapter 15](#ch-zram-glue)) | the first half of this header, `__KERNEL__` is defined |
 | userspace | tests, benchmarks, fuzzers, tools, built with CMake | the second half of this header |
 
 The middle row is why the first half has fallbacks for old kernels: the phone runs Linux 4.14, from

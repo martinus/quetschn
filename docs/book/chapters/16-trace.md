@@ -345,8 +345,8 @@ the zero padding of the last byte ([chapter 4](#ch-format--validity)). `seqlz_de
 `trace.c` builds the page, runs `seqlz_find()` for the sequences, the same ones the compressor finds (a
 test in `test/seqlz_test.cpp` checks that `seqlz_encode()` of them gives the compressor's bytes),
 computes each sequence's bits from the tables' `enc[]` arrays, compresses with raw and with coded
-literals, and decodes. It includes `seqlz_internal.h` to read the codes, so it depends on the tables'
-layout. Its whole output, as the build of this book printed it; the compressed bytes are the same on
+literals, and decodes. It reads the codes from `seqlz_tables`, whose layout `seqlz.h` brings along
+through `seqlz_tables.h`, so it depends on the tables' layout. Its whole output, as the build of this book printed it; the compressed bytes are the same on
 every CPU, so the output is too:
 
 @output ch16-trace
