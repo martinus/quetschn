@@ -165,8 +165,11 @@ static int build_own(struct own_table *t)
 	if (first_codes(seqlz_own_lengths, SEQLZ_OWN_SYMBOLS, bits, next))
 		return -EINVAL;
 	for (s = 0; s < SEQLZ_OWN_SYMBOLS; s++) {
-		unsigned int l = seqlz_own_lengths[s], c = next[l]++;
+		unsigned int l = seqlz_own_lengths[s], c;
 
+		if (l == 0) /* the encoder needs a code for every symbol */
+			return -EINVAL;
+		c = next[l]++;
 		t->enc[s] = (u16)(c | l << 8);
 		for (k = c << (bits - l); k < (c + 1U) << (bits - l); k++)
 			t->decode[k] = (u16)(s | l << 8);

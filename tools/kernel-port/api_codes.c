@@ -6,12 +6,14 @@
  */
 struct seqlz_tables seqlz_fixed_tables __ro_after_init;
 
+/* the interface's sizes are the codec's */
+static_assert(sizeof(struct seqlz_state) == SEQLZ_MEM_COMPRESS);
+static_assert(SEQLZ_MEM_DECOMPRESS == SEQLZ_SCRATCH);
+static_assert(SEQLZ_PAGE == 1U << SEQLZ_PAGE_BITS);
+
 /* subsys_initcall: the tables are there before a zram that is built in */
 static int __init seqlz_init(void)
 {
-	BUILD_BUG_ON(sizeof(struct seqlz_state) != SEQLZ_MEM_COMPRESS);
-	BUILD_BUG_ON(SEQLZ_PAGE != 1U << SEQLZ_PAGE_BITS);
-	BUILD_BUG_ON(SEQLZ_MEM_DECOMPRESS != SEQLZ_SCRATCH);
 	/*
 	 * Does not fail: before scripts/gen-seqlz-tables.py writes
 	 * seqlz_tables.c, it checks the lengths as seqlz_tables_init() does,

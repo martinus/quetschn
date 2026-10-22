@@ -144,16 +144,18 @@ byte.
 
 ## build_own(): the code of OWN, and quad[] by decoding every byte {#ch-codes--own}
 
-@listing src/seqlz_codes.c 152-173
+@listing src/seqlz_codes.c 152-176
 
 `OWN` is the fixed code a page's own literal table is written in ([chapter 4](#ch-format--own)), and
 its lengths are not in `struct seqlz_lengths` either: `seqlz_own_lengths` is generated into the same
 `.inc` file as the literal tables. The first part is `build_lit()` again for {{own.symbols}} symbols
 and 8 bits, with the two halves of each entry the other way round, the code or symbol in the low byte
 ([chapter 7](#ch-internal--own)). `first_codes()` returns `-EINVAL` only if the generated lengths are
-broken, and then `seqlz_tables_init()` fails as for any table.
+broken, and then `seqlz_tables_init()` fails as for any table. Unlike the other tables, a length of 0 is
+`-EINVAL` too: the encoder may write any symbol of `OWN`, so each needs a code, and the loop would read
+`next[0]`, which `first_codes()` never sets.
 
-@listing src/seqlz_codes.c 174-217
+@listing src/seqlz_codes.c 177-220
 
 `quad[k]` is filled by decoding the 8 bits `k` with the `decode[]` just built, symbol after symbol, as
 far as the 8 bits go. `w` is what is left of `k` after `pos` bits, moved to the top, with zeros below;
@@ -182,7 +184,7 @@ also where the entry has no second length, and then it must move by the first's 
 
 ## has_all_symbols(): can the encoder write every page {#ch-codes--all-symbols}
 
-@listing src/seqlz_codes.c 219-237
+@listing src/seqlz_codes.c 222-240
 
 The decoder can use any complete prefix code: a symbol left out cannot be in a valid page. The encoder
 gets whatever page zram hands it and needs a code for every symbol that page might need: each token a
@@ -195,7 +197,7 @@ last symbol has no code: the tables build, the decoder can use them, and `seqlz_
 
 ## seqlz_tables_init(): all of it, from a clean slate {#ch-codes--init}
 
-@listing src/seqlz_codes.c 239-254
+@listing src/seqlz_codes.c 242-257
 
 The `memset()` does more than the comment says: tokens without a code need `enc[]` 0, the encoder's
 masked index could reach the entries behind the last length symbol, `lit_cost` is built with `|=`,
@@ -212,7 +214,7 @@ because the generator checks it, see below.
 `seqlz_tables_size()`, `seqlz_all_symbols()` and `has_all_symbols()`, and appends
 `tools/kernel-port/api_codes.c`:
 
-@listing tools/kernel-port/api_codes.c 1-30
+@listing tools/kernel-port/api_codes.c 1-32
 
 `__init` code is freed after boot, `__ro_after_init` data is read-only after it, and
 `subsys_initcall()` has the kernel call `seqlz_init()` at boot, before zram starts
@@ -220,8 +222,8 @@ because the generator checks it, see below.
 `__ro_after_init` data is in the kernel image, which carries {{size.tables|grp}} bytes of zeros until
 boot; `docs/plan.md` notes that for the cover letter to the kernel's maintainers, and tables built at
 compile time as an open question ([#153](https://github.com/martinus/quetschn/issues/153)). The
-`BUILD_BUG_ON()`s are the kernel's compile-time checks: its names for the work memory must be the
-sizes the codec uses. `seqlz_init()` cannot fail, since commit `4c42cc5`: the script that writes the
+`static_assert()`s are compile-time checks: the interface's names for the work memory and the block
+must be the sizes the codec uses. `seqlz_init()` cannot fail, since commit `4c42cc5`: the script that writes the
 kernel's tables checks the lengths first.
 
 A module with an init function and no exit function cannot be unloaded, so `seqlz_exit()` exists,

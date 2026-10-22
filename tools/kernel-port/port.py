@@ -17,8 +17,8 @@ src/ stays the one source of the codec. This writes from it:
                                         most 80 columns
   lib/seqlz/tests/seqlz_kunit.c         the KUnit tests, tools/kernel-port/seqlz_kunit.c, with the
                                         tables' SHA-256 and the worked example from docs/format.md
-  lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Makefile: the module seqlz, CONFIG_SEQLZ, and
-                                        CONFIG_SEQLZ_KUNIT_TEST
+  lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Kconfig.debug, lib/Makefile: the module seqlz,
+                                        CONFIG_SEQLZ, and CONFIG_SEQLZ_KUNIT_TEST
   drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c; the
                                         backend in the form of the tree's zcomp, with one context per
                                         CPU or with separate ones for compression and decompression
@@ -597,7 +597,9 @@ def main():
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"
           "\t  seqlz compresses and decompresses one block of 4 KiB at a\n"
           "\t  time, for zram, whatever the page size. It is an LZ format\n"
-          "\t  whose sequences are Huffman coded with fixed tables.\n\n"
+          "\t  whose sequences are Huffman coded with fixed tables.\n\n", "config SEQLZ\n")
+    # with the other KUnit tests of lib/, in the runtime testing menu
+    patch(tree / "lib/Kconfig.debug", "config PRANDOM_KUNIT_TEST\n",
           "config SEQLZ_KUNIT_TEST\n"
           "\ttristate \"KUnit tests for seqlz\" if !KUNIT_ALL_TESTS\n"
           "\tdepends on KUNIT\n"
@@ -608,7 +610,8 @@ def main():
           "\t  KUnit tests for seqlz: its tables against their SHA-256,\n"
           "\t  blocks that are compressed and decompressed again, and\n"
           "\t  blocks that are damaged or invalid by one rule of the format.\n\n"
-          "\t  If unsure, say N.\n\n", "config SEQLZ\n")
+          "\t  If unsure, say N.\n\n"
+          "config PRANDOM_KUNIT_TEST\n", "config SEQLZ_KUNIT_TEST\n")
     patch(tree / "Documentation/staging/index.rst", "   rpmsg\n   speculation\n",
           "   rpmsg\n   seqlz\n   speculation\n", "   seqlz\n")
     patch(tree / "lib/Makefile", "obj-$(CONFIG_LZ4_DECOMPRESS) += lz4/\n",

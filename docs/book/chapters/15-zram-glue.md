@@ -198,7 +198,7 @@ into `src/` or `tools/kernel-port/`, never into the copy.
 | `lib/seqlz/seqlz_codes.c`, `seqlz_compress.c`, `seqlz_decompress.c` | `src/`, each with its part of the interface from `api_*.c`; the matcher of `page_lz.h` inside `seqlz_compress.c` |
 | `lib/seqlz/seqlz_tables.c` | generated in the tree by `scripts/gen-seqlz-tables.py` from `lib/seqlz/seqlz_counts.txt` |
 | `lib/seqlz/tests/seqlz_kunit.c` | `tools/kernel-port/seqlz_kunit.c`, with values from `docs/format.md` filled in |
-| `lib/Kconfig`, `lib/Makefile`, `lib/seqlz/Makefile` | `CONFIG_SEQLZ` and `CONFIG_SEQLZ_KUNIT_TEST`, `-O3` as `lib/lz4` |
+| `lib/Kconfig`, `lib/Kconfig.debug`, `lib/Makefile`, `lib/seqlz/Makefile` | `CONFIG_SEQLZ`, and `CONFIG_SEQLZ_KUNIT_TEST` with the other KUnit tests of `lib/`; `-O3` as `lib/lz4` |
 | `drivers/block/zram/backend_seqlz.[ch]`, `Kconfig`, `Makefile`, `zcomp.c` | the backend, `CONFIG_ZRAM_BACKEND_SEQLZ` |
 | `Documentation/staging/seqlz.rst` | `docs/format.md`, by `format_rst.py` |
 | `MAINTAINERS`, `Documentation/admin-guide/blockdev/zram.rst`, `Documentation/staging/index.rst` | an entry each |

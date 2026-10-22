@@ -14,6 +14,7 @@
 #include <linux/prandom.h>
 #include <linux/seqlz.h>
 #include <linux/string.h>
+#include <linux/unaligned.h>
 
 #include "../seqlz.h"
 
@@ -56,6 +57,10 @@ static void seqlz_test_tables(struct kunit *test)
 	check_sha256(test, seqlz_lit_sets, sizeof(seqlz_lit_sets), sha256_lit);
 	check_sha256(test, seqlz_own_lengths, sizeof(seqlz_own_lengths),
 		     sha256_own);
+	/* the encoder's bound of 31 bits for a token and its offset */
+	KUNIT_EXPECT_GT(test, seqlz_default_own.token[SEQLZ_ESCAPE], 0);
+	KUNIT_EXPECT_LE(test, seqlz_default_own.token[SEQLZ_ESCAPE],
+			SEQLZ_MAX_ESCAPE_LEN);
 }
 
 /* buffers for one test, freed by KUnit */
@@ -67,7 +72,7 @@ struct bufs {
 static void get_bufs(struct kunit *test, struct bufs *b)
 {
 	b->page = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
-	b->c = kunit_kmalloc(test, 2 * SEQLZ_BLOCK_SIZE, GFP_KERNEL);
+	b->c = kunit_kmalloc(test, SEQLZ_COMPRESS_BOUND, GFP_KERNEL);
 	b->out = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
 	b->cmem = kunit_kmalloc(test, SEQLZ_MEM_COMPRESS, GFP_KERNEL);
 	b->dmem = kunit_kmalloc(test, SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
@@ -147,7 +152,7 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 		for (k = 0; k + 8 <= SEQLZ_BLOCK_SIZE; k += 8) {
 			v = 0x7f0000001000ULL +
 			    (prandom_u32_state(rng) % 64) * 16;
-			memcpy(p + k, &v, 8);
+			put_unaligned_le64(v, p + k);
 		}
 		break;
 	case 3: /* a short pattern with noise: offsets 2 or 4, long matches */
@@ -182,7 +187,9 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 			if (k % 8 == 0)
 				v = prandom_u32_state(rng);
 			p[k] = prandom_u32_state(rng);
-			memcpy(p + k + 1, &v, 3);
+			p[k + 1] = v;
+			p[k + 2] = v >> 8;
+			p[k + 3] = v >> 16;
 		}
 		break;
 	case 8: /* records of 16 bytes, a bit flipped here and there: deltas */
@@ -193,6 +200,7 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 				p[k] ^= 1U << prandom_u32_state(rng) % 8;
 		}
 		break;
+	case 6:
 	default: /* mostly zeros, as many swapped pages */
 		memset(p, 0, SEQLZ_BLOCK_SIZE);
 		for (k = 0; k < 40; k++)
@@ -213,7 +221,7 @@ static void seqlz_test_round_trip(struct kunit *test)
 		make_page(&rng, round, b.page);
 		for (level = SEQLZ_LEVEL_MIN; level <= SEQLZ_LEVEL_MAX;
 		     level++) {
-			len = seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE,
+			len = seqlz_compress(b.page, b.c, SEQLZ_COMPRESS_BOUND,
 					     b.cmem, level);
 			KUNIT_ASSERT_GT(test, len, 0);
 			coded += !!(b.c[1] & 0x80);
@@ -247,14 +255,14 @@ static void seqlz_test_round_trip(struct kunit *test)
 			 * one byte less does not fit, and nothing is written
 			 * behind it
 			 */
-			memset(b.c, 0x5a, 2 * SEQLZ_BLOCK_SIZE);
+			memset(b.c, 0x5a, SEQLZ_COMPRESS_BOUND);
 			KUNIT_ASSERT_EQ(test,
 					seqlz_compress(b.page, b.c, len - 1,
 						       b.cmem, level),
 					-E2BIG);
 			KUNIT_ASSERT_NULL(test,
 					  memchr_inv(b.c + len - 1, 0x5a,
-						     2 * SEQLZ_BLOCK_SIZE -
+						     SEQLZ_COMPRESS_BOUND -
 							     len + 1));
 		}
 	}
@@ -263,11 +271,11 @@ static void seqlz_test_round_trip(struct kunit *test)
 	KUNIT_EXPECT_GE(test, own, 10);
 	KUNIT_EXPECT_GE(test, deltas, 10);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE,
+			seqlz_compress(b.page, b.c, SEQLZ_COMPRESS_BOUND,
 				       b.cmem, SEQLZ_LEVEL_MIN - 1),
 			-EINVAL);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE,
+			seqlz_compress(b.page, b.c, SEQLZ_COMPRESS_BOUND,
 				       b.cmem, SEQLZ_LEVEL_MAX + 1),
 			-EINVAL);
 }
@@ -284,13 +292,14 @@ static void seqlz_test_damaged(struct kunit *test)
 	int round, len, f, ret;
 
 	get_bufs(test, &b);
-	d = kunit_kmalloc(test, 2 * SEQLZ_BLOCK_SIZE + 9, GFP_KERNEL);
+	d = kunit_kmalloc(test, SEQLZ_COMPRESS_BOUND + 9, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, d);
 	prandom_seed_state(&rng, 43);
 	for (round = 0; round < 1000; round++) {
 		make_page(&rng, round, b.page);
-		len = seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE, b.cmem,
-				     SEQLZ_LEVEL_MIN + round % SEQLZ_LEVEL_MAX);
+		len = seqlz_compress(b.page, b.c, SEQLZ_COMPRESS_BOUND, b.cmem,
+				     SEQLZ_LEVEL_MIN + round % (SEQLZ_LEVEL_MAX -
+								SEQLZ_LEVEL_MIN + 1));
 		KUNIT_ASSERT_GT(test, len, 0);
 
 		memcpy(d, b.c, len);

@@ -142,7 +142,10 @@ def initializer(name, lists, indent):
 def lengths_initializer(tables):
     plus_one = [[c + 1.0 for c in t] for t in tables[:3]]
     # a length value's symbols: 16 of their own, then one per highest bit from 4 up to the page's bits
-    page_bits = len(tables[1]) - 13
+    # minus 1, 12 + P of them, see SEQLZ_LEN_SYMBOLS
+    page_bits = len(tables[1]) - 12
+    if page_bits not in (12, 14):
+        sys.exit(f"ll: {len(tables[1])} symbols, which is no page size")
     token = token_lengths(plus_one[0], page_bits)
     ll, ml = code_lengths(plus_one[1], VALUE_BITS), code_lengths(plus_one[2], VALUE_BITS)
     # a token without a code is sent as the escape, which must have one that leaves room for the offset

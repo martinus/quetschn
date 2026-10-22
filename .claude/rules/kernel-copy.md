@@ -10,7 +10,7 @@ Reviewers read the copy `tools/kernel-port/port.py` writes into a kernel tree, n
 follows these rules; open gaps in existing code: issues #151 to #157 (review of 10 Oct 2026).
 
 - Generated, never edited: fix `src/` or `tools/kernel-port/`. To read it: `git archive` the kernel
-  tree's `drivers/block/zram lib/Kconfig lib/Makefile MAINTAINERS
+  tree's `drivers/block/zram lib/Kconfig lib/Kconfig.debug lib/Makefile MAINTAINERS
   Documentation/admin-guide/blockdev/zram.rst` into a dir, run `port.py <dir>`.
 - Kernel helpers, not own ones: `get_unaligned_le16()`, `sizeof_field()`, `prefetch()`,
   `L1_CACHE_BYTES`, `BIT()`. No inline assembly, not even per architecture: fix a kernel gap with its
