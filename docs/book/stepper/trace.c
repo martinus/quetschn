@@ -6,6 +6,7 @@
  * decode to itself.
  *
  * cc -O1 -I<repo>/src -I<dir of dec_inst.c> trace.c <repo>/src/seqlz_{codes,compress,default_tables,lit_sets}.c
+ *   seqlz_tables.c, the tables tools/gen-tables/gen-tables.sh writes
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,8 +73,6 @@ int main(void) {
     };
     unsigned int k;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     printf("{\"consts\":{\"PAGE\":%u,\"SCRATCH\":%u,\"FAST_BLOCK_ROOM\":%u,\"FAST_LIT_ROOM\":%u,"
            "\"FAST_IN_ROOM\":%u,\"TOKEN_BITS\":%u,\"LL_CAP\":%u,\"ML_CAP\":%u,\"HEADER\":%u},\"pages\":{",
            SEQLZ_BLOCK_SIZE,

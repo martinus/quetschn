@@ -24,7 +24,7 @@ for s in 4k 16k; do
         fi
     done
 done
-# and it refuses lengths that seqlz_tables_init() refuses, so the kernel's tables built from what it writes
+# and it refuses lengths that seqlz_tables_build() refuses, so the kernel's tables built from what it writes
 # cannot fail
 python3 - "$repo/tools/kernel-port/gen-seqlz-lengths.py" <<'EOF'
 import importlib.util
@@ -40,12 +40,13 @@ for lengths, every in [([1, 2, 2, 2], True), ([1, 2, 3], True), ([1, 2, 4, 4, 4,
         gen.check(str(lengths), lengths, 3, every)
     except SystemExit:
         continue
-    sys.exit(f"gen-seqlz-lengths.py takes the lengths {lengths}, which seqlz_tables_init() refuses")
+    sys.exit(f"gen-seqlz-lengths.py takes the lengths {lengths}, which seqlz_tables_build() refuses")
 EOF
 
+"$repo/tools/gen-tables/gen-tables.sh" "$out/seqlz_tables.c" -DQUETSCHN_PAGE_BITS=12
 ${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-compress/compress.c" \
     "$repo/src/seqlz_codes.c" "$repo/src/seqlz_compress.c" "$repo/src/seqlz_compress_literals.c" "$repo/src/seqlz_decompress.c" "$repo/src/seqlz_decompress_literals.c" \
-    "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c"
+    "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c" "$out/seqlz_tables.c"
 cp "$repo"/tools/seqlz-worst/pages/*.page "$out/"
 python3 - "$out" "$repo/docs/format.md" <<'EOF'
 import random

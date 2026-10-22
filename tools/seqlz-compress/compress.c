@@ -15,8 +15,6 @@ int main(int argc, char** argv) {
     int i;
     unsigned int level;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     for (i = 1; i < argc; i++) {
         FILE* f = fopen(argv[i], "rb");
 

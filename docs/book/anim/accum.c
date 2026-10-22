@@ -163,8 +163,6 @@ int main(void) {
     static struct drv D;
     unsigned int len, ref_len;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     slab_page(page);
     encoder_init(&real, real_dst, CAP, page + SEQLZ_BLOCK_SIZE);
     encoder_init(&D.e, shadow, CAP, page + SEQLZ_BLOCK_SIZE);

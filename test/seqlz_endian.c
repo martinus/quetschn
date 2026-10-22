@@ -91,8 +91,6 @@ int main(void) {
     unsigned int k, i, coded_pages = 0, own_pages = 0, failed = 0;
     unsigned int level;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 2;
     for (k = 0; k < 600; k++) {
         make_page(page, k);
         for (level = 1; level <= SEQLZ_LEVELS; level++) {

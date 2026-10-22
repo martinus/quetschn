@@ -21,8 +21,6 @@ int main(void) {
     unsigned int n_lit, j, k, used[256] = {0}, first = 1;
     const u8* lit;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     slab_page(page);
     if (!seqlz_compress(&st, page, raw, sizeof(raw), 1) || !seqlz_compress(&st, page, comp, sizeof(comp), 2))
         return 1;

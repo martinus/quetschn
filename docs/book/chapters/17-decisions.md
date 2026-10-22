@@ -128,7 +128,8 @@ the rows are 31.3%, 26.1%, 25.4% and 23.7%. So seqlz has a cheap greedy matcher
 
 A page that compresses to 1000 bytes has no room for a description of its tables, and building tables
 from one costs the decoder time on every read. So seqlz's {{ch17.tables}} tables are fixed, part of the
-format, and built once, {{size.tables|grp}} bytes shared by all CPUs ([chapter 8](#ch-codes)). Tables
+format, and generated when seqlz is built, {{size.tables|grp}} bytes shared by all CPUs
+([chapter 8](#ch-codes)). Tables
 trained on the very dump they are measured on, which no real table can be, are only 2.0% smaller on the
 desktop's pages and 0.7% on the phone's; more starts of k-means did not help either, since the start
 with the fewest bits on the training pages is not the one with the fewest on others
@@ -259,9 +260,9 @@ build of the module to the next
 
 ### Complete codes only
 
-Every 11 bits start a code, so the decoder has no check for an invalid one. The trainer,
-`seqlz_tables_init()` and, since commit `4c42cc5`, the generator of the kernel copy's tables check it
-([chapter 8](#ch-codes)).
+Every 11 bits start a code, so the decoder has no check for an invalid one. The trainer and
+`seqlz_tables_build()` check it, so the build that generates the tables fails on lengths that are no
+complete code, in userspace and, since commit `4c42cc5`, in the kernel ([chapter 8](#ch-codes)).
 
 ### Length values: trained codes, measured twice
 
@@ -605,8 +606,8 @@ nothing from one page to the next, so the kernel's backend gives each CPU one un
 of 5th October 2026 proposes, it is two allocations of 8 KiB each, a split that changed no codec's time in
 the VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zrams-contexts-split-into-compression-and-decompression-the-same-time-in-the-vm-the-same-memory-for-seqlz)).
-Level 1 has no decompression context. The tables, {{size.tables|grp}} bytes, are built once and shared
-by every CPU.
+Level 1 has no decompression context. The tables, {{size.tables|grp}} bytes, are generated when the
+kernel is built and shared by every CPU.
 @assert ch15.mem.union_gets == ch15.mem.cctx_gets == ch15.mem.dctx_gets == 8192 and ch15.mem.struct_gets == ch15.mem.split_gets == 16384
 
 ### 16 KiB pages: why the kernel copy is 4 KiB only

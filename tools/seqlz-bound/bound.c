@@ -5,9 +5,10 @@
  * Huffman codes fitted to the same pages. Checks per page that the counted bits give the compressed
  * size. Same-filled pages are left out, as zram does; pages zram stores raw, of 3625 bytes and more,
  * are counted apart. Build from the repository's root:
+ *   tools/gen-tables/gen-tables.sh seqlz_tables.c
  *   cc -O2 -Isrc -o bound tools/seqlz-bound/bound.c src/seqlz_codes.c src/seqlz_compress.c \
  *      src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c \
- *      src/seqlz_default_tables.c src/seqlz_lit_sets.c
+ *      src/seqlz_default_tables.c src/seqlz_lit_sets.c seqlz_tables.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +38,7 @@ int main(int argc, char** argv) {
     FILE* f = fopen(argv[1], "rb");
     unsigned int i;
 
-    if (!f || seqlz_tables_init(L))
+    if (!f)
         return 1;
     while (fread(page, 1, SEQLZ_BLOCK_SIZE, f) == SEQLZ_BLOCK_SIZE) {
         unsigned int len = seqlz_compress(&st, page, dst, sizeof dst, 2), n = seqlz_find(&st, page, seq, 2);

@@ -141,7 +141,7 @@ static void kernel_port(void) {
     fact_num("ch15.kport.seqlz_h", lines_of_file());
     load("tools/kernel-port/api_compress.c");
     fact_num("ch15.kport.api_compress", lines_of_file());
-    load("tools/kernel-port/gen_tables_main.c");
+    load("tools/gen-tables/gen_seqlz_tables.c");
     fact_num("ch15.kport.gen_main", lines_of_file());
 
     load("tools/kernel-port/backend_seqlz.c");

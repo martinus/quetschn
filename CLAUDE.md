@@ -45,7 +45,7 @@ much closer it gets, not by whether it arrives.
 ```text
 src/            codec, freestanding C11, kernel rules: seqlz_compress.c + seqlz_match.h (matcher),
                 seqlz_compress_literals.c, seqlz_decompress.c, seqlz_decompress_literals.c,
-                seqlz_codes.c (builds the tables; in the kernel a host program at build time),
+                seqlz_codes.c (builds the tables; tools/gen-tables/ prints them as C at build time),
                 headers seqlz_format.h (format), seqlz_tables.h (tables' layout), seqlz_internal.h
                 (what the codec's files share), seqlz.h (userspace API: harness, tests, tools),
                 seqlz_default_tables*.{c,inc} + seqlz_lit_sets*.{c,inc} (trained tables = format),
@@ -81,7 +81,8 @@ cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # ctest 2/2 wit
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
 fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
-gcc -O2 -Isrc -o le test/seqlz_endian.c src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
+tools/gen-tables/gen-tables.sh $S/t.c   # the tables, which every build of src/ outside CMake needs too
+gcc -O2 -Isrc -o le test/seqlz_endian.c $S/t.c src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
 python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decoder, checks table hashes
 tools/seqlz-ref/check.sh && tools/check-links.py                    # before pushing docs or tables
 K=/home/martinus/gra/linux/finehill   # src/ or tools/kernel-port/ changed:

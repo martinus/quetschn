@@ -89,7 +89,7 @@ flowchart TB
     D --> DL["seqlz_decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
     DL --> OT["read_own_table()<br/>builds a page's own<br/>table in the page"]
     D --> LOOP["decode_block(): the loop<br/>over the sequences,<br/>one table lookup each"]
-    T["seqlz_tables: built once<br/>from the trained lengths,<br/>in the kernel at build time"] -.->|"read only"| C
+    T["seqlz_tables: generated<br/>from the trained lengths<br/>when seqlz is built"] -.->|"read only"| C
     T -.->|"read only"| D
 </pre>
 

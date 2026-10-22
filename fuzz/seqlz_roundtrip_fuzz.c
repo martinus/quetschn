@@ -17,7 +17,7 @@
 
 #define DST_CAP (2U * SEQLZ_BLOCK_SIZE)
 
-static int tables_built;
+static int set_up;
 static struct seqlz_state state;
 static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
 static unsigned char literals[SEQLZ_BLOCK_SIZE];
@@ -80,13 +80,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     if (size < 1 || size > SEQLZ_BLOCK_SIZE + 1U)
         return 0;
-    if (!tables_built) {
-        tables_built = 1;
+    if (!set_up) {
+        set_up = 1;
         dst = malloc(DST_CAP);
         again = malloc(DST_CAP);
         out = malloc(SEQLZ_BLOCK_SIZE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!dst || !again || !out || !scratch || seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
+        if (!dst || !again || !out || !scratch)
             abort();
     }
     page = calloc(1, SEQLZ_BLOCK_SIZE);

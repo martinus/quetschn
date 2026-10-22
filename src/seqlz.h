@@ -17,28 +17,20 @@ struct seqlz_sequence {
 };
 
 /**
- * seqlz_all_symbols() - Whether every symbol has a code
- *
- * The encoder needs a code for every symbol it may have to write. The decoder
- * does not: a complete prefix code can leave symbols out, and blocks that use
- * them are not valid for these tables.
- *
- * Return: true if the encoder can use the tables of seqlz_tables_init().
- */
-bool seqlz_all_symbols(void);
-
-/**
- * seqlz_tables_init() - Build the codes and decode tables from code lengths
+ * seqlz_tables_build() - Build the codes and decode tables from code lengths
+ * @t: the tables to write
  * @lengths: the code lengths, e.g. seqlz_default_lengths
  *
- * The tables are one object, which the encoder and the decoder use; this
- * replaces them, so no block may be compressed or decompressed meanwhile.
+ * The codec uses seqlz_tables, which a program for the build host writes with
+ * this from seqlz_default_lengths, see tools/gen-tables/. The tests build
+ * others.
  *
  * Return: 0, or -EINVAL if the lengths are not a complete prefix code: a code
- * longer than its table allows, more codes than fit, gaps, or none at all.
- * Then the tables stay as they were.
+ * longer than its table allows, more codes than fit, gaps, or none at all; or
+ * if a symbol the encoder may have to write has no code.
  */
-int seqlz_tables_init(const struct seqlz_lengths *lengths);
+int seqlz_tables_build(struct seqlz_tables *t,
+		       const struct seqlz_lengths *lengths);
 
 /*
  * the code lengths of the format, see seqlz_default_tables.c and
@@ -105,8 +97,7 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * literals used.
  *
  * Return: the length of the compressed block, or 0 if it does not fit into
- * @dst_cap bytes, the tables lack a code, see seqlz_all_symbols(), the
- * sequences do not describe a block, or @level is not one.
+ * @dst_cap bytes, the sequences do not describe a block, or @level is not one.
  */
 unsigned int seqlz_encode(struct seqlz_state *st,
 			  const struct seqlz_sequence *seq, unsigned int n,
@@ -134,7 +125,7 @@ unsigned int seqlz_encode(struct seqlz_state *st,
  * same level.
  *
  * Return: the length of the compressed block, or 0 if it does not fit into
- * @dst_cap bytes, the tables lack a code, or @level is not one.
+ * @dst_cap bytes, or @level is not one.
  */
 unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,
 			    unsigned int dst_cap, unsigned int level);

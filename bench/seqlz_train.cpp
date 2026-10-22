@@ -79,7 +79,7 @@ std::vector<unsigned char> seqlz_code_lengths(std::vector<double> const& counts,
 
 // The token lengths with an escape: only the k most frequent tokens get a code, the others the escape's
 // code and SEQLZ_ESCAPE_BITS bits. k as it gives the fewest bits, with an escape of at most 8 bits
-// (seqlz_tables_init() checks that).
+// (seqlz_tables_build() checks that).
 std::vector<unsigned char> seqlz_token_lengths(std::vector<double> const& counts) {
     auto order = std::vector<std::size_t>(counts.size());
     for (std::size_t i = 0; i < order.size(); ++i) {

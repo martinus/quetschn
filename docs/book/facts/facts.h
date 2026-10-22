@@ -63,14 +63,8 @@ static inline void facts_end(void) {
     printf(fact_n ? "\n}\n" : "{}\n");
 }
 
+/* the tables compiled in */
 static inline const struct seqlz_tables* fact_tables(void) {
-    static int built;
-
-    if (!built) {
-        if (seqlz_tables_init(&seqlz_default_lengths))
-            exit(1);
-        built = 1;
-    }
     return &seqlz_tables;
 }
 

@@ -13,7 +13,7 @@ For each chapter assigned to you, in this order of importance:
    reason the repository does not give presented as fact. Re-run the worked examples that matter
    (compile small programs against src/ with `gcc -O2 -Isrc src/seqlz_codes.c src/seqlz_compress.c
    src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c src/seqlz_default_tables.c
-   src/seqlz_lit_sets.c` in a scratch directory outside the repository, or python3; tools/seqlz-ref/seqlz_ref.py has load_tables(12)). Check that
+   src/seqlz_lit_sets.c seqlz_tables.c`, the tables from `tools/gen-tables/gen-tables.sh seqlz_tables.c`, in a scratch directory outside the repository, or python3; tools/seqlz-ref/seqlz_ref.py has load_tables(12)). Check that
    numbers inside SVG diagrams match the text. Links to GitHub docs: the anchor must be the GitHub
    slug of an existing heading (lowercase, drop characters that are not letters, digits, spaces,
    hyphens or underscores, spaces to hyphens). A measurement quoted per dump ("24 and 2 bytes", "on the first

@@ -121,11 +121,10 @@ struct seqlz_tables {
 	u64 lit_cost[256];
 	struct own_table own;
 	struct value_table ll, ml;
-	bool all_symbols; /* see seqlz_all_symbols() */
 };
 
-/* the tables of seqlz_tables_init(), read only after that, by all CPUs */
-extern struct seqlz_tables seqlz_tables;
+/* the tables, generated from the code lengths when seqlz is built */
+extern const struct seqlz_tables seqlz_tables;
 
 static_assert((SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(3) <= 31U &&
 	       SEQLZ_TOKEN_BITS + SEQLZ_RAW_BITS(5) <= 31U &&

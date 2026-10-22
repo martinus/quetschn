@@ -62,8 +62,8 @@ static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what
 }
 
 /*
- * The tables and the warm-up page are global, built by the first device's setup only: a later one would
- * write them while other devices compress and decompress with them
+ * The warm-up page is global, made by the first device's setup only: a later one would write it while
+ * other devices read it. The tables are compiled in.
  */
 static DEFINE_MUTEX(sz_setup_lock);
 static bool sz_ready;
@@ -75,8 +75,6 @@ static int sz_setup_once(void)
 
 	if (sz_ready)
 		return 0;
-	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
-		return -EINVAL;
 	/*
 	 * the warm-up page: random letters, skewed, and spaces: about 100 sequences and coded literals. x is
 	 * the generator of the C standard's example rand(), its upper 16 bits used: one byte in 5 a space,

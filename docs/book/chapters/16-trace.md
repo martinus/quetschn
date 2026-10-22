@@ -57,14 +57,11 @@ bytes, so their offsets are multiples of 8, classes 4 and 5, or the repeat offse
 repeats and many literals, letters that the trained literal tables code in 4 to 6 bits, so the page
 passes the rule for coded literals.
 
-## The tables: seqlz_tables_init() {#ch-trace--tables}
+## The tables: seqlz_tables {#ch-trace--tables}
 
-```c
-seqlz_tables_init(&seqlz_default_lengths);  /* seqlz_tables, {{size.tables|grp}} bytes */
-seqlz_all_symbols();                        /* true */
-```
-
-`seqlz_tables_init()` ([chapter 8](#ch-codes)) builds the codes and decode tables. Some we meet below:
+The program calls nothing to get the tables: `seqlz_tables`, {{size.tables|grp}} bytes of codes and
+decode tables, is compiled in, generated from the code lengths when seqlz was built
+([chapter 8](#ch-codes--kernel)). Some we meet below:
 the escape has the {{tok.len.3072}}-bit code `{{tok.code.3072}}`, and only {{ch14.tokens_coded}} of the
 {{const.TOKEN_SYMBOLS}} tokens have a code of their own. Literal table 0, the one for text, gives `e`
 {{lit.0.len.101}} bits, the space {{lit.0.len.32}}, `0x00` {{lit.0.len.0}}; the encoder will pick table 3
@@ -450,9 +447,6 @@ int main(void)
 	unsigned int values = 0, len0, len1, set = 0, best = ~0U;
 
 	make_page(page);
-	if (seqlz_tables_init(&seqlz_default_lengths) ||
-	    !seqlz_all_symbols())
-		return 1;
 
 	/* the sequences, and the bits each one takes in the bitstream */
 	n = seqlz_find(&st, page, seq, 2);

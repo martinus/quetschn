@@ -425,12 +425,6 @@ static int cmp_u64(const void* a, const void* b) {
     return (x > y) - (x < y);
 }
 
-/* the tables compiled in, for seqlz_compress(), seqlz_encode() and seqlz_decode() */
-static void tables(void) {
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        abort();
-}
-
 /* The decoder on the made-up streams, per kind the most instructions and branch misses of its 16 pages,
  * and the median of their cycles: a single run's cycles can be far off on a phone. */
 static int count_decode(void) {
@@ -441,7 +435,6 @@ static int count_decode(void) {
     struct cost empty;
     unsigned int kind, k;
 
-    tables();
     if (counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);
@@ -501,7 +494,6 @@ static int count_pages(const char* path) {
     FILE* f = fopen(path, "rb");
     unsigned int n = 0;
 
-    tables();
     if (!f || counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);
@@ -531,8 +523,6 @@ static int write_streams(const char* dir) {
     unsigned int kind, k, len;
     char path[4096];
 
-    tables();
-
     for (kind = 0; build(kind, &b); kind++)
         for (k = 0; k < 4; k++) {
             FILE* f;
@@ -555,7 +545,6 @@ static int count_streams(int n, char** paths) {
     struct cost empty;
     int i;
 
-    tables();
     if (counters_open(&ctr))
         return 1;
     empty = measure(&ctr, do_nothing, 0);

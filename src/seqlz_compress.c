@@ -316,8 +316,8 @@ static unsigned int encode_raw(const struct seqlz_sequence *seq, unsigned int n,
 	struct seqlz_encoder e;
 	unsigned int i, pos = 0, lits = 0;
 
-	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols ||
-	    n == 0 || n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_BLOCK_SIZE)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || n == 0 ||
+	    n > SEQLZ_MAX_SEQUENCES || n_literals > SEQLZ_BLOCK_SIZE)
 		return 0;
 	/*
 	 * Only sequences that make a block, checked as the decoder checks them,
@@ -393,7 +393,7 @@ static unsigned int compress_block(struct seqlz_state *st, const u8 *src,
 {
 	struct seqlz_encoder e;
 
-	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM)
 		return 0;
 	encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	seqlz_match_block(st->table, src, false, encode_emit, &e);
@@ -413,7 +413,7 @@ static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 	struct seqlz_encoder e;
 
 	*delta = 0;
-	if (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)
+	if (dst_cap < SEQLZ_HEADER + ENC_ROOM)
 		return 0;
 	encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	e.rec = true;

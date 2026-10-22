@@ -4,13 +4,14 @@
 `seqlz_codes.c`, which builds the tables both read, share about them. Almost all of its
 {{ch07.lines}} lines are memory layout: the bytes of each table, the bits of each entry, and
 `static_assert()`s that the fields are wide enough. It includes only `seqlz_format.h`, so that a
-program on the build machine can include it too: the kernel builds its tables with one when the
-kernel is built ([chapter 8](#ch-codes--kernel)).
+program on the build machine can include it too: that program generates the tables when seqlz is
+built, in userspace as in the kernel ([chapter 8](#ch-codes--kernel)).
 
 The format stores a table as code lengths ([chapter 4](#ch-format--codes)). The encoder needs each
 symbol's code as a number to shift into its bit buffer, the decoder a table it can index with the next
 bits of the stream. `struct seqlz_tables` holds both forms of all {{ch17.tables}} tables, {{size.tables|grp}}
-bytes, one global struct, built once ([chapter 8](#ch-codes)) and then only read, by every CPU.
+bytes, one global `const` struct, generated when seqlz is built ([chapter 8](#ch-codes--kernel)) and
+read by every CPU.
 The part to read closely is the end: `token_entry()` packs everything the decoder needs to know about
 a token into one 32-bit number, so that the loop over the sequences never takes a token apart.
 
@@ -277,7 +278,7 @@ one by one. [Chapter 8](#ch-codes--own) builds the three arrays.
 
 ## struct seqlz_tables: {{size.tables|grp}} bytes, once {#ch-internal--tables}
 
-@listing src/seqlz_tables.h 118-128
+@listing src/seqlz_tables.h 118-127
 
 The layout on x86-64, from `sizeof` and `offsetof`; arm64 aligns a `u64` the same way:
 
@@ -291,7 +292,6 @@ The layout on x86-64, from `sizeof` and `offsetof`; arm64 aligns a `u64` the sam
 | `own` | {{ch07.off.own|grp}} | {{ch07.size.own}} | encoder and decoder, a page's own table |
 | `ll` | {{ch07.off.ll|grp}} | {{ch07.size.value_table}} | both, for long literal runs |
 | `ml` | {{ch07.off.ml|grp}} | {{ch07.size.value_table}} | both, for long matches |
-| `all_symbols` | {{ch07.off.all_symbols|grp}} | 1, then {{ch07.tail_pad}} of padding | the harness's encoder |
 
 The 16 KiB build has the same size, {{k16.size.tables|grp}} bytes: its length tables have
 {{k16.const.LEN_SYMBOLS}} symbols, and `enc[]` has 32 entries either way. A page touches much less.
@@ -302,15 +302,15 @@ and it builds the 2 KiB table in the page. The
 encoder reads `token.enc`, 6 KiB, the `enc` of `ll` and `ml`, `lit_cost`, 2 KiB, and one literal
 table's `enc`, 1 KiB, at level 3 also `own.enc`.
 
-`all_symbols` is what `seqlz_all_symbols()` returns ([chapter 8](#ch-codes--all-symbols)); `port.py`
-deletes it in the kernel's copy, whose tables are checked when they are generated. There the global
-is `const struct seqlz_tables seqlz_tables`, written as C when the kernel is built, so it is in the
-kernel's read-only data ([chapter 15](#ch-zram-glue--init)). In userspace it is not `const`:
-`seqlz_tables_init()` writes it once, when a program starts.
+The global is `const struct seqlz_tables seqlz_tables`, written as C when seqlz is built, in the
+kernel ([chapter 15](#ch-zram-glue--init)) as in userspace, so it is in the read-only data: nothing
+writes it while seqlz runs, and nothing has to build it before the first block. Lengths that are no
+complete code, or leave out a symbol the encoder may write, stop the build instead
+([chapter 8](#ch-codes--all-symbols)).
 
 ## The fields of a token entry {#ch-internal--token-entry}
 
-@listing src/seqlz_tables.h 130-137
+@listing src/seqlz_tables.h 129-136
 
 The asserts check the fields of the entry described next. The 5 bits of `DROP` hold up to 31, and the
 most a token with a code of its own moves the bitstream is an 11-bit code plus class 3's offset bits,
@@ -318,7 +318,7 @@ $11 + 12 = 23$, 25 on 16 KiB pages. `ll` has 4 bits, `ml` 6 bits for at most 35,
 `SEQLZ_OFF_SHIFT()` reads a whole nibble ([chapter 6](#ch-header--offsets)), so a shift of 4 would fail
 here instead of being cut to 0. And 12 bits must hold every token.
 
-@listing src/seqlz_tables.h 138-154
+@listing src/seqlz_tables.h 137-153
 
 Every field is something the decoder would otherwise compute from the token's number for every
 sequence: split off `ll`, `ml` and the class, look up the class's offset bits and shift, add
@@ -408,7 +408,7 @@ with its {{tok.len.3072}}-bit code:
 <figcaption>A token table entry: bits 0 to 18 tell the decoder how to cut the offset out of the bitstream, bits 19 to 28 are the lengths, the top bits flags.</figcaption>
 </figure>
 
-@listing src/seqlz_tables.h 155-168
+@listing src/seqlz_tables.h 154-167
 
 The macros shift a field down and mask it to its width; bits 30 and 31 the decoder tests directly,
 and bit 29 is free. `TOK_N()` and `TOK_BACK()` are shift counts for the decoder's 64-bit bit
@@ -417,7 +417,7 @@ register, and their mask of 63 is again a proof for the compiler that the shift 
 
 ## token_entry(): the fields from a token's number {#ch-internal--token-entry-code}
 
-@listing src/seqlz_tables.h 170-185
+@listing src/seqlz_tables.h 169-184
 
 `token_entry(s, n)` is the entry for token `s` with a code of `n` bits. It is in the header because
 two files call it: `build_token()` ([chapter 8](#ch-codes--build-token)) fills the table with it, and

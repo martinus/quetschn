@@ -40,7 +40,6 @@ int main(int argc, char** argv) {
     if (fread(pages, 4096, n, f) != n)
         return 1;
     static struct seqlz_state st;
-    seqlz_tables_init(&seqlz_default_lengths);
     unsigned char** c = malloc(n * sizeof *c);
     unsigned* len = malloc(n * sizeof *len);
     size_t m = 0;

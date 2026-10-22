@@ -463,8 +463,7 @@ with them.
 @assert words.l3.delta == 0 and pointers.l3.delta == 1
 The kernel's copy keeps `compress_block()`, `compress_own()` and `seqlz_compress()`, renamed to
 `seqlz_compress_block()`, as the kernel's interface function is called `seqlz_compress()`, which tests
-the level instead. It drops the `!seqlz_tables.all_symbols` tests, because the kernel's tables are
-checked when they are generated ([chapter 15](#ch-zram-glue--init)).
+the level instead.
 @assert pointers.len == delta.ptr.l2.len
 
 ## The page of ab, bit by bit {#ch-encoder--example}
@@ -511,8 +510,6 @@ int main(void)
 {
 	unsigned int i, len;
 
-	if (seqlz_tables_init(&seqlz_default_lengths))
-		return 1;
 	for (i = 0; i < SEQLZ_BLOCK_SIZE; i++)
 		page[i] = i & 1 ? 'b' : 'a';
 	len = seqlz_compress(&st, page, dst, sizeof(dst), 1);
