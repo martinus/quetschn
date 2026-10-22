@@ -153,7 +153,7 @@ the `prfm` instruction. On the Mi 9T's A55 that cost 0.1 to 0.3 µs per warm rea
 @listing src/seqlz_compat.h 120-124
 
 A function-like macro `min` would expand inside `std::min(a, b)` in the C++ files. The function takes
-`unsigned int`, which is all its callers need: `seqlz_token()` in `seqlz.h`
+`unsigned int`, which is all its callers need: `seqlz_token()` in `seqlz_internal.h`
 ([chapter 6](#ch-header)) caps `ll` at {{ch05.ll_cap}} and `ml - 4` at {{ch05.ml_cap}} with it.
 
 @listing src/seqlz_compat.h 126-133

@@ -64,17 +64,6 @@ extern const u8 seqlz_own_lengths[SEQLZ_OWN_SYMBOLS];
 int seqlz_decode(const void *src, unsigned int src_len, void *dst,
 		 void *scratch);
 
-/* the token of a sequence with a match, see the top of seqlz_format.h */
-static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
-				       unsigned int cls)
-{
-	unsigned int a = min(ll, SEQLZ_LL_CAP);
-	unsigned int b = min(ml - SEQLZ_MIN_MATCH, SEQLZ_ML_CAP);
-
-	return a + (b << SEQLZ_LL_BITS) +
-	       (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
-}
-
 /* every sequence but the last covers at least 4 bytes of the block */
 #define SEQLZ_MAX_SEQUENCES (SEQLZ_BLOCK_SIZE / 4U + 1U)
 

@@ -54,7 +54,7 @@ WIDTH = 80
 
 # what only the harness and the tests of src/ use, left out of the kernel's copy
 HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
-                          r"\bseqlz_tables_size\b|\ball_symbols\b")
+                          r"\ball_symbols\b")
 
 # the one reference to this repository the kernel's copy keeps, the project's page in MAINTAINERS
 PROJECT_URL = "https://github.com/martinus/quetschn"
@@ -82,11 +82,11 @@ REWRITES = [
     ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_block()
     ("seqlz_compress()", "seqlz_compress_block()"),
-    # the library works on blocks of 4 KiB whatever PAGE_SIZE is, see port_header()
+    # the library works on blocks of 4 KiB whatever PAGE_SIZE is, see BLOCK_BITS_KERNEL
     ("seqlz compresses one block at a time, a memory page for zram.",
      "seqlz compresses one block of SEQLZ_BLOCK_SIZE bytes at a time, for zram, whatever the kernel's PAGE_SIZE "
      "is."),
-    # the kernel's copy is for 4 KiB pages only, see port_header()
+    # the kernel's copy is for blocks of 4 KiB only, see BLOCK_BITS_KERNEL
     (" For blocks of 16 KiB it is 16 KiB, as lz4's table.", ""),
     ("A block has at most 16 KiB of literals", "A block has at most 4 KiB of literals"),
     ("at most 640 bytes in a 4 KiB block and 2560 in a 16 KiB block, so w is at most 12.",
@@ -289,22 +289,6 @@ def must(text, a, b, count=1):
     return text.replace(a, b)
 
 
-def rename_compress(text, end):
-    """seqlz_compress() of src/ as seqlz_compress_block(): the interface has the name now. Its signature,
-    with end the ";" or the "{" after it, wrapped again under the longer name; the comments get the name
-    from REWRITES, which wraps them again."""
-    return must(text, "unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,\n"
-                      "\t\t\t    unsigned int dst_cap, unsigned int level)" + end,
-                "unsigned int seqlz_compress_block(struct seqlz_state *st, const void *src,\n"
-                "\t\t\t\t void *dst, unsigned int dst_cap,\n"
-                "\t\t\t\t unsigned int level)" + end)
-
-
-def common(text):
-    text = fix_comments(text)
-    return text
-
-
 def signature(head, params, end):
     """a function's head, e.g. "static int __init name(", and its parameters, wrapped as the kernel
     wraps them: at most WIDTH columns, the next lines under the first parameter"""
@@ -322,11 +306,11 @@ def signature(head, params, end):
     return "\n".join(lines)
 
 
-def make_static(text, name, init=False):
-    """the definition of name static, and __init if init, its parameters wrapped again"""
+def make_static(text, name):
+    """the definition of name static, its parameters wrapped again"""
     m = re.search(r"^((?:const )?(?:unsigned )?\w+ \**)" + name + r"\(([^)]*)\)\n\{", text, re.M)
     assert m, name
-    head = "static " + m.group(1) + ("__init " if init else "") + name + "("
+    head = "static " + m.group(1) + name + "("
     return text[:m.start()] + signature(head, m.group(2), "\n{") + text[m.end():]
 
 
@@ -348,10 +332,10 @@ def port_format():
     gen_seqlz_tables, so only headers that tools/include has"""
     t = spdx((SRC / "seqlz_format.h").read_text(), False)
     t = guard(t, "seqlz_format")
-    t = must(t, '#include "seqlz_compat.h"\n', "#include <linux/build_bug.h>\n#include <linux/types.h>\n")
+    t = must(t, '#include "seqlz_compat.h"\n', includes("format"))
     t, k = BLOCK_BITS_SRC.subn(BLOCK_BITS_KERNEL, t)
     assert k == 1, "the block size of src/seqlz_format.h"
-    return common(t)
+    return fix_comments(t)
 
 
 def port_tables_h():
@@ -364,29 +348,29 @@ def port_tables_h():
                 "extern struct seqlz_tables seqlz_tables;\n",
              "/* the tables, generated when the kernel is built, see gen_seqlz_tables.c */\n"
              "extern const struct seqlz_tables seqlz_tables;\n")
-    return common(t)
+    return fix_comments(t)
 
 
 def port_internal():
     """lib/seqlz/seqlz_internal.h: what the codec's files share"""
     t = spdx((SRC / "seqlz_internal.h").read_text(), False)
     t = guard(t, "seqlz_internal")
-    t = must(t, '#include "seqlz_tables.h"\n', "#include <linux/cache.h>\n#include <linux/prefetch.h>\n"
-             "#include <linux/seqlz.h>\n#include <linux/stddef.h>\n#include <linux/types.h>\n\n#include \"seqlz_tables.h\"\n")
+    t = must(t, '#include "seqlz_tables.h"\n', includes("internal") + '\n#include "seqlz_tables.h"\n')
     # blocks of 4 KiB only, whatever PAGE_SIZE is: the values of 16 KiB pages go, not only their comments
     t = must(t, "#define SEQLZ_HASH_BITS (SEQLZ_BLOCK_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
     t = must(t, "#define SEQLZ_LEVELS 3U\n", "#define SEQLZ_LEVELS SEQLZ_LEVEL_MAX\n")
     # the cast is for C++, which src/ is compiled as too
     t = must(t, "\tconst u8 *q = (const u8 *)p; /* a cast for the C++ of the harness */\n", "\tconst u8 *q = p;\n")
-    # raw literals of their own come only from the harness's seqlz_encode()
-    t = must(t, "unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,\n\t\t\t\t u8 *spare);\n",
-             "unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare);\n")
-    return common(t)
+    return fix_comments(t)
 
 
-# what each file uses itself, not what it gets through another header
+# what each file uses itself, not what it gets through another header; seqlz_format.h builds for the
+# host too, for gen_seqlz_tables, so only with headers that tools/include has
 INCLUDES = {
-    "compress": ["linux/errno.h", "linux/export.h", "linux/minmax.h", "linux/string.h", "linux/unaligned.h"],
+    "format": ["linux/build_bug.h", "linux/types.h"],
+    "internal": ["linux/cache.h", "linux/minmax.h", "linux/prefetch.h", "linux/seqlz.h", "linux/stddef.h",
+                 "linux/types.h"],
+    "compress": ["linux/errno.h", "linux/export.h", "linux/string.h", "linux/unaligned.h"],
     "compress_literals": ["linux/math64.h", "linux/minmax.h", "linux/string.h", "linux/unaligned.h"],
     "decompress": ["linux/errno.h", "linux/export.h", "linux/module.h", "linux/unaligned.h"],
     "decompress_literals": ["linux/compiler.h", "linux/minmax.h", "linux/unaligned.h"],
@@ -397,23 +381,16 @@ def port_c(name):
     """lib/seqlz/seqlz_<name>.c from src/, with the kernel's headers"""
     t = spdx((SRC / f"seqlz_{name}.c").read_text(), True)
     ours = '#include "seqlz.h"\n' if '#include "seqlz.h"\n' in t else '#include "seqlz_internal.h"\n'
-    return must(t, ours, "".join(f"#include <{h}>\n" for h in INCLUDES[name]) + '\n#include "seqlz_internal.h"\n')
+    return must(t, ours, includes(name) + '\n#include "seqlz_internal.h"\n')
 
 
-def port_compress_literals():
-    """lib/seqlz/seqlz_compress_literals.c: seqlz_code_literals() without raw, which only the harness has"""
-    t = port_c("compress_literals")
-    t = must(t, "unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,\n\t\t\t\t u8 *spare)\n"
-                "{\n\treturn code_literals(d, len, raw, spare, NULL, 0);\n}\n",
-             "unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare)\n"
-             "{\n\treturn code_literals(d, len, NULL, spare, NULL, 0);\n}\n")
-    return common(t)
+def includes(name):
+    """the kernel headers of INCLUDES[name] as #include lines"""
+    return "".join(f"#include <{h}>\n" for h in INCLUDES[name])
 
 
 def port_compress():
     t = port_c("compress")
-    t = must(t, "\treturn seqlz_code_literals(dst, len, NULL, st->literals);\n",
-             "\treturn seqlz_code_literals(dst, len, st->literals);\n")
     # what only the harness uses: seqlz_find(), seqlz_encode() and their helpers
     t = cut(t, r"/\* ---- the matcher of seqlz_match\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
@@ -422,13 +399,6 @@ def port_compress():
     # the tables are checked when they are built, not for every block
     t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)\n",
              "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
-    # seqlz_token() of src/seqlz.h, for the encoder, its one user here
-    api = (SRC / "seqlz.h").read_text()
-    m = re.search(r"/\* the token of a sequence with a match, see the top of seqlz_format\.h \*/\n"
-                  r"static inline unsigned int seqlz_token\(.*?\n\}\n", api, re.S)
-    assert m, "seqlz_token() in src/seqlz.h"
-    token = m.group(0)
-    t = must(t, "/* ---- encoder ---- */\n", "/* ---- encoder ---- */\n\n" + token)
     # the matcher of seqlz_match.h, right before the one function that calls it, calling encode_seq()
     # itself: in the kernel's copy it has no other caller
     lz = (SRC / "seqlz_match.h").read_text()
@@ -453,13 +423,14 @@ def port_compress():
     t = cut(t, r"/\* encode_seq\(\) as the matcher calls it, without and with records \*/\n.*?"
                r"encode_seq\(ctx, in, ll, ml, off, true\);\n\}\n\n")
     # seqlz_compress() is the interface's name now, with the work memory and a level
-    t = rename_compress(t, "\n{")
+    # the interface has the name seqlz_compress() now; the comments get the new name from REWRITES
+    t = must(t, "unsigned int seqlz_compress(struct", "unsigned int seqlz_compress_block(struct")
     t = make_static(t, "seqlz_compress_block")
     # the interface's kernel-doc is in include/linux/seqlz.h, and seqlz_compress() checked the level
     t = put_doc(t, "seqlz_compress_block", "/* one block, for the interface below, which checked the level */\n")
     t = must(t, "\tif (level < 1 || level > SEQLZ_LEVELS)\n\t\treturn 0;\n", "")
     t = t.rstrip("\n") + "\n\n" + (HERE / "api_compress.c").read_text()
-    return common(t)
+    return fix_comments(t)
 
 
 def port_decompress():
@@ -467,7 +438,7 @@ def port_decompress():
     t = make_static(t, "seqlz_decode")
     t = put_doc(t, "seqlz_decode", "/* seqlz_decompress(), see include/linux/seqlz.h */\n")
     t = t.rstrip("\n") + "\n\n" + (HERE / "api_decompress.c").read_text()
-    return common(t)
+    return fix_comments(t)
 
 
 def port_gen():
@@ -487,7 +458,7 @@ def port_gen():
     # every symbol needs a code, for the encoder
     t = must(t, "\tt->all_symbols = has_all_symbols(lengths);\n", "\tif (!has_all_symbols(lengths))\n\t\treturn -EINVAL;\n")
     t = t.rstrip("\n") + "\n\n" + (HERE / "gen_tables_main.c").read_text()
-    return common(t)
+    return fix_comments(t)
 
 
 # lib/seqlz/Makefile: the module, and its tables, which gen_seqlz_tables, a program for the build host,
@@ -522,9 +493,6 @@ def port_lengths_script():
     t = must(t, '    what = None\n    if args and args[0] in ("--lengths", "--lit-sets"):\n'
              "        what = args.pop(0)\n", "")
     t = must(t, "    if what:\n        return main_inc(what, tables)\n", "")
-    t = must(t, "def lengths_initializer(tables, storage=\"\"):", "def lengths_initializer(tables, storage):")
-    t = must(t, "def lit_sets_initializer(tables, storage=\"\"):", "def lit_sets_initializer(tables, storage):")
-    t = must(t, "def own_initializer(tables, storage=\"\"):", "def own_initializer(tables, storage):")
     return t
 
 
@@ -623,9 +591,9 @@ def main():
         "lib/seqlz/seqlz_tables.h": port_tables_h(),
         "lib/seqlz/seqlz_internal.h": port_internal(),
         "lib/seqlz/seqlz_compress.c": port_compress(),
-        "lib/seqlz/seqlz_compress_literals.c": port_compress_literals(),
+        "lib/seqlz/seqlz_compress_literals.c": fix_comments(port_c("compress_literals")),
         "lib/seqlz/seqlz_decompress.c": port_decompress(),
-        "lib/seqlz/seqlz_decompress_literals.c": common(port_c("decompress_literals")),
+        "lib/seqlz/seqlz_decompress_literals.c": fix_comments(port_c("decompress_literals")),
         "lib/seqlz/gen_seqlz_tables.c": port_gen(),
         "lib/seqlz/seqlz_counts.txt": port_counts(),
         SPEC: ".. SPDX-License-Identifier: GPL-2.0-only OR MIT\n\n" +

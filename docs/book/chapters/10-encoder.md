@@ -150,7 +150,7 @@ page, which the encoder does not need for anything else.
 
 ## Level 3: a record in front of each sequence's literals {#ch-encoder--records}
 
-@listing src/seqlz_internal.h 91-100
+@listing src/seqlz_internal.h 102-111
 
 Level 3 stores the literals as deltas to earlier bytes of the page ([chapter 6](#ch-header--literals)),
 one choice for the whole page, and which one is cheapest is known only when all literals are there.
@@ -419,24 +419,25 @@ counts, lengths, codes and the table's description ([chapter 11](#ch-literals-en
 `u64`, so `OWN_LITERALS_MAX / 8U` is that byte. `seqlz_code_own()`, level 3's way in, which tries the
 deltas first, comes right after it in that file ([chapter 11](#ch-literals-enc--code-own)).
 
-@listing src/seqlz_compress.c 366-385
+@listing src/seqlz_compress.c 366-389
 
 `seqlz_code_literals()` codes the literals with one of the 8 fixed literal tables if that saves
 enough, and returns the new length or `len` unchanged; `seqlz_code_own()` does the same at level 3,
-also with a table of the page's own. Level 2 gets the
-caller's literals as the raw copy it reads while it writes the coded ones over the raw ones in `dst`.
+also with a table of the page's own. Both read the literals from a copy while they write the coded
+ones over the raw ones in `dst`: `seqlz_compress()` gives them the matcher's state for it, and
+`seqlz_encode()`, whose state may be `NULL`, a block on its stack. The kernel has only the first.
 At level 3, `encode_raw()` gets the page and the matcher's state, writes the literals' deltas there, and
 `seqlz_code_own()` codes them. The level is checked before anything is written, so a level outside 1 to
 `SEQLZ_LEVELS`, or level 3 without the state, returns 0 as the header's kernel-doc says
 ([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 387-397
+@listing src/seqlz_compress.c 391-401
 
 `compress_block()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
 construction, and its call of `seqlz_match_block()` with `encode_emit` is the whole compression loop of
 levels 1 and 2 once inlined, the greedy matcher with `lazy` the constant `false`.
 
-@listing src/seqlz_compress.c 399-434
+@listing src/seqlz_compress.c 403-438
 
 `compress_own()` is the same for level 3: the lazy matcher, with `encode_emit_rec`, so the records go
 in front of the literals. If the page does not fit, `e.p == e.lit`, the loop calls `encoder_init()`
@@ -447,7 +448,7 @@ then finds `dst` as it would without records. It is `noinline`: inlined into `se
 to `compress_block()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
 of its own.
 
-@listing src/seqlz_compress.c 436-451
+@listing src/seqlz_compress.c 440-455
 
 `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)), with the level of the device:
 `seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_block()`. Level 2

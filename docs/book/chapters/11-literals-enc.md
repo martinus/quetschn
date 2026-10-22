@@ -620,7 +620,7 @@ up by one. Of the page's {{delta.ptr.n_lit}} literals, {{delta.ptr.xor.h.10}} XO
 
 ### seqlz_code_own(): the deltas first {#ch-literals-enc--code-own}
 
-@listing src/seqlz_compress_literals.c 795-821
+@listing src/seqlz_compress_literals.c 795-820
 
 `seqlz_code_own()` is level 3's call of `code_literals()`, with `own_work()` for a table of the
 page's own. With a delta it codes the deltas in the matcher's state, as `raw`, with no `spare`, since

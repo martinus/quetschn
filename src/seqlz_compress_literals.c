@@ -814,8 +814,7 @@ unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
  * The literals with the fixed tables only, below SEQLZ_LEVEL_OWN. Two entry
  * points, so that code_literals() is compiled for the arguments of each.
  */
-unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,
-				 u8 *spare)
+unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare)
 {
-	return code_literals(d, len, raw, spare, NULL, 0);
+	return code_literals(d, len, NULL, spare, NULL, 0);
 }

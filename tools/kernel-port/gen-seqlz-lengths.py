@@ -151,7 +151,7 @@ def initializer(name, lists):
         for label, values in lists) + "};\n"
 
 
-def lengths_initializer(tables, storage=""):
+def lengths_initializer(tables, storage):
     plus_one = [[c + 1.0 for c in t] for t in tables[:3]]
     # a length value's symbols: 16 of their own, then one per highest bit
     # from 4 up to the block's bits minus 1, 12 + P of them, see
@@ -174,7 +174,7 @@ def lengths_initializer(tables, storage=""):
         [(".token = ", token), (".ll = ", ll), (".ml = ", ml)])
 
 
-def lit_sets_initializer(tables, storage=""):
+def lit_sets_initializer(tables, storage):
     # every byte gets a code, the encoder needs one; the first number of a
     # literal table's counts is its pages, not a byte
     sets = [code_lengths([c + 1.0 for c in t[1:]], LIT_BITS)
@@ -186,7 +186,7 @@ def lit_sets_initializer(tables, storage=""):
         [("", s) for s in sets])
 
 
-def own_initializer(tables, storage=""):
+def own_initializer(tables, storage):
     # the code of a block's own literal table, see SEQLZ_LIT_OWN; every
     # symbol gets a code, so that the decoder's table has no gap
     own = code_lengths([c + 1.0 for c in tables[-1]], OWN_BITS)
@@ -207,10 +207,10 @@ def main_inc(what, tables):
     text = head().replace("/* SPDX-License-Identifier: GPL-2.0-only OR MIT */",
                           "// SPDX-License-Identifier: GPL-2.0-only OR MIT")
     if what == "--lengths":
-        print(text + lengths_initializer(tables), end="")
+        print(text + lengths_initializer(tables, ""), end="")
     else:
-        print(text + lit_sets_initializer(tables) + "\n" +
-              own_initializer(tables), end="")
+        print(text + lit_sets_initializer(tables, "") + "\n" +
+              own_initializer(tables, ""), end="")
 
 
 def main():

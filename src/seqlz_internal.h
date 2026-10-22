@@ -74,6 +74,17 @@ static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_BLOCK_SIZE,
 #define SEQLZ_LEVEL_CODED 2U
 #define SEQLZ_LEVEL_OWN 3U
 
+/* the token of a sequence with a match, see the top of seqlz_format.h */
+static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
+				       unsigned int cls)
+{
+	unsigned int a = min(ll, SEQLZ_LL_CAP);
+	unsigned int b = min(ml - SEQLZ_MIN_MATCH, SEQLZ_ML_CAP);
+
+	return a + (b << SEQLZ_LL_BITS) +
+	       (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
+}
+
 /*
  * The matcher's hash table, one per CPU, cleared for each block. Once the
  * matcher is done it holds the raw literals or their deltas while they are
@@ -137,8 +148,7 @@ static_assert(sizeof_field(struct lit_table, decode) % PREFETCH_STEP == 0,
 /* the coded literals, see seqlz_compress_literals.c */
 unsigned int seqlz_delta_literals(u8 *d, u8 **lit_end, const u8 *block,
 				  u8 *deltas);
-unsigned int seqlz_code_literals(u8 *d, unsigned int len, const u8 *raw,
-				 u8 *spare);
+unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare);
 unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 			    unsigned int delta);
 

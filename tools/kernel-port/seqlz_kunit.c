@@ -188,9 +188,7 @@ static void make_block(struct rnd_state *rng, unsigned int kind, u8 *p)
 			if (k % 8 == 0)
 				v = prandom_u32_state(rng);
 			p[k] = prandom_u32_state(rng);
-			p[k + 1] = v;
-			p[k + 2] = v >> 8;
-			p[k + 3] = v >> 16;
+			put_unaligned_le24(v, p + k + 1);
 		}
 		break;
 	case 8: /* records of 16 bytes, a bit flipped here and there: deltas */
@@ -446,8 +444,7 @@ static unsigned int literals_only(u8 *c, unsigned int n)
 {
 	unsigned int k;
 
-	c[0] = n;
-	c[1] = n >> 8;
+	put_unaligned_le16(n, c);
 	for (k = 0; k < n; k++)
 		c[2 + k] = k * 7;
 	return 2 + n;

@@ -23,7 +23,7 @@ caches. Then each first lookup into a line is a miss of about 100 ns, and prefet
 let these misses overlap instead of one after the other ([chapter 3](#ch-cpu--prefetch)).
 <!-- undated: a typical latency, explained in chapter 3 -->
 
-@listing src/seqlz_internal.h 102-127
+@listing src/seqlz_internal.h 113-138
 
 `L1_CACHE_BYTES` is the kernel's size of a cache line, 64 on x86-64 and arm64. `prefetch()` is `prfm` on
 arm64 and `prefetcht0` on x86-64, the latter with a patch to the kernel ([chapter 5](#ch-compat--prefetch)).
@@ -54,7 +54,7 @@ two runs
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
 
 ::: warn The line of end - 1
-The loop prefetches the line of `p` and the lines 64, 128, ... bytes on. Where `p` is not at the start
+The loop prefetches the line of `p` and the lines 64, 139, ... bytes on. Where `p` is not at the start
 of a line, the table touches one line more than the loop reaches. In `struct seqlz_tables` on a 64-bit
 build the token table is at offset {{ch12.tok.off}}, `ll.decode` and `ml.decode` at
 {{ch12.ll.off|grp}} and {{ch12.ml.off|grp}}, {{ch12.ll.mod}} bytes past a multiple of 64, and the
@@ -74,7 +74,7 @@ tools that get it from `malloc()` do not have. On x86-64 the extra prefetch made
 bench; it was not measured on the phone (commit `bafef14`).
 :::
 
-@listing src/seqlz_internal.h 129-135
+@listing src/seqlz_internal.h 140-146
 
 The loop forms the pointers `q + k` up to `q + size - 64` only when `size` is a multiple of 512;
 otherwise its last round would form pointers past `end` and prefetch lines behind the table. These

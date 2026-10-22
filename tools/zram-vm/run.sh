@@ -83,15 +83,18 @@ else
         cp "$dir/src/"seqlz*.c "$dir/src/"*.h "$dir/src/"*_4k.inc "$d/"
         # backend_seqlz.c passes a level; a src/ from before the levels took a bool there, and would
         # build and code the literals at every level
-        grep -q "define SEQLZ_LEVELS" "$d/seqlz.h" || { echo "variant $name: $dir/src has no levels, it is older than this run.sh" >&2; exit 1; }
+        grep -qs "define SEQLZ_LEVELS" "$d"/*.h || { echo "variant $name: $dir/src has no levels, it is older than this run.sh" >&2; exit 1; }
         sed -i "s/^#define SZ_NAME \"seqlz-\"$/#define SZ_NAME \"$name-\"/" "$d/backend_seqlz.c"
         grep -q "^#define SZ_NAME \"$name-\"$" "$d/backend_seqlz.c" || { echo "variant $name: no backend name" >&2; exit 1; }
-        # the global symbols of this build, renamed so that the builds do not clash
-        # (the names of older versions too: seqlz_tables_size and seqlz_default_own before 22 Oct 2026)
-        for s in seqlz_compress seqlz_decode seqlz_tables_init seqlz_tables_size seqlz_tables seqlz_all_symbols \
-            seqlz_find seqlz_encode seqlz_default_lengths seqlz_default_own seqlz_lit_sets seqlz_own_lengths \
-            seqlz_delta_literals seqlz_code_literals seqlz_code_own seqlz_decode_literals \
-            $(printf 'backend_seqlz_%s ' $levels); do
+        # the global symbols of this build, renamed so that the builds do not clash: the codec's, from nm of
+        # its files built for the host, whichever version it is, and the backend's
+        o=$(mktemp -d)
+        for f in "$d"/seqlz*.c; do
+            cc -std=gnu11 -c -I"$d" -o "$o/$(basename "$f" .c).o" "$f" || { echo "variant $name: $f does not build" >&2; exit 1; }
+        done
+        syms=$(nm -g --defined-only "$o"/*.o | awk 'NF == 3 { print $3 }' | sort -u)
+        rm -rf "$o"
+        for s in $syms $(printf 'backend_seqlz_%s ' $levels); do
             echo "#define $s ${s}_v_$name"
         done >"$d/rename.h"
         objs="v_$name/backend_seqlz.o $(codec_objs "$d" | sed "s#\([^ ][^ ]*\)#v_$name/\1#g")"

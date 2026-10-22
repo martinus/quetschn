@@ -14,6 +14,7 @@ shift
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+margs=("$@")
 kmake=(make -C "$work/src" O="$work/build" "$@")
 
 # a make whose output goes to $work/build.log; stops the script on a failed build or a warning, printing
@@ -37,14 +38,22 @@ python3 "$here/port.py" "$work/src" >/dev/null
 git -C "$work/src" add -A
 git -C "$work/src" diff --cached --stat | tail -1
 
-"${kmake[@]}" defconfig >/dev/null
-"$work/src/scripts/config" --file "$work/build/.config" --enable ZRAM --enable ZRAM_BACKEND_SEQLZ --module SEQLZ \
-    --enable KUNIT --module SEQLZ_KUNIT_TEST
-"${kmake[@]}" olddefconfig >/dev/null
+# configure <build dir> <scripts/config args>: defconfig with seqlz, zram and the KUnit tests, the args on
+# top, then prepare
+configure() {
+    local o=$1
+    shift
+    make -C "$work/src" O="$o" "${margs[@]}" defconfig >/dev/null
+    "$work/src/scripts/config" --file "$o/.config" --enable ZRAM --enable ZRAM_BACKEND_SEQLZ --module SEQLZ \
+        --enable KUNIT --module SEQLZ_KUNIT_TEST "$@"
+    make -C "$work/src" O="$o" "${margs[@]}" olddefconfig >/dev/null
+    make -C "$work/src" O="$o" "${margs[@]}" -j"$(nproc)" prepare >/dev/null
+}
+
+configure "$work/build"
 for c in ZRAM_BACKEND_SEQLZ=y SEQLZ_KUNIT_TEST=m; do
     grep -q "^CONFIG_$c" "$work/build/.config" || { echo "CONFIG_$c not set" >&2; exit 1; }
 done
-"${kmake[@]}" -j"$(nproc)" prepare >/dev/null
 build "${kmake[@]}" -j"$(nproc)" W=1 KCFLAGS=-fstack-usage lib/seqlz/ drivers/block/zram/
 ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null || exit 1
@@ -80,17 +89,12 @@ fi
 if grep -q '^CONFIG_ARM64=y' "$work/build/.config"; then
     for pages in 16K 64K; do
         o="$work/build-$pages"
-        pmake=(make -C "$work/src" O="$o" "$@")
-        "${pmake[@]}" defconfig >/dev/null
-        "$work/src/scripts/config" --file "$o/.config" --disable ARM64_4K_PAGES --enable "ARM64_${pages}_PAGES" \
-            --enable ZRAM --enable ZRAM_BACKEND_SEQLZ --module SEQLZ --enable KUNIT --module SEQLZ_KUNIT_TEST
-        "${pmake[@]}" olddefconfig >/dev/null
+        configure "$o" --disable ARM64_4K_PAGES --enable "ARM64_${pages}_PAGES"
         grep -q "^CONFIG_ARM64_${pages}_PAGES=y" "$o/.config" && grep -q '^CONFIG_SEQLZ_KUNIT_TEST=m' "$o/.config" ||
             { echo "$pages pages: CONFIG_ARM64_${pages}_PAGES or CONFIG_SEQLZ_KUNIT_TEST not set" >&2; exit 1; }
         ! grep -q '^CONFIG_ZRAM_BACKEND_SEQLZ=y' "$o/.config" ||
             { echo "$pages pages: CONFIG_ZRAM_BACKEND_SEQLZ is set" >&2; exit 1; }
-        "${pmake[@]}" -j"$(nproc)" prepare >/dev/null
-        build "${pmake[@]}" -j"$(nproc)" W=1 lib/seqlz/
+        build make -C "$work/src" O="$o" "$@" -j"$(nproc)" W=1 lib/seqlz/
         ls "$o/lib/seqlz/seqlz_decompress.o" "$o/lib/seqlz/tests/seqlz_kunit.o" >/dev/null || exit 1
         echo "build with $pages pages: no warnings, zram's backend off"
     done
