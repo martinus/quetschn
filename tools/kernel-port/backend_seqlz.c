@@ -15,6 +15,9 @@
 
 /* a page is one block of seqlz; Kconfig keeps the backend to 4 KiB pages */
 static_assert(PAGE_SIZE == SEQLZ_BLOCK_SIZE);
+/* kmalloc() from its caches, larger would take pages of a higher order */
+static_assert(SEQLZ_MEM_COMPRESS <= KMALLOC_MAX_CACHE_SIZE);
+static_assert(SEQLZ_MEM_DECOMPRESS <= KMALLOC_MAX_CACHE_SIZE);
 
 #ifndef ZCOMP_RW_SPLIT
 /*

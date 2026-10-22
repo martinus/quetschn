@@ -237,7 +237,7 @@ struct seqlz_tables seqlz_tables;
 
 /*
  * The codes and decode tables of lengths, seqlz_lit_sets and seqlz_own_lengths
- * in t; -EINVAL as seqlz_tables_init()
+ * in t; -EINVAL if one of them is not a complete prefix code
  */
 static int build_tables(struct seqlz_tables *t,
 			const struct seqlz_lengths *lengths)
@@ -258,5 +258,11 @@ static int build_tables(struct seqlz_tables *t,
 
 int seqlz_tables_init(const struct seqlz_lengths *lengths)
 {
-	return build_tables(&seqlz_tables, lengths);
+	/* built aside: lengths that fail leave the tables as they were */
+	static struct seqlz_tables t;
+
+	if (build_tables(&t, lengths))
+		return -EINVAL;
+	seqlz_tables = t;
+	return 0;
 }

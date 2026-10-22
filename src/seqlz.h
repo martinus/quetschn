@@ -36,6 +36,7 @@ bool seqlz_all_symbols(void);
  *
  * Return: 0, or -EINVAL if the lengths are not a complete prefix code: a code
  * longer than its table allows, more codes than fit, gaps, or none at all.
+ * Then the tables stay as they were.
  */
 int seqlz_tables_init(const struct seqlz_lengths *lengths);
 

@@ -90,6 +90,7 @@ else
         # (the names of older versions too: seqlz_tables_size and seqlz_default_own before 22 Oct 2026)
         for s in seqlz_compress seqlz_decode seqlz_tables_init seqlz_tables_size seqlz_tables seqlz_all_symbols \
             seqlz_find seqlz_encode seqlz_default_lengths seqlz_default_own seqlz_lit_sets seqlz_own_lengths \
+            seqlz_delta_literals seqlz_code_literals seqlz_code_own seqlz_decode_literals \
             $(printf 'backend_seqlz_%s ' $levels); do
             echo "#define $s ${s}_v_$name"
         done >"$d/rename.h"

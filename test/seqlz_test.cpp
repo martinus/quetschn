@@ -303,6 +303,34 @@ TEST_CASE("seqlz: tables that are no prefix code are rejected") {
     CHECK(seqlz_tables_init(&l) == -EINVAL);
 }
 
+TEST_CASE("seqlz: lengths that are rejected leave the tables as they were") {
+    auto t = default_tables();
+    auto rng = std::mt19937_64(43);
+    auto page = std::vector<unsigned char>(page_size);
+    for (auto& b : page) {
+        b = static_cast<unsigned char>("seqlz tables "[rng() % 13]); // repeats and coded literals
+    }
+    auto st = std::make_unique<seqlz_state>();
+    auto compress = [&] {
+        auto c = std::vector<unsigned char>(2 * page_size);
+        auto const len = seqlz_compress(st.get(), page.data(), c.data(), static_cast<unsigned>(c.size()), 2);
+        c.resize(len);
+        return c;
+    };
+    auto const before = compress();
+    REQUIRE(!before.empty());
+    // the token table is built before the one of ll, which fails
+    auto l = seqlz_default_lengths;
+    l.ll[0] = SEQLZ_MAX_BITS + 1;
+    REQUIRE(seqlz_tables_init(&l) == -EINVAL);
+    CHECK(seqlz_all_symbols());
+    CHECK(compress() == before);
+    auto out = std::vector<unsigned char>(page_size);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    REQUIRE(seqlz_decode(before.data(), static_cast<unsigned>(before.size()), out.data(), scratch.data()) == 0);
+    CHECK(out == page);
+}
+
 TEST_CASE("seqlz: any input is safe for the decoder") {
     auto const t = default_tables();
     auto rng = std::mt19937_64(37);

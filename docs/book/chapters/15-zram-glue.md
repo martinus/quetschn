@@ -376,7 +376,10 @@ As a union it is {{size.state}} bytes from `kmalloc-8k`. `lz4` asks `vmalloc()` 
 ([plan.md](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)):
 12 KiB less per CPU, on the Mi 9T's 8 cores 96 KiB, resident whether the phone swaps or not.
 `kzalloc_obj(*c)` is a newer typed spelling of `kzalloc(sizeof(*c), GFP_KERNEL)`, as zram's other
-backends allocate their contexts; `GFP_KERNEL` may sleep, which is fine when a CPU comes up.
+backends allocate their contexts; `GFP_KERNEL` may sleep, which is fine when a CPU comes up. Two
+`static_assert`s at the top of the file keep `SEQLZ_MEM_COMPRESS` and `SEQLZ_MEM_DECOMPRESS` at most
+`KMALLOC_MAX_CACHE_SIZE`: larger, `kzalloc()` would take pages of a higher order straight from the page
+allocator, which can fail under fragmentation when a CPU comes up.
 @assert const.SCRATCH <= size.state <= 8192 < ch15.state_plus_scratch <= 16384
 
 ::: why The union is safe because of zram's mutex

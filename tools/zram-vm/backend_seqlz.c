@@ -7,11 +7,11 @@
 extern int zram_prefetch;
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/mutex.h>
 #include <linux/prefetch.h>
 
 #include "backend_seqlz.h"
 #include "seqlz.h"
-#include "seqlz_internal.h"
 
 /* zram-prefetch.patch, after backend_seqlz.h for the zcomp types */
 extern void (*zram_warm_fn)(struct zcomp_params *params, struct zcomp_ctx *ctx, int what, const void *src,
@@ -61,11 +61,20 @@ static void sz_warm(struct zcomp_params *params, struct zcomp_ctx *ctx, int what
 	}
 }
 
-static int sz_setup_params(struct zcomp_params *params)
+/*
+ * The tables and the warm-up page are global, built by the first device's setup only: a later one would
+ * write them while other devices compress and decompress with them
+ */
+static DEFINE_MUTEX(sz_setup_lock);
+static bool sz_ready;
+
+static int sz_setup_once(void)
 {
 	struct seqlz_state *st;
 	unsigned int k;
 
+	if (sz_ready)
+		return 0;
 	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
 		return -EINVAL;
 	/*
@@ -86,7 +95,18 @@ static int sz_setup_params(struct zcomp_params *params)
 		kfree(st);
 	}
 	zram_warm_fn = sz_warm;
+	sz_ready = true;
 	return 0;
+}
+
+static int sz_setup_params(struct zcomp_params *params)
+{
+	int ret;
+
+	mutex_lock(&sz_setup_lock);
+	ret = sz_setup_once();
+	mutex_unlock(&sz_setup_lock);
+	return ret;
 }
 
 static void sz_release_params(struct zcomp_params *params)

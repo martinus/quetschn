@@ -19,7 +19,7 @@ src/ stays the one source of the codec. This writes from it:
                                         comments of its own and lines of at most 80 columns
   lib/seqlz/tests/seqlz_kunit.c         the KUnit tests, tools/kernel-port/seqlz_kunit.c, with the
                                         tables' SHA-256 and the worked example from docs/format.md
-  lib/seqlz/Makefile, .kunitconfig, lib/Kconfig, lib/Kconfig.debug, lib/Makefile: the module seqlz,
+  lib/seqlz/Makefile, .kunitconfig, .gitignore, lib/Kconfig, lib/Kconfig.debug, lib/Makefile: the module seqlz,
                                         CONFIG_SEQLZ, and CONFIG_SEQLZ_KUNIT_TEST
   drivers/block/zram/backend_seqlz.[ch] from tools/kernel-port/, with Kconfig, Makefile and zcomp.c; the
                                         backend in the form of the tree's zcomp, with one context per
@@ -144,7 +144,7 @@ BLOCK_BITS_KERNEL = """/*
 
 # the comment of the counts in the kernel's copy, instead of the one of bench/
 COUNTS_HEAD = """# The symbol counts of seqlz's tables for blocks of 4 KiB, which
-# scripts/gen-seqlz-lengths.py turns into lib/seqlz/seqlz_tables.c. Counted on
+# scripts/gen-seqlz-lengths.py turns into lib/seqlz/seqlz_lengths.h. Counted on
 # 1 091 983 memory pages of a desktop and a phone, with seqlz's matcher; the
 # literal tables by k-means over the 963 723 pages with more than 64 literals.
 # token, ll and ml: how often each symbol occurred, by number. lit: the pages of
@@ -427,7 +427,7 @@ def port_compress():
     m = re.search(r"/\* the token of a sequence with a match, see the top of seqlz_format\.h \*/\n"
                   r"static inline unsigned int seqlz_token\(.*?\n\}\n", api, re.S)
     assert m, "seqlz_token() in src/seqlz.h"
-    token = m.group(0).replace("see the top of seqlz_format.h", "see the top of seqlz_format.h")
+    token = m.group(0)
     t = must(t, "/* ---- encoder ---- */\n", "/* ---- encoder ---- */\n\n" + token)
     # the matcher of seqlz_match.h, right before the one function that calls it, calling encode_seq()
     # itself: in the kernel's copy it has no other caller
@@ -634,6 +634,8 @@ def main():
         "lib/seqlz/tests/seqlz_kunit.c": port_kunit(),
         "lib/seqlz/Makefile": MAKEFILE,
         "lib/seqlz/.kunitconfig": "CONFIG_KUNIT=y\nCONFIG_SEQLZ_KUNIT_TEST=y\n",
+        # what the build generates, as lib/crc/.gitignore
+        "lib/seqlz/.gitignore": "# SPDX-License-Identifier: GPL-2.0-only\n/gen_seqlz_tables\n/seqlz_tables.c\n",
         "drivers/block/zram/backend_seqlz.c": port_backend(tree),
         "drivers/block/zram/backend_seqlz.h": (HERE / "backend_seqlz.h").read_text(),
     }

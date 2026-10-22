@@ -115,7 +115,7 @@ Symbol 18 of the `ll` table, the {{ll.len.18}}-bit code `{{ll.code.18}}`, gets
 `enc[18] = {{ch07.ll18.c}} | {{ll.len.18}} << 16 = {{ch07.ll18.enc}}`, and the entries
 {{ch07.ll18.first}} to {{ch07.ll18.last}} get `{{ch08.le.18}} | {{ll.len.18}} = {{ch07.ll18.entry}}`.
 The loop stops at `SEQLZ_LEN_SYMBOLS`, so the entries `enc[{{const.LEN_SYMBOLS}}]` to `enc[31]`, which
-are there for the encoder's mask, stay 0 from the `memset()` of `seqlz_tables_init()`.
+are there for the encoder's mask, stay 0 from the `memset()` of `build_tables()`.
 @assert ll.len[18] == 5
 
 ## build_lit(): the same, for a literal table {#ch-codes--build-lit}
@@ -199,15 +199,16 @@ last symbol has no code: the tables build, the decoder can use them, and `seqlz_
 
 ## seqlz_tables_init(): all of it, from a clean slate {#ch-codes--init}
 
-@listing src/seqlz_codes.c 236-262
+@listing src/seqlz_codes.c 236-268
 
 The `memset()` does more than the comment says: tokens without a code need `enc[]` 0, the encoder's
 masked index could reach the entries behind the last length symbol, `lit_cost` is built with `|=`,
 and when the tests build tables twice on the same memory, nothing of the first set survives. The `||`
-stops at the first table that fails, and the struct is then half built: `src/zram_seqlz.c` fails the
-zram device's setup. `build_tables()` takes the struct as a parameter, `t`, and
-`seqlz_tables_init()` hands it the global; the kernel's generator hands it a struct of its own
-([below](#ch-codes--kernel)). A complete code that leaves symbols out returns 0 with
+stops at the first table that fails, and the struct is then half built. So `seqlz_tables_init()`
+builds into a static struct of its own and copies it over the global only when all of it built:
+lengths that fail leave the tables the encoder and the decoder use as they were, and
+`src/zram_seqlz.c` fails the zram device's setup. `build_tables()` takes the struct as a parameter,
+`t`; the kernel's generator hands it a struct of its own ([below](#ch-codes--kernel)). A complete code that leaves symbols out returns 0 with
 `all_symbols` false, tables the decoder can use and the encoder cannot; `seqlz_compress()` and
 `seqlz_encode()` then return 0 for every page. With the tables of the format that never happens,
 because the generator checks it, see below.
