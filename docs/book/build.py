@@ -201,19 +201,22 @@ STEPPER_CSS = [False]
 SRC_C = ("codes", "compress", "compress_literals", "decompress", "decompress_literals", "default_tables", "lit_sets")
 
 
-TABLES = []
+TABLES = {}
 TABLES_LOCK = threading.Lock()
 
 
-def tables_c():
-    """seqlz_tables.c, the codec's tables, which tools/gen-tables/gen-tables.sh generates, once per build"""
+def tables_c(flags=()):
+    """seqlz_tables.c, the codec's tables, which tools/gen-tables/gen-tables.sh generates, once per build
+    and block size: flags, a program's -D flags, may set QUETSCHN_PAGE_BITS"""
+    bits = tuple(f for f in flags if f.startswith("-DQUETSCHN_PAGE_BITS="))
     with TABLES_LOCK:
-        if not TABLES:
+        if bits not in TABLES:
             tmp = tempfile.mkdtemp()
             atexit.register(shutil.rmtree, tmp, True)
-            subprocess.run([str(REPO / "tools" / "gen-tables" / "gen-tables.sh"), f"{tmp}/seqlz_tables.c"], check=True)
-            TABLES.append(f"{tmp}/seqlz_tables.c")
-        return TABLES[0]
+            subprocess.run([str(REPO / "tools" / "gen-tables" / "gen-tables.sh"), f"{tmp}/seqlz_tables.c", *bits],
+                           check=True)
+            TABLES[bits] = f"{tmp}/seqlz_tables.c"
+        return TABLES[bits]
 
 
 def run_c(main, include_dirs=(), link=SRC_C, flags=(), extra=()):
@@ -222,7 +225,7 @@ def run_c(main, include_dirs=(), link=SRC_C, flags=(), extra=()):
     step-throughs record theirs before the function first sets them."""
     text = main.read_text()
     srcs = [str(REPO / f"src/seqlz_{n}.c") for n in link if f'#include "seqlz_{n}.c"' not in text]
-    srcs += [tables_c()] if link else []
+    srcs += [tables_c(flags)] if link else []
     incs = [a for d in [*include_dirs, HERE, REPO / "src"] for a in ("-I", str(d))]
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["cc", "-O1", "-ftrivial-auto-var-init=zero", *flags, *incs, str(main), *srcs, *extra,

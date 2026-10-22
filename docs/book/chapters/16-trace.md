@@ -450,9 +450,6 @@ int main(void)
 	unsigned int values = 0, len0, len1, set = 0, best = ~0U;
 
 	make_page(page);
-	if (seqlz_tables_init(&seqlz_default_lengths) ||
-	    !seqlz_all_symbols())
-		return 1;
 
 	/* the sequences, and the bits each one takes in the bitstream */
 	n = seqlz_find(&st, page, seq, 2);

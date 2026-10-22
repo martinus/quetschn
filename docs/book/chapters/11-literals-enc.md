@@ -936,7 +936,6 @@ int main(void)
 {
 	unsigned int k, len, seed = 1;
 
-	seqlz_tables_init(&seqlz_default_lengths);
 	for (k = 0; k < 200; k++) {
 		seed = seed * 1103515245u + 12345u;
 		page[k] = "etaoinshrdlu "[(seed >> 16) % 13];

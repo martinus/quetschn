@@ -511,8 +511,6 @@ int main(void)
 {
 	unsigned int i, len;
 
-	if (seqlz_tables_init(&seqlz_default_lengths))
-		return 1;
 	for (i = 0; i < SEQLZ_BLOCK_SIZE; i++)
 		page[i] = i & 1 ? 'b' : 'a';
 	len = seqlz_compress(&st, page, dst, sizeof(dst), 1);

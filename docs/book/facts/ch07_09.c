@@ -300,7 +300,6 @@ static void ch07(void) {
     fact_num("ch07.pad_own", offsetof(struct seqlz_tables, ll) - offsetof(struct seqlz_tables, own) - sizeof t->own);
     fact_num("ch07.off.ll", offsetof(struct seqlz_tables, ll));
     fact_num("ch07.off.ml", offsetof(struct seqlz_tables, ml));
-    fact_num("ch07.tail_pad", sizeof *t - offsetof(struct seqlz_tables, ml) - sizeof t->ml);
 }
 
 /* ---- chapter 8: the codes from the lengths */
