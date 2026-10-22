@@ -3,7 +3,7 @@
  * The codes and decode tables, built from the code lengths:
  * seqlz_tables_init().
  */
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 /*
  * The decode entry of length value symbol s: its base value and how many extra
@@ -138,9 +138,8 @@ static int build_lit_sets(struct seqlz_tables *t)
 		if (build_lit(seqlz_lit_sets[k], &t->lit[k]))
 			return -EINVAL;
 	for (k = 0; k < 256U * SEQLZ_LIT_SETS; k++)
-		t->lit_cost[k % 256][k / 256 / 8] |=
-			(u64)seqlz_lit_sets[k / 256][k % 256]
-			<< (8U * (k / 256 % 8));
+		t->lit_cost[k % 256] |= (u64)seqlz_lit_sets[k / 256][k % 256]
+					<< (8U * (k / 256));
 	return 0;
 }
 

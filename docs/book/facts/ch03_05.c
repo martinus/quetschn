@@ -11,6 +11,7 @@
 
 #include "facts.h"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 #define LINE 64U /* the cache line of chapter 3 */
 
@@ -170,7 +171,7 @@ int main(void) {
     fact_num("ch05.prefetches_128", PREFETCH_STEP / 128);
     fact_num("ch05.ll_cap", SEQLZ_LL_CAP);
     fact_num("ch05.ml_cap", SEQLZ_ML_CAP);
-    /* the helpers marked __always_inline: in the .c files and page_lz.h, and in seqlz_compat.h */
+    /* the helpers marked __always_inline: in the .c files and seqlz_match.h, and in seqlz_compat.h */
     repo_path(path, sizeof path, "src");
     d = opendir(path);
     if (!d) {
@@ -181,7 +182,7 @@ int main(void) {
         size_t n = strlen(e->d_name);
         char rel[300];
 
-        if (!(n > 2 && !strcmp(e->d_name + n - 2, ".c")) && strcmp(e->d_name, "page_lz.h"))
+        if (!(n > 2 && !strcmp(e->d_name + n - 2, ".c")) && strcmp(e->d_name, "seqlz_match.h"))
             continue;
         snprintf(rel, sizeof rel, "src/%s", e->d_name);
         n_inline += lines_starting(rel, inl);

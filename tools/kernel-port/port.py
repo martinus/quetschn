@@ -8,11 +8,11 @@ src/ stays the one source of the codec. This writes from it:
   lib/seqlz/seqlz_internal.h            from src/, with the tables the interface's functions use
   lib/seqlz/seqlz_codes.c, seqlz_compress.c, seqlz_decompress.c: from src/, each with its part of the
                                         interface from tools/kernel-port/api_*.c; the matcher of
-                                        src/page_lz.h in seqlz_compress.c, calling the encoder itself;
+                                        src/seqlz_match.h in seqlz_compress.c, calling the encoder itself;
                                         static what only that file calls, and the tables built once,
                                         __init
-  lib/seqlz/seqlz_tables.c              the tables, generated in the tree by scripts/gen-seqlz-tables.py,
-                                        tools/kernel-port/gen-seqlz-tables.py, from lib/seqlz/seqlz_counts.txt,
+  lib/seqlz/seqlz_tables.c              the tables, generated in the tree by scripts/gen-seqlz-lengths.py,
+                                        tools/kernel-port/gen-seqlz-lengths.py, from lib/seqlz/seqlz_counts.txt,
                                         bench/seqlz_counts_4k.txt with comments of its own and lines of at
                                         most 80 columns
   lib/seqlz/tests/seqlz_kunit.c         the KUnit tests, tools/kernel-port/seqlz_kunit.c, with the
@@ -100,7 +100,7 @@ F:	Documentation/staging/seqlz.rst
 F:	drivers/block/zram/backend_seqlz.*
 F:	include/linux/seqlz.h
 F:	lib/seqlz/
-F:	scripts/gen-seqlz-tables.py
+F:	scripts/gen-seqlz-lengths.py
 """
 # the backend in zram's documentation, after what it says about levels; the facts are the Kconfig help's
 # and backend_seqlz.c's
@@ -133,7 +133,7 @@ BLOCK_BITS_KERNEL = """/*
 
 # the comment of the counts in the kernel's copy, instead of the one of bench/
 COUNTS_HEAD = """# The symbol counts of seqlz's tables for blocks of 4 KiB, which
-# scripts/gen-seqlz-tables.py turns into lib/seqlz/seqlz_tables.c. Counted on
+# scripts/gen-seqlz-lengths.py turns into lib/seqlz/seqlz_tables.c. Counted on
 # 1 091 983 memory pages of a desktop and a phone, with seqlz's matcher; the
 # literal tables by k-means over the 963 723 pages with more than 64 literals.
 # token, ll and ml: how often each symbol occurred, by number. lit: the pages of
@@ -319,22 +319,20 @@ def make_static(text, name, init=False):
     return text[:m.start()] + signature(head, m.group(2), "\n{") + text[m.end():]
 
 
-# the kernel-doc of the functions that are static in the kernel's copy, out of lib/seqlz/seqlz.h and
-# above their definitions
-STATIC_DOCS = ["seqlz_all_symbols", "seqlz_tables_init", "seqlz_decode", "seqlz_compress"]
+# the kernel-doc of the functions that are static in the kernel's copy, out of src/seqlz.h and above their
+# definitions
+STATIC_DOCS = ["seqlz_decode", "seqlz_compress"]
 
 
 def header_docs():
-    """the kernel-doc of each of STATIC_DOCS in src/seqlz.h, and the header without them and their
-    prototypes"""
+    """the kernel-doc of each of STATIC_DOCS in src/seqlz.h"""
     t = (SRC / "seqlz.h").read_text()
     docs = {}
     for name in STATIC_DOCS:
         m = re.search(r"/\*\*\n \* " + name + r"\(\) -.*?\*/\n", t, re.S)
         assert m, name
         docs[name] = m.group(0)
-        t = cut(t, re.escape(m.group(0)) + r"[^;]*;\n\n")
-    return t, docs
+    return docs
 
 
 def put_doc(text, name, doc):
@@ -344,89 +342,86 @@ def put_doc(text, name, doc):
     return text[:m.start()] + doc + text[m.start():]
 
 
-def port_header():
-    """lib/seqlz/seqlz.h: what the codec's files share, not an interface"""
-    t, _ = header_docs()
-    t = spdx(t, False)
-    t = must(t, "#ifndef _LINUX_SEQLZ_H\n#define _LINUX_SEQLZ_H\n", "#ifndef _LIB_SEQLZ_SEQLZ_H\n#define _LIB_SEQLZ_SEQLZ_H\n")
-    t = must(t, '#include "seqlz_compat.h"\n', "#include <linux/minmax.h>\n#include <linux/seqlz.h>\n#include <linux/types.h>\n")
-    t = cut(t, r"/\* a sequence as the matcher finds it, see seqlz_find\(\) \*/\nstruct seqlz_sequence \{.*?\};\n\n")
-    t = cut(t, r"/\*\*\n \* seqlz_encode\(\) -.*?;\n\n")
-    t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the block \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
-    t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
-    # blocks of 4 KiB only, whatever PAGE_SIZE is: the values of 16 KiB pages go, not only their comments
-    t = must(t, "#define SEQLZ_HASH_BITS (SEQLZ_BLOCK_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
+def guard(t, name):
+    """the include guard of src/'s name.h as the kernel's, _LIB_SEQLZ_NAME_H"""
+    ours = name.upper() + "_H"
+    return must(t, f"#ifndef {ours}\n#define {ours}\n", f"#ifndef _LIB_SEQLZ_{ours}\n#define _LIB_SEQLZ_{ours}\n")
+
+
+def port_format():
+    """lib/seqlz/seqlz_format.h: the format's numbers; with seqlz_tables.h it builds for the host too, for
+    gen_seqlz_tables, so only headers that tools/include has"""
+    t = spdx((SRC / "seqlz_format.h").read_text(), False)
+    t = guard(t, "seqlz_format")
+    t = must(t, '#include "seqlz_compat.h"\n', "#include <linux/build_bug.h>\n#include <linux/types.h>\n")
     t, k = BLOCK_BITS_SRC.subn(BLOCK_BITS_KERNEL, t)
-    assert k == 1, "the block size of src/seqlz.h"
-
-    t = common(t)
-    return t
-
-
-def port_internal():
-    """lib/seqlz/seqlz_internal.h, with the tables that the interface's functions use"""
-    t = (SRC / "seqlz_internal.h").read_text()
-    t = spdx(t, False)
-    t = must(t, "#ifndef SEQLZ_INTERNAL_H\n#define SEQLZ_INTERNAL_H\n",
-             "#ifndef _LIB_SEQLZ_SEQLZ_INTERNAL_H\n#define _LIB_SEQLZ_SEQLZ_INTERNAL_H\n")
-    t = must(t, '#include "seqlz.h"\n', "#include <linux/stddef.h>\n#include <linux/types.h>\n\n#include \"seqlz.h\"\n")
-    t = must(t, "\tbool all_symbols; /* see seqlz_all_symbols() */\n", "")
+    assert k == 1, "the block size of src/seqlz_format.h"
     return common(t)
 
 
+def port_tables_h():
+    """lib/seqlz/seqlz_tables.h: the tables' layout, and the tables themselves, generated"""
+    t = spdx((SRC / "seqlz_tables.h").read_text(), False)
+    t = guard(t, "seqlz_tables")
+    # whether every symbol has a code: gen_seqlz_tables checks that when it builds the tables
+    t = must(t, "\tbool all_symbols; /* see seqlz_all_symbols() */\n", "")
+    t = must(t, "/* the tables of seqlz_tables_init(), read only after that, by all CPUs */\n"
+                "extern struct seqlz_tables seqlz_tables;\n",
+             "/* the tables, generated when the kernel is built, see gen_seqlz_tables.c */\n"
+             "extern const struct seqlz_tables seqlz_tables;\n")
+    return common(t)
+
+
+def port_internal():
+    """lib/seqlz/seqlz_internal.h: what the codec's files share"""
+    t = spdx((SRC / "seqlz_internal.h").read_text(), False)
+    t = guard(t, "seqlz_internal")
+    t = must(t, '#include "seqlz_tables.h"\n', "#include <linux/cache.h>\n#include <linux/prefetch.h>\n"
+             "#include <linux/seqlz.h>\n#include <linux/stddef.h>\n#include <linux/types.h>\n\n#include \"seqlz_tables.h\"\n")
+    # blocks of 4 KiB only, whatever PAGE_SIZE is: the values of 16 KiB pages go, not only their comments
+    t = must(t, "#define SEQLZ_HASH_BITS (SEQLZ_BLOCK_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
+    # the cast is for C++, which src/ is compiled as too
+    t = must(t, "\tconst u8 *q = (const u8 *)p; /* a cast for the C++ of the harness */\n", "\tconst u8 *q = p;\n")
+    return common(t)
+
+
+# what each file uses itself, not what it gets through another header
 INCLUDES = {
-    "codes": ["linux/build_bug.h", "linux/errno.h", "linux/init.h", "linux/module.h", "linux/seqlz.h",
-              "linux/string.h"],
-    "compress": ["linux/errno.h", "linux/export.h", "linux/math64.h", "linux/seqlz.h", "linux/string.h",
-                 "linux/unaligned.h"],
-    "decompress": ["linux/cache.h", "linux/errno.h", "linux/export.h", "linux/prefetch.h", "linux/seqlz.h",
-                   "linux/unaligned.h"],
+    "compress": ["linux/errno.h", "linux/export.h", "linux/minmax.h", "linux/string.h", "linux/unaligned.h"],
+    "compress_literals": ["linux/math64.h", "linux/minmax.h", "linux/string.h", "linux/unaligned.h"],
+    "decompress": ["linux/errno.h", "linux/export.h", "linux/module.h", "linux/unaligned.h"],
+    "decompress_literals": ["linux/compiler.h", "linux/minmax.h", "linux/unaligned.h"],
 }
 
 
 def port_c(name):
-    """lib/seqlz/seqlz_<name>.c from src/, with the kernel's headers and the interface's part of
-    api_<name>.c"""
-    t = (SRC / f"seqlz_{name}.c").read_text()
-    t = spdx(t, True)
-    t = must(t, '#include "seqlz_internal.h"\n',
-              "".join(f"#include <{h}>\n" for h in INCLUDES[name]) + '\n#include "seqlz_internal.h"\n')
-    return t
-
-
-def port_codes(docs):
-    t = port_c("codes")
-    # whether every symbol has a code: scripts/gen-seqlz-tables.py checked that when it wrote the lengths
-    t = cut(t, r"bool seqlz_all_symbols\(.*?\n\}\n\n")
-    t = cut(t, r"/\*\n \* Whether the encoder can write every block:.*?\n\}\n\n")
-    t = must(t, "\tt->all_symbols = has_all_symbols(lengths);\n", "")
-    # all of it runs once, from seqlz_init()
-    t = must(t, "struct seqlz_tables seqlz_tables;\n", "struct seqlz_tables seqlz_tables __ro_after_init;\n")
-    for name in ["length_entry", "first_codes", "build_token", "build_values", "build_lit", "build_lit_sets",
-                 "build_own", "build_tables"]:
-        m = re.search(r"^static (\w+) " + name + r"\(([^)]*)\)\n\{", t, re.M)
-        assert m, name
-        t = t[:m.start()] + signature(f"static {m.group(1)} __init {name}(", m.group(2), "\n{") + t[m.end():]
-    for name in ["seqlz_tables_init"]:
-        t = make_static(t, name, init=True)
-        t = put_doc(t, name, docs[name])
-    t = t.rstrip("\n") + "\n\n" + (HERE / "api_codes.c").read_text()
-    return common(t)
+    """lib/seqlz/seqlz_<name>.c from src/, with the kernel's headers"""
+    t = spdx((SRC / f"seqlz_{name}.c").read_text(), True)
+    ours = '#include "seqlz.h"\n' if '#include "seqlz.h"\n' in t else '#include "seqlz_internal.h"\n'
+    return must(t, ours, "".join(f"#include <{h}>\n" for h in INCLUDES[name]) + '\n#include "seqlz_internal.h"\n')
 
 
 def port_compress(docs):
     t = port_c("compress")
     # what only the harness uses: seqlz_find(), seqlz_encode() and their helpers
-    t = cut(t, r"/\* ---- the matcher of page_lz\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
+    t = cut(t, r"/\* ---- the matcher of seqlz_match\.h, for seqlz_find\(\) ---- \*/\n.*?(?=/\* ---- encoder ---- \*/)")
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
                r"static unsigned int encode_raw\(.*?\n\}\n\n")
     t = cut(t, r"unsigned int seqlz_encode\(.*?\n\}\n\n")
-    # the tables are checked once, by seqlz_init(), not for every page
-    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)\n", "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
-    # the matcher of page_lz.h, right before the one function that calls it, calling encode_emit()
+    # the tables are checked when they are built, not for every block
+    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)\n",
+             "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
+    # seqlz_token() of src/seqlz.h, for the encoder, its one user here
+    api = (SRC / "seqlz.h").read_text()
+    m = re.search(r"/\* the token of a sequence with a match, see the top of seqlz_format\.h \*/\n"
+                  r"static inline unsigned int seqlz_token\(.*?\n\}\n", api, re.S)
+    assert m, "seqlz_token() in src/seqlz.h"
+    token = m.group(0).replace("see the top of seqlz_format.h", "see the top of seqlz_format.h")
+    t = must(t, "/* ---- encoder ---- */\n", "/* ---- encoder ---- */\n\n" + token)
+    # the matcher of seqlz_match.h, right before the one function that calls it, calling encode_seq()
     # itself: in the kernel's copy it has no other caller
-    lz = (SRC / "page_lz.h").read_text()
-    lz = lz[lz.index('#include "seqlz.h"\n') + len('#include "seqlz.h"\n'):lz.rindex("#endif")].strip("\n")
+    lz = (SRC / "seqlz_match.h").read_text()
+    lz = lz[lz.index('#include "seqlz_internal.h"\n') + len('#include "seqlz_internal.h"\n'):lz.rindex("#endif")].strip("\n")
     lz = cut(lz, r"/\*\n \* The matcher calls this for every sequence it finds.*?\);\n\n")
     lz = must(lz, "static __always_inline void\n"
                   "seqlz_match_block(u16 *table, const u8 *src, bool lazy, emit_fn emit, void *ctx)\n",
@@ -436,7 +431,7 @@ def port_compress(docs):
     # encode_seq() with the records of SEQLZ_LEVEL_OWN in the lazy copy, lazy a constant there
     lz, k = re.subn(r"\bemit\(ctx, (.*?)\);", r"encode_seq(e, \1, lazy);", lz)
     assert k == 2, k
-    t = must(t, '#include "page_lz.h"\n\n', "")
+    t = must(t, '#include "seqlz_match.h"\n', "")
     t = must(t, "static unsigned int compress_block(", "/* ---- the matcher ---- */\n\n" + lz + "\n\n"
              "static unsigned int compress_block(")
     t = must(t, "\t\tseqlz_match_block(st->table, src, true, encode_emit_rec, &e);\n",
@@ -460,6 +455,63 @@ def port_decompress(docs):
     t = put_doc(t, "seqlz_decode", docs["seqlz_decode"])
     t = t.rstrip("\n") + "\n\n" + (HERE / "api_decompress.c").read_text()
     return common(t)
+
+
+def port_gen():
+    """lib/seqlz/gen_seqlz_tables.c: src/seqlz_codes.c as a program for the build host, which writes the
+    codes and decode tables as C, with tools/kernel-port/gen_tables_main.c"""
+    t = spdx((SRC / "seqlz_codes.c").read_text(), True)
+    t = must(t, "/*\n * The codes and decode tables, built from the code lengths:\n * seqlz_tables_init().\n */\n"
+                '#include "seqlz.h"\n',
+             "/*\n * gen_seqlz_tables: seqlz's codes and decode tables, built from the code\n"
+             " * lengths of seqlz_lengths.h and printed as lib/seqlz/seqlz_tables.c. A program\n"
+             " * for the build host, run when the kernel is built.\n */\n"
+             "#include <errno.h>\n#include <stdio.h>\n#include <string.h>\n\n"
+             '#include "seqlz_tables.h"\n#include "seqlz_lengths.h"\n')
+    t = cut(t, r"bool seqlz_all_symbols\(void\)\n\{.*?\n\}\n\n")
+    t = cut(t, r"struct seqlz_tables seqlz_tables;\n\n")
+    t = cut(t, r"\n\nint seqlz_tables_init\(const struct seqlz_lengths \*lengths\)\n\{.*?\n\}\n")
+    # every symbol needs a code, for the encoder
+    t = must(t, "\tt->all_symbols = has_all_symbols(lengths);\n", "\tif (!has_all_symbols(lengths))\n\t\treturn -EINVAL;\n")
+    t = t.rstrip("\n") + "\n\n" + (HERE / "gen_tables_main.c").read_text()
+    return common(t)
+
+
+# lib/seqlz/Makefile: the module, and its tables, which gen_seqlz_tables, a program for the build host,
+# writes from the code lengths, as lib/crc's gen_crc32table and lib/raid's mktables do
+MAKEFILE = """# SPDX-License-Identifier: GPL-2.0-only OR MIT
+# as lib/lz4: with -O2 seqlz compresses slower, on x86-64 and arm64
+ccflags-y += -O3
+
+obj-$(CONFIG_SEQLZ) += seqlz.o
+seqlz-y := seqlz_compress.o seqlz_compress_literals.o seqlz_decompress.o \\
+	   seqlz_decompress_literals.o seqlz_tables.o
+
+# the codes and decode tables, built from the code lengths of seqlz_lengths.h
+hostprogs := gen_seqlz_tables
+HOSTCFLAGS_gen_seqlz_tables.o := -I$(srctree)/tools/include
+
+quiet_cmd_gen_seqlz_tables = GEN     $@
+      cmd_gen_seqlz_tables = $(obj)/gen_seqlz_tables > $@
+
+targets += seqlz_tables.c
+$(obj)/seqlz_tables.c: $(obj)/gen_seqlz_tables FORCE
+	$(call if_changed,gen_seqlz_tables)
+
+obj-$(CONFIG_SEQLZ_KUNIT_TEST) += tests/seqlz_kunit.o
+"""
+
+
+def port_lengths_script():
+    """scripts/gen-seqlz-lengths.py without what only the repository's userspace build uses"""
+    t = (HERE / "gen-seqlz-lengths.py").read_text()
+    t = cut(t, r"def main_inc\(what, tables\):\n.*?\n\n\n(?=def main\(\):)")
+    t = must(t, '    what = args.pop(0) if args and args[0] in ("--lengths", "--lit-sets") else None\n', "")
+    t = must(t, "    if what:\n        return main_inc(what, tables)\n", "")
+    t = must(t, "def lengths_initializer(tables, storage=\"\"):", "def lengths_initializer(tables, storage):")
+    t = must(t, "def lit_sets_initializer(tables, storage=\"\"):", "def lit_sets_initializer(tables, storage):")
+    t = must(t, "def own_initializer(tables, storage=\"\"):", "def own_initializer(tables, storage):")
+    return t
 
 
 def port_counts():
@@ -551,25 +603,23 @@ def main():
     tree = pathlib.Path(sys.argv[1])
     if not (tree / "drivers/block/zram/zcomp.c").exists():
         sys.exit(f"{tree} is not a Linux tree with zram")
-    docs = header_docs()[1]
+    docs = header_docs()
     out = {
         "include/linux/seqlz.h": (HERE / "seqlz.h").read_text(),
-        "lib/seqlz/seqlz.h": port_header(),
+        "lib/seqlz/seqlz_format.h": port_format(),
+        "lib/seqlz/seqlz_tables.h": port_tables_h(),
         "lib/seqlz/seqlz_internal.h": port_internal(),
-        "lib/seqlz/seqlz_codes.c": port_codes(docs),
         "lib/seqlz/seqlz_compress.c": port_compress(docs),
+        "lib/seqlz/seqlz_compress_literals.c": common(port_c("compress_literals")),
         "lib/seqlz/seqlz_decompress.c": port_decompress(docs),
+        "lib/seqlz/seqlz_decompress_literals.c": common(port_c("decompress_literals")),
+        "lib/seqlz/gen_seqlz_tables.c": port_gen(),
         "lib/seqlz/seqlz_counts.txt": port_counts(),
         SPEC: ".. SPDX-License-Identifier: GPL-2.0-only OR MIT\n\n" +
               format_rst.convert((REPO / "docs" / "format.md").read_text()),
-        "scripts/gen-seqlz-tables.py": (HERE / "gen-seqlz-tables.py").read_text(),
+        "scripts/gen-seqlz-lengths.py": port_lengths_script(),
         "lib/seqlz/tests/seqlz_kunit.c": port_kunit(),
-        "lib/seqlz/Makefile": "# SPDX-License-Identifier: GPL-2.0-only OR MIT\n"
-                              "# as lib/lz4: with -O2 seqlz compresses slower, on x86-64 and arm64\n"
-                              "ccflags-y += -O3\n\n"
-                              "obj-$(CONFIG_SEQLZ) += seqlz.o\n"
-                              "seqlz-y := seqlz_codes.o seqlz_compress.o seqlz_decompress.o seqlz_tables.o\n\n"
-                              "obj-$(CONFIG_SEQLZ_KUNIT_TEST) += tests/seqlz_kunit.o\n",
+        "lib/seqlz/Makefile": MAKEFILE,
         "lib/seqlz/.kunitconfig": "CONFIG_KUNIT=y\nCONFIG_SEQLZ_KUNIT_TEST=y\n",
         "drivers/block/zram/backend_seqlz.c": port_backend(tree),
         "drivers/block/zram/backend_seqlz.h": (HERE / "backend_seqlz.h").read_text(),
@@ -578,7 +628,9 @@ def main():
     added = {"MAINTAINERS": MAINTAINERS_ENTRY, ZRAM_RST: ZRAM_DOC}
     for path, text in [*out.items(), *added.items()]:
         for n, line in enumerate(text.split("\n"), 1):
-            if FORBIDDEN.search(KEPT_URLS.sub("", line)) or HARNESS_ONLY.search(line) or \
+            # the kernel's own tools/include, for the host program that writes the tables
+            if FORBIDDEN.search(KEPT_URLS.sub("", line).replace("$(srctree)/tools/include", "")) or \
+                    HARNESS_ONLY.search(line) or \
                     path.startswith("lib/") and CPU_MODEL.search(line):
                 left.append(f"{path}:{n}: {line.strip()}")
     if left:
@@ -589,12 +641,13 @@ def main():
     for path, text in out.items():
         (tree / path).parent.mkdir(parents=True, exist_ok=True)
         (tree / path).write_text(text)
-    # the tables, by the generator in the tree, as anybody would make them again
-    (tree / "scripts/gen-seqlz-tables.py").chmod(0o755)
-    out["lib/seqlz/seqlz_tables.c"] = subprocess.run(
-        [sys.executable, "scripts/gen-seqlz-tables.py", "lib/seqlz/seqlz_counts.txt"], cwd=tree, check=True,
+    # the code lengths, by the script in the tree, as anybody would make them again; the codes and decode
+    # tables are generated from them when the kernel is built, see MAKEFILE
+    (tree / "scripts/gen-seqlz-lengths.py").chmod(0o755)
+    out["lib/seqlz/seqlz_lengths.h"] = subprocess.run(
+        [sys.executable, "scripts/gen-seqlz-lengths.py", "lib/seqlz/seqlz_counts.txt"], cwd=tree, check=True,
         capture_output=True, text=True).stdout
-    (tree / "lib/seqlz/seqlz_tables.c").write_text(out["lib/seqlz/seqlz_tables.c"])
+    (tree / "lib/seqlz/seqlz_lengths.h").write_text(out["lib/seqlz/seqlz_lengths.h"])
 
     patch(tree / "lib/Kconfig", "config LZ4_DECOMPRESS\n\ttristate\n\n",
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"

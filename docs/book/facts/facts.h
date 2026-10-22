@@ -12,7 +12,7 @@
 #include <string.h>
 
 #include "pages.h"
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 static int fact_n;
 

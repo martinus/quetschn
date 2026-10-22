@@ -128,7 +128,7 @@
         return 'The header, bytes 0 and 1 little endian: 0x' + hex(h, 4) + '. The top bit is ' + (h >> 15) + ': ' +
           (h >> 15 ? 'the literals are Huffman coded' : 'the literals are raw') + ', and there are ' + (h & 0x7fff) + ' of them.';
       }
-      if (t.indexOf('q = decode_literals') === 0) return 'decode_literals() decodes the ' + page.nLit + ' coded literals into the scratch buffer, 8 streams side by side (chapter 13). The sequences’ bitstream starts right after the streams, at byte ' + page.bitStart + '.';
+      if (t.indexOf('q = seqlz_decode_literals') === 0) return 'seqlz_decode_literals() decodes the ' + page.nLit + ' coded literals into the scratch buffer, 8 streams side by side (chapter 13). The sequences’ bitstream starts right after the streams, at byte ' + page.bitStart + '.';
       if (t.indexOf('lit = scratch') === 0) return 'From now on the literals come from the scratch buffer, and the bit reader starts at byte ' + page.bitStart + '.';
       if (t.indexOf('lit = s + SEQLZ_HEADER') === 0) return 'Raw literals: they are bytes 2 to ' + (C.HEADER + page.nLit - 1) + ', and the bitstream starts after them, at byte ' + page.bitStart + '.';
       if (t.indexOf('end_gap =') === 0) return 'end_gap = d_end − lit_end, as numbers. When d − lit is end_gap, the literals left, lit_end − lit, are exactly the bytes the page still needs, d_end − d: one compare per slow sequence tells the end.';

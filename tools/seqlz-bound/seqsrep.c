@@ -6,7 +6,8 @@
  * start of a page, as in the format, the others 0 until there is one), and 1 for the first sequence of
  * a page. A match at one of them moves it to the front, as zstd's repeat offsets. Build from the
  * repository's root:
- *   cc -O2 -Isrc -o seqsrep tools/seqlz-bound/seqsrep.c src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
+ *   cc -O2 -Isrc -o seqsrep tools/seqlz-bound/seqsrep.c
+ * src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
  */
 #include <stdio.h>
 #include <stdlib.h>

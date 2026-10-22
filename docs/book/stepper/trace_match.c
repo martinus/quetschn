@@ -4,7 +4,7 @@
  * records every step (instrument.py match). Prints JSON: per page its bytes and the steps. Fails if
  * the sequences the matcher emits do not make the page again.
  *
- * cc -O1 -I<dir of the instrumented page_lz.h> -I<repo>/src trace_match.c
+ * cc -O1 -I<dir of the instrumented seqlz_match.h> -I<repo>/src trace_match.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,8 +27,8 @@ static void step(int line,
                  unsigned int len);
 #define STEP_A() step(__LINE__, pos, anchor, last, h, cand, -1, -1, 0, 0)
 #define STEP_B() step(__LINE__, pos, anchor, last, h, cand, (int)rep_hit, (int)cand_hit, m, len)
-#include "page_lz.h"
 #include "pages.h"
+#include "seqlz_match.h"
 
 /*
  * One step: the line and the variables, and the slot that position pos - 2 hashes to, where a hit

@@ -16,7 +16,9 @@
 
 #include "facts.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 static char key_buf[128];
 
@@ -271,7 +273,7 @@ static void encoder_facts(const struct seqlz_tables* t) {
     static struct seqlz_state st;
     static const u8 shown[] = {' ', 'a', 'd', 'e', 'l', 'n', 'u'};
     struct own_work* w = own_work(&st);
-    u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}}, odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}};
+    u64 even[SEQLZ_LIT_STREAMS] = {0}, odd[SEQLZ_LIT_STREAMS] = {0};
     unsigned int n_lit, bits = ~0U, set = 0, j, k, coded = 0, sizes[SEQLZ_LIT_STREAMS], width, header, d, est;
     unsigned int h = 0, n = 0, space0 = 0, own_coded, own_width, init_len[256] = {0}, own_bits = 0;
     const u8* lits;
@@ -281,7 +283,7 @@ static void encoder_facts(const struct seqlz_tables* t) {
         fail("the text page does not compress");
     n_lit = get_unaligned_le16(dst);
     lits = dst + SEQLZ_HEADER;
-    /* code_literals()' first steps, with the counts for the page's own table */
+    /* seqlz_code_literals()' first steps, with the counts for the page's own table */
     memset(w->freq, 0, sizeof w->freq);
     lit_cost(lits, n_lit, even, odd, w->freq);
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {

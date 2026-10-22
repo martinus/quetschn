@@ -6,7 +6,7 @@
  *   ch10.ab.*, ch10.ptr.*   the page of ab and the page of pointers put by put and flush by flush,
  *                           checked against what seqlz_compress() writes
  *   ch10.esc.*              the escape, and token 10 escaped
- *   ch11.*                  chapter 11's page of letters through code_literals(), step by step
+ *   ch11.*                  chapter 11's page of letters through seqlz_code_literals(), step by step
  *   ch12.*                  the sizes and offsets of the decoder's tables, repeat_pattern(), and the
  *                           bit reader on made-up bytes and on the page of ab
  */
@@ -15,7 +15,9 @@
 
 #include "facts.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 #define CAP (2 * SEQLZ_BLOCK_SIZE)
 
@@ -306,7 +308,7 @@ static void chapter10(void) {
     fact_num("ch10.wrap.extra", extra);
 }
 
-/* ---- chapter 11: code_literals() on the page of letters ---- */
+/* ---- chapter 11: seqlz_code_literals() on the page of letters ---- */
 
 /* letters_page() of pages.h with n letters */
 static unsigned int letters_n;
@@ -333,7 +335,7 @@ static void chapter11(void) {
     static u8 page[SEQLZ_BLOCK_SIZE], raw[CAP], cod[CAP], check[SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
-    u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}}, odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {{0}};
+    u64 even[SEQLZ_LIT_STREAMS] = {0}, odd[SEQLZ_LIT_STREAMS] = {0};
     static const u8 four[4] = {0x65, 0x20, 0x65, 0x00};
     const u64 lanes = 0x00ff00ff00ff00ffULL;
     unsigned int total[SEQLZ_LIT_SETS], order[SEQLZ_LIT_SETS], sizes[SEQLZ_LIT_STREAMS], q[SEQLZ_LIT_STREAMS + 1];
@@ -394,15 +396,11 @@ static void chapter11(void) {
         s = scratch();
         *s = 0;
         for (k = 0; k < SEQLZ_LIT_SETS; k++)
-            sprintf(s + strlen(s), " %2u", (unsigned int)(T->lit_cost[b][0] >> (8 * k) & 255U));
-        str(key("ch11.cost.%02x", b),
-            "byte %02x: lengths%s   lit_cost 0x%016llx",
-            b,
-            s,
-            (unsigned long long)T->lit_cost[b][0]);
+            sprintf(s + strlen(s), " %2u", (unsigned int)(T->lit_cost[b] >> (8 * k) & 255U));
+        str(key("ch11.cost.%02x", b), "byte %02x: lengths%s   lit_cost 0x%016llx", b, s, (unsigned long long)T->lit_cost[b]);
     }
     for (i = 0; i < 4; i++) {
-        x += T->lit_cost[four[i]][0];
+        x += T->lit_cost[four[i]];
         str(key("ch11.x.%u", i + 1), "after %02x:  0x%016llx", four[i], (unsigned long long)x);
     }
     str("ch11.x", "0x%016llx", (unsigned long long)x);
@@ -443,7 +441,7 @@ static void chapter11(void) {
     fact_num("ch11.others.max", total[order[SEQLZ_LIT_SETS - 1]]);
     set = order[0];
     if ((cod[2] & 7U) != set)
-        fail("code_literals() chose another table than the pricing");
+        fail("seqlz_code_literals() chose another table than the pricing");
     fact_num("ch11.set", set);
     q[0] = 0;
     for (j = 0; j < SEQLZ_LIT_STREAMS; j++) {

@@ -187,9 +187,9 @@ count, `{{ch16.raw.u16}}`, and moves the bitstream to right after the literals, 
 $2 + {{ch16.lits}} + {{ch16.bytes}} = {{ch16.raw.len}}$ bytes, the page as `seqlz-1` stores it.
 @assert ch16.pad_bits > 0 and ch16.raw.gap >= ch16.bytes
 
-## code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
+## seqlz_code_literals(): {{ch16.coded.saved}} bytes less {#ch-trace--literals}
 
-`code_literals()` ([chapter 11](#ch-literals-enc)) prices the {{ch16.lits}} literals in all 8 tables,
+`seqlz_code_literals()` ([chapter 11](#ch-literals-enc)) prices the {{ch16.lits}} literals in all 8 tables,
 in chunks of {{ch16.lt.chunk}}. The trace program recomputes it one literal at a time:
 
 @output ch16-trace 27-35
@@ -291,7 +291,7 @@ one, {{ch16.zs.lower}}.
 The backend calls `seqlz_decode(src, {{ch16.coded.len}}, dst, scratch)` with the per-CPU scratch of
 {{const.SCRATCH}} bytes ([chapter 14](#ch-decode)). Bit 7 of byte 2 is 0, so it runs the copy of
 `decode_block()` without deltas. That prefetches the token and length tables, finds the
-top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `decode_literals()`
+top bit of `{{ch16.coded.u16}}` set and `n_lit = {{ch16.lits}}`, and `seqlz_decode_literals()`
 ([chapter 13](#ch-literals-dec)) reads table {{ch16.lt.set}} and width {{ch16.lt.width}} from byte 2,
 prefetches the literal table, and reads the sizes, {{ch16.lt.sizes_sp}}. {{ch16.lits}} literals are
 {{ch16.d.rounds}} full rounds of 40 and a rest of {{ch16.d.rest}}: {{ch16.d.steps}} steps of all 8 streams
@@ -357,7 +357,7 @@ every CPU, so the output is too:
 #include <stdlib.h>
 #include <string.h>
 
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 #define N_REC 48 /* records of 32 bytes from byte 64 on */
 
@@ -534,7 +534,7 @@ int main(void)
 	    memcmp(out, page, SEQLZ_BLOCK_SIZE))
 		return 2;
 
-	/* the 8 literal tables as code_literals() weighs them */
+	/* the 8 literal tables as seqlz_code_literals() weighs them */
 	for (k = 0; k < SEQLZ_LIT_SETS; k++) {
 		unsigned int bits = 0, bytes = 0, j, m;
 
@@ -609,12 +609,12 @@ and gcc, `trace.c` in the current directory:
 
 ```text
 R=/path/to/quetschn
-sed -e 's/^#include "seqlz_internal.h"$/&\nunsigned int n_fast, n_slow;\n#define seqlz_decode seqlz_decode_counted/' \
+sed -e 's/^#include "seqlz.h"$/&\nunsigned int n_fast, n_slow;\n#define seqlz_decode seqlz_decode_counted/' \
     -e 's/^\t\t\ttok = next_token_fast(/\t\t\tn_fast++;\n&/' \
     -e 's|^\t\t/\* the slow path: length values, and every check \*/$|&\n\t\tn_slow++;|' \
     $R/src/seqlz_decompress.c > dec_counted.c
 gcc -O2 -Wall -Wextra -I$R/src -o trace trace.c dec_counted.c \
-    $R/src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
+    $R/src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
 ./trace
 ```
 

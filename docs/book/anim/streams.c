@@ -2,7 +2,7 @@
 /*
  * streams.c: the data of the animation "streams" in chapter 13. Compresses chapter 16's page with
  * coded literals and prints, as JSON, its literals in page order with the code length each has in the
- * page's literal table, the stream sizes of the header, and what decode_literals() writes after the
+ * page's literal table, the stream sizes of the header, and what seqlz_decode_literals() writes after the
  * literals in its last step. Fails if anything disagrees with seqlz_decode().
  */
 #include <stdio.h>

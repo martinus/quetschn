@@ -11,6 +11,7 @@
 #include "facts.h"
 
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 
 static int ch14_on;
 static unsigned int ch14_seq(unsigned int d,
@@ -43,6 +44,7 @@ static void ch14_slow(void);
 #define SEQLZ_LL_CAP (ch14_on ? ch14_slow() : (void)0, (1U << SEQLZ_LL_BITS) - 1U)
 
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 /* a key made with printf's format */
 static inline const char* key(const char* fmt, ...) {
@@ -260,7 +262,7 @@ static void ch13(void) {
     fact_num("ch13.max_load_byte", 7 * SEQLZ_SIZE_BITS_MAX / 8);
     fact_num("ch13.max_load_bit", 7 * SEQLZ_SIZE_BITS_MAX);
 
-    /* decode_literals(), its steps as they are, with the record of stream 0's first two refills */
+    /* seqlz_decode_literals(), its steps as they are, with the record of stream 0's first two refills */
     for (i = 0; i < 8; i++) {
         ip[i] = start[i];
         b[i] = 1;
@@ -1025,7 +1027,7 @@ static void ch16(void) {
     if (n_raw != SEQLZ_HEADER + n_lit + (bits + 7) / 8)
         die("ch16: raw length");
 
-    /* the literal tables as code_literals() weighs them */
+    /* the literal tables as seqlz_code_literals() weighs them */
     for (k = 0; k < SEQLZ_LIT_SETS; k++) {
         unsigned int b = stream_bits(raw + SEQLZ_HEADER, n_lit, k, &bytes, NULL);
 

@@ -92,13 +92,13 @@ it may not do in the kernel, and the benchmarks would not measure what the kerne
 The kernel's `u64` is `unsigned long long` on every architecture, glibc's `uint64_t` is `unsigned
 long` on 64-bit Linux. Defining `u64` the kernel's way gives userspace the same types the kernel code
 sees, e.g. for `__builtin_ctzll()` and for `printf()` formats. The codec marks
-{{ch05.inline_c}} small helpers in its `.c` files and `page_lz.h` `__always_inline`, e.g. `enc_put()`,
+{{ch05.inline_c}} small helpers in its `.c` files and `seqlz_match.h` `__always_inline`, e.g. `enc_put()`,
 and {{ch05.inline_compat}} more in this header, because a call in a loop that runs once per sequence
 or per literal costs more than the helper's work; glibc's `sys/cdefs.h` has its own
 `__always_inline`, which means the same. `noinline` and `__cold` are only for C: in C++ the macros
 would also replace the words inside `[[gnu::noinline]]` and `[[gnu::cold]]`, which gcc 16 then
 ignores with a warning. The decoder uses both on `lit_load_tail()`, which runs only at the end of a
-literal stream, and `noinline` on `decode_literals()` ([chapter 13](#ch-literals-dec)).
+literal stream, and `noinline` on `seqlz_decode_literals()` ([chapter 13](#ch-literals-dec)).
 `static_assert` is a keyword in C23 and in C++, so the macro is only for C before C23. Line 102 says
 that cache lines have 64 bytes, true for every x86-64 CPU and for the arm64 cores that were measured;
 it decides only how many prefetches `prefetch_lines()` sends, never a result.
@@ -206,7 +206,7 @@ load through accessors like these, and since then `test/seqlz_endian.c` compress
 | --- | --- | --- |
 | `get_unaligned_le16()`, `put_unaligned_le16()` | the `u16` at the start of a page, in `seqlz_decode()` and the encoder | the format says little endian |
 | `get_unaligned_le32()` | the matcher's 4-byte compare of a candidate, the stream sizes of coded literals | any fixed order works for a compare; the sizes are little endian |
-| `get_unaligned_le32()`, `put_unaligned_le32()`, `get_unaligned_le64()`, `put_unaligned_le64()` | the deltas of level 3's literals, 4 or 8 bytes at a time, in `delta_literals()` and in the decoder's `add4()` and `add8()` | any order works, as long as the load and the store use the same one |
+| `get_unaligned_le32()`, `put_unaligned_le32()`, `get_unaligned_le64()`, `put_unaligned_le64()` | the deltas of level 3's literals, 4 or 8 bytes at a time, in `seqlz_delta_literals()` and in the decoder's `add4()` and `add8()` | any order works, as long as the load and the store use the same one |
 | `get_unaligned_le64()` | the matcher's hash and match length, the decoder's pattern for offsets below 8 | the byte at `p` in the low bits, so that bit tricks find the first byte that differs at the bottom |
 | `get_unaligned_be64()` | the decoder's bit reader for the sequences, the literal streams | the bitstreams are most significant bit first |
 | `put_unaligned_le64()` | the encoder's flush of its bits, the literal coder, the decoder's pattern copy | see [chapter 10](#ch-encoder) |

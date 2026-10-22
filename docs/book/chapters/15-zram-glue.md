@@ -57,7 +57,7 @@ the split; the harness's `lz4`, `lzo` and `zstd` are copies of the kernel's glue
 @listing src/zram_seqlz.c 1-8
 
 The three codecs are the three levels of `seqlz_compress()` ([chapter 6](#ch-header--compressor)); they
-write the same format and are read by the same decoder. `seqlz-2` lets `code_literals()`
+write the same format and are read by the same decoder. `seqlz-2` lets `seqlz_code_literals()`
 ([chapter 11](#ch-literals-enc)) code the literals where that saves $\frac{1}{16}$ of them and
 {{ch15.coded_min}} bytes, `seqlz-3` adds the lazy matcher, a literal table of the page's own and the
 literals as deltas to earlier bytes of the page. In the
@@ -98,7 +98,7 @@ review asked for the global.
 
 `struct seqlz_state` is a union of the matcher's hash table and a page of bytes
 ([chapter 6](#ch-header--compressor)): {{ch17.hash_slots}} entries of 2 bytes, {{size.state}} bytes, and
-`code_literals()` copies the raw literals into the same memory once the matcher is done
+`seqlz_code_literals()` copies the raw literals into the same memory once the matcher is done
 ([chapter 11](#ch-literals-enc--in-place)). Both codecs compress with it. The zeroing is not needed, since
 the matcher clears its table for every page; `kvzalloc()` zeroes in the kernel, and the harness does the
 same. The kernel builds without the warning about unused parameters below `W=3`, so its backend needs no
@@ -160,7 +160,7 @@ codec has no decompression context. The object is not `static`: `bench/bench_mai
 
 The scratch is where the coded literals are decoded to ([chapter 13](#ch-literals-dec)), a page plus 16
 bytes, at levels 2 and 3, {{const.SCRATCH}} with 4 KiB pages: the decoder's 16-byte copies read up to 15 bytes past the last
-literal, and the last step of `decode_literals()` writes up to 8. So `seqlz-2` has
+literal, and the last step of `seqlz_decode_literals()` writes up to 8. So `seqlz-2` has
 {{size.state}} bytes per CPU for compression and {{const.SCRATCH}} for decompression,
 {{ch15.state_plus_scratch|grp}} bytes, which `kmalloc()` hands out as {{ch15.mem.split_gets|grp}}. The
 harness's one context before the split was a struct of both, also {{ch15.mem.struct_gets|grp}} bytes
@@ -195,8 +195,8 @@ into `src/` or `tools/kernel-port/`, never into the copy.
 | --- | --- |
 | `include/linux/seqlz.h` | `tools/kernel-port/seqlz.h`: the interface, two functions |
 | `lib/seqlz/seqlz.h`, `seqlz_internal.h` | `src/`, without what only the harness uses |
-| `lib/seqlz/seqlz_codes.c`, `seqlz_compress.c`, `seqlz_decompress.c` | `src/`, each with its part of the interface from `api_*.c`; the matcher of `page_lz.h` inside `seqlz_compress.c` |
-| `lib/seqlz/seqlz_tables.c` | generated in the tree by `scripts/gen-seqlz-tables.py` from `lib/seqlz/seqlz_counts.txt` |
+| `lib/seqlz/seqlz_codes.c`, `seqlz_compress.c`, `seqlz_decompress.c` | `src/`, each with its part of the interface from `api_*.c`; the matcher of `seqlz_match.h` inside `seqlz_compress.c` |
+| `lib/seqlz/seqlz_tables.c` | generated in the tree by `scripts/gen-seqlz-lengths.py` from `lib/seqlz/seqlz_counts.txt` |
 | `lib/seqlz/tests/seqlz_kunit.c` | `tools/kernel-port/seqlz_kunit.c`, with values from `docs/format.md` filled in |
 | `lib/Kconfig`, `lib/Kconfig.debug`, `lib/Makefile`, `lib/seqlz/Makefile` | `CONFIG_SEQLZ`, and `CONFIG_SEQLZ_KUNIT_TEST` with the other KUnit tests of `lib/`; `-O3` as `lib/lz4` |
 | `drivers/block/zram/backend_seqlz.[ch]`, `Kconfig`, `Makefile`, `zcomp.c` | the backend, `CONFIG_ZRAM_BACKEND_SEQLZ` |
@@ -259,7 +259,7 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
   more user, `seqlz_find()`.
 - **What only the harness uses is cut**: `seqlz_find()`, `seqlz_encode()` and `encode_raw()`, `struct
   seqlz_sequence`, `SEQLZ_MAX_SEQUENCES`, `seqlz_tables_size()`, the `all_symbols` field and its
-  checks. The `raw` parameter of `code_literals()` stays: at level 3 it carries the deltas
+  checks. The `raw` parameter of `seqlz_code_literals()` stays: at level 3 it carries the deltas
   ([chapter 11](#ch-literals-enc--code-own)).
 
 Every textual replacement goes through `must()` or `cut()`, which assert that the text occurs exactly as
@@ -444,7 +444,7 @@ runs `port.py`, and then:
 CI runs it for x86-64 with gcc, and with clang for arm64, the phones' architecture, 32-bit arm, whose
 32-bit `long` and pointers show a computation that assumes 64 bits, and s390, which is big-endian. The
 32-bit kernel warns about stack frames above 1280 bytes, against 2048 on 64-bit. With gcc 16.2.1, x86-64
-`defconfig` and the Makefile's `-O3`, the deepest frames are `code_literals()` and `decode_literals()`,
+`defconfig` and the Makefile's `-O3`, the deepest frames are `seqlz_code_literals()` and `seqlz_decode_literals()`,
 640 bytes each, and 1000 and 952 with KASAN and UBSan. Since 11th October 2026 `check.sh` prints the
 three deepest frames of each build and fails at 1024 bytes, the limit of older kernels' 32-bit
 `FRAME_WARN`.

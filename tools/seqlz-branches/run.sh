@@ -34,7 +34,7 @@ for m in 2 0 1; do
         "$out/decode_once" "$pages" $m 2>"$out/stat$m.csv" | tee "$out/run$m.txt"
 done
 taskset -c 2 perf record -q -o "$out/lbr.data" -j any,u -e cycles:u -c 20003 -- "$out/decode_once" "$pages" 0 >/dev/null
-perf report -i "$out/lbr.data" -b --stdio --symbols=seqlz_decode,decode_literals --sort mispredict,srcline_from \
+perf report -i "$out/lbr.data" -b --stdio --symbols=seqlz_decode,seqlz_decode_literals --sort mispredict,srcline_from \
     --percent-limit 0 2>/dev/null >"$out/lbr.txt"
 # per decode: the counts of mode 0 minus mode 2, and of mode 1 minus mode 0; the mispredicted branches of
 # mode 0 by source line, a line's share of them times the misses per decode

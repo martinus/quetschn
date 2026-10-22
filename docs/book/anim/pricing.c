@@ -11,12 +11,13 @@
 
 #include "pages.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 
 int main(void) {
     static u8 page[SEQLZ_BLOCK_SIZE], raw[2 * SEQLZ_BLOCK_SIZE], comp[2 * SEQLZ_BLOCK_SIZE];
     static struct seqlz_state st;
-    u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {0};
-    u64 odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = {0};
+    u64 even[SEQLZ_LIT_STREAMS] = {0};
+    u64 odd[SEQLZ_LIT_STREAMS] = {0};
     unsigned int n_lit, j, k, used[256] = {0}, first = 1;
     const u8* lit;
 
@@ -43,7 +44,7 @@ int main(void) {
     /* byte k of lit_cost[b] is b's code length in table k */
     for (j = 0; j < 256; j++)
         for (k = 0; k < SEQLZ_LIT_SETS; k++)
-            if ((seqlz_tables.lit_cost[j][0] >> (8 * k) & 255U) != (seqlz_tables.lit[k].enc[j] & 63U))
+            if ((seqlz_tables.lit_cost[j] >> (8 * k) & 255U) != (seqlz_tables.lit[k].enc[j] & 63U))
                 return 1;
     printf("{\"set\":%u,\"run\":%u,\"lit\":[", comp[2] & (SEQLZ_LIT_SETS - 1U), LIT_COST_RUN);
     for (k = 0; k < n_lit; k++) {
@@ -57,7 +58,7 @@ int main(void) {
         printf("%s\"%u\":[", first ? "" : ",", k);
         first = 0;
         for (j = 0; j < SEQLZ_LIT_SETS; j++)
-            printf("%s%u", j ? "," : "", (unsigned int)(seqlz_tables.lit_cost[k][0] >> (8 * j) & 255U));
+            printf("%s%u", j ? "," : "", (unsigned int)(seqlz_tables.lit_cost[k] >> (8 * j) & 255U));
         printf("]");
     }
     printf("},\"bits\":[");

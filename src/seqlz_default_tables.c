@@ -3,7 +3,7 @@
  * The code lengths compiled in. They are part of the format: a block decodes
  * only with the tables it was compressed with (docs/format.md). For blocks of
  * 4 KiB they are in seqlz_default_tables_4k.inc, which
- * tools/kernel-port/gen-seqlz-tables.py makes from the counts in
+ * tools/kernel-port/gen-seqlz-lengths.py makes from the counts in
  * bench/seqlz_counts_4k.txt, counted with
  *   quetschn-seqlz-train --corpus train-mix-1012 --counts
  * on pages that are not in the dumps the benchmarks measure. docs/format.md

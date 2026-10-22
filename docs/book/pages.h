@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 /* n bytes of v, little endian */
 static inline void le(u8* p, unsigned long long v, unsigned int n) {

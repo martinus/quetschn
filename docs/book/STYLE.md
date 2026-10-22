@@ -48,7 +48,7 @@ Say a thing once: no summary of what a listing showed, no repeat of what another
 ## Listings
 
 ```text
-@listing src/page_lz.h 13-22
+@listing src/seqlz_match.h 13-22
 ```
 
 on a line of its own inserts lines 13 to 22 of that file, with real line numbers, taken from the

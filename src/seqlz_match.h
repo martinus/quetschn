@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-only */
-#ifndef SEQLZ_PAGE_LZ_H
-#define SEQLZ_PAGE_LZ_H
+#ifndef SEQLZ_MATCH_H
+#define SEQLZ_MATCH_H
 
 /*
  * The part of seqlz that is plain LZ: the matcher, which finds the sequences of
@@ -8,7 +8,7 @@
  * seqlz_compress.c.
  */
 
-#include "seqlz.h"
+#include "seqlz_internal.h"
 
 /*
  * A hash of the low 5 bytes of v, as zstd computes it: the shift by 24 drops

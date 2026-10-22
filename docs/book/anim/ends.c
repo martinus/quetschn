@@ -14,6 +14,7 @@
 
 #include "pages.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 
 #define CAP_MAX (2 * SEQLZ_BLOCK_SIZE)
 

@@ -12,7 +12,7 @@ base's file name. --counts takes counts trained before. Then, from the repositor
 - the 8 lit lines in the order that fits the committed literal tables best, by the sum of the
   differences of their code lengths, so that an unchanged table keeps its number (the order means
   nothing to the format);
-- bench/seqlz_counts_<4k|16k>.txt, and the two .inc of src/ by tools/kernel-port/gen-seqlz-tables.py;
+- bench/seqlz_counts_<4k|16k>.txt, and the two .inc of src/ by tools/kernel-port/gen-seqlz-lengths.py;
 - the SHA-256 of each table in docs/format.md.
 
 The counts' own line comes from the pages level 3 gives a table of their own with the tables <build> has
@@ -33,7 +33,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-GEN = "tools/kernel-port/gen-seqlz-tables.py"
+GEN = "tools/kernel-port/gen-seqlz-lengths.py"
 ORDER = (
     "# The 8 lit lines are in the order that matches the literal tables trained before them best, by the\n"
     "# sum of the differences of their code lengths: the order means nothing to the format.\n"

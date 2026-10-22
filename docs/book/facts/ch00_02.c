@@ -14,7 +14,7 @@
 #include <dirent.h>
 
 #include "facts.h"
-#include "page_lz.h"
+#include "seqlz_match.h"
 
 /* the repository, with a / at the end; FACTS_REPO for a copy of this file outside it */
 static const char* repo_dir(void) {

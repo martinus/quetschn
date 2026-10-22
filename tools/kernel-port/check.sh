@@ -49,6 +49,13 @@ build "${kmake[@]}" -j"$(nproc)" W=1 KCFLAGS=-fstack-usage lib/seqlz/ drivers/bl
 ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null || exit 1
 echo "build: no warnings"
+# the tables gen_seqlz_tables wrote in the build, against the ones src/ builds in userspace, printed the same
+printf '#include <stdio.h>\n#include "seqlz_codes.c"\n#include "gen_tables_main.c"\n' >"$work/tables.c"
+cc -O2 -I"$here/../../src" -I"$here" -o "$work/tables" "$work/tables.c" "$here/../../src/seqlz_default_tables.c" \
+    "$here/../../src/seqlz_lit_sets.c"
+"$work/tables" | diff -q - "$work/build/lib/seqlz/seqlz_tables.c" >/dev/null ||
+    { echo "lib/seqlz/seqlz_tables.c is not the tables of src/" >&2; exit 1; }
+echo "tables: the same as src/'s"
 # a division of 64 bits that the compiler leaves to a library call: the kernel has none, and only the
 # link, which check.sh does not do, would say so on 32-bit arm and x86; div_u64() is the kernel's way
 calls=$(nm -u "$work/build"/lib/seqlz/*.o | grep -E '__aeabi_l(div|mod)|__aeabi_uldivmod|__(u?div|u?mod)di3' || true)
@@ -94,7 +101,7 @@ fi
 (cd "$work/src" && { git diff --cached --stat; git diff --cached; } | perl scripts/checkpatch.pl --strict --no-signoff --summary-file --show-types - || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:" | sort | uniq -c | sort -rn | head -20
 echo "x86-prefetcht0.patch:"
 (cd "$work/src" && perl scripts/checkpatch.pl --strict --show-types "$here/x86-prefetcht0.patch" || true) | grep -E "^(ERROR|WARNING|CHECK)|^total:"
-(cd "$work/src" && scripts/kernel-doc -none -Wall -Werror lib/seqlz/seqlz_codes.c lib/seqlz/seqlz_compress.c lib/seqlz/seqlz_decompress.c lib/seqlz/seqlz_internal.h lib/seqlz/seqlz.h include/linux/seqlz.h) || exit 1
+(cd "$work/src" && scripts/kernel-doc -none -Wall -Werror lib/seqlz/*.[ch] include/linux/seqlz.h) || exit 1
 echo "kernel-doc: no warnings"
 # the specification as docutils reads it; Sphinx, which the kernel's htmldocs need, is not required here
 if python3 -c 'import docutils' 2>/dev/null; then

@@ -567,7 +567,7 @@ to 180 ns slower, 740 to 810 ns at p99
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back)).
 @assert ch17.len_lines * 2 == 32
 
-### `decode_literals()` is not inlined
+### `seqlz_decode_literals()` is not inlined
 
 Inside the loop over the sequences, its 8 stream accumulators would take registers that loop needs, also
 on pages without coded literals ([chapter 13](#ch-literals-dec--main)).
@@ -764,7 +764,7 @@ within the noise
 
 The cost is in the code as much as in the time: a second copy of the decoder's loop, `undelta_literals()`,
 `undelta_fast()`, `add4()` and `add8()`, one more field of untrusted input, and in the encoder the
-records, `delta_literals()`, `sub_bytes()` and a second matching pass for a page that does not fit with
+records, `seqlz_delta_literals()`, `sub_bytes()` and a second matching pass for a page that does not fit with
 its records. zram in the phone's kernel has not measured the deltas yet.
 
 ## Tried and not kept {#ch-decisions--not-kept}

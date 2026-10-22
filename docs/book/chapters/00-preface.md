@@ -55,15 +55,19 @@ produces, and collects [the design decisions](#ch-decisions) with what they were
 | file | lines | what it is | chapter |
 | --- | --- | --- | --- |
 | `src/seqlz_compat.h` | {{ch00.lines.seqlz_compat_h}} | the kernel's types and helpers, also outside the kernel | [5](#ch-compat) |
-| `src/seqlz.h` | {{ch00.lines.seqlz_h}} | the format's constants, the public functions | [6](#ch-header) |
-| `src/seqlz_internal.h` | {{ch00.lines.seqlz_internal_h}} | the layout of the tables in memory, the token table's entries | [7](#ch-internal) |
+| `src/seqlz_format.h` | {{ch00.lines.seqlz_format_h}} | the format's constants | [6](#ch-header) |
+| `src/seqlz_internal.h` | {{ch00.lines.seqlz_internal_h}} | what the compressor's and decompressor's files share: work memory, levels | [6](#ch-header) |
+| `src/seqlz.h` | {{ch00.lines.seqlz_h}} | the functions for userspace: tests, tools, the harness | [6](#ch-header) |
+| `src/seqlz_tables.h` | {{ch00.lines.seqlz_tables_h}} | the layout of the tables in memory, the token table's entries | [7](#ch-internal) |
 | `src/seqlz_codes.c` | {{ch00.lines.seqlz_codes_c}} | builds codes and decode tables from code lengths | [8](#ch-codes) |
 | `src/seqlz_default_tables.c`, `src/seqlz_lit_sets.c` and their `.inc` files | ${{ch00.lines.seqlz_default_tables_c}} + {{ch00.lines.seqlz_lit_sets_c}} + 2 \times {{ch00.lines.seqlz_default_tables_4k_inc}} + 2 \times {{ch00.lines.seqlz_lit_sets_4k_inc}}$ | the trained code lengths, part of the format | [8](#ch-codes) |
-| `src/page_lz.h` | {{ch00.lines.page_lz_h}} | the matcher: finds the repeats in a page | [9](#ch-matcher) |
-| `src/seqlz_compress.c` | {{ch00.lines.seqlz_compress_c}} | the encoder, and the coding of literals | [10](#ch-encoder), [11](#ch-literals-enc) |
-| `src/seqlz_decompress.c` | {{ch00.lines.seqlz_decompress_c}} | the decoder | [12](#ch-dec-basics), [13](#ch-literals-dec), [14](#ch-decode) |
+| `src/seqlz_match.h` | {{ch00.lines.seqlz_match_h}} | the matcher: finds the repeats in a page | [9](#ch-matcher) |
+| `src/seqlz_compress.c` | {{ch00.lines.seqlz_compress_c}} | the encoder | [10](#ch-encoder) |
+| `src/seqlz_compress_literals.c` | {{ch00.lines.seqlz_compress_literals_c}} | the coding of literals | [11](#ch-literals-enc) |
+| `src/seqlz_decompress.c` | {{ch00.lines.seqlz_decompress_c}} | the decoder | [12](#ch-dec-basics), [14](#ch-decode) |
+| `src/seqlz_decompress_literals.c` | {{ch00.lines.seqlz_decompress_literals_c}} | the decoding of literals | [13](#ch-literals-dec) |
 | `src/zram_seqlz.c` | {{ch00.lines.zram_seqlz_c}} | seqlz as a zram backend, for the benchmarks | [15](#ch-zram-glue) |
-@assert len(ch00.lines) == 14
+@assert len(ch00.lines) == 18
 @assert ch00.lines.seqlz_default_tables_4k_inc == ch00.lines.seqlz_default_tables_16k_inc and ch00.lines.seqlz_lit_sets_4k_inc == ch00.lines.seqlz_lit_sets_16k_inc
 
 How the pieces call each other, the compressor on the left and the decompressor on the right:
@@ -73,16 +77,16 @@ flowchart TB
     Z["zram: a page to store"] --> C["seqlz_compress()"]
     C --> CP["compress_block()<br/>levels 1 and 2"]
     C --> CO["compress_own()<br/>level 3"]
-    CP --> M["seqlz_match_block()<br/>page_lz.h, the matcher"]
+    CP --> M["seqlz_match_block()<br/>seqlz_match.h, the matcher"]
     CO --> M
     M -->|"each sequence<br/>as it is found"| E["encode_seq()<br/>token, offset,<br/>length values"]
-    CO --> X["delta_literals()<br/>level 3: the literals<br/>as deltas"]
+    CO --> X["seqlz_delta_literals()<br/>level 3: the literals<br/>as deltas"]
     CP --> F["encoder_finish()<br/>bitstream behind<br/>the literals"]
     CO --> F
-    C --> L["code_literals()<br/>Huffman codes<br/>the literals<br/>if that saves enough"]
+    C --> L["seqlz_code_literals()<br/>Huffman codes<br/>the literals<br/>if that saves enough"]
     L --> OC["own_code()<br/>level 3: a table<br/>of the page's own"]
     R["zram: a page to read"] --> D["seqlz_decode()"]
-    D --> DL["decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
+    D --> DL["seqlz_decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
     DL --> OT["own_table()<br/>builds a page's own<br/>table in the page"]
     D --> LOOP["decode_block(): the loop<br/>over the sequences,<br/>one table lookup each"]
     T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C

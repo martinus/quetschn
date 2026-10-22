@@ -6,7 +6,8 @@
  * match, the last sequence has no token: min(ll, 15) + 16 * min(ml - 4, 31), the offset, the offset
  * before it, and 1 for the first sequence of a page. Build from the repository's root:
  *   cc -O2 -Isrc -o seqs tools/seqlz-bound/seqs.c src/seqlz_codes.c src/seqlz_compress.c \
- *      src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
+ *      src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c \
+ *      src/seqlz_default_tables.c src/seqlz_lit_sets.c
  */
 #include <stdio.h>
 #include <stdlib.h>

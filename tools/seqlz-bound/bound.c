@@ -6,7 +6,8 @@
  * size. Same-filled pages are left out, as zram does; pages zram stores raw, of 3625 bytes and more,
  * are counted apart. Build from the repository's root:
  *   cc -O2 -Isrc -o bound tools/seqlz-bound/bound.c src/seqlz_codes.c src/seqlz_compress.c \
- *      src/seqlz_decompress.c src/seqlz_default_tables.c src/seqlz_lit_sets.c
+ *      src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c \
+ *      src/seqlz_default_tables.c src/seqlz_lit_sets.c
  */
 #include <stdio.h>
 #include <stdlib.h>

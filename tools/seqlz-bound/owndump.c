@@ -3,7 +3,8 @@
  * owndump <in.pages> <out.bin>: compresses every page of a corpus at level 3 and writes the compressed
  * pages that have a literal table of their own (coded literals, byte 2's code 8) to out.bin, each as
  * a 2-byte little endian length and its bytes; for own_context.py. Build:
- * gcc -O2 -Isrc -o owndump tools/seqlz-bound/owndump.c src/seqlz_{codes,compress,decompress,default_tables,lit_sets}.c
+ * gcc -O2 -Isrc -o owndump tools/seqlz-bound/owndump.c
+ * src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
  */
 #include <stdio.h>
 #include <stdlib.h>

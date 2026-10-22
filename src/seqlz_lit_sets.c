@@ -7,7 +7,7 @@
  * goes to the table that codes its literals in the fewest bits, then each table
  * becomes the Huffman code of its pages' literals. Of 32 runs from other
  * starting tables, the one with the fewest bits is kept. The most used table
- * comes first. tools/kernel-port/gen-seqlz-tables.py makes the .inc files from
+ * comes first. tools/kernel-port/gen-seqlz-lengths.py makes the .inc files from
  * the counts the training ended with, in bench/seqlz_counts_4k.txt and
  * _16k.txt.
  */

@@ -12,6 +12,7 @@
 
 #include "pages.h"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 /* the bitstream from q to end, read most significant bit first, zeros after its end */
 static const u8* g_q;
@@ -63,7 +64,7 @@ int main(void) {
     }
     n_lit &= SEQLZ_LIT_CODED - 1U;
     /* where the bitstream starts, as seqlz_decode() gets it; level 2 writes no deltas */
-    q = decode_literals(comp, n, n_lit, scratch, out, &dt);
+    q = seqlz_decode_literals(comp, n, n_lit, scratch, out, &dt);
     if (q && dt) {
         fprintf(stderr, "lines.c: the page has literals as deltas\n");
         return 1;

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """A copy of src/seqlz_decompress.c whose decode_block(), the body of seqlz_decode(), records each step, for the step-through of
-chapter 14, or of src/page_lz.h whose seqlz_match_block() does, for chapter 9. A hook goes in front
+chapter 14, or of src/seqlz_match.h whose seqlz_match_block() does, for chapter 9. A hook goes in front
 of the statements below, on the same line, so __LINE__ is the line in src/. build.py compiles the copy
 with -ftrivial-auto-var-init=zero, so that a step before a variable's first assignment records 0 and
 not whatever was on the stack. Fails if a statement is not found: then the list below has to follow
 src/.
 
 instrument.py decode <src/seqlz_decompress.c> <out.c>   prints the function's first and last line
-instrument.py match <src/page_lz.h> <out.h>
+instrument.py match <src/seqlz_match.h> <out.h>
 """
 import sys
 
@@ -16,7 +16,7 @@ import sys
 # Never the body of an if without braces: the hook would become the body; the script fails on one.
 DECODE_STOPS = [
     "n_lit = get_unaligned_le16(s);",
-    "q = decode_literals(s, src_len, n_lit, scratch, d, &delta);",
+    "q = seqlz_decode_literals(s, src_len, n_lit, scratch, d,",
     "lit = scratch;",
     "lit = s + SEQLZ_HEADER;",
     "d_fast = d_end - FAST_BLOCK_ROOM;",

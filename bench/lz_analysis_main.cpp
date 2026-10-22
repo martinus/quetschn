@@ -67,7 +67,7 @@ struct model {
 
 // Counts (count = true) or costs in bits (count = false) of one page. with_repeat: offsets that
 // repeat one of the last three get a repeat code.
-double walk(parsed_page const& pg, model& m, bool count, bool with_repeat, bool code_literals) {
+double walk(parsed_page const& pg, model& m, bool count, bool with_repeat, bool seqlz_code_literals) {
     auto bits = 0.0;
     auto add = [&](std::array<double, 64>& table, symbol s) {
         if (count) {
@@ -106,7 +106,7 @@ double walk(parsed_page const& pg, model& m, bool count, bool with_repeat, bool 
         if (count) {
             m.literal[b] += 1;
         } else {
-            bits += code_literals ? -std::log2(m.literal[b]) : 8.0;
+            bits += seqlz_code_literals ? -std::log2(m.literal[b]) : 8.0;
         }
     }
     return bits;

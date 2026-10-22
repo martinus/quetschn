@@ -16,7 +16,8 @@
 #include <linux/string.h>
 #include <linux/unaligned.h>
 
-#include "../seqlz.h"
+#include "../seqlz_internal.h"
+#include "../seqlz_lengths.h"
 
 /*
  * The SHA-256 of each table's code lengths, in symbol order, and a page of

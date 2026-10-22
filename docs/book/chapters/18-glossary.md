@@ -19,7 +19,7 @@ sense given here.
   [Chapter 11](#ch-literals-enc)
 - **complete**: a prefix code whose codes use up every bit pattern, Kraft sum 1, so a decode table has no
   empty entry. [Chapter 2](#ch-compression--complete)
-- **decoder, encoder, matcher**: the matcher finds the matches of a page (`src/page_lz.h`), the encoder
+- **decoder, encoder, matcher**: the matcher finds the matches of a page (`src/seqlz_match.h`), the encoder
   writes them in the format, the decoder turns a compressed page back into the page.
   [Chapters 9 to 14](#ch-matcher)
 - **delta, `dt`**: at level 3, a literal stored as the literal minus an earlier byte of the page,
@@ -78,7 +78,7 @@ sense given here.
 - **prefix code**: codes of which none is the start of another, so a decoder knows where each ends.
   [Chapter 2](#ch-compression--prefix-codes)
 - **record**: at level 3, the {{delta.rec}} bytes the encoder writes in front of a sequence's literals, its position,
-  `ll` and the offset before, for `delta_literals()`. [Chapter 10](#ch-encoder--records)
+  `ll` and the offset before, for `seqlz_delta_literals()`. [Chapter 10](#ch-encoder--records)
 - **repeat offset**: the offset of the match before, used again for 0 bits; 1 at the start of a page.
   [Chapter 4](#ch-format--offsets)
 - **scratch**: the per-CPU buffer the decoder decodes coded literals into, a page plus 16 bytes.

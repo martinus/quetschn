@@ -15,7 +15,7 @@ a token into one 32-bit number, so that the loop over the sequences never takes 
 
 ## The head of the file {#ch-internal--head}
 
-@listing src/seqlz_internal.h 1-11
+@listing src/seqlz_tables.h 1-11
 
 The kernel's copy renames the guard to `_LIB_SEQLZ_SEQLZ_INTERNAL_H`, after its place in `lib/seqlz/`.
 The constants come from `seqlz.h` ([chapter 6](#ch-header)); this chapter uses their values for 4 KiB
@@ -23,7 +23,7 @@ pages.
 
 ## A decode table is indexed by the next bits {#ch-internal--decode-tables}
 
-@listing src/seqlz_internal.h 12-33
+@listing src/seqlz_tables.h 12-33
 
 The first paragraph of the comment is [table decoding](#ch-compression--table-decoding): a code of $l$
 bits in a table of $2^L$ entries fills the $2^{L-l}$ entries that start with its bits, and they all say
@@ -62,7 +62,7 @@ wants the continuation lines of a call aligned with its first argument
 
 ## The table of length values {#ch-internal--value-table}
 
-@listing src/seqlz_internal.h 35-38
+@listing src/seqlz_tables.h 35-38
 
 `decode[256]` is the decoder's form, indexed by the top 8 bits of its bit register,
 {{ch07.size.value_decode}} bytes. `enc[32]` is the encoder's, the code in the low 16 bits and its
@@ -75,7 +75,7 @@ of the array it reads.
 
 ## The token table: 8 KiB for the decoder, 6 KiB for the encoder {#ch-internal--token-table}
 
-@listing src/seqlz_internal.h 40-55
+@listing src/seqlz_tables.h 40-55
 
 The decode table has 2048 entries of 4 bytes, 8 KiB; what an entry holds is the subject of
 [the last sections](#ch-internal--token-entry). The encoder's `enc[]` has one `u16` per symbol, the
@@ -102,7 +102,7 @@ bits of length fit the `u16`.
 
 ## The literal tables {#ch-internal--lit-table}
 
-@listing src/seqlz_internal.h 57-60
+@listing src/seqlz_tables.h 57-60
 
 Each of the 8 literal tables has two forms again. `decode[1024]` has entries of 2 bytes, the code's
 length in the low byte and the literal in the high byte. In table 0, byte `0x65`, the letter `e`, has
@@ -121,7 +121,7 @@ page reads one of them.
 
 ## One add per literal for all 8 tables {#ch-internal--lit-cost}
 
-@listing src/seqlz_internal.h 62-70
+@listing src/seqlz_tables.h 62-69
 
 To choose the literal table, the encoder needs the sum of the page's code lengths in each of the 8
 tables: naively 8 lookups and 8 adds per literal. `lit_cost[b]` is a `u64` whose byte $j$ is the code
@@ -200,7 +200,7 @@ the mask `0x00ff00ff00ff00ff` and starts again, every 200 literals of the page.
 
 ## Byte 2 and the largest stream {#ch-internal--byte2}
 
-@listing src/seqlz_internal.h 71-77
+@listing src/seqlz_tables.h 70-76
 
 These asserts tie the constants of `seqlz.h` to byte 2 of a page with coded literals
 ([chapter 4](#ch-format--layout)): the 8 fixed tables are the codes 0 to 7, the page's own table the
@@ -209,10 +209,10 @@ and the width field ends where the delta bit, bit 7, starts. The first assert wo
 table, which would collide with `SEQLZ_LIT_OWN`, and the decoder's `s[2] & (SEQLZ_LIT_SETS - 1U)` would
 no longer pick the table.
 
-@listing src/seqlz_internal.h 78-86
+@listing src/seqlz_tables.h 77-85
 
 `SEQLZ_DELTA_LAST` stores a literal as its delta to the byte as far back as the offset of the sequence
-before ([chapter 6](#ch-header--literals)), and the encoder's `delta_literals()` and the decoder's
+before ([chapter 6](#ch-header--literals)), and the encoder's `seqlz_delta_literals()` and the decoder's
 `undelta_literals()` and `undelta_fast()` both need that distance, so it is here, in the header both
 include. An offset of 4 or more is the distance as it is; below 4 it is the smallest multiple of the
 offset that is at least 4:
@@ -227,18 +227,18 @@ match would have copied next; with offset 1 or 2, the byte 4 back is. The decode
 distance being at least 4: it adds the bytes back 4 at a time, and each of the 4 bytes it adds must
 already be the page's own, so none of them may lie in the word it writes.
 
-@listing src/seqlz_internal.h 88-96
+@listing src/seqlz_tables.h 87-88
 
 `LIT_STREAM_MAX` is the largest stream, every 8th
 literal with a code of 10 bits, $(512 \cdot 10 + 7) / 8 = {{ch07.lit_stream_max}}$ bytes on 4 KiB
 pages and {{k16.ch07.lit_stream_max}} on 16 KiB pages, and the assert proves that a size of 12 bits
 holds it, so the encoder can write the sizes whatever the literals are. The last assert guards code,
-not the format: the encoder's `lit_streams()` and the decoder's `decode_literals()`
+not the format: the encoder's `lit_streams()` and the decoder's `seqlz_decode_literals()`
 ([chapter 13](#ch-literals-dec)) are written out by hand for 8 streams.
 
 ## The code of a page's own table, and two lengths per lookup {#ch-internal--own}
 
-@listing src/seqlz_internal.h 98-122
+@listing src/seqlz_tables.h 90-114
 
 `OWN`, the fixed code that describes a page's own literal table ([chapter 4](#ch-format--own)), gets
 three arrays. `enc` is the encoder's, the code in the low byte and its length above it, the other way
@@ -276,7 +276,7 @@ one by one. [Chapter 8](#ch-codes--own) builds the three arrays.
 
 ## struct seqlz_tables: {{size.tables|grp}} bytes, once {#ch-internal--tables}
 
-@listing src/seqlz_internal.h 124-134
+@listing src/seqlz_tables.h 116-126
 
 The layout on x86-64, from `sizeof` and `offsetof`; arm64 aligns a `u64` the same way:
 
@@ -309,7 +309,7 @@ zram device.
 
 ## The fields of a token entry {#ch-internal--token-entry}
 
-@listing src/seqlz_internal.h 136-145
+@listing src/seqlz_tables.h 128-135
 
 The asserts check the fields of the entry described next. The 5 bits of `DROP` hold up to 31, and the
 most a token with a code of its own moves the bitstream is an 11-bit code plus class 3's offset bits,
@@ -318,7 +318,7 @@ $11 + 12 = 23$, 25 on 16 KiB pages. `ll` has 4 bits, `ml` 6 bits for at most 35,
 here instead of being cut to 0. Class 5's offsets must stay inside the page, and 12 bits must hold
 every token.
 
-@listing src/seqlz_internal.h 146-162
+@listing src/seqlz_tables.h 136-152
 
 Every field is something the decoder would otherwise compute from the token's number for every
 sequence: split off `ll`, `ml` and the class, look up the class's offset bits and shift, add 4 to
@@ -408,7 +408,7 @@ with its {{tok.len.3072}}-bit code:
 <figcaption>A token table entry: bits 0 to 18 tell the decoder how to cut the offset out of the bitstream, bits 19 to 28 are the lengths, the top bits flags.</figcaption>
 </figure>
 
-@listing src/seqlz_internal.h 163-176
+@listing src/seqlz_tables.h 153-166
 
 The macros shift a field down and mask it to its width; bits 30 and 31 the decoder tests directly,
 and bit 29 is free. `TOK_N()` and `TOK_BACK()` are shift counts for the decoder's 64-bit bit
@@ -417,7 +417,7 @@ register, and their mask of 63 is again a proof for the compiler that the shift 
 
 ## token_entry(): the fields from a token's number {#ch-internal--token-entry-code}
 
-@listing src/seqlz_internal.h 178-193
+@listing src/seqlz_tables.h 168-183
 
 `token_entry(s, n)` is the entry for token `s` with a code of `n` bits. It is in the header because
 two files call it: `build_token()` ([chapter 8](#ch-codes--build-token)) fills the table with it, and
@@ -444,7 +444,7 @@ of the class.
 ::: try Print any token's entry
 ```c
 #include <stdio.h>
-#include "seqlz_internal.h"
+#include "seqlz.h"
 
 int main(void)
 {
@@ -475,7 +475,7 @@ ${{tok.len.2098}} + 5 = {{ch07.tok.2098.DROP}}$, `LL` {{ch07.tok.2098.LL}}, `ML`
 {{ch07.tok.2098.ML}}. The decoder uses it on these lines of `decode_block()`, the body of `seqlz_decode()`
 ([chapter 14](#ch-decode)):
 
-@listing src/seqlz_decompress.c 850-854
+@listing src/seqlz_decompress.c 491-495
 
 Say the register holds the code, then `{{ch07.reg_raw_bits}}`, then whatever follows:
 `{{ch07.reg}}`, the first bit of the stream as bit 63. The top 11 bits are `{{ch07.reg_index_bits}}`,
@@ -512,7 +512,7 @@ The escape's {{tok.len.3072}}-bit code `{{tok.code.3072}}` fills the indices {{c
 to {{ch07.tok.3072.last}} with `1U << 31 | {{tok.len.3072}} << 14 = {{ch07.tok.3072.entry}}`, the
 lower row of the diagram. The decoder handles it before everything else:
 
-@listing src/seqlz_decompress.c 832-844
+@listing src/seqlz_decompress.c 473-485
 
 Token 1797, 5 literals and a match of 20 at a class 3 offset, has no code. The encoder writes the
 escape's `{{tok.code.3072}}`, 1797 in 12 bits, `{{ch07.esc1797.bits}}`, and then the offset, say 1000,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * ch07_09.c: the facts of chapters 7 (seqlz_internal.h), 8 (seqlz_codes.c) and
- * 9 (page_lz.h): the entries of the tables as seqlz_tables_init() builds them,
+ * 9 (seqlz_match.h): the entries of the tables as seqlz_tables_init() builds them,
  * first_codes() on the real lengths, the layout of struct seqlz_tables, the
  * files' lines, the counts the tables were trained on, and the matcher's steps
  * on the pages of chapter 9.
@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #include "facts.h"
-#include "page_lz.h"
+#include "seqlz_match.h"
 
 /* first_codes() and length_entry() are static: the file is included, and
  * build.py does not link it */
@@ -190,7 +190,7 @@ static void ch07(void) {
     static const unsigned int tokens[] = {34, 49, 1552, 1567, 1797, 2032, 2097, 2098, SEQLZ_ESCAPE};
     const struct seqlz_tables* t = fact_tables();
     unsigned int k, j, best = 0, s, c, n;
-    u64 sum = t->lit_cost[0][0] + t->lit_cost[0x65][0], reg, e;
+    u64 sum = t->lit_cost[0] + t->lit_cost[0x65], reg, e;
 
     fact_num("ch07.lines", lines_of("src/seqlz_internal.h"));
     for (k = 0; k < sizeof tokens / sizeof tokens[0]; k++)
@@ -255,14 +255,14 @@ static void ch07(void) {
     }
 
     /* lit_cost of the bytes 0x00 and 0x65, and their sum */
-    fact_fmt("ch07.lit_cost.0", "%#018llx", t->lit_cost[0][0]);
-    fact_fmt("ch07.lit_cost.101", "%#018llx", t->lit_cost[0x65][0]);
+    fact_fmt("ch07.lit_cost.0", "%#018llx", t->lit_cost[0]);
+    fact_fmt("ch07.lit_cost.101", "%#018llx", t->lit_cost[0x65]);
     fact_fmt("ch07.lit_cost.sum", "%#018llx", sum);
     for (j = 0; j < SEQLZ_LIT_SETS; j++) {
         unsigned int lane = (unsigned int)(sum >> (8 * j)) & 255;
 
         fact_num(K("ch07.lit_sum.%u", j), lane);
-        fact_fmt(K("ch07.lit_lane.101.%u", j), "%02llx", (t->lit_cost[0x65][0] >> (8 * j)) & 255);
+        fact_fmt(K("ch07.lit_lane.101.%u", j), "%02llx", (t->lit_cost[0x65] >> (8 * j)) & 255);
         if (lane < ((sum >> (8 * best)) & 255))
             best = j;
     }
@@ -512,7 +512,7 @@ static void ch09(void) {
     unsigned int k, n, pos, odd = 0, cand0 = 0, first = 0;
     u64 x2 = get_unaligned_le64(p + 8) ^ get_unaligned_le64(q + 8);
 
-    fact_num("ch09.lines", lines_of("src/page_lz.h"));
+    fact_num("ch09.lines", lines_of("src/seqlz_match.h"));
     fact_num("ch09.limit", SEQLZ_BLOCK_SIZE - 8);
     fact_num("ch09.limit_last", SEQLZ_BLOCK_SIZE - 9);
     fact_num("ch09.table_bytes", sizeof(u16) << SEQLZ_HASH_BITS);

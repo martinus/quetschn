@@ -8,7 +8,9 @@
 // facts: also 16k
 #include "facts.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 #include "seqlz_decompress.c"
+#include "seqlz_decompress_literals.c"
 
 /* the repository's root, from this file's path: <root>/docs/book/facts/ch15_18.c */
 static const char* repo_path(const char* rel) {
@@ -139,8 +141,8 @@ static void kernel_port(void) {
     fact_num("ch15.kport.seqlz_h", lines_of_file());
     load("tools/kernel-port/api_compress.c");
     fact_num("ch15.kport.api_compress", lines_of_file());
-    load("tools/kernel-port/api_codes.c");
-    fact_num("ch15.kport.api_codes", lines_of_file());
+    load("tools/kernel-port/gen_tables_main.c");
+    fact_num("ch15.kport.gen_main", lines_of_file());
 
     load("tools/kernel-port/backend_seqlz.c");
     fact_num("ch15.backend.head.a", find_line("#define pr_fmt(fmt) \"seqlz: \" fmt", 1));

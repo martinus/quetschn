@@ -1,7 +1,7 @@
 # Decoding eight streams side by side {#ch-literals-dec}
 
 A page with coded literals has them Huffman coded in 8 streams, literal `i` in stream `i % 8`
-([chapter 11](#ch-literals-enc) wrote them). `seqlz_decode()` first calls `decode_literals()`, which
+([chapter 11](#ch-literals-enc) wrote them). `seqlz_decode()` first calls `seqlz_decode_literals()`, which
 decodes all of them into the scratch, `SEQLZ_SCRATCH` bytes of work memory, and returns where the
 sequences' bitstream starts. From then on the loop of [chapter 14](#ch-decode) reads the literals from
 the scratch as if the page had them raw.
@@ -14,7 +14,8 @@ The page layout is in [chapter 4](#ch-format--layout), the literal table's entri
 
 ## A stream is a pointer and 64 bits with a 1 at the end {#ch-literals-dec--sentinel}
 
-@listing src/seqlz_decompress.c 251-259
+@listing src/seqlz_decompress_literals.c 1-6
+@listing src/seqlz_decompress_literals.c 8-16
 
 Each code shifts `bits` left by its length, and the 1 that the refill set in bit 0 moves up with it. So
 its position, `__builtin_ctzll(bits)`, is the number of bits used since `ip`: one instruction on x86-64,
@@ -76,7 +77,7 @@ byte {{ch13.s0.start}} of the compressed page with the bytes `{{ch13.s0.bytes}}`
 
 The file has `lit_load_tail()` first, because `lit_refill()` calls it; we go the other way round.
 
-@listing src/seqlz_decompress.c 274-289
+@listing src/seqlz_decompress_literals.c 31-46
 
 `end` is the end of the whole compressed page, not of the stream. `p` moves by the whole bytes used, and
 `<< (used & 7U)` drops the bits of `p`'s first byte that were used already, which also puts the new
@@ -108,7 +109,7 @@ which were the end of the code of `{{ch13.c.4.lit}}`.
 
 ### lit_load_tail(): the last bytes, out of the loop
 
-@listing src/seqlz_decompress.c 260-272
+@listing src/seqlz_decompress_literals.c 17-29
 
 With fewer than 8 bytes left, an 8-byte load would read past the compressed page, which may be the end
 of a mapping. `lit_load_tail()` reads what is there and zeros for the rest. `noinline` keeps its byte
@@ -121,20 +122,20 @@ through `lit_load_tail()`.
 
 ## lit_decode(): one literal, or one that does not count {#ch-literals-dec--decode}
 
-@listing src/seqlz_decompress.c 291-304
+@listing src/seqlz_decompress_literals.c 48-62
 
 The top 10 bits index the table directly ([chapter 2](#ch-compression--table-decoding)); the index is
 below 1024 for any `bits`, so a damaged page cannot make this read go wrong. `mask` is 63 or 0. With 63,
 `e & 63` is the code length, and the mask tells the compiler that the shift is below 64. With 0, the
 literal is decoded and written but the stream does not move, "decode, but do not advance" without a
-branch, which the end of `decode_literals()` needs.
+branch, which the end of `seqlz_decode_literals()` needs.
 
 ## The sizes of the 8 streams {#ch-literals-dec--sizes}
 
-@listing src/seqlz_decompress.c 306-329
+@listing src/seqlz_decompress_literals.c 64-87
 
 From `p` on, the header has `width` bytes with the 8 stream sizes, `width` bits each, lowest bit first
-([chapter 4](#ch-format--layout)). `decode_literals()` passes byte 3, or byte 4 when byte 3 is the
+([chapter 4](#ch-format--layout)). `seqlz_decode_literals()` passes byte 3, or byte 4 when byte 3 is the
 delta's byte. A 4-byte load always holds a field: it starts at most 7 bits into its
 first byte and has at most 12 bits. The furthest load, for `k = 7` with `width = 12`, is at byte
 `84 / 8 = 10` and reads bytes 10 to 13, past the 12 bytes of sizes and possibly past the end of a short
@@ -152,7 +153,7 @@ The zeros at the top of the last load are `h`'s, not bytes of the page. The stre
 
 ## Does a stream end where its size says? {#ch-literals-dec--ends}
 
-@listing src/seqlz_decompress.c 331-347
+@listing src/seqlz_decompress_literals.c 89-105
 
 The format wants a stream's codes to end in its last byte, with the bits after the last code 0
 ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#coded-literals)). The bits
@@ -187,10 +188,10 @@ sequences' bitstream are what tell a damaged page from a valid one.
 With code 8 in byte 2 the page brings its own literal table, as a list of code lengths in the fixed
 code `OWN` ([chapter 4](#ch-format--own)). `own_table()` reads that list and writes the same kind of
 decode table a fixed literal table has, 1024 entries of `code length | byte << 8`, so the rest of
-`decode_literals()` does not know the difference. It needs 2 KiB for that table and 3 KiB more on the
+`seqlz_decode_literals()` does not know the difference. It needs 2 KiB for that table and 3 KiB more on the
 way, and takes neither from the work memory the project counts per CPU.
 
-@listing src/seqlz_decompress.c 349-353
+@listing src/seqlz_decompress_literals.c 107-111
 
 The decode table goes into the output page, `dst`: nothing writes the page before all literals are
 decoded into the scratch, and then the table is no longer needed. The buckets, one row of 256 bytes
@@ -200,15 +201,15 @@ and one more for a page at an odd address, and {{own.dt.bucket_bytes|grp}} in th
 a run's code of up to 8 bits and its up to 8 bits more.
 @assert own.dec.step_max == 16 and own.dt.bytes == 2048 and own.dt.bucket_bytes == 3072
 
-@listing src/seqlz_decompress.c 355-381
+@listing src/seqlz_decompress_literals.c 113-139
 
-The comment says why it is a function of its own: inlined into `decode_literals()`, its locals made
+The comment says why it is a function of its own: inlined into `seqlz_decode_literals()`, its locals made
 that function's stack frame larger than the kernel allows with KASAN, which puts a red zone around
 each local ([chapter 15](#ch-zram-glue--check) has the limit and the frames `check.sh` reports).
 
 ### The loop: up to two lengths per lookup
 
-@listing src/seqlz_decompress.c 382-396
+@listing src/seqlz_decompress_literals.c 140-154
 
 The description is read through `bits`, a 64-bit window whose top `avail` bits are the next ones, as
 the sequences' bit reader does it ([chapter 12](#ch-dec-basics--bit-reader)). When fewer than 16 are
@@ -219,7 +220,7 @@ the end of the input, `lit_load_tail()` reads what is there and zeros after it
 ([below](#ch-literals-dec--refill)); `min(at, len)` keeps the pointer in the page even when `at` has
 run past its end.
 
-@listing src/seqlz_decompress.c 397-412
+@listing src/seqlz_decompress_literals.c 155-170
 
 `top` is the next 8 bits, and `quad[top]` ([chapter 7](#ch-internal--own)) says what they hold. Bit 31
 means a run that does not fit an entry, e.g. a run of 32: symbol 15's 8-bit code and 5 bits more. Then
@@ -229,7 +230,7 @@ bits. Two shifts, because for a run of 1, `nb` is 1, and one shift by 64 would b
 1` has a 0 on top, so a shift by 63 gives the 0 that `read(0)` is. `b` is the next byte value, and a
 run only moves it on.
 
-@listing src/seqlz_decompress.c 413-427
+@listing src/seqlz_decompress_literals.c 171-185
 
 A step with lengths takes the first one, `l1`, and the run before it, and puts byte `b` into the bucket
 of length `l1`. A complete code may end after this length, and the bits after it are then the zero
@@ -262,7 +263,7 @@ symbols in one lookup ([chapter 7](#ch-internal--own)).
 
 ### The checks, at the end
 
-@listing src/seqlz_decompress.c 428-431
+@listing src/seqlz_decompress_literals.c 186-189
 
 The loop checks nothing about the bytes, so it ends for any input: each step takes at least one code,
 and past the end of the input every code is `{{own.code.8}}`, a length of 9 bits, 2 per 8 zero bits,
@@ -275,7 +276,7 @@ which `fuzz/seqlz_diff_fuzz.c` checks against the reference decoder.
 
 ### Writing the entries, length by length
 
-@listing src/seqlz_decompress.c 432-451
+@listing src/seqlz_decompress_literals.c 190-209
 
 The buckets hold, for each length, the byte values with that length, in order of their value, which is
 the order of their canonical codes. Writing all entries of length 1, then of length 2, and so on, from
@@ -285,7 +286,7 @@ the same for all of them, `l | byte << 8`, and the multiply by `0x00010001000100
 4 lanes of a `u64`, so one 8-byte store writes 4 entries. Codes of 1 to 8 bits have 512 down to 4
 entries, a multiple of 4.
 
-@listing src/seqlz_decompress.c 452-465
+@listing src/seqlz_decompress_literals.c 210-223
 
 Codes of 9 bits have 2 entries, one 4-byte store, and codes of 10 bits one. A loop for each, and none
 with a branch on how many entries a byte has: with one loop over all lengths and that branch, level 3
@@ -304,7 +305,7 @@ loop per length, 2.7% faster, on 15th October 2026
 @assert own.dt["20"].first == 0 and own.dt["74"].last == 1023
 
 The table is built for one page and not kept: 2 KiB of stores for every read of such a page, where a
-page with a fixed table loads its 2 KiB table, which `decode_literals()` prefetches
+page with a fixed table loads its 2 KiB table, which `seqlz_decode_literals()` prefetches
 ([below](#ch-literals-dec--main)).
 
 ::: measured Building a table of the page's own: 1.7 µs on the A76
@@ -319,9 +320,9 @@ reads 2.9% slower on the A76 and 1.0% on the A55, for pages 0.5% smaller
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-pages-own-literal-table-in-the-order-of-the-bytes-decoded-two-lengths-at-a-time-05-smaller-than-by-code-length-reads-29-slower-on-the-a76-kept)).
 :::
 
-## decode_literals(), from the header to the bitstream {#ch-literals-dec--main}
+## seqlz_decode_literals(), from the header to the bitstream {#ch-literals-dec--main}
 
-@listing src/seqlz_decompress.c 467-477
+@listing src/seqlz_decompress_literals.c 225-235
 
 `n_lit` is the page's u16 without the `SEQLZ_LIT_CODED` bit. `*delta` gets which delta level 3's
 literals are, which the loop over the sequences turns back into literals ([below](#ch-literals-dec--undelta)). A static function with one caller is
@@ -330,7 +331,7 @@ made pages with raw literals slower too, 12% when the comment still had a number
 with a setup that is not recorded. Until 10th October the function was also aligned to 64 bytes; measured
 again, that made less than 0.02 µs of difference in the kernel VM, and it was removed (commit `bad6224`).
 
-@listing src/seqlz_decompress.c 478-499
+@listing src/seqlz_decompress_literals.c 236-257
 
 A page of 2 bytes has no byte 2 and gets width 5, which the check below rejects. `deltas` is bit 7 of
 byte 2, 0 or 1, the number of bytes that say which delta, and 0 for a page of 2 bytes too. `q`, where
@@ -342,7 +343,7 @@ registers like any variable. Until 10th October 2026 they were 8 variables each,
 the noise of code placement in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
 
-@listing src/seqlz_decompress.c 500-508
+@listing src/seqlz_decompress_literals.c 258-266
 
 The codes 9 to 15 are reserved: a decoder that accepted them now could not tell old pages from new
 ones later. `n_lit` must fit the scratch. The length check counts the delta's byte, so the page holds
@@ -352,7 +353,7 @@ right before its last size byte would have that byte read past its end. With bit
 one compare: a byte of 0 wraps to $2^{32} - 1$, and everything from 4 on is at least 3, so only 1 to 3
 pass. Without deltas, `*delta` is 0 and the page's byte 3 is the first byte of the sizes.
 
-@listing src/seqlz_decompress.c 509-531
+@listing src/seqlz_decompress_literals.c 267-289
 
 Code 8 builds the page's own table
 ([above](#ch-literals-dec--own)) into `page`, the output page that `seqlz_decode()` passes down for
@@ -371,7 +372,7 @@ business.
 
 ### Full rounds: 8 streams, 5 literals each
 
-@listing src/seqlz_decompress.c 532-546
+@listing src/seqlz_decompress_literals.c 290-304
 
 Stream `i` in step `j` of the round at `k` holds literal `k + 8 * j + i`, so the scratch gets the literals
 in page order with no shuffle. The loops have constant bounds, and the compiler unrolls them into 8
@@ -381,7 +382,7 @@ refills and 40 lookups, where each `b[i]` depends only on the `b[i]` before it: 
 
 ### The rest: the same steps for all 8 streams
 
-@listing src/seqlz_decompress.c 547-574
+@listing src/seqlz_decompress_literals.c 305-332
 
 After one more refill, at most `steps + 1 <= 5` codes follow. In the last step,
 `(0U - (r > i)) & 63U` is 63 for the `r` streams that have a literal left and 0 for the others, which
@@ -406,14 +407,14 @@ check, not for a measured gain.
 
 ## Adding the bytes back, in page order {#ch-literals-dec--undelta}
 
-The literals of a page with deltas come out of `decode_literals()` still as deltas, into the scratch.
+The literals of a page with deltas come out of `seqlz_decode_literals()` still as deltas, into the scratch.
 They can only be turned back into literals in the page: each is a delta to an earlier byte of the page,
 which may be a byte of a match or of another sequence's literals, and that byte has to be the page's own
 when the literal is restored. So the loop over the sequences restores each sequence's literals right
 after it copied them, before the match after them ([chapter 14](#ch-decode--deltas)), with the helpers
-that follow `decode_literals()` in the file.
+that follow `seqlz_decode_literals()` in the file.
 
-@listing src/seqlz_decompress.c 576-595
+@listing src/seqlz_decompress.c 216-235
 
 `add4()` and `add8()` add the word `dist` bytes before `p` to the word at `p`, byte by byte, modulo 256:
 a load, a load, the addition and a store, `put_unaligned_le32()` being the store of
@@ -445,7 +446,7 @@ XOR it replaced was 1. The two loads can overlap: with `dist` 4, `add8()` would 
 to change, and the bytes it wrote would be wrong. That is why the callers use `add8()` only for a
 distance of 8 or more.
 
-@listing src/seqlz_decompress.c 597-626
+@listing src/seqlz_decompress.c 237-266
 
 `undelta_literals()` restores the `nl` literals at `d`, `at` bytes into the page. `dist` is the delta's
 distance, 4, 8, or the offset of the sequence before as `seqlz_delta_last()` makes it, at least 4
@@ -470,7 +471,7 @@ literal, so the first 8 bytes stay as they are, the first pointer, and the byte 
 `10 + 10 = 20`, the low byte of the second pointer: `{{delta.ptr.plain}}`.
 @assert delta.ptr.rec[0].ll == 9 and delta.ptr.rec[0].pos == 0 and delta.ptr.pick == ch06.DELTA_8 and delta.ptr.plain == "10 00 56 34 12 7f 00 00 20 30 40 50" and delta.ptr.deltas == "10 00 56 34 12 7f 00 00 10 10 10 10"
 
-@listing src/seqlz_decompress.c 628-653
+@listing src/seqlz_decompress.c 268-293
 
 The fast path of the loop copies 16 bytes of literals whatever `nl` is, at most 14
 ([chapter 14](#ch-decode--fast)), and `undelta_fast()` restores all 16, with no loop and no branch on
@@ -506,7 +507,7 @@ same level 2 code differed by, and was not kept
 
 ## Why nothing reads or writes outside its buffer {#ch-literals-dec--safety}
 
-`seqlz_decode()` is safe for any input ([chapter 14](#ch-decode--safety)). For `decode_literals()`:
+`seqlz_decode()` is safe for any input ([chapter 14](#ch-decode--safety)). For `seqlz_decode_literals()`:
 
 - **Reads stay in the input.** The header is read after `src_len` is checked, the sizes from a copy. A
   refill loads 8 bytes only when 8 are left before the end of the whole input, else `lit_load_tail()`
@@ -558,7 +559,7 @@ On the A55, an in-order core, a round is 312 instructions for 40 literals, in us
 from NDK r30: per literal a shift for the index, the load, a shift for the byte, the store and the shift
 of the stream, plus 2.8 for the refills and the stream pointers on the stack. At about one instruction
 per cycle, a page with coded literals takes about 8400 cycles more than with raw literals, 8 per
-literal, and `decode_literals()` has 14% of the decoder's samples, with no hot spot. Putting the 8 loads
+literal, and `seqlz_decode_literals()` has 14% of the decoder's samples, with no hot spot. Putting the 8 loads
 of a step first saved 2.8% of the A55's decode cycles, and was not built into the kernel module
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#8-coded-literals-on-the-a55-78-instructions-per-literal-at-one-per-cycle)).
 

@@ -12,6 +12,7 @@
 
 #include "pages.h"
 #include "seqlz_compress.c"
+#include "seqlz_compress_literals.c"
 
 #define SEQS 4
 #define CAP (2 * SEQLZ_BLOCK_SIZE)

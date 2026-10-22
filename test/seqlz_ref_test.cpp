@@ -543,13 +543,13 @@ std::vector<unsigned char> coded_run(seqlz_ref const& r, unsigned int n, unsigne
     });
 }
 
-// What own_table() does to the table it writes
+// What make_own_table() does to the table it writes
 enum class own_damage { none, overfull, above_255, padding_bit };
 
 // A page's own table in which only the bytes x < y have a code, of 1 bit each: the runs before them, as
 // docs/format.md has them, and their lengths. *padding gets the bits after its last symbol.
 std::vector<unsigned char>
-own_table(seqlz_ref const& r, unsigned int x, unsigned int y, own_damage damage, unsigned int* padding) {
+make_own_table(seqlz_ref const& r, unsigned int x, unsigned int y, own_damage damage, unsigned int* padding) {
     auto w = bit_writer{};
     auto run = [&](unsigned int n) {
         if (n > 0) {
@@ -592,7 +592,7 @@ TEST_CASE("seqlz_ref: pages with a literal table of their own, and tables invali
                 return (k + 1) * 2654435761U >> 31 ? y : x;
             };
             auto padding = 0U;
-            auto const good = coded_literals(*r, n, literal, code, own_table(*r, x, y, own_damage::none, &padding));
+            auto const good = coded_literals(*r, n, literal, code, make_own_table(*r, x, y, own_damage::none, &padding));
             auto const page = check_same(r.get(), good);
             REQUIRE(page.size() == SEQLZ_BLOCK_SIZE);
             for (unsigned int k = 0; k < SEQLZ_BLOCK_SIZE; ++k) {
@@ -603,7 +603,7 @@ TEST_CASE("seqlz_ref: pages with a literal table of their own, and tables invali
                     continue;
                 }
                 auto unused = 0U;
-                auto const bad = coded_literals(*r, n, literal, code, own_table(*r, x, y, d, &unused));
+                auto const bad = coded_literals(*r, n, literal, code, make_own_table(*r, x, y, d, &unused));
                 CHECK(seqlz_ref_decode(r.get(), bad.data(), bad.size(), out.data()) == -1);
                 check_same(r.get(), bad);
             }

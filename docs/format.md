@@ -174,7 +174,7 @@ set of tables would be a new format, see [No version in the block](#no-version-i
 is a list of code lengths, one byte per symbol, symbol 0 first:
 
 <!-- in the kernel's copy:
-| table | symbols | longest code | in `lib/seqlz/seqlz_tables.c` |
+| table | symbols | longest code | in `lib/seqlz/seqlz_lengths.h` |
 | --- | --- | --- | --- |
 | tokens and escape, `TOK` | 3073 | 11 bits | `seqlz_default_lengths.token` |
 | literal length values, `LL` | `LEN_SYMBOLS` | 8 bits | `seqlz_default_lengths.ll` |
@@ -200,7 +200,8 @@ of a block's own literal table.
 
 <!-- in the kernel's copy:
 Every table is built from counts that are in the kernel, `lib/seqlz/seqlz_counts.txt`, by
-`scripts/gen-seqlz-tables.py`, which writes `lib/seqlz/seqlz_tables.c`. The counts say how often each
+`scripts/gen-seqlz-lengths.py`, which writes the code lengths, `lib/seqlz/seqlz_lengths.h`; the
+codes and decode tables are built from them when the kernel is built. The counts say how often each
 token, `ll` and `ml` symbol occurred on the training pages, for each literal table, how often each
 byte occurred as a literal on the pages that table codes best, and how often each symbol of `OWN`
 occurred in the blocks' own tables. The pages are 1 091 983 memory pages of a desktop and a phone. They are not published, because memory pages hold keys and passwords. The counts
@@ -213,11 +214,11 @@ Every table is built from counts that are in this repository:
 [`bench/seqlz_counts_16k.txt`](../bench/seqlz_counts_16k.txt). They have how often each token, `ll` and
 `ml` symbol occurred on the training pages, for each literal table, how often each byte occurred as
 a literal on the pages that table codes best, and how often each symbol of `OWN` occurred in the
-descriptions of the pages that level 3 gives a table of their own. `tools/kernel-port/gen-seqlz-tables.py` turns the counts
+descriptions of the pages that level 3 gives a table of their own. `tools/kernel-port/gen-seqlz-lengths.py` turns the counts
 into the tables in `src/`, and `tools/seqlz-ref/check.sh` checks in CI that they are its output, byte for
 byte. `quetschn-seqlz-train --from-counts <file>` does the same in C++, see `bench/seqlz_train.cpp`, and
 the test `seqlz_train` checks that it gives the same tables, for both block sizes. The kernel gets the
-generator as `scripts/gen-seqlz-tables.py` and the 4 KiB counts.
+generator as `scripts/gen-seqlz-lengths.py` and the 4 KiB counts.
 
 The 4 KiB tables are counted on 1 091 983 pages: three sessions of a Xiaomi Mi 9T under memory
 pressure, the resident pages of a desktop and 200 000 pages of its zram dump of 28th September 2026. The
@@ -459,7 +460,7 @@ The 9 bytes `02 00 61 62 23 f2 ff fb 60` are a 4 KiB block of `ab` 2048 times, w
 Not part of the format: any block that decodes is fine, and one block can be written in many ways, as
 with lz4 or zstd. For reference, `seqlz_compress()` writes:
 
-- at levels 1 and 2 the matches of a greedy matcher (`page_lz.h`); level 3 takes a match shorter than
+- at levels 1 and 2 the matches of a greedy matcher (`seqlz_match.h`); level 3 takes a match shorter than
   20 bytes only where the next position has no longer one, and extends each match backwards over
   the literals before it while their bytes are the same;
 - each offset with class 0 when it is the last one, else the class with the fewest offset bits that
