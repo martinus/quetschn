@@ -89,7 +89,7 @@ flowchart TB
     D --> DL["seqlz_decode_literals()<br/>{{ch00.LIT_STREAMS}} streams side by side"]
     DL --> OT["read_own_table()<br/>builds a page's own<br/>table in the page"]
     D --> LOOP["decode_block(): the loop<br/>over the sequences,<br/>one table lookup each"]
-    T["seqlz_tables_init()<br/>once, from the<br/>trained lengths"] -.->|"read only"| C
+    T["seqlz_tables: built once<br/>from the trained lengths,<br/>in the kernel at build time"] -.->|"read only"| C
     T -.->|"read only"| D
 </pre>
 
@@ -100,9 +100,11 @@ repository at the commit named on the title page, the last one that changed `src
 name `a2d57dd` of 10th October 2026, an older commit, for a count or a layout taken there. The code is
 in the kernel's style: tabs of 8 columns, lines within 80 columns.
 
-**4 KiB pages unless said otherwise.** seqlz is written for pages of 4 KiB and of 16 KiB,
-`QUETSCHN_PAGE_BITS` 12 or 14. Linux on x86-64 and on most phones has 4 KiB pages, and the kernel's
-copy of seqlz is built for those only. Where 16 KiB pages change something, the text says so.
+**4 KiB pages unless said otherwise.** seqlz compresses one block at a time, for zram one page. In
+`src/` a block is 4 KiB or 16 KiB, as `QUETSCHN_PAGE_BITS` is 12 or 14. Linux on x86-64 and on most
+phones has 4 KiB pages, and the kernel's copy of seqlz compresses blocks of 4 KiB only, whatever the
+page size. The book says page where the block is zram's page, which is almost everywhere, and where
+16 KiB pages change something, the text says so.
 
 **Boxes.** **Kernel background** and **CPU background** boxes are easy to skip if you know the
 subject. **Why** boxes hold a design decision and what it was measured against, **Measured** boxes a

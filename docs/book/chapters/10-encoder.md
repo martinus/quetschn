@@ -7,9 +7,9 @@ as one loop, so the encoder gets each sequence the moment it is found and never 
 whole. That is a problem, because the bitstream starts after all literals, and how many there are is
 known only after the last sequence. The encoder writes from both ends of its output buffer: the
 literals from the front, the bitstream backwards from the back, and at the end it copies the
-bitstream, turned around, to right after the literals. This chapter is lines 1 to 321 of the file,
-`encode_raw()` and the functions at its end; lines 323 to 489 pick level 3's deltas of the literals,
-and lines 546 to 1152 code the literals, both in [chapter 11](#ch-literals-enc).
+bitstream, turned around, to right after the literals. This chapter is all of `seqlz_compress.c`;
+level 3's deltas of the literals and the coding of the literals are in `seqlz_compress_literals.c`,
+[chapter 11](#ch-literals-enc).
 
 ## The file's head, and seqlz_find() {#ch-encoder--find}
 
@@ -239,7 +239,7 @@ and a match of 4 bytes at the repeat offset, has none:
 
 | | value |
 | --- | --- |
-| `ee = t->token.enc[3072]` | `{{ch10.esc.entry}}`: length {{ch10.esc.len}}, code `{{ch10.esc.codehex}}` |
+| `ee = seqlz_tables.token.enc[3072]` | `{{ch10.esc.entry}}`: length {{ch10.esc.len}}, code `{{ch10.esc.codehex}}` |
 | `*len` | {{ch10.esc.len}} + 12 = {{ch10.esc10.len}} |
 | returned | <code>{{ch10.esc.codehex}} &lt;&lt; 12 &#124; 10</code> = `{{ch10.esc10.ret}}`: `{{ch10.esc10.bits}}` |
 
@@ -384,7 +384,7 @@ would turn a negative room into a huge one. The sequences are checked by the rul
 ([chapter 14](#ch-decode)) before a byte is written.
 
 ::: warn Why a match below 4 bytes is not only invalid but dangerous
-`encode_emit()` computes `ml - 4` unsigned. For `ml` 3 that wraps to {{ch10.wrap.ml4|grp}}, so a
+`encode_seq()` computes `ml - SEQLZ_MIN_MATCH` unsigned. For `ml` 3 that wraps to {{ch10.wrap.ml4|grp}}, so a
 length value follows with {{ch10.wrap.extra}} extra bits, which breaks the accumulator's budget and
 the 31 bits per 4 bytes of the room proof. Before commit `256768e` the encoder checked only that the
 literals were there, and 1025 such sequences wrote past the two pages of `dst`; AddressSanitizer
@@ -407,22 +407,23 @@ matcher's state that `seqlz_encode()` passes; `*delta` is the delta it picked, o
 
 ## The entry points {#ch-encoder--entry}
 
-The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
-here because they tie this chapter's code together.
+The file ends with the public functions. They hand the literals to `seqlz_code_literals()` or
+`seqlz_code_own()`, the two ways into `seqlz_compress_literals.c` ([chapter 11](#ch-literals-enc)),
+and one helper of that file belongs here:
 
 @listing src/seqlz_compress_literals.c 789-793
 
-For a table of the page's own, `seqlz_code_literals()` needs `struct own_work`, {{own.enc.work_size|grp}}
-bytes of counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)),
-and `own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `st->work` counts in
-`u64`, so `OWN_LITERALS_MAX / 8U` is that byte. `seqlz_code_own()`, which comes next in the file, is level
-3's call of `seqlz_code_literals()`, first with the deltas; it is in
-[chapter 11](#ch-literals-enc--code-own).
+For a table of the page's own, the coder needs `struct own_work`, {{own.enc.work_size|grp}} bytes of
+counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)), and
+`own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `st->work` counts in
+`u64`, so `OWN_LITERALS_MAX / 8U` is that byte. `seqlz_code_own()`, level 3's way in, which tries the
+deltas first, comes right after it in that file ([chapter 11](#ch-literals-enc--code-own)).
 
 @listing src/seqlz_compress.c 366-385
 
-`seqlz_code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
-also with a table of the page's own, and returns the new length or `len` unchanged. Level 2 gets the
+`seqlz_code_literals()` codes the literals with one of the 8 fixed literal tables if that saves
+enough, and returns the new length or `len` unchanged; `seqlz_code_own()` does the same at level 3,
+also with a table of the page's own. Level 2 gets the
 caller's literals as the raw copy it reads while it writes the coded ones over the raw ones in `dst`.
 At level 3, `encode_raw()` gets the page and the matcher's state, writes the literals' deltas there, and
 `seqlz_code_own()` codes them. The level is checked before anything is written, so a level outside 1 to
@@ -459,10 +460,10 @@ to `seqlz_code_own()`, which also uses `own_work(st)`, the upper half of the sam
 {{pointers.len}} bytes at level 1, {{delta.ptr.l2.len}} at level 2 and {{delta.ptr.l3.len}} at level 3,
 with them.
 @assert words.l3.delta == 0 and pointers.l3.delta == 1
-The kernel's copy keeps `compress_block()`, `compress_own()`, `seqlz_code_own()` and
-`seqlz_compress()`, renamed to `seqlz_compress_page()`, as the kernel's interface function is called
-`seqlz_compress()`, and drops the `!t->all_symbols` tests, because the kernel's tables are checked when
-they are generated ([chapter 15](#ch-zram-glue--init)).
+The kernel's copy keeps `compress_block()`, `compress_own()` and `seqlz_compress()`, renamed to
+`seqlz_compress_block()`, as the kernel's interface function is called `seqlz_compress()`, which tests
+the level instead. It drops the `!seqlz_tables.all_symbols` tests, because the kernel's tables are
+checked when they are generated ([chapter 15](#ch-zram-glue--init)).
 @assert pointers.len == delta.ptr.l2.len
 
 ## The page of ab, bit by bit {#ch-encoder--example}

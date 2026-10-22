@@ -564,6 +564,6 @@ literals, for a record that `seqlz_delta_literals()` reads ([chapter 10](#ch-enc
 `dst` too small for those the page is matched a second time without them, and stored without deltas. The tests check that `seqlz_compress()` writes the same bytes as
 `seqlz_encode()` for the sequences of `seqlz_find()`, at each level.
 
-In the kernel's copy this function is `seqlz_compress_page()`, `static`; the public `seqlz_compress()`
-of `include/linux/seqlz.h` calls it with the kernel's tables, returns `-EINVAL` for a level outside 1
-to 3, and `-E2BIG` instead of 0 ([chapter 15](#ch-zram-glue)).
+In the kernel's copy this function is `seqlz_compress_block()`, `static`; the public `seqlz_compress()`
+of `include/linux/seqlz.h` calls it, returns `-EINVAL` for a level outside 1 to 3, and `-E2BIG`
+instead of 0 ([chapter 15](#ch-zram-glue--interface)).
