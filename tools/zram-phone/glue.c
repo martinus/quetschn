@@ -77,12 +77,7 @@ static struct crypto_alg algs[] = { Q_ALG(1), Q_ALG(2), Q_ALG(3) };
 
 static int __init q_init(void)
 {
-	int ret;
-
-	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
-		return -EINVAL;
-	ret = crypto_register_algs(algs, ARRAY_SIZE(algs));
-	return ret;
+	return crypto_register_algs(algs, ARRAY_SIZE(algs));
 }
 
 static void __exit q_exit(void)

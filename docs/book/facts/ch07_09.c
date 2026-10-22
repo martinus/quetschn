@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * ch07_09.c: the facts of chapters 7 (seqlz_internal.h), 8 (seqlz_codes.c) and
- * 9 (seqlz_match.h): the entries of the tables as seqlz_tables_init() builds them,
+ * 9 (seqlz_match.h): the entries of the tables as seqlz_tables_build() builds them,
  * first_codes() on the real lengths, the layout of struct seqlz_tables, the
  * files' lines, the counts the tables were trained on, and the matcher's steps
  * on the pages of chapter 9.
@@ -300,8 +300,7 @@ static void ch07(void) {
     fact_num("ch07.pad_own", offsetof(struct seqlz_tables, ll) - offsetof(struct seqlz_tables, own) - sizeof t->own);
     fact_num("ch07.off.ll", offsetof(struct seqlz_tables, ll));
     fact_num("ch07.off.ml", offsetof(struct seqlz_tables, ml));
-    fact_num("ch07.off.all_symbols", offsetof(struct seqlz_tables, all_symbols));
-    fact_num("ch07.tail_pad", sizeof *t - offsetof(struct seqlz_tables, all_symbols) - 1);
+    fact_num("ch07.tail_pad", sizeof *t - offsetof(struct seqlz_tables, ml) - sizeof t->ml);
 }
 
 /* ---- chapter 8: the codes from the lengths */

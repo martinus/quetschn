@@ -10,7 +10,7 @@ src/ stays the one source of the codec. This writes from it:
   seqlz_decompress_literals.c:          from src/, the two main files each with its part of the
                                         interface from tools/kernel-port/api_*.c; the matcher of
                                         src/seqlz_match.h in seqlz_compress.c, calling the encoder itself
-  lib/seqlz/gen_seqlz_tables.c          src/seqlz_codes.c and tools/kernel-port/gen_tables_main.c, a
+  lib/seqlz/gen_seqlz_tables.c          src/seqlz_codes.c and tools/gen-tables/gen_seqlz_tables.c, a
                                         program for the build host that writes the codes and decode
                                         tables, seqlz_tables.c, when the kernel is built
   lib/seqlz/seqlz_lengths.h             the code lengths it builds them from, written in the tree by
@@ -53,8 +53,7 @@ SRC = REPO / "src"
 WIDTH = 80
 
 # what only the harness and the tests of src/ use, left out of the kernel's copy
-HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b|"
-                          r"\ball_symbols\b")
+HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\bSEQLZ_MAX_SEQUENCES\b")
 
 # the one reference to this repository the kernel's copy keeps, the project's page in MAINTAINERS
 PROJECT_URL = "https://github.com/martinus/quetschn"
@@ -342,12 +341,6 @@ def port_tables_h():
     """lib/seqlz/seqlz_tables.h: the tables' layout, and the tables themselves, generated"""
     t = spdx((SRC / "seqlz_tables.h").read_text(), False)
     t = guard(t, "seqlz_tables")
-    # whether every symbol has a code: gen_seqlz_tables checks that when it builds the tables
-    t = must(t, "\tbool all_symbols; /* see seqlz_all_symbols() */\n", "")
-    t = must(t, "/* the tables of seqlz_tables_init(), read only after that, by all CPUs */\n"
-                "extern struct seqlz_tables seqlz_tables;\n",
-             "/* the tables, generated when the kernel is built, see gen_seqlz_tables.c */\n"
-             "extern const struct seqlz_tables seqlz_tables;\n")
     return fix_comments(t)
 
 
@@ -396,9 +389,6 @@ def port_compress():
     t = cut(t, r"/\* seqlz_encode\(\) up to the coded literals, with the compressor's encoder \*/\n"
                r"static unsigned int encode_raw\(.*?\n\}\n\n")
     t = cut(t, r"unsigned int seqlz_encode\(.*?\n\}\n\n")
-    # the tables are checked when they are built, not for every block
-    t = must(t, "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM || !seqlz_tables.all_symbols)\n",
-             "\tif (dst_cap < SEQLZ_HEADER + ENC_ROOM)\n", 2)
     # the matcher of seqlz_match.h, right before the one function that calls it, calling encode_seq()
     # itself: in the kernel's copy it has no other caller
     lz = (SRC / "seqlz_match.h").read_text()
@@ -443,21 +433,20 @@ def port_decompress():
 
 def port_gen():
     """lib/seqlz/gen_seqlz_tables.c: src/seqlz_codes.c as a program for the build host, which writes the
-    codes and decode tables as C, with tools/kernel-port/gen_tables_main.c"""
+    codes and decode tables as C, with the program of tools/gen-tables/gen_seqlz_tables.c"""
     t = spdx((SRC / "seqlz_codes.c").read_text(), True)
-    t = must(t, "/*\n * The codes and decode tables, built from the code lengths:\n * seqlz_tables_init().\n */\n"
-                '#include "seqlz.h"\n',
+    t = must(t, "/*\n * The codes and decode tables, built from the code lengths:\n * seqlz_tables_build(). A program "
+                "for the build host prints them as C, see\n * tools/gen-tables/, and every build of seqlz compiles "
+                'that.\n */\n#include "seqlz.h"\n',
              "/*\n * gen_seqlz_tables: seqlz's codes and decode tables, built from the code\n"
              " * lengths of seqlz_lengths.h and printed as lib/seqlz/seqlz_tables.c. A program\n"
              " * for the build host, run when the kernel is built.\n */\n"
              "#include <errno.h>\n#include <stdio.h>\n#include <string.h>\n\n"
              '#include "seqlz_tables.h"\n#include "seqlz_lengths.h"\n')
-    t = cut(t, r"bool seqlz_all_symbols\(void\)\n\{.*?\n\}\n\n")
-    t = cut(t, r"struct seqlz_tables seqlz_tables;\n\n")
-    t = cut(t, r"\n\nint seqlz_tables_init\(const struct seqlz_lengths \*lengths\)\n\{.*?\n\}\n")
-    # every symbol needs a code, for the encoder
-    t = must(t, "\tt->all_symbols = has_all_symbols(lengths);\n", "\tif (!has_all_symbols(lengths))\n\t\treturn -EINVAL;\n")
-    t = t.rstrip("\n") + "\n\n" + (HERE / "gen_tables_main.c").read_text()
+    # its one caller is main(), below
+    t = make_static(t, "seqlz_tables_build")
+    gen = (REPO / "tools" / "gen-tables" / "gen_seqlz_tables.c").read_text()
+    t = t.rstrip("\n") + "\n\n" + gen[gen.index("/* ---- the tables as C"):]
     return fix_comments(t)
 
 

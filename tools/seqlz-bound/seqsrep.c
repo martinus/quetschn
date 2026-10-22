@@ -6,8 +6,9 @@
  * start of a page, as in the format, the others 0 until there is one), and 1 for the first sequence of
  * a page. A match at one of them moves it to the front, as zstd's repeat offsets. Build from the
  * repository's root:
- *   cc -O2 -Isrc -o seqsrep tools/seqlz-bound/seqsrep.c
+ *   tools/gen-tables/gen-tables.sh seqlz_tables.c && cc -O2 -Isrc -o seqsrep tools/seqlz-bound/seqsrep.c
  * src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
+ * seqlz_tables.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@ int main(int argc, char** argv) {
     FILE *f, *o;
     unsigned int pages = 0, i, k, level;
 
-    if (argc != 4 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb")) || seqlz_tables_init(&seqlz_default_lengths)) {
+    if (argc != 4 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb"))) {
         fprintf(stderr, "usage: seqsrep <pages file> <output> <level>\n");
         return 1;
     }

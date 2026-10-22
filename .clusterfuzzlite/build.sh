@@ -3,7 +3,9 @@
 # The fuzz targets of fuzz/ for ClusterFuzzLite, with its compiler, sanitizer flags and libFuzzer, into
 # $OUT, with make_seeds.c's seeds and the input lengths fuzz/afl.sh gives them. 4 KiB pages only; the
 # fuzz job in ci.yml has 16 KiB pages and MSan too.
-codec="src/seqlz_codes.c src/seqlz_compress.c src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c src/seqlz_default_tables.c src/seqlz_lit_sets.c"
+# the tables, generated with clang for the build machine, without the sanitizer flags
+HOSTCC=clang tools/gen-tables/gen-tables.sh "$WORK/seqlz_tables.c"
+codec="src/seqlz_codes.c src/seqlz_compress.c src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c src/seqlz_default_tables.c src/seqlz_lit_sets.c $WORK/seqlz_tables.c"
 for t in decode roundtrip diff encode; do
     extra=""
     if [ "$t" = diff ]; then

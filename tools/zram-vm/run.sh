@@ -61,11 +61,12 @@ else
     codec_objs() { (cd "$1" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' '); }
     cp "$here/backend_seqlz.c" "$here/backend_seqlz.h" "$here/../../src/"seqlz*.c "$here/../../src/"*.h \
         "$here/../../src/"*_4k.inc "$z/"
+    "$here/../gen-tables/gen-tables.sh" "$z/seqlz_tables.c"
     sed -i 's|#include "backend_842.h"|#include "backend_842.h"\n#include "backend_seqlz.h"|' "$z/zcomp.c"
     for l in $levels; do
         sed -i "s|^\tNULL$|\t\&backend_seqlz_$l,\n\tNULL|" "$z/zcomp.c"
     done
-    objs=$(codec_objs "$here/../../src")
+    objs="$(codec_objs "$here/../../src") seqlz_tables.o"
     printf 'zram-y += backend_seqlz.o %s\n' "$objs" >>"$z/Makefile"
     for o in $objs; do
         printf 'CFLAGS_%s += -O3\n' "$o" >>"$z/Makefile"
@@ -81,6 +82,10 @@ else
         [[ -f $bdir/backend_seqlz.c ]] || bdir=$here
         cp "$bdir/backend_seqlz.c" "$bdir/backend_seqlz.h" "$d/"
         cp "$dir/src/"seqlz*.c "$dir/src/"*.h "$dir/src/"*_4k.inc "$d/"
+        # its tables, by its own generator; an older src/ builds them at run time, in its own backend
+        if [[ -x $dir/tools/gen-tables/gen-tables.sh ]]; then
+            "$dir/tools/gen-tables/gen-tables.sh" "$d/seqlz_tables.c"
+        fi
         # backend_seqlz.c passes a level; a src/ from before the levels took a bool there, and would
         # build and code the literals at every level
         grep -qs "define SEQLZ_LEVELS" "$d"/*.h || { echo "variant $name: $dir/src has no levels, it is older than this run.sh" >&2; exit 1; }

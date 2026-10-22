@@ -57,6 +57,7 @@ python3 build.py [--check] [--out DIR]
     --check fails if a line of src/ is in no listing, an id is twice on the page, or a link goes to
     an id that is not; --out writes the two pages into DIR instead of next to this script
 """
+import atexit
 import base64
 import html
 import json
@@ -64,7 +65,9 @@ import pathlib
 import re
 import subprocess
 import sys
+import shutil
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import markdown
@@ -198,12 +201,28 @@ STEPPER_CSS = [False]
 SRC_C = ("codes", "compress", "compress_literals", "decompress", "decompress_literals", "default_tables", "lit_sets")
 
 
+TABLES = []
+TABLES_LOCK = threading.Lock()
+
+
+def tables_c():
+    """seqlz_tables.c, the codec's tables, which tools/gen-tables/gen-tables.sh generates, once per build"""
+    with TABLES_LOCK:
+        if not TABLES:
+            tmp = tempfile.mkdtemp()
+            atexit.register(shutil.rmtree, tmp, True)
+            subprocess.run([str(REPO / "tools" / "gen-tables" / "gen-tables.sh"), f"{tmp}/seqlz_tables.c"], check=True)
+            TABLES.append(f"{tmp}/seqlz_tables.c")
+        return TABLES[0]
+
+
 def run_c(main, include_dirs=(), link=SRC_C, flags=(), extra=()):
-    """main built with the codec of src/ and run, its stdout. A file of src/ that main #includes, to
-    reach its static functions, is not linked a second time. Variables start at 0: the step-throughs
-    record theirs before the function first sets them."""
+    """main built with the codec of src/ and its tables, and run, its stdout. A file of src/ that main
+    #includes, to reach its static functions, is not linked a second time. Variables start at 0: the
+    step-throughs record theirs before the function first sets them."""
     text = main.read_text()
     srcs = [str(REPO / f"src/seqlz_{n}.c") for n in link if f'#include "seqlz_{n}.c"' not in text]
+    srcs += [tables_c()] if link else []
     incs = [a for d in [*include_dirs, HERE, REPO / "src"] for a in ("-I", str(d))]
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["cc", "-O1", "-ftrivial-auto-var-init=zero", *flags, *incs, str(main), *srcs, *extra,

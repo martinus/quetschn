@@ -70,7 +70,7 @@ userspace interface ([chapter 6](#ch-header--tables)).
 
 ## Setting up a device: the tables, built and checked {#ch-zram-glue--setup}
 
-@listing src/zram_seqlz.c 10-25
+@listing src/zram_seqlz.c 10-16
 
 `setup()` is `setup_params()`. seqlz is compiled for one block size, so a 4 KiB build given a corpus of
 16 KiB pages fails here instead of reading past each page. Then it builds the one global
@@ -87,13 +87,13 @@ every zram device and priority, from constant data, was what the kernel copy did
 per device and passed it to every call, and every function of the codec took it as a parameter.
 :::
 
-@listing src/zram_seqlz.c 27-36
+@listing src/zram_seqlz.c 18-27
 
 `destroy()` takes only the stream, so it serves as `destroy_cctx` and as `destroy_dctx`.
 
 ## The compression context is the matcher's table {#ch-zram-glue--cctx}
 
-@listing src/zram_seqlz.c 38-47
+@listing src/zram_seqlz.c 29-38
 
 `struct seqlz_state` is a union of the matcher's hash table and a page of bytes
 ([chapter 6](#ch-header--compressor)): {{ch17.hash_slots}} entries of 2 bytes, {{size.state}} bytes, and
@@ -106,18 +106,18 @@ same. The kernel builds without the warning about unused parameters below `W=3`,
 
 ## seqlz-1: compress and decompress {#ch-zram-glue--fast}
 
-@listing src/zram_seqlz.c 49-62
+@listing src/zram_seqlz.c 40-53
 
 `compress()` is the one compress function of all three codecs, with the level as a parameter that
 `struct zcomp_ops` does not have; each codec gets a wrapper of one line that passes its level:
 
-@listing src/zram_seqlz.c 64-69
+@listing src/zram_seqlz.c 55-60
 
 `*dst_len` is the capacity of `dst` on the way in and the compressed length on the way out. zram gives a
 compressor 2 pages of output, and a page always fits into 2 pages ([chapter 10](#ch-encoder)), so the 0
 of a page that did not fit comes only with a smaller buffer, e.g. the one page zswap gives.
 
-@listing src/zram_seqlz.c 71-86
+@listing src/zram_seqlz.c 62-77
 
 `s` is the compression context here, because this codec has no `create_dctx`, and pages with raw
 literals need no work memory. In zram with the split, a codec without `create_dctx` gets a stream with
@@ -148,14 +148,14 @@ codecs, so its decode times include a prefetch the kernel's backend does not do.
 from the VM and the phone, are the ones the project trusts for decode times.
 :::
 
-@listing src/zram_seqlz.c 88-96
+@listing src/zram_seqlz.c 79-87
 
 The fields not named are null, which is how the harness, like zram after the split, knows that this
 codec has no decompression context. The object is not `static`: `bench/bench_main.cpp` names it.
 
 ## seqlz-2 and seqlz-3: a second context for the scratch {#ch-zram-glue--fast-lit}
 
-@listing src/zram_seqlz.c 98-107
+@listing src/zram_seqlz.c 89-98
 
 The scratch is where the coded literals are decoded to ([chapter 13](#ch-literals-dec)), a page plus 16
 bytes, at levels 2 and 3, {{const.SCRATCH}} with 4 KiB pages: the decoder's 16-byte copies read up to 15 bytes past the last
@@ -165,7 +165,7 @@ literal, and the last step of `seqlz_decode_literals()` writes up to 8. So `seql
 harness's one context before the split was a struct of both, also {{ch15.mem.struct_gets|grp}} bytes
 handed out, so the split cost seqlz no memory.
 
-@listing src/zram_seqlz.c 109-121
+@listing src/zram_seqlz.c 100-112
 
 `seqlz_compress()` writes the raw literals first and codes them over the raw ones in the same buffer
 where that pays, so the same 2 pages of output suffice. Level 3 needs no more memory than level 2:
@@ -174,13 +174,13 @@ its table of the page's own is worked out in the compression context, behind the
 ([chapter 13](#ch-literals-dec--own)); the records for the deltas go into the output buffer, and the
 deltas into the compression context ([chapter 10](#ch-encoder--records)).
 
-@listing src/zram_seqlz.c 123-133
+@listing src/zram_seqlz.c 114-124
 
 Here `s` is the decompression context, and pages with raw literals leave the scratch alone. One
 `decompress()` serves `seqlz-2` and `seqlz-3`: the decoder reads from byte 2 which table a page uses,
 and whether its literals are deltas.
 
-@listing src/zram_seqlz.c 135-157
+@listing src/zram_seqlz.c 126-148
 
 ## The kernel's copy is generated, not written {#ch-zram-glue--port}
 

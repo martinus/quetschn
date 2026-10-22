@@ -291,7 +291,7 @@ In the kernel they are `const`, written as C by a program that runs when the ker
 documenting a function ([chapter 15](#ch-zram-glue--interface)).
 @assert size.tables == k16.size.tables
 
-@listing src/seqlz.h 19-41
+@listing src/seqlz.h 19-32
 
 The decoder needs only a complete prefix code ([chapter 2](#ch-compression--complete)): every pattern
 of bits then starts with a code, and a symbol without one cannot be in a valid block. The encoder needs a
@@ -407,7 +407,7 @@ per page with deltas, 915.6 without, 5.0% less, measured on 21st and 22nd Octobe
 [chapter 17](#ch-decisions--deltas) has what it costs in time.
 
 @listing src/seqlz_format.h 270-295
-@listing src/seqlz.h 43-49
+@listing src/seqlz.h 35-41
 
 The comment is the format of [a page's own table](#ch-format--own) in a few lines. "A run of k bits"
 means a run whose number has `k` bits: a run of 32 is `0b100000`, 6 bits, so it is symbol
@@ -446,9 +446,9 @@ that part.
 
 ## Decoding a page {#ch-header--encode-decode}
 
-@listing src/seqlz.h 51-65
+@listing src/seqlz.h 43-57
 
-Lines 58 to 60 are the most important lines of this header. zram stores no checksum, so a page
+Lines 50 to 52 are the most important lines of this header. zram stores no checksum, so a page
 damaged in memory, or by a bug elsewhere, reaches the decoder as it is, and a decoder that wrote outside
 its buffers would turn a damaged page into a damaged kernel. [Chapter 14](#ch-decode--safety) has the
 checks and the fuzzing that keep the promise. The page does not say which tables wrote it. `scratch` may
@@ -476,7 +476,7 @@ conditional move per cap and no branch.
 ## The compressor's state {#ch-header--compressor}
 
 @listing src/seqlz_internal.h 53-63
-@listing src/seqlz.h 66-68
+@listing src/seqlz.h 58-60
 
 The first comment is the compressor's design: the matcher and the encoder are one loop over the page
 ([chapter 9](#ch-matcher), [chapter 10](#ch-encoder)). Each entry of the hash table is the position of
@@ -528,13 +528,13 @@ What it adds is the alignment of 8: a union of `u16` and `u8` alone could start 
 and `struct own_work` has `u32` members. In the kernel the hash table and the decoder's scratch share
 one allocation of 8 KiB per CPU ([chapter 15](#ch-zram-glue--backend)).
 
-@listing src/seqlz.h 70-83
+@listing src/seqlz.h 62-75
 
 `seqlz_find()` runs the matcher alone, e.g. to compare matchers or to feed `seqlz_encode()`, with the
 matcher of the level it is given: at level 3 the sequences are other ones. It does not copy the
 literals; a tool takes them from the page.
 
-@listing src/seqlz.h 85-115
+@listing src/seqlz.h 77-106
 
 `seqlz_encode()` writes a page from sequences it is given. It needs the state only at level 3, as work
 memory for a page's own table ([chapter 11](#ch-literals-enc--own)) and for the deltas; below
@@ -546,13 +546,13 @@ gives a page that decodes to something else.
 
 `seqlz_encode()` is for the tests, the fuzzer that feeds the encoder raw sequences, and
 `tools/seqlz-worst/`, which writes valid pages from sequences the matcher would never find, to search
-for the pages slowest to decode. It checks the rules of lines 102 to 105, the ones the decoder checks,
+for the pages slowest to decode. It checks the rules of lines 94 to 97, the ones the decoder checks,
 before it writes anything. It did not always: a match shorter than 4 bytes made `ml - 4` wrap to near
 $2^{32}$, its length value took more than 31 bits, and 1025 such sequences wrote past the two pages of
 `dst`. `fuzz/seqlz_encode_fuzz.c` came with the fix (commit `256768e`). 0 can mean failure because
 every page has at least its 2-byte header.
 
-@listing src/seqlz.h 117-142
+@listing src/seqlz.h 108-133
 
 `seqlz_compress()`'s size contract: zram's buffer of two pages is always enough, also for random data,
 which [chapter 10](#ch-encoder) proves with the 31 bits of `SEQLZ_MAX_ESCAPE_LEN`. A smaller buffer

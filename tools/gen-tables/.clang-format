@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT OR GPL-2.0-only
+# gen_seqlz_tables.c goes into the kernel tree too, as lib/seqlz/gen_seqlz_tables.c, and is written in its style,
+# not this project's; checkpatch checks it, see tools/kernel-port/check.sh.
+DisableFormat: true

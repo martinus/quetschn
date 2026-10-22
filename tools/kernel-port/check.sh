@@ -58,11 +58,9 @@ build "${kmake[@]}" -j"$(nproc)" W=1 KCFLAGS=-fstack-usage lib/seqlz/ drivers/bl
 ls "$work/build/lib/seqlz/seqlz_decompress.o" "$work/build/lib/seqlz/tests/seqlz_kunit.o" \
     "$work/build/drivers/block/zram/backend_seqlz.o" >/dev/null || exit 1
 echo "build: no warnings"
-# the tables gen_seqlz_tables wrote in the build, against the ones src/ builds in userspace, printed the same
-printf '#include <stdio.h>\n#include "seqlz_codes.c"\n#include "gen_tables_main.c"\n' >"$work/tables.c"
-cc -O2 -I"$here/../../src" -I"$here" -o "$work/tables" "$work/tables.c" "$here/../../src/seqlz_default_tables.c" \
-    "$here/../../src/seqlz_lit_sets.c"
-"$work/tables" | diff -q - "$work/build/lib/seqlz/seqlz_tables.c" >/dev/null ||
+# the tables gen_seqlz_tables wrote in the build, against the ones userspace generates from src/
+"$here/../gen-tables/gen-tables.sh" "$work/tables.c"
+diff -q "$work/tables.c" "$work/build/lib/seqlz/seqlz_tables.c" >/dev/null ||
     { echo "lib/seqlz/seqlz_tables.c is not the tables of src/" >&2; exit 1; }
 echo "tables: the same as src/'s"
 # a division of 64 bits that the compiler leaves to a library call: the kernel has none, and only the

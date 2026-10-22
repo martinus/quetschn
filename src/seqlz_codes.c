@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 /*
  * The codes and decode tables, built from the code lengths:
- * seqlz_tables_init().
+ * seqlz_tables_build(). A program for the build host prints them as C, see
+ * tools/gen-tables/, and every build of seqlz compiles that.
  */
 #include "seqlz.h"
 
@@ -121,11 +122,6 @@ static int build_lit(const u8 *len, struct lit_table *t)
 	return 0;
 }
 
-bool seqlz_all_symbols(void)
-{
-	return seqlz_tables.all_symbols;
-}
-
 /*
  * The literal tables, which are not in struct seqlz_lengths, they are fixed:
  * seqlz_lit_sets. And each byte's code length in all of them, see lit_cost.
@@ -233,14 +229,13 @@ static bool has_all_symbols(const struct seqlz_lengths *lengths)
 	return all;
 }
 
-struct seqlz_tables seqlz_tables;
-
 /*
  * The codes and decode tables of lengths, seqlz_lit_sets and seqlz_own_lengths
- * in t; -EINVAL if one of them is not a complete prefix code
+ * in t; -EINVAL if one of them is not a complete prefix code, or if a symbol
+ * the encoder may have to write has no code
  */
-static int build_tables(struct seqlz_tables *t,
-			const struct seqlz_lengths *lengths)
+int seqlz_tables_build(struct seqlz_tables *t,
+		       const struct seqlz_lengths *lengths)
 {
 	/*
 	 * zero, so that symbols without a code have code 0, and so have the
@@ -250,19 +245,7 @@ static int build_tables(struct seqlz_tables *t,
 	if (build_token(lengths->token, &t->token) ||
 	    build_values(lengths->ll, &t->ll) ||
 	    build_values(lengths->ml, &t->ml) || build_lit_sets(t) ||
-	    build_own(&t->own))
+	    build_own(&t->own) || !has_all_symbols(lengths))
 		return -EINVAL;
-	t->all_symbols = has_all_symbols(lengths);
-	return 0;
-}
-
-int seqlz_tables_init(const struct seqlz_lengths *lengths)
-{
-	/* built aside: lengths that fail leave the tables as they were */
-	static struct seqlz_tables t;
-
-	if (build_tables(&t, lengths))
-		return -EINVAL;
-	seqlz_tables = t;
 	return 0;
 }

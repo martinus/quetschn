@@ -358,10 +358,6 @@ int main(int argc, char** argv) {
         counts.ll.assign(SEQLZ_LEN_SYMBOLS, 0.0);
         counts.ml.assign(SEQLZ_LEN_SYMBOLS, 0.0);
         counts.own.assign(SEQLZ_OWN_SYMBOLS, 0.0);
-        // the tables compiled in, for the pages level 3 writes, whose own literal tables are counted
-        if (seqlz_tables_init(&seqlz_default_lengths) != 0) {
-            throw std::runtime_error("cannot build the tables compiled in");
-        }
         auto compressed = std::vector<unsigned char>(2 * SEQLZ_BLOCK_SIZE);
         auto own_pages = std::size_t{0};
         auto state = std::make_unique<seqlz_state>();

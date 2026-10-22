@@ -277,7 +277,7 @@ one by one. [Chapter 8](#ch-codes--own) builds the three arrays.
 
 ## struct seqlz_tables: {{size.tables|grp}} bytes, once {#ch-internal--tables}
 
-@listing src/seqlz_tables.h 118-128
+@listing src/seqlz_tables.h 118-127
 
 The layout on x86-64, from `sizeof` and `offsetof`; arm64 aligns a `u64` the same way:
 
@@ -310,7 +310,7 @@ kernel's read-only data ([chapter 15](#ch-zram-glue--init)). In userspace it is 
 
 ## The fields of a token entry {#ch-internal--token-entry}
 
-@listing src/seqlz_tables.h 130-137
+@listing src/seqlz_tables.h 129-136
 
 The asserts check the fields of the entry described next. The 5 bits of `DROP` hold up to 31, and the
 most a token with a code of its own moves the bitstream is an 11-bit code plus class 3's offset bits,
@@ -318,7 +318,7 @@ $11 + 12 = 23$, 25 on 16 KiB pages. `ll` has 4 bits, `ml` 6 bits for at most 35,
 `SEQLZ_OFF_SHIFT()` reads a whole nibble ([chapter 6](#ch-header--offsets)), so a shift of 4 would fail
 here instead of being cut to 0. And 12 bits must hold every token.
 
-@listing src/seqlz_tables.h 138-154
+@listing src/seqlz_tables.h 137-153
 
 Every field is something the decoder would otherwise compute from the token's number for every
 sequence: split off `ll`, `ml` and the class, look up the class's offset bits and shift, add
@@ -408,7 +408,7 @@ with its {{tok.len.3072}}-bit code:
 <figcaption>A token table entry: bits 0 to 18 tell the decoder how to cut the offset out of the bitstream, bits 19 to 28 are the lengths, the top bits flags.</figcaption>
 </figure>
 
-@listing src/seqlz_tables.h 155-168
+@listing src/seqlz_tables.h 154-167
 
 The macros shift a field down and mask it to its width; bits 30 and 31 the decoder tests directly,
 and bit 29 is free. `TOK_N()` and `TOK_BACK()` are shift counts for the decoder's 64-bit bit
@@ -417,7 +417,7 @@ register, and their mask of 63 is again a proof for the compiler that the shift 
 
 ## token_entry(): the fields from a token's number {#ch-internal--token-entry-code}
 
-@listing src/seqlz_tables.h 170-185
+@listing src/seqlz_tables.h 169-184
 
 `token_entry(s, n)` is the entry for token `s` with a code of `n` bits. It is in the header because
 two files call it: `build_token()` ([chapter 8](#ch-codes--build-token)) fills the table with it, and

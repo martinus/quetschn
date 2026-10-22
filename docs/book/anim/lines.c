@@ -49,8 +49,6 @@ int main(void) {
     unsigned long pos = 0;
     const u8* q;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     slab_page(page);
     n = seqlz_compress(&st, page, comp, sizeof(comp), 2);
     if (!n || seqlz_decode(comp, n, out, scratch) || memcmp(out, page, SEQLZ_BLOCK_SIZE)) {

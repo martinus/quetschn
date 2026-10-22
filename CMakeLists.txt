@@ -75,10 +75,23 @@ target_link_libraries(quetschn-score PRIVATE quetschn_bench quetschn_warnings)
 add_executable(quetschn-swap-bursts tools/swap-bursts/swap-bursts.c)
 target_link_libraries(quetschn-swap-bursts PRIVATE quetschn_warnings)
 
+# seqlz's codes and decode tables, generated from the code lengths by a program for the build host
+set(QUETSCHN_SEQLZ_TABLES ${CMAKE_BINARY_DIR}/seqlz_tables.c)
+file(GLOB QUETSCHN_SEQLZ_HEADERS CONFIGURE_DEPENDS src/*.h src/*.inc)
+add_custom_command(OUTPUT ${QUETSCHN_SEQLZ_TABLES}
+    COMMAND ${CMAKE_SOURCE_DIR}/tools/gen-tables/gen-tables.sh ${QUETSCHN_SEQLZ_TABLES}
+        -DQUETSCHN_PAGE_BITS=${QUETSCHN_PAGE_BITS}
+    DEPENDS tools/gen-tables/gen-tables.sh tools/gen-tables/gen_seqlz_tables.c src/seqlz_codes.c
+        src/seqlz_default_tables.c src/seqlz_lit_sets.c ${QUETSCHN_SEQLZ_HEADERS}
+    COMMENT "seqlz's tables"
+    VERBATIM)
+# it includes seqlz_tables.h, and is not in src/ next to it
+set_source_files_properties(${QUETSCHN_SEQLZ_TABLES} PROPERTIES INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/src)
+
 # seqlz without kernel code, for the tests and tools. seqlz's sources, for every target that builds it:
 # this library, the kernel codecs, the fuzzers
 set(QUETSCHN_SEQLZ_SOURCES src/seqlz_codes.c src/seqlz_compress.c src/seqlz_compress_literals.c src/seqlz_decompress.c
-    src/seqlz_decompress_literals.c src/seqlz_default_tables.c src/seqlz_lit_sets.c)
+    src/seqlz_decompress_literals.c src/seqlz_default_tables.c src/seqlz_lit_sets.c ${QUETSCHN_SEQLZ_TABLES})
 add_library(quetschn_seqlz STATIC ${QUETSCHN_SEQLZ_SOURCES})
 target_include_directories(quetschn_seqlz PUBLIC src)
 target_link_libraries(quetschn_seqlz PRIVATE quetschn_warnings)

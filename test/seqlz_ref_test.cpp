@@ -34,11 +34,6 @@ std::unique_ptr<seqlz_ref> make_ref() {
     return r;
 }
 
-// the tables of seqlz_compress() and seqlz_decode(), the ones compiled in
-void fast_tables() {
-    REQUIRE(seqlz_tables_init(&seqlz_default_lengths) == 0);
-}
-
 // Pages of several kinds, so that every class of offset, long lengths, escapes and coded literals occur.
 std::vector<unsigned char> make_page(std::mt19937_64& rng, int kind) {
     static char const* const words[] = {"the ", "page ", "swap ", "memory ", "of ", "zram ", "kernel ", "and "};
@@ -233,7 +228,6 @@ TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
 #endif
 
 TEST_CASE("seqlz_ref: the compressor's pages decode the same with both decoders, raw and coded literals") {
-    fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(41);
     auto coded = 0;
@@ -306,7 +300,6 @@ std::vector<unsigned char> delta_page(std::mt19937_64& rng, int kind) {
 TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and damaged deltas alike") {
     // The delta byte and byte 2 with each bit flipped: other deltas, invalid ones, a page without deltas whose
     // delta byte is then read as the first byte of the stream sizes.
-    fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(53);
     auto deltas = std::array<int, 4>{};
@@ -337,7 +330,6 @@ TEST_CASE("seqlz_ref: literals as deltas decode the same with both decoders, and
 TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid or invalid for both decoders alike") {
     // Every bit of the table and the first bytes after it, one at a time: lengths that overfill the code
     // space or leave it short, runs past byte value 255, bits after the table's end, two runs in a row.
-    fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(47);
     auto pages = 0;
@@ -362,7 +354,6 @@ TEST_CASE("seqlz_ref: pages' own literal tables with one bit flipped are valid o
 }
 
 TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike") {
-    fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(43);
     for (int round = 0; round < 1000; ++round) {
@@ -407,7 +398,6 @@ TEST_CASE("seqlz_ref: tables that are no complete prefix code, and other page si
 }
 
 TEST_CASE("seqlz_ref: a page of literals only has no bits, and as many literals as the page") {
-    fast_tables();
     auto const r = make_ref();
     auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     auto const good = literals_only(SEQLZ_BLOCK_SIZE);
@@ -421,7 +411,6 @@ TEST_CASE("seqlz_ref: a page of literals only has no bits, and as many literals 
 }
 
 TEST_CASE("seqlz_ref: a page ends where its bits end, the rest of the last byte 0") {
-    fast_tables();
     auto const r = make_ref();
     auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     auto padding = 0U;
@@ -576,7 +565,6 @@ make_own_table(seqlz_ref const& r, unsigned int x, unsigned int y, own_damage da
 TEST_CASE("seqlz_ref: pages with a literal table of their own, and tables invalid by one rule") {
     // Runs before the bytes that the fast decoder takes two at a time with the lengths, 3 and 1, or on
     // their own, 97 and 254; each damage makes the page invalid, for both decoders.
-    fast_tables();
     auto const r = make_ref();
     auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);
     for (auto const& [x, y] : {std::pair{3U, 5U}, std::pair{97U, 98U}, std::pair{0U, 255U}}) {
@@ -621,7 +609,6 @@ TEST_CASE("seqlz_ref: literal streams that end at every place of a byte, their p
     // the 1 that marks how far it read when its last 8 bytes are in them; real pages hit that 3 times in
     // 60 000. It takes codes of 9 and of 10 bits: 57 bits after the last refill are 5 codes of 10 bits
     // and 7 bits used of the first byte, which codes of one even length never give.
-    fast_tables();
     auto const r = make_ref();
     for (unsigned int seed = 0; seed < 4; ++seed) {
         CAPTURE(seed);
@@ -646,7 +633,6 @@ TEST_CASE("seqlz_ref: literal streams that end at every place of a byte, their p
 }
 
 TEST_CASE("seqlz_ref: coded literals need a delta byte of 1 to 3, a code up to 8 and every code inside its stream") {
-    fast_tables();
     auto const r = make_ref();
     auto rng = std::mt19937_64(47);
     auto out = std::vector<unsigned char>(SEQLZ_BLOCK_SIZE);

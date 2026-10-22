@@ -22,8 +22,6 @@ int main(void) {
     unsigned int n, w, at = 0, b = 0, space = 0, s, l, k, rows = 0, d, next[17] = {0}, code[256] = {0};
     const u8* p;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     words_page(page);
     n = seqlz_compress(&st, page, dst, sizeof dst, SEQLZ_LEVEL_OWN);
     if (!n || !(get_unaligned_le16(dst) & SEQLZ_LIT_CODED) || (dst[2] & SEQLZ_LIT_CODE_MASK) != SEQLZ_LIT_OWN ||

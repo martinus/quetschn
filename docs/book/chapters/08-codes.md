@@ -15,7 +15,7 @@ half of the chapter is where the lengths come from.
 
 ## The head of the file {#ch-codes--size}
 
-@listing src/seqlz_codes.c 1-6
+@listing src/seqlz_codes.c 1-7
 
 The file includes `seqlz.h`, the userspace interface ([chapter 6](#ch-header--tables)), for the two
 functions it defines there, `seqlz_tables_init()` and `seqlz_all_symbols()`. In the kernel's copy it
@@ -24,7 +24,7 @@ as it is a program for the build machine ([below](#ch-codes--kernel)).
 
 ## length_entry(): a length value's base and extra bits {#ch-codes--length-entry}
 
-@listing src/seqlz_codes.c 8-18
+@listing src/seqlz_codes.c 9-19
 
 The part of a length value's decode entry that depends only on the symbol, in the layout of
 [chapter 7](#ch-internal--decode-tables): symbols below 16 are their value with no extra bits, a symbol
@@ -36,7 +36,7 @@ symbol {{k16.ch08.le_last_symbol}} has {{k16.ch08.le_last_extra}}, which still f
 
 ## first_codes(): the first code of each length {#ch-codes--first-codes}
 
-@listing src/seqlz_codes.c 20-52
+@listing src/seqlz_codes.c 21-53
 
 `first_codes()` is the rule of [chapter 2](#ch-compression--canonical-codes), the one of deflate
 (RFC 1951, section 3.2.2) that
@@ -77,7 +77,7 @@ table has no code shorter than 4 bits; its {{tok.codes_of.11}} codes of 11 bits 
 
 ## build_token(): a code is one range of the table {#ch-codes--build-token}
 
-@listing src/seqlz_codes.c 54-77
+@listing src/seqlz_codes.c 55-78
 
 The loop runs to `<=` because the escape is symbol 3072. A symbol without a code is skipped: its
 `enc[]` stays 0, which is how the encoder knows to escape it ([chapter 7](#ch-internal--token-table)).
@@ -109,7 +109,7 @@ only in some builds before
 
 ## build_values(): the same, for length values {#ch-codes--build-values}
 
-@listing src/seqlz_codes.c 79-98
+@listing src/seqlz_codes.c 80-99
 
 Symbol 18 of the `ll` table, the {{ll.len.18}}-bit code `{{ll.code.18}}`, gets
 `enc[18] = {{ch07.ll18.c}} | {{ll.len.18}} << 16 = {{ch07.ll18.enc}}`, and the entries
@@ -120,7 +120,7 @@ are there for the encoder's mask, stay 0 from the `memset()` of `build_tables()`
 
 ## build_lit(): the same, for a literal table {#ch-codes--build-lit}
 
-@listing src/seqlz_codes.c 100-122
+@listing src/seqlz_codes.c 101-123
 
 256 symbols, codes of at most 10 bits, entries in the order `lit_put()` and the decoder need
 ([chapter 7](#ch-internal--lit-table)). In table 0 the space, `0x20`, and `e`, `0x65`, have the first
@@ -133,7 +133,7 @@ literals, so the codes go into the tables as `first_codes()` numbers them
 
 ## The literal tables and their costs {#ch-codes--lit-sets}
 
-@listing src/seqlz_codes.c 124-144
+@listing src/seqlz_codes.c 125-140
 
 `seqlz_all_symbols()` returns what `build_tables()` found below; the encoder reads the field
 itself. `seqlz_tables_init()` takes the token and length tables as a parameter, so that the tests can
@@ -146,7 +146,7 @@ table 7 is undefined. For byte `0x65` the 8 lanes are `{{ch08.lit101_row}}`, whi
 
 ## build_own(): the code of OWN, and quad[] by decoding every byte {#ch-codes--own}
 
-@listing src/seqlz_codes.c 146-170
+@listing src/seqlz_codes.c 142-166
 
 `OWN` is the fixed code a page's own literal table is written in ([chapter 4](#ch-format--own)), and
 its lengths are not in `struct seqlz_lengths` either: `seqlz_own_lengths` is generated into the same
@@ -157,7 +157,7 @@ broken, and then `seqlz_tables_init()` fails as for any table. Unlike the other 
 `-EINVAL` too: the encoder may write any symbol of `OWN`, so each needs a code, and the loop would read
 `next[0]`, which `first_codes()` never sets.
 
-@listing src/seqlz_codes.c 171-214
+@listing src/seqlz_codes.c 167-210
 
 `quad[k]` is filled by decoding the 8 bits `k` with the `decode[]` just built, symbol after symbol, as
 far as the 8 bits go. `w` is what is left of `k` after `pos` bits, moved to the top, with zeros below;
@@ -186,7 +186,7 @@ also where the entry has no second length, and then it must move by the first's 
 
 ## has_all_symbols(): can the encoder write every page {#ch-codes--all-symbols}
 
-@listing src/seqlz_codes.c 216-234
+@listing src/seqlz_codes.c 212-230
 
 The decoder can use any complete prefix code: a symbol left out cannot be in a valid page. The encoder
 gets whatever page zram hands it and needs a code for every symbol that page might need: each token a
@@ -199,7 +199,7 @@ last symbol has no code: the tables build, the decoder can use them, and `seqlz_
 
 ## seqlz_tables_init(): all of it, from a clean slate {#ch-codes--init}
 
-@listing src/seqlz_codes.c 236-268
+@listing src/seqlz_codes.c 232-262
 
 The `memset()` does more than the comment says: tokens without a code need `enc[]` 0, the encoder's
 masked index could reach the entries behind the last length symbol, `lit_cost` is built with `|=`,
@@ -218,9 +218,9 @@ because the generator checks it, see below.
 The kernel does not run this file. `tools/kernel-port/port.py` turns it into
 `lib/seqlz/gen_seqlz_tables.c`, a program for the build host, as `lib/crc/gen_crc32table.c` is for the
 CRC tables: the same builders, without `seqlz_tables_init()`, `seqlz_all_symbols()` and the global, the
-code lengths from `lib/seqlz/seqlz_lengths.h`, and `tools/kernel-port/gen_tables_main.c` at the end:
+code lengths from `lib/seqlz/seqlz_lengths.h`, and `tools/gen-tables/gen_seqlz_tables.c` at the end:
 
-@listing tools/kernel-port/gen_tables_main.c 1-{{ch15.kport.gen_main}}
+@listing tools/gen-tables/gen_seqlz_tables.c 1-{{ch15.kport.gen_main}}
 
 When the kernel is built, `lib/seqlz/Makefile` builds the program, runs it and compiles what it
 prints, `seqlz_tables.c`: `const struct seqlz_tables seqlz_tables`, {{size.tables|grp}} bytes of the

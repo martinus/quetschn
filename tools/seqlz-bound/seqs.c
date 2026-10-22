@@ -5,9 +5,10 @@
  * pages of 3625 bytes and more are left out, as in bound.c. One record of four u16 per sequence with a
  * match, the last sequence has no token: min(ll, 15) + 16 * min(ml - 4, 31), the offset, the offset
  * before it, and 1 for the first sequence of a page. Build from the repository's root:
+ *   tools/gen-tables/gen-tables.sh seqlz_tables.c
  *   cc -O2 -Isrc -o seqs tools/seqlz-bound/seqs.c src/seqlz_codes.c src/seqlz_compress.c \
  *      src/seqlz_compress_literals.c src/seqlz_decompress.c src/seqlz_decompress_literals.c \
- *      src/seqlz_default_tables.c src/seqlz_lit_sets.c
+ *      src/seqlz_default_tables.c src/seqlz_lit_sets.c seqlz_tables.c
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@ int main(int argc, char** argv) {
     FILE *f, *o;
     unsigned int pages = 0, i, k;
 
-    if (argc != 3 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb")) || seqlz_tables_init(&seqlz_default_lengths)) {
+    if (argc != 3 || !(f = fopen(argv[1], "rb")) || !(o = fopen(argv[2], "wb"))) {
         fprintf(stderr, "usage: seqs <pages file> <output>\n");
         return 1;
     }

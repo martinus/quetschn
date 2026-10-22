@@ -182,8 +182,6 @@ int main(void) {
     long p_seq, cnt_seq;
     unsigned int cs[3];
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     slab_page(page);
     ref_len = seqlz_compress(&st, page, ref, CAP_MAX, 1);
     if (!ref_len)

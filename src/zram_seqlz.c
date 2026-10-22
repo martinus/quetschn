@@ -7,19 +7,10 @@
 #include "seqlz.h"
 #include "zram_codec.h"
 
-/*
- * The tables are one object for all devices, as the kernel's, which are in its
- * image; building them again for each device gives the same tables.
- */
+/* the tables are one object for all devices, built in, as the kernel's */
 static int setup(struct quetschn_params *p)
 {
 	if (p->page_size != SEQLZ_BLOCK_SIZE)
-		return -1;
-	/*
-	 * the encoder needs a code for every symbol; the tables are fixed, so
-	 * this only catches a training that went wrong
-	 */
-	if (seqlz_tables_init(&seqlz_default_lengths) || !seqlz_all_symbols())
 		return -1;
 	return 0;
 }

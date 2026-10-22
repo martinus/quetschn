@@ -25,8 +25,6 @@ int main(void) {
     unsigned int sz[SEQLZ_LIT_STREAMS];
     unsigned long long h = 0;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return fail("tables");
     slab_page(page);
     n_raw = seqlz_compress(&st, page, raw, sizeof(raw), 1);
     n = seqlz_compress(&st, page, comp, sizeof(comp), 2);

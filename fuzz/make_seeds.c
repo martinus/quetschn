@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
     int kind;
     unsigned int level;
 
-    if (argc != 3 || seqlz_tables_init(&seqlz_default_lengths)) {
+    if (argc != 3) {
         fprintf(stderr, "usage: make_seeds <decode dir> <roundtrip dir>\n");
         return 1;
     }

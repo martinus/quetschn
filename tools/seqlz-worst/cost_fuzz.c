@@ -104,9 +104,6 @@ static unsigned long long instructions(void) {
     return v;
 }
 
-#ifndef COST_CODEC
-static int tables_built;
-#endif
 static unsigned char c[2 * SEQLZ_BLOCK_SIZE], out[SEQLZ_BLOCK_SIZE];
 #ifndef COST_CODEC
 static unsigned char scratch[SEQLZ_SCRATCH];
@@ -129,11 +126,6 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         insn_fd = (int)syscall(SYS_perf_event_open, &a, 0, -1, -1, 0);
         if (insn_fd < 0)
             abort();
-#ifndef COST_CODEC
-        tables_built = 1;
-        if (seqlz_tables_init(&seqlz_default_lengths))
-            abort();
-#endif
     }
 #ifdef COST_CODEC
     {

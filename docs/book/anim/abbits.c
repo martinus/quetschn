@@ -39,8 +39,6 @@ int main(void) {
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
     unsigned int len, n, raw, cls, tok, extra, sym, v, k, n_lit;
 
-    if (seqlz_tables_init(&seqlz_default_lengths))
-        return 1;
     ab_page(page);
     len = seqlz_compress(&st, page, dst, sizeof dst, 1);
     if (!len || seqlz_decode(dst, len, out, NULL) || memcmp(out, page, SEQLZ_BLOCK_SIZE))
