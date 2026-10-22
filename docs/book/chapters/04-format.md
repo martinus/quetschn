@@ -22,7 +22,7 @@ the whole page, and `n > PAGE` makes the page invalid.
 
 <figure class="diagram">
 <div class="scroll">
-<svg viewBox="0 0 720 238" role="img" aria-label="The two layouts of a compressed page: a 2-byte header, the literals, then the bitstream; with coded literals the header also has byte 2, the stream sizes, with literals as deltas the byte that says which delta, with code 8 the page's own table, and 8 streams" font-size="12">
+<svg viewBox="0 0 720 238" role="img" aria-label="The two layouts of a compressed page: a 2-byte header, the literals, then the bitstream; with coded literals the header also has byte 2, with literals as deltas the byte that says which delta, the stream sizes, with code 8 the page's own table, and 8 streams" font-size="12">
   <text x="20" y="24" text-anchor="start" font-weight="bold">raw literals: h &amp; 0x8000 is 0</text>
   <rect x="20" y="34" width="90" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="65.0" y="56" text-anchor="middle">h = n</text>
@@ -43,10 +43,10 @@ the whole page, and `n > PAGE` makes the page invalid.
   <text x="65.0" y="156" text-anchor="middle" font-size="11">h = 0x8000+n</text>
   <rect x="110" y="134" width="30" height="34" class="fill-sheet" stroke="currentColor"/>
   <text x="125.0" y="156" text-anchor="middle">t</text>
-  <rect x="140" y="134" width="100" height="34" class="fill-sheet" stroke="currentColor"/>
-  <text x="190.0" y="156" text-anchor="middle">s[0] to s[7]</text>
-  <rect x="240" y="134" width="26" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
-  <text x="253.0" y="156" text-anchor="middle">dt</text>
+  <rect x="140" y="134" width="26" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
+  <text x="153.0" y="156" text-anchor="middle">dt</text>
+  <rect x="166" y="134" width="100" height="34" class="fill-sheet" stroke="currentColor"/>
+  <text x="216.0" y="156" text-anchor="middle">s[0] to s[7]</text>
   <rect x="266" y="134" width="50" height="34" class="fill-sheet" stroke="currentColor" stroke-dasharray="4 3"/>
   <text x="291.0" y="156" text-anchor="middle">own</text>
   <rect x="316" y="134" width="33" height="34" class="fill-mark" stroke="currentColor" fill-opacity="0.35"/>
@@ -73,10 +73,10 @@ the whole page, and `n > PAGE` makes the page invalid.
   <text x="110" y="190" text-anchor="middle" class="mut">2</text>
   <line x1="140" y1="168" x2="140" y2="176" stroke="currentColor"/>
   <text x="140" y="190" text-anchor="middle" class="mut">3</text>
-  <line x1="240" y1="168" x2="240" y2="176" stroke="currentColor"/>
-  <text x="228" y="190" text-anchor="middle" class="mut">3 + w</text>
+  <line x1="166" y1="168" x2="166" y2="176" stroke="currentColor"/>
+  <text x="170" y="190" text-anchor="middle" class="mut">+ e</text>
   <line x1="266" y1="168" x2="266" y2="176" stroke="currentColor"/>
-  <text x="270" y="190" text-anchor="middle" class="mut">+ e</text>
+  <text x="270" y="190" text-anchor="middle" class="mut">+ w</text>
   <line x1="316" y1="168" x2="316" y2="176" stroke="currentColor"/>
   <text x="320" y="190" text-anchor="middle" class="mut">+ d</text>
   <line x1="580" y1="168" x2="580" y2="176" stroke="currentColor"/>
@@ -149,9 +149,9 @@ tables or with a table that the page brings, and more fields come first. Byte 2,
   ([below](#ch-format--deltas)), which only `seqlz-3` writes. The codes 9 to 15 are free for a later format
   ([no version in the page](#ch-format--version)).
 
-The next `w` bytes, from byte 3 on, are one little-endian number `S` of `8 * w` bits with the 8 stream
-sizes, `w` bits each, the lowest first: `s[j] = (S >> (j * w)) & ((1 << w) - 1)`. With `e = 1` one
-byte follows, `dt`, which says which earlier byte each delta is to. With code 8 the page's own table follows,
+With `e = 1` byte 3 is `dt`, which says which earlier byte each delta is to. The next `w` bytes, from
+byte $3 + e$ on, are one little-endian number `S` of `8 * w` bits with the 8 stream sizes, `w` bits
+each, the lowest first: `s[j] = (S >> (j * w)) & ((1 << w) - 1)`. With code 8 the page's own table follows,
 `d` bytes; with the codes 0 to 7, `d` is 0. Then come the 8 streams, `s[j]`
 bytes each, and after the last one `B`. The literals are dealt out to the streams like cards: stream
 $j$ holds literals $j$, $j + 8$, $j + 16$ and so on, each as a code of the table that `code` names,
@@ -250,7 +250,7 @@ many of the decoder's cache lines a page needs ([chapter 3](#ch-cpu--msb-first))
 
 ## A page's own literal table, in byte order {#ch-format--own}
 
-With code 8 the page brings its own literal table, right after the stream sizes and `dt`, at
+With code 8 the page brings its own literal table, right after `dt` and the stream sizes, at
 byte $3 + w + e$. It is
 read most significant bit first, like `B`. It is not a list of 256 code lengths: it is a list of
 symbols of one more fixed table, `OWN`, which goes through the byte values from 0 up and says for each
@@ -392,8 +392,8 @@ without any memory of its own, in [chapter 13](#ch-literals-dec--own).
 
 With `e = 1` each literal was stored as its **delta** to an earlier byte of the page before it was
 coded: the literal minus that byte, modulo 256. The decoder adds the same byte back as it appends the
-literal, modulo 256 again, which gives the literal back. The byte `dt`, right after the stream sizes,
-says which byte. For the `i`-th literal of a sequence, counted from 0, which goes to byte `p = |out|`
+literal, modulo 256 again, which gives the literal back. The byte `dt`, byte 3, right after `t` and
+before the stream sizes, says which byte. For the `i`-th literal of a sequence, counted from 0, which goes to byte `p = |out|`
 of the page:
 
 | `dt` | the literal is `(lits[used + i] + out[p - x]) mod 256` with | literals as they are |
@@ -415,8 +415,8 @@ literals; the subtraction replaced it the same day, before it was merged ([chapt
 
 The page of 512 pointers of [chapter 9](#ch-matcher--back) at level 3 begins with
 `{{delta.ptr.l3.head}}`: `h` says {{delta.ptr.l3.n}} coded literals, `t = {{delta.ptr.l3.t}}` is code
-{{delta.ptr.l3.code}} with `w = {{delta.ptr.l3.w}}` and `e = 1`, 5 bytes of sizes follow, and byte
-{{delta.ptr.l3.dt_at}} is `dt = {{delta.ptr.l3.dt}}`. Its second sequence is 1 literal at byte
+{{delta.ptr.l3.code}} with `w = {{delta.ptr.l3.w}}` and `e = 1`, byte {{delta.ptr.l3.dt_at}} is
+`dt = {{delta.ptr.l3.dt}}`, and 5 bytes of sizes follow. Its second sequence is 1 literal at byte
 {{delta.ptr.rec.1.pos}} after a match at offset 8, so `x = 8`, and the decoded delta `0x10` is added
 to `out[8] = 0x20`, the low byte of the pointer before, which gives `0x30`.
 @assert delta.ptr.l3.w == 5 and delta.ptr.l3.dt == 3 and delta.ptr.rec[1].last == 8 and delta.ptr.rec[1].pos == 16 and delta.ptr.fast.before[:2] == "10" and delta.ptr.fast.ref[:2] == "20" and delta.ptr.fast.after[:2] == "30"

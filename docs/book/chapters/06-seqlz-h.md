@@ -331,13 +331,16 @@ literals for all 8 streams per refill.
 ```text
 byte 2:      bit 7 | bit 6  bit 5  bit 4 | bit 3  bit 2  bit 1  bit 0
              deltas|       w - 5         |      the literals' code
-bytes 3 ...: the 8 stream sizes in bytes, w bits each, lowest bit first, w bytes together
-byte 3 + w:  with bit 7 set, which delta, 1 to 3, see below
+byte 3:      with bit 7 set, which delta, 1 to 3, see below
+bytes 3 + e: the 8 stream sizes in bytes, w bits each, lowest bit first, w bytes together,
+             from byte 3 without deltas, e = 0, from byte 4 with them, e = 1
 ```
 
 8 sizes of `w` bits are `w` bytes, so the header is $3 + w$, 8 to 15 bytes, one more with deltas, and
-`SEQLZ_LIT_HEADER(0)` is the offset of the first size byte. A page whose largest stream has 100 bytes
-takes 7 bits per size and a header of 10 bytes. A stream holds every 8th literal of at most 10 bits,
+`SEQLZ_LIT_HEADER(0)` is 3, the offset of the delta's byte with deltas and of the first size byte
+without. The header reads in order: byte 2 says whether the delta's byte is there, and it comes
+next, before the sizes. A page whose largest stream has 100 bytes takes 7 bits per size and a header
+of 10 bytes. A stream holds every 8th literal of at most 10 bits,
 at most 640 bytes on 4 KiB pages and 2560 on 16 KiB pages, which need 10 and 12 bits. Widths of 3 and
 4 bits would need a fourth bit for the width, and only 1.8% of the pages with coded literals would use
 them
@@ -372,8 +375,8 @@ as deltas, and {{delta.ptr.h.10}} of them are `0x10`. Level 2 stores the page in
 with raw literals, as coding them saves too little; level 3 without deltas would store it in
 {{delta.ptr.l3plain.len}} bytes, with them in {{delta.ptr.l3.len}}. Its byte 2 is `{{delta.ptr.l3.t}}`:
 code {{delta.ptr.l3.code}}, the page's own table, $w = {{delta.ptr.l3.w}}$, bit 7 set, and byte
-{{delta.ptr.l3.dt_at}}, right after the sizes, is {{delta.ptr.l3.dt}}, `SEQLZ_DELTA_LAST`.
-@assert delta.ptr.l3.dt == ch06.DELTA_LAST and delta.ptr.l3.code == own.lit_own and delta.ptr.l3.len < delta.ptr.l3plain.len < delta.ptr.l2.len and delta.ptr.l3.dt_at == delta.ptr.l3.w + 3
+{{delta.ptr.l3.dt_at}}, right before the sizes, is {{delta.ptr.l3.dt}}, `SEQLZ_DELTA_LAST`.
+@assert delta.ptr.l3.dt == ch06.DELTA_LAST and delta.ptr.l3.code == own.lit_own and delta.ptr.l3.len < delta.ptr.l3plain.len < delta.ptr.l2.len and delta.ptr.l3.dt_at == 3
 
 This page shows why a delta and not a XOR. A XOR of the same literals with the same bytes, which
 level 3 wrote before the deltas, gives {{delta.ptr.xor.distinct}} values: only {{delta.ptr.xor.h.10}}
@@ -384,8 +387,8 @@ turns that into one small value where a XOR gives one value per pattern of carri
 @assert delta.ptr.xor.distinct > delta.ptr.distinct.deltas and F("delta.ptr.xor.h.10") < F("delta.ptr.h.10") and min(F("delta.ptr.xor.h.30"), F("delta.ptr.xor.h.70"), F("delta.ptr.xor.h.f0")) > 0
 
 0 is not one of the values: bit 7 already says whether there are deltas, and the decoder rejects a byte
-of 0 or above 3. The byte is at $3 + w$ with every code, a fixed table's or the page's own, whose
-description moves one byte up behind it. That an
+of 0 or above 3. The byte is byte 3 with every code, a fixed table's or the page's own, and the sizes,
+the description and the streams move one byte up behind it. That an
 offset of 1 or 2 counts as 4 and 3 as 6 is a rule for the decoder: it adds 4 or 8 bytes at a time,
 which only works if every byte it adds lies before the word it writes, at least 4 bytes back.
 After a match with an offset of 3 the bytes repeat every 3 bytes, so the byte 6 back is the byte 3

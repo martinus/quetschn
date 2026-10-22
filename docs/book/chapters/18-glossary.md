@@ -39,8 +39,8 @@ sense given here.
   the next position starts a longer one, which seqlz does not. [Chapter 9](#ch-matcher)
 - **hash table**: the matcher's {{ch17.hash_slots}} slots of 2 bytes, cleared for each page, the newest
   position per hash of 5 bytes. [Chapter 9](#ch-matcher--hash)
-- **header**: the u16 with the literal count and a flag, and with coded literals byte 2 and the stream
-  sizes, $3 + w$ bytes, and with deltas one byte more. [Chapter 6](#ch-header--literals)
+- **header**: the u16 with the literal count and a flag, and with coded literals byte 2, with deltas the
+  byte that says which, and the stream sizes: $3 + w$ bytes, and with deltas one byte more. [Chapter 6](#ch-header--literals)
 - **Huffman code**: the prefix code with the fewest bits for given frequencies; seqlz's are limited to
   {{ch18.bits.token}}, {{ch18.bits.lit}} and {{ch18.bits.len}} bits. [Chapter 2](#ch-compression--huffman)
 - **k-means**: the trainer's clustering for the literal tables: each page goes to the table that codes it

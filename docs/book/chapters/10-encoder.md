@@ -408,7 +408,7 @@ matcher's state that `seqlz_encode()` passes; `*delta` is the delta it picked, o
 The file ends with the public functions, after the code of [chapter 11](#ch-literals-enc); they come
 here because they tie this chapter's code together.
 
-@listing src/seqlz_compress.c 1160-1164
+@listing src/seqlz_compress.c 1161-1165
 
 For a table of the page's own, `code_literals()` needs `struct own_work`, {{own.enc.work_size|grp}}
 bytes of counts, lengths, codes and the table's description ([chapter 11](#ch-literals-enc--own)),
@@ -417,7 +417,7 @@ and `own_work()` puts it into the matcher's state at byte {{own.enc.work_at}}: `
 3's call of `code_literals()`, first with the deltas; it is in
 [chapter 11](#ch-literals-enc--code-own).
 
-@listing src/seqlz_compress.c 1185-1204
+@listing src/seqlz_compress.c 1186-1205
 
 `code_literals()` codes the literals with one of the 8 literal tables if that saves enough, at level 3
 also with a table of the page's own, and returns the new length or `len` unchanged. Level 2 gets the
@@ -427,13 +427,13 @@ At level 3, `encode_raw()` gets the page and the matcher's state, writes the lit
 `SEQLZ_LEVELS`, or level 3 without the state, returns 0 as the header's kernel-doc says
 ([chapter 6](#ch-header--compressor)).
 
-@listing src/seqlz_compress.c 1206-1217
+@listing src/seqlz_compress.c 1207-1218
 
 `compress_page()` is `encode_raw()` without the checks, since the matcher's sequences are valid by
 construction, and its call of `seqlz_match_page()` with `encode_emit` is the whole compression loop of
 levels 1 and 2 once inlined, the greedy matcher with `lazy` the constant `false`.
 
-@listing src/seqlz_compress.c 1219-1246
+@listing src/seqlz_compress.c 1220-1247
 
 `compress_own()` is the same for level 3: the lazy matcher, with `encode_emit_rec`, so the records go
 in front of the literals. If the page does not fit, `e.p == e.lit`, the loop calls `encoder_init()`
@@ -444,7 +444,7 @@ then finds `dst` as it would without records. It is `noinline`: inlined into `se
 to `compress_page()`, levels 1 and 2 wrote their pages slower, as the comment says, without a number
 of its own.
 
-@listing src/seqlz_compress.c 1248-1264
+@listing src/seqlz_compress.c 1249-1265
 
 `seqlz_compress()` is what zram calls ([chapter 15](#ch-zram-glue)), with the level of the device:
 `seqlz-1`, `seqlz-2` and `seqlz-3` in the harness. Level 1 stops after `compress_page()`. Level 2

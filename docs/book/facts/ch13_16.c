@@ -236,7 +236,7 @@ static void ch13(void) {
     fact_num("ch13.width", width);
     fact_num("ch13.mask", (1U << width) - 1U);
     fact_hex("ch13.size_hex", src + SEQLZ_LIT_HEADER(0), width);
-    total = lit_stream_sizes(src, width, q, sz, start);
+    total = lit_stream_sizes(src + SEQLZ_LIT_HEADER(0), width, q, sz, start);
     memcpy(h, src + SEQLZ_LIT_HEADER(0), width);
     for (k = 0; k < 8; k++) {
         unsigned int at = k * width / 8U, sh = k * width % 8U, le = get_unaligned_le32(h + at);

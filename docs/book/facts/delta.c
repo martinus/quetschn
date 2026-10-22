@@ -210,8 +210,8 @@ int main(void) {
     fact_str("delta.ptr.l3.t", hex);
     fact_num("delta.ptr.l3.code", d2[2] & SEQLZ_LIT_CODE_MASK);
     fact_num("delta.ptr.l3.w", SEQLZ_SIZE_BITS_MIN + (d2[2] >> SEQLZ_LIT_WIDTH_AT & 7U));
-    fact_num("delta.ptr.l3.dt_at", SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN + (d2[2] >> SEQLZ_LIT_WIDTH_AT & 7U)));
-    fact_num("delta.ptr.l3.dt", d2[SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN + (d2[2] >> SEQLZ_LIT_WIDTH_AT & 7U))]);
+    fact_num("delta.ptr.l3.dt_at", SEQLZ_LIT_HEADER(0));
+    fact_num("delta.ptr.l3.dt", d2[SEQLZ_LIT_HEADER(0)]);
     fact_hex("delta.ptr.l3.head", d2, SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN + (d2[2] >> SEQLZ_LIT_WIDTH_AT & 7U)) + 1);
     fact_num("delta.ptr.l3.n", get_unaligned_le16(d2) & (SEQLZ_LIT_CODED - 1U));
     if (seqlz_decode(t, d2, len, out, scratch) || memcmp(out, page, SEQLZ_PAGE))

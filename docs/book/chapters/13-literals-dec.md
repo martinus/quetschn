@@ -133,8 +133,9 @@ branch, which the end of `decode_literals()` needs.
 
 @listing src/seqlz_decompress.c 306-329
 
-From byte 3 on, the header has `width` bytes with the 8 stream sizes, `width` bits each, lowest bit first
-([chapter 4](#ch-format--layout)). A 4-byte load always holds a field: it starts at most 7 bits into its
+From `p` on, the header has `width` bytes with the 8 stream sizes, `width` bits each, lowest bit first
+([chapter 4](#ch-format--layout)). `decode_literals()` passes byte 3, or byte 4 when byte 3 is the
+delta's byte. A 4-byte load always holds a field: it starts at most 7 bits into its
 first byte and has at most 12 bits. The furthest load, for `k = 7` with `width = 12`, is at byte
 `84 / 8 = 10` and reads bytes 10 to 13, past the 12 bytes of sizes and possibly past the end of a short
 page. So the sizes are copied into `h` first, whose bytes behind them are zero. The example page has
@@ -329,24 +330,29 @@ made pages with raw literals slower too, 12% when the comment still had a number
 with a setup that is not recorded. Until 10th October the function was also aligned to 64 bytes; measured
 again, that made less than 0.02 µs of difference in the kernel VM, and it was removed (commit `bad6224`).
 
-@listing src/seqlz_decompress.c 477-495
+@listing src/seqlz_decompress.c 477-497
 
-A page of 2 bytes has no byte 2 and gets width 5, which the check below rejects. The streams are arrays
+A page of 2 bytes has no byte 2 and gets width 5, which the check below rejects. `deltas` is bit 7 of
+byte 2, 0 or 1, the number of bytes that say which delta, and 0 for a page of 2 bytes too. `q`, where
+the streams start when the page has no table of its own, is behind byte 2, that byte and the sizes:
+$3 + w + e$ in the terms of [chapter 4](#ch-format--layout). The streams are arrays
 `ip[]`, `start[]`, `sz[]` and `b[]`; with constant indices after unrolling, the compiler keeps them in
 registers like any variable. Until 10th October 2026 they were 8 variables each, `i0` to `i7` and `b0` to
 `b7`. The arrays made the function 105 lines shorter and read coded pages 0.1 µs faster on the A55, within
 the noise of code placement in the kernel VM
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
 
-@listing src/seqlz_decompress.c 496-506
+@listing src/seqlz_decompress.c 498-505
 
 The codes 9 to 15 are reserved: a decoder that accepted them now could not tell old pages from new
-ones later. `n_lit` must fit the scratch. With bit 7 set, the byte after the sizes says which delta, and
-`*q - 1U >= SEQLZ_DELTA_LAST` checks both ends with one compare: a byte of 0 wraps to $2^{32} - 1$, and
-everything from 4 on is at least 3, so only 1 to 3 pass. `q >= end` is a page that ends before that
-byte. `q` then moves past it, so everything after starts one byte later, as the format says.
+ones later. `n_lit` must fit the scratch. The length check counts the delta's byte, so the page holds
+that byte and all `width` bytes of sizes before anything reads them; without `+ deltas`, a page cut
+right before its last size byte would have that byte read past its end. With bit 7 set, byte 3,
+`SEQLZ_LIT_HEADER(0)`, says which delta, and `*delta - 1U >= SEQLZ_DELTA_LAST` checks both ends with
+one compare: a byte of 0 wraps to $2^{32} - 1$, and everything from 4 on is at least 3, so only 1 to 3
+pass. Without deltas, `*delta` is 0 and the page's byte 3 is the first byte of the sizes.
 
-@listing src/seqlz_decompress.c 507-528
+@listing src/seqlz_decompress.c 506-528
 
 Code 8 builds the page's own table
 ([above](#ch-literals-dec--own)) into `page`, the output page that `seqlz_decode()` passes down for
@@ -357,7 +363,7 @@ fixed table; `& (SEQLZ_LIT_SETS - 1U)` changes none of them and keeps the index 
 whatever the value. The prefetch of the 2 KiB table goes out before the sizes are read, so its misses
 overlap with that work; the table never starts a line, so it covers {{ch13.lt.lines}} lines, the last
 one asked for by the prefetch of `end - 1` ([chapter 12](#ch-dec-basics--prefetch)). The sizes are
-read from byte 3 on, the streams start at `q`. `total` is at most $8 \times 4095$, and `q - s` at most
+read from byte $3 + e$ on, behind the delta's byte if there is one, and the streams start at `q`. `total` is at most $8 \times 4095$, and `q - s` at most
 a page, so the check of the streams against `src_len` cannot wrap in 64 bits, and after it every stream
 ends inside the input. Whether the bitstream after them is long enough is the sequence loop's
 business.

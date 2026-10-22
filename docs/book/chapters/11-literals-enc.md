@@ -211,7 +211,7 @@ more after the 8 sizes are rounded up; the code does not look for that case.
 
 @listing src/seqlz_compress.c 1096-1099
 
-With deltas, the byte that says which follows the sizes, and `header` counts it:
+With deltas, the byte that says which comes before the sizes, and `header` counts it:
 `(unsigned int)(delta != 0)` is 1 or 0 without a branch.
 
 @listing src/seqlz_compress.c 1025-1036
@@ -263,7 +263,7 @@ table:
 So the page takes its own table: header, description and streams are {{own.enc.total}} bytes instead of
 {{own.enc.fixed_total}}. `desc`, `width`, `header`, `coded`, `sizes` and `enc` change over to it, and the
 rest of `code_literals()` writes the page as for a fixed table, with the description in the header,
-behind the delta's byte if there is one. With deltas, `header` already counts that byte, so the right
+behind the sizes, which come behind the delta's byte if there is one. With deltas, `header` already counts that byte, so the right
 side of the second check takes it off again, `- (delta ? 1U : 0U)`: both tables would need it, and the
 page's own table has to save the same 16 bytes as without deltas.
 
@@ -596,7 +596,7 @@ up by one. Of the page's {{delta.ptr.n_lit}} literals, {{delta.ptr.xor.h.10}} XO
 
 ### code_own(): the deltas first {#ch-literals-enc--code-own}
 
-@listing src/seqlz_compress.c 1166-1183
+@listing src/seqlz_compress.c 1167-1184
 
 `code_own()` is level 3's call of `code_literals()`. With a delta it codes the deltas in the matcher's
 state, as `raw`, with no `spare`, since that copy is the one it reads. If the deltas stay raw, the page
@@ -658,7 +658,7 @@ copy of the deltas in the matcher's state, and nothing is copied. `q[0]` is righ
 header, and each stream starts where the one before ends. The first `static_assert` after the function
 makes the comment's argument a compile-time fact:
 
-@listing src/seqlz_compress.c 1154-1158
+@listing src/seqlz_compress.c 1155-1159
 
 ```text
 streams end at     d + header + coded,  header = 3 + w + e + desc
@@ -802,15 +802,16 @@ skip makes `k` {{ch11.tr4.jump}}, past the end, where the loop condition stops i
 
 ## The header: u16, byte 2 and the sizes {#ch-literals-enc--header}
 
-@listing src/seqlz_compress.c 1134-1147
+@listing src/seqlz_compress.c 1134-1148
 
 The u16 gets `SEQLZ_LIT_CODED`: {{ch11.n}} literals are `{{ch11.u16hex}}`, the bytes `{{ch11.u16}}`.
 Byte 2 is the literals' code in bits 0 to 3, `width - 5` in bits 4 to 6, and in bit 7 whether they are
 deltas, e.g. table 3 with width 7 is `3 | 2 << 4 = 0x23`, the page's own table with width
 {{own.text.w}} `8 | {{own.text.w5}} << 4 = {{own.text.t}}`, and the page of pointers, own table, width
 {{delta.ptr.l3.w}} and deltas, `8 | 0 << 4 | 1 << 7 = {{delta.ptr.l3.t}}`. The delta's byte goes right behind
-the sizes, at `SEQLZ_LIT_HEADER(width)`, and the description behind it, where `q[0]` already left room
-for both, since `header` counts them.
+byte 2, at `SEQLZ_LIT_HEADER(0)`, byte 3, and the sizes behind it, one byte later with a delta than
+without. The description comes after the sizes, at `SEQLZ_LIT_HEADER(width)` plus the delta's byte,
+and `q[0]` already left room for all of them, since `header` counts them.
 @assert delta.ptr.l3.w == 5
 
 @listing src/seqlz_compress.c 722-739
@@ -825,7 +826,7 @@ and so on.
 
 ## The bitstream moves down {#ch-literals-enc--memmove}
 
-@listing src/seqlz_compress.c 1148-1152
+@listing src/seqlz_compress.c 1149-1153
 
 `memmove()`, as the bitstream moves down by more than {{ch11.save_min}} bytes and is often longer than
 that, so source and destination overlap. In the example, {{ch11.bs}} bytes move from byte
