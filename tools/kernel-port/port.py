@@ -26,8 +26,8 @@ src/ stays the one source of the codec. This writes from it:
   Documentation/admin-guide/blockdev/zram.rst: the backend, its page size and its levels
   arch/x86/include/asm/processor.h      x86-prefetcht0.patch, prefetch() as prefetcht0 on x86-64, which
                                         clang drops otherwise; not if the tree has it already
-On the way: the kernel's headers instead of src/seqlz_compat.h, PAGE_SHIFT instead of
-QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
+On the way: the kernel's headers instead of src/seqlz_compat.h, SEQLZ_PAGE_BITS, 12 whatever PAGE_SIZE
+is, instead of QUETSCHN_PAGE_BITS, the exports and the module's licence, the SPDX lines in the kernel's order, and no
 references to this repository in the comments (its documents, tools and build) and no reasons that
 only hold for the Mi 9T's 4.14, Fedora's config or our test machines, which say the reason in general
 terms instead; a comment that changed is wrapped again to 80 columns. Fails if a reference is left,
@@ -74,6 +74,9 @@ REWRITES = [
     ("@t: seqlz_tables_size() bytes", "@t: the tables to build"),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_page()
     ("seqlz_compress()", "seqlz_compress_page()"),
+    # the library works on blocks of 4 KiB whatever PAGE_SIZE is, see port_header()
+    ("seqlz compresses one memory page at a time, for zram.",
+     "seqlz compresses one page of SEQLZ_BLOCK_SIZE bytes at a time, for zram, whatever the kernel's PAGE_SIZE is."),
     # the kernel's copy is for 4 KiB pages only, see port_header()
     (" For 16 KiB pages it is 16 KiB, as lz4's table.", ""),
     ("A page has at most 16 KiB of literals", "A page has at most 4 KiB of literals"),
@@ -227,7 +230,7 @@ def fix_comments(text):
                     rewrites_used[k] += t.count(a)
                     t = t.replace(a, b)
                 t = HEADING.sub("", t)
-                t = t.replace("QUETSCHN_PAGE_BITS", "PAGE_SHIFT").replace(".inc", ".h")
+                t = t.replace("QUETSCHN_PAGE_BITS", "SEQLZ_PAGE_BITS").replace(".inc", ".h")
                 if t != p[1]:
                     p[1], changed = t, True
         if not changed:
@@ -281,7 +284,7 @@ def rename_compress(text, end):
 def common(text):
     text = PAGE_BITS_BLOCK.sub("", text)
     text = fix_comments(text)
-    text = text.replace("QUETSCHN_PAGE_BITS", "PAGE_SHIFT")
+    text = text.replace("QUETSCHN_PAGE_BITS", "SEQLZ_PAGE_BITS")
     return text
 
 
@@ -340,18 +343,19 @@ def port_header():
     t, _ = header_docs()
     t = spdx(t, False)
     t = must(t, "#ifndef _LINUX_SEQLZ_H\n#define _LINUX_SEQLZ_H\n", "#ifndef _LIB_SEQLZ_SEQLZ_H\n#define _LIB_SEQLZ_SEQLZ_H\n")
-    t = must(t, '#include "seqlz_compat.h"\n', "#include <asm/page.h>\n#include <linux/minmax.h>\n#include <linux/types.h>\n")
+    t = must(t, '#include "seqlz_compat.h"\n', "#include <linux/minmax.h>\n#include <linux/seqlz.h>\n#include <linux/types.h>\n")
     t = cut(t, r"/\* a sequence as the matcher finds it, see seqlz_find\(\) \*/\nstruct seqlz_sequence \{.*?\};\n\n")
     t = cut(t, r"/\*\*\n \* seqlz_tables_size\(\) -.*?;\n\n")
     t = cut(t, r"/\*\*\n \* seqlz_encode\(\) -.*?;\n\n")
     t = cut(t, r"/\* every sequence but the last covers at least 4 bytes of the page \*/\n#define SEQLZ_MAX_SEQUENCES[^\n]*\n")
     t = cut(t, r"/\*\*\n \* seqlz_find\(\) -.*?;\n\n")
-    # 4 KiB pages only: the values of 16 KiB pages go, not only their comments
+    # blocks of 4 KiB only, whatever PAGE_SIZE is: the values of 16 KiB pages go, not only their comments
     t = must(t, "#define SEQLZ_HASH_BITS (QUETSCHN_PAGE_BITS == 12 ? 12U : 13U)\n", "#define SEQLZ_HASH_BITS 12U\n")
     t = common(t)
-    t = must(t, "#define SEQLZ_PAGE (1U << PAGE_SHIFT)\n",
-             "#if PAGE_SHIFT != 12\n#error \"seqlz is for 4 KiB pages only\"\n#endif\n"
-             "#define SEQLZ_PAGE ((unsigned int)PAGE_SIZE)\n")
+    t = must(t, "#define SEQLZ_PAGE (1U << SEQLZ_PAGE_BITS)\n",
+             "/*\n * A page of the format is a block of SEQLZ_BLOCK_SIZE bytes, whatever the\n"
+             " * kernel's PAGE_SIZE is; seqlz_init() checks that it is 1 << SEQLZ_PAGE_BITS\n */\n"
+             "#define SEQLZ_PAGE_BITS 12\n#define SEQLZ_PAGE ((unsigned int)SEQLZ_BLOCK_SIZE)\n")
     return t
 
 
@@ -591,19 +595,19 @@ def main():
 
     patch(tree / "lib/Kconfig", "config LZ4_DECOMPRESS\n\ttristate\n\n",
           "config LZ4_DECOMPRESS\n\ttristate\n\nconfig SEQLZ\n\ttristate\n\thelp\n"
-          "\t  seqlz compresses and decompresses one memory page of 4 KiB\n"
-          "\t  at a time, for zram. It is an LZ format whose sequences are\n"
-          "\t  Huffman coded with fixed tables.\n\n"
+          "\t  seqlz compresses and decompresses one block of 4 KiB at a\n"
+          "\t  time, for zram, whatever the page size. It is an LZ format\n"
+          "\t  whose sequences are Huffman coded with fixed tables.\n\n"
           "config SEQLZ_KUNIT_TEST\n"
           "\ttristate \"KUnit tests for seqlz\" if !KUNIT_ALL_TESTS\n"
-          "\tdepends on KUNIT && PAGE_SIZE_4KB\n"
+          "\tdepends on KUNIT\n"
           "\tdefault KUNIT_ALL_TESTS\n"
           "\tselect SEQLZ\n"
           "\tselect CRYPTO_LIB_SHA256\n"
           "\thelp\n"
           "\t  KUnit tests for seqlz: its tables against their SHA-256,\n"
-          "\t  pages that are compressed and decompressed again, and pages\n"
-          "\t  that are damaged or invalid by one rule of the format.\n\n"
+          "\t  blocks that are compressed and decompressed again, and\n"
+          "\t  blocks that are damaged or invalid by one rule of the format.\n\n"
           "\t  If unsure, say N.\n\n", "config SEQLZ\n")
     patch(tree / "Documentation/staging/index.rst", "   rpmsg\n   speculation\n",
           "   rpmsg\n   seqlz\n   speculation\n", "   seqlz\n")

@@ -49,7 +49,8 @@ trained on a zram dump of the Android 17 emulator with 16 KiB pages
 That is one emulator, no real phone with 16 KiB pages yet. And with 16 KiB pages `seqlz-2`
 asks for 32 784 bytes of work memory per CPU, twice `lz4`'s
 ([seqlz.md](seqlz.md#what-is-not-known-yet)). So it is not in the first series for the kernel:
-`tools/kernel-port/` builds seqlz for 4 KiB pages only.
+`tools/kernel-port/` builds the library for blocks of 4 KiB, with any page size, and the zram backend
+for 4 KiB pages only.
 <!-- end -->
 
 ## The idea
@@ -88,7 +89,8 @@ The compressed page is a byte string of length `len`. Its length is not stored i
 stores it and gives it to the decoder.
 <!-- in the kernel's copy:
 
-Linux has seqlz for 4 KiB pages only. The format for 16 KiB pages is not fixed yet.
+Linux has seqlz for blocks of 4 KiB only, whatever its page size is; there a block is
+what this document calls a page. The format for 16 KiB pages is not fixed yet.
 -->
 
 ## Layout of a compressed page

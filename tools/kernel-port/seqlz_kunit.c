@@ -66,9 +66,9 @@ struct bufs {
 
 static void get_bufs(struct kunit *test, struct bufs *b)
 {
-	b->page = kunit_kmalloc(test, PAGE_SIZE, GFP_KERNEL);
-	b->c = kunit_kmalloc(test, 2 * PAGE_SIZE, GFP_KERNEL);
-	b->out = kunit_kmalloc(test, PAGE_SIZE, GFP_KERNEL);
+	b->page = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
+	b->c = kunit_kmalloc(test, 2 * SEQLZ_BLOCK_SIZE, GFP_KERNEL);
+	b->out = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
 	b->cmem = kunit_kmalloc(test, SEQLZ_MEM_COMPRESS, GFP_KERNEL);
 	b->dmem = kunit_kmalloc(test, SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, b->page);
@@ -90,7 +90,7 @@ static int decompress(struct kunit *test, struct bufs *b, const u8 *src,
 
 	KUNIT_ASSERT_NOT_NULL(test, in);
 	memcpy(in, src, len);
-	memset(b->out, 0xa5, PAGE_SIZE);
+	memset(b->out, 0xa5, SEQLZ_BLOCK_SIZE);
 	ret = seqlz_decompress(in, len, b->out, b->dmem);
 	kunit_kfree(test, in);
 	return ret;
@@ -105,7 +105,7 @@ static void seqlz_test_example(struct kunit *test)
 	get_bufs(test, &b);
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, example, sizeof(example)),
 			0);
-	for (k = 0; k < PAGE_SIZE; k++)
+	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b.out[k], k % 2 ? 'b' : 'a');
 	/* without its last byte the match is cut */
 	KUNIT_EXPECT_EQ(test,
@@ -135,33 +135,33 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 
 	switch (kind % 9) {
 	case 0: /* random bytes: raw literals, few matches */
-		prandom_bytes_state(rng, p, PAGE_SIZE);
+		prandom_bytes_state(rng, p, SEQLZ_BLOCK_SIZE);
 		break;
 	case 1: /* words */
-		for (k = 0; k < PAGE_SIZE;)
+		for (k = 0; k < SEQLZ_BLOCK_SIZE;)
 			for (w = words[prandom_u32_state(rng) % 8];
-			     *w && k < PAGE_SIZE;)
+			     *w && k < SEQLZ_BLOCK_SIZE;)
 				p[k++] = *w++;
 		break;
 	case 2: /* pointers: offsets that are multiples of 8 */
-		for (k = 0; k + 8 <= PAGE_SIZE; k += 8) {
+		for (k = 0; k + 8 <= SEQLZ_BLOCK_SIZE; k += 8) {
 			v = 0x7f0000001000ULL +
 			    (prandom_u32_state(rng) % 64) * 16;
 			memcpy(p + k, &v, 8);
 		}
 		break;
 	case 3: /* a short pattern with noise: offsets 2 or 4, long matches */
-		for (k = 0; k < PAGE_SIZE; k++)
+		for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
 			p[k] = prandom_u32_state(rng) % 50 ?
 				       k % (kind / 7 % 2 ? 2 : 4) :
 				       prandom_u32_state(rng);
 		break;
 	case 4: /* copies of earlier bytes at any distance, long and short */
-		for (k = 0; k < PAGE_SIZE;) {
+		for (k = 0; k < SEQLZ_BLOCK_SIZE;) {
 			if (k > 16 && prandom_u32_state(rng) % 2) {
 				off = 1 + prandom_u32_state(rng) % k;
 				n = prandom_u32_state(rng) % 4 ? 20 : 600;
-				n = min(PAGE_SIZE - k,
+				n = min(SEQLZ_BLOCK_SIZE - k,
 					4 + prandom_u32_state(rng) % n);
 				for (i = 0; i < n; i++, k++)
 					p[k] = p[k - off];
@@ -171,14 +171,14 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 		}
 		break;
 	case 5: /* letters, the frequent ones more often: coded literals */
-		for (k = 0; k < PAGE_SIZE; k++) {
+		for (k = 0; k < SEQLZ_BLOCK_SIZE; k++) {
 			n = sizeof(letters) - 1;
 			p[k] = letters[prandom_u32_state(rng) % n *
 				       (prandom_u32_state(rng) % n) / n];
 		}
 		break;
 	case 7: /* fields of 4 bytes, the high 3 kept for 2: literals as deltas */
-		for (k = 0; k < PAGE_SIZE; k += 4) {
+		for (k = 0; k < SEQLZ_BLOCK_SIZE; k += 4) {
 			if (k % 8 == 0)
 				v = prandom_u32_state(rng);
 			p[k] = prandom_u32_state(rng);
@@ -187,16 +187,16 @@ static void make_page(struct rnd_state *rng, unsigned int kind, u8 *p)
 		break;
 	case 8: /* records of 16 bytes, a bit flipped here and there: deltas */
 		prandom_bytes_state(rng, p, 16);
-		for (k = 16; k < PAGE_SIZE; k++) {
+		for (k = 16; k < SEQLZ_BLOCK_SIZE; k++) {
 			p[k] = p[k - 16];
 			if (prandom_u32_state(rng) % 12 == 0)
 				p[k] ^= 1U << prandom_u32_state(rng) % 8;
 		}
 		break;
 	default: /* mostly zeros, as many swapped pages */
-		memset(p, 0, PAGE_SIZE);
+		memset(p, 0, SEQLZ_BLOCK_SIZE);
 		for (k = 0; k < 40; k++)
-			p[prandom_u32_state(rng) % PAGE_SIZE] =
+			p[prandom_u32_state(rng) % SEQLZ_BLOCK_SIZE] =
 				prandom_u32_state(rng);
 	}
 }
@@ -213,7 +213,7 @@ static void seqlz_test_round_trip(struct kunit *test)
 		make_page(&rng, round, b.page);
 		for (level = SEQLZ_LEVEL_MIN; level <= SEQLZ_LEVEL_MAX;
 		     level++) {
-			len = seqlz_compress(b.page, b.c, 2 * PAGE_SIZE,
+			len = seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE,
 					     b.cmem, level);
 			KUNIT_ASSERT_GT(test, len, 0);
 			coded += !!(b.c[1] & 0x80);
@@ -223,12 +223,13 @@ static void seqlz_test_round_trip(struct kunit *test)
 				  b.c[2] >> SEQLZ_LIT_DELTA_AT;
 			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
 					0);
-			KUNIT_ASSERT_MEMEQ(test, b.out, b.page, PAGE_SIZE);
+			KUNIT_ASSERT_MEMEQ(test, b.out, b.page,
+					   SEQLZ_BLOCK_SIZE);
 			/*
 			 * without work memory, only pages without coded
 			 * literals: zram's level 1 has no decompression context
 			 */
-			memset(b.out, 0xa5, PAGE_SIZE);
+			memset(b.out, 0xa5, SEQLZ_BLOCK_SIZE);
 			if (b.c[1] & 0x80) {
 				KUNIT_ASSERT_EQ(test,
 						seqlz_decompress(b.c, len, b.out,
@@ -240,20 +241,21 @@ static void seqlz_test_round_trip(struct kunit *test)
 								 NULL),
 						0);
 				KUNIT_ASSERT_MEMEQ(test, b.out, b.page,
-						   PAGE_SIZE);
+						   SEQLZ_BLOCK_SIZE);
 			}
 			/*
 			 * one byte less does not fit, and nothing is written
 			 * behind it
 			 */
-			memset(b.c, 0x5a, 2 * PAGE_SIZE);
+			memset(b.c, 0x5a, 2 * SEQLZ_BLOCK_SIZE);
 			KUNIT_ASSERT_EQ(test,
 					seqlz_compress(b.page, b.c, len - 1,
 						       b.cmem, level),
 					-E2BIG);
 			KUNIT_ASSERT_NULL(test,
 					  memchr_inv(b.c + len - 1, 0x5a,
-						     2 * PAGE_SIZE - len + 1));
+						     2 * SEQLZ_BLOCK_SIZE -
+							     len + 1));
 		}
 	}
 	/* the pages have to give both layouts, pages' own tables and deltas */
@@ -261,12 +263,12 @@ static void seqlz_test_round_trip(struct kunit *test)
 	KUNIT_EXPECT_GE(test, own, 10);
 	KUNIT_EXPECT_GE(test, deltas, 10);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
-				       SEQLZ_LEVEL_MIN - 1),
+			seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE,
+				       b.cmem, SEQLZ_LEVEL_MIN - 1),
 			-EINVAL);
 	KUNIT_EXPECT_EQ(test,
-			seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
-				       SEQLZ_LEVEL_MAX + 1),
+			seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE,
+				       b.cmem, SEQLZ_LEVEL_MAX + 1),
 			-EINVAL);
 }
 
@@ -282,12 +284,12 @@ static void seqlz_test_damaged(struct kunit *test)
 	int round, len, f, ret;
 
 	get_bufs(test, &b);
-	d = kunit_kmalloc(test, 2 * PAGE_SIZE + 9, GFP_KERNEL);
+	d = kunit_kmalloc(test, 2 * SEQLZ_BLOCK_SIZE + 9, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, d);
 	prandom_seed_state(&rng, 43);
 	for (round = 0; round < 1000; round++) {
 		make_page(&rng, round, b.page);
-		len = seqlz_compress(b.page, b.c, 2 * PAGE_SIZE, b.cmem,
+		len = seqlz_compress(b.page, b.c, 2 * SEQLZ_BLOCK_SIZE, b.cmem,
 				     SEQLZ_LEVEL_MIN + round % SEQLZ_LEVEL_MAX);
 		KUNIT_ASSERT_GT(test, len, 0);
 
@@ -369,7 +371,7 @@ struct maker {
 	struct kunit *test;
 	/* page_own: a page's own literal table, see own_table() */
 	struct code tok, ll, ml, lit, own, page_own;
-	u8 streams[SEQLZ_LIT_STREAMS][PAGE_SIZE / 8];
+	u8 streams[SEQLZ_LIT_STREAMS][SEQLZ_BLOCK_SIZE / 8];
 	/* the bits after the last symbol of the page's own table */
 	unsigned int own_padding;
 };
@@ -420,7 +422,10 @@ static struct maker *get_maker(struct kunit *test)
 	return m;
 }
 
-/* A page of n raw literals k * 7 and no bits: valid only for n = PAGE_SIZE */
+/*
+ * A page of n raw literals k * 7 and no bits: valid only for
+ * n = SEQLZ_BLOCK_SIZE
+ */
 static unsigned int literals_only(u8 *c, unsigned int n)
 {
 	unsigned int k;
@@ -433,19 +438,19 @@ static unsigned int literals_only(u8 *c, unsigned int n)
 }
 
 /*
- * A page of PAGE_SIZE raw literals and a token that takes them all, of class
- * cls, its 4 offset bits if cls is 1, then ll: invalid, the last sequence has
- * no token.
+ * A page of SEQLZ_BLOCK_SIZE raw literals and a token that takes them all, of
+ * class cls, its 4 offset bits if cls is 1, then ll: invalid, the last
+ * sequence has no token.
  */
 static unsigned int one_sequence(struct maker *m, u8 *c, unsigned int cls)
 {
-	unsigned int len = literals_only(c, PAGE_SIZE);
+	unsigned int len = literals_only(c, SEQLZ_BLOCK_SIZE);
 	struct bits w = { .p = c + len };
 
 	token(m, &w, SEQLZ_LL_CAP + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS)));
 	if (cls == 1)
 		put(&w, 1, 4);
-	put_len_value(m, &w, &m->ll, PAGE_SIZE - SEQLZ_LL_CAP);
+	put_len_value(m, &w, &m->ll, SEQLZ_BLOCK_SIZE - SEQLZ_LL_CAP);
 	return len + bytes(&w);
 }
 
@@ -461,7 +466,7 @@ static unsigned int one_match(struct maker *m, u8 *c, unsigned int *padding)
 	c[1] = 0;
 	c[2] = 7;
 	token(m, &w, 1 + (SEQLZ_ML_CAP << SEQLZ_LL_BITS));
-	put_len_value(m, &w, &m->ml, PAGE_SIZE - 1 - 4 - SEQLZ_ML_CAP);
+	put_len_value(m, &w, &m->ml, SEQLZ_BLOCK_SIZE - 1 - 4 - SEQLZ_ML_CAP);
 	*padding = 8 * bytes(&w) - w.n;
 	return 3 + bytes(&w);
 }
@@ -475,7 +480,7 @@ static void seqlz_test_one_sequence(struct kunit *test)
 	get_bufs(test, &b);
 	len = one_match(m, b.c, &padding);
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
-	for (k = 0; k < PAGE_SIZE; k++)
+	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b.out[k], 7);
 	/* a byte more, and if there is room, a bit after the last code */
 	b.c[len] = 0;
@@ -486,12 +491,12 @@ static void seqlz_test_one_sequence(struct kunit *test)
 	}
 
 	/* a page of literals only has no bits */
-	len = literals_only(b.c, PAGE_SIZE);
+	len = literals_only(b.c, SEQLZ_BLOCK_SIZE);
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
-	for (k = 0; k < PAGE_SIZE; k++)
+	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b.out[k], (u8)(k * 7));
 	/* and as many literals as the page has bytes */
-	len = literals_only(b.c, PAGE_SIZE - 1);
+	len = literals_only(b.c, SEQLZ_BLOCK_SIZE - 1);
 	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
 	/* the last sequence has no token, of any class */
 	len = one_sequence(m, b.c, 0);
@@ -627,7 +632,7 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 	w = (struct bits){ .p = c + at };
 	token(m, &w, SEQLZ_LL_CAP + (SEQLZ_ML_CAP << SEQLZ_LL_BITS));
 	put_len_value(m, &w, &m->ll, n - SEQLZ_LL_CAP);
-	put_len_value(m, &w, &m->ml, PAGE_SIZE - n - 4 - SEQLZ_ML_CAP);
+	put_len_value(m, &w, &m->ml, SEQLZ_BLOCK_SIZE - n - 4 - SEQLZ_ML_CAP);
 	return at + bytes(&w);
 }
 
@@ -657,7 +662,7 @@ static void check_coded(struct maker *m, struct bufs *b, unsigned int n,
 	len = coded_literals(m, b->c, n, lit, arg, own, GOOD, &padding);
 	KUNIT_ASSERT_EQ_MSG(test, decompress(test, b, b->c, len), 0,
 			    "n %u arg %u", n, arg);
-	for (k = 0; k < PAGE_SIZE; k++)
+	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
 		KUNIT_ASSERT_EQ(test, b->out[k], lit(min(k, n - 1), arg));
 	for (d = DELTA_0; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
 		if ((d == PADDING_BIT && !padding) ||

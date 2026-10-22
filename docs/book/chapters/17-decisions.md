@@ -625,8 +625,8 @@ cold reads 0.08 to 0.22 µs slower on 4 KiB pages in the kernel VM, for memory t
 zram's own buffer of two pages per stream, unused while reading and half unused while writing, is not
 tried yet
 ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#not-evaluated-yet)).
-Until that is decided, and until there is a phone with 16 KiB pages, their format is not fixed and the
-kernel copy is for 4 KiB pages only
+Until that is decided, and until there is a phone with 16 KiB pages, their format is not fixed, the
+kernel copy compresses blocks of 4 KiB, and its zram backend is for 4 KiB pages only
 ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 @assert k16.ch15.mem.cctx_gets <= 32768 and k16.ch15.mem.dctx_gets <= 32768 and k16.ch15.mem.split_gets == 48 * 1024
 

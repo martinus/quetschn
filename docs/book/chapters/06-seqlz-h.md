@@ -53,8 +53,8 @@ inlines it: on the Mi 9T's 4.14 kernel, built with clang, a module of the codec 
 @listing src/seqlz.h 71-86
 
 `QUETSCHN_PAGE_BITS` is the codec's one setting, 12 for 4 KiB pages and 14 for 16 KiB, where CMake
-passes `-DQUETSCHN_PAGE_BITS=14`. The kernel's copy uses `PAGE_SHIFT` instead and stops with `#error`
-if it is not 12: the format for 16 KiB pages is not fixed yet
+passes `-DQUETSCHN_PAGE_BITS=14`. The kernel's copy has `SEQLZ_PAGE_BITS`, 12, whatever the kernel's
+page size is: it compresses blocks of 4 KiB, and the format for 16 KiB pages is not fixed yet
 ([`docs/format.md`](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
 
 The two longest codes set the sizes of the decode tables. A table-driven decoder looks up the next $L$

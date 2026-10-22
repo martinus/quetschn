@@ -178,15 +178,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: x86_64, make: '', kunit: true}
-          - {name: arm64, make: 'ARCH=arm64 LLVM=1'}
+          # kunit: the arguments of kunit.sh, UML with KASAN and UBSan, and arm64 in qemu with 64 KiB pages,
+          # where the library compresses blocks of 4 KiB that are not pages
+          - {name: x86_64, make: '', kunit: '--kconfig_add CONFIG_KASAN=y --kconfig_add CONFIG_UBSAN=y'}
+          - {name: arm64, make: 'ARCH=arm64 LLVM=1', kunit: '--arch=arm64 --make_options LLVM=1 --kconfig_add CONFIG_ARM64_64K_PAGES=y'}
           - {name: arm, make: 'ARCH=arm LLVM=1'}
           - {name: s390, make: 'ARCH=s390 LLVM=1'}
     name: kernel-port (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v7
       - name: tools to build a kernel
-        run: sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev ${{ matrix.make && 'clang lld llvm' || '' }}
+        run: >-
+          sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev ${{ matrix.make && 'clang lld llvm' || '' }}
+          ${{ matrix.name == 'arm64' && 'qemu-system-arm' || '' }}
       - name: fetch the kernel tree
         run: |
           git init -q kernel && cd kernel
@@ -197,7 +201,7 @@ jobs:
         run: tools/kernel-port/check.sh kernel ${{ matrix.make }}
       - name: KUnit tests
         if: matrix.kunit
-        run: tools/kernel-port/kunit.sh kernel --kconfig_add CONFIG_KASAN=y --kconfig_add CONFIG_UBSAN=y
+        run: tools/kernel-port/kunit.sh kernel ${{ matrix.kunit }}
 
   # The one required check. A job whose dependency failed is skipped, and a skipped required check
   # counts as passed, so this needs if: always() and has to look at every result itself.

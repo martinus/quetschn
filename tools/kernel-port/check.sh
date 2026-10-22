@@ -4,7 +4,8 @@
 # check.sh <linux tree> [make args]: port.py into a copy of the tree's HEAD, then the checks a submission
 # needs: the codec, its KUnit tests and zram built with W=1, checkpatch --strict on the patch,
 # kernel-doc on the codec. make args go to every make, e.g. LLVM=1, or ARCH=arm64 LLVM=1 for arm64.
-# The tests run with kunit.sh.
+# On arm64 also the library with 16 KiB and 64 KiB pages, without the zram backend. The tests run with
+# kunit.sh.
 # Prints the patch's size and checkpatch's summary; fails on a build error or warning.
 set -euo pipefail
 [[ $# -ge 1 ]] || { echo "usage: tools/kernel-port/check.sh <linux tree> [make args]" >&2; exit 2; }
@@ -65,6 +66,27 @@ if grep -q '^CONFIG_X86_64=y' "$work/build/.config"; then
     n=$(objdump -d "$work/build/lib/seqlz/seqlz_decompress.o" | grep -c prefetcht0 || true)
     [[ $n -gt 0 ]] || { echo "lib/seqlz/seqlz_decompress.o has no prefetcht0" >&2; exit 1; }
     echo "prefetch: $n prefetcht0"
+fi
+
+# arm64: the library and its tests with 16 KiB and 64 KiB pages too, it works on blocks of 4 KiB whatever
+# PAGE_SIZE is; zram's backend is for 4 KiB pages only and stays off there
+if grep -q '^CONFIG_ARM64=y' "$work/build/.config"; then
+    for pages in 16K 64K; do
+        o="$work/build-$pages"
+        pmake=(make -C "$work/src" O="$o" "$@")
+        "${pmake[@]}" defconfig >/dev/null
+        "$work/src/scripts/config" --file "$o/.config" --disable ARM64_4K_PAGES --enable "ARM64_${pages}_PAGES" \
+            --enable ZRAM --enable ZRAM_BACKEND_SEQLZ --module SEQLZ --enable KUNIT --module SEQLZ_KUNIT_TEST
+        "${pmake[@]}" olddefconfig >/dev/null
+        grep -q "^CONFIG_ARM64_${pages}_PAGES=y" "$o/.config" && grep -q '^CONFIG_SEQLZ_KUNIT_TEST=m' "$o/.config" ||
+            { echo "$pages pages: CONFIG_ARM64_${pages}_PAGES or CONFIG_SEQLZ_KUNIT_TEST not set" >&2; exit 1; }
+        ! grep -q '^CONFIG_ZRAM_BACKEND_SEQLZ=y' "$o/.config" ||
+            { echo "$pages pages: CONFIG_ZRAM_BACKEND_SEQLZ is set" >&2; exit 1; }
+        "${pmake[@]}" -j"$(nproc)" prepare >/dev/null
+        build "${pmake[@]}" -j"$(nproc)" W=1 lib/seqlz/
+        ls "$o/lib/seqlz/seqlz_decompress.o" "$o/lib/seqlz/tests/seqlz_kunit.o" >/dev/null || exit 1
+        echo "build with $pages pages: no warnings, zram's backend off"
+    done
 fi
 
 # with the diffstat, as a mail of git format-patch has it: checkpatch sees in it that MAINTAINERS changes.

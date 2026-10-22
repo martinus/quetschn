@@ -13,6 +13,9 @@
 
 #include "backend_seqlz.h"
 
+/* a page is one block of seqlz; Kconfig keeps the backend to 4 KiB pages */
+static_assert(PAGE_SIZE == SEQLZ_BLOCK_SIZE);
+
 #ifndef ZCOMP_RW_SPLIT
 /*
  * The work memory of compression and of decompression, per CPU. zram holds

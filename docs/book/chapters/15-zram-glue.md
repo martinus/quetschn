@@ -219,7 +219,7 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
 +#include <linux/unaligned.h>
 +
 -	if (br->count < (int)(SEQLZ_TOKEN_BITS + QUETSCHN_PAGE_BITS))
-+	if (br->count < (int)(SEQLZ_TOKEN_BITS + PAGE_SHIFT))
++	if (br->count < (int)(SEQLZ_TOKEN_BITS + SEQLZ_PAGE_BITS))
 -int seqlz_decode(const struct seqlz_tables *t, const void *src,
 -		 unsigned int src_len, void *dst, void *scratch)
 +/**
@@ -240,11 +240,13 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
 
 - **The kernel's headers**, from a list in `port.py`. `seqlz_compat.h` would pull them in anyway
   ([chapter 5](#ch-compat--kernel)), but a reviewer expects a file's includes in the file.
-- **`PAGE_SHIFT` instead of `QUETSCHN_PAGE_BITS`.** `lib/seqlz/seqlz.h` gets
-  `#error "seqlz is for 4 KiB pages only"` for any other page size, and the values for 16 KiB pages are
-  cut from the constants, e.g. `SEQLZ_RAW_NIBBLES` becomes `{{ch15.raw_nibbles}}`. The format for 16 KiB
-  pages is not fixed yet, and with them `seqlz-2` asks for twice `lz4`'s work memory per CPU
-  ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)).
+- **`SEQLZ_PAGE_BITS` instead of `QUETSCHN_PAGE_BITS`**, 12 whatever the kernel's `PAGE_SIZE` is: the
+  library compresses blocks of 4 KiB, `SEQLZ_BLOCK_SIZE` of the interface, and builds with 16 KiB and
+  64 KiB pages too. The values for 16 KiB pages are cut from the constants, e.g. `SEQLZ_RAW_NIBBLES`
+  becomes `{{ch15.raw_nibbles}}`. The format for 16 KiB pages is not fixed yet, and with them `seqlz-2`
+  asks for twice `lz4`'s work memory per CPU
+  ([format.md](https://github.com/martinus/quetschn/blob/main/docs/format.md#status)). A library in
+  `lib/` that built only with 4 KiB pages would fail the first build bot with 64 KiB pages on arm64.
 - **`static` and kernel-doc.** `seqlz_decode()`, `seqlz_tables_init()` and `seqlz_compress()` of `src/`
   are called from one file in the kernel, so they become `static`, with their kernel-doc moved from the
   header to the definition and the parameters wrapped again in the kernel's style.
@@ -291,7 +293,8 @@ with it.
 @listing tools/kernel-port/seqlz.h 1-{{ch15.kport.seqlz_h}}
 
 This is the shape of `include/linux/lz4.h`: work memory sizes as constants, functions that take the work
-memory as a `void *`, and no tables. Before commit `aaa381e` the kernel copy exported all of
+memory as a `void *`, and no tables. The interface speaks of blocks of `SEQLZ_BLOCK_SIZE` bytes, not of
+`PAGE_SIZE`: one memory page with 4 KiB pages, a quarter of one with 16 KiB pages. Before commit `aaa381e` the kernel copy exported all of
 `src/seqlz.h`, 7 functions and the code lengths. The comments are **kernel-doc**, the kernel's format
 for documenting functions, which `scripts/kernel-doc` parses and checks.
 
@@ -341,6 +344,8 @@ template for zram trees with and without the October 2026 series.
 @listing tools/kernel-port/backend_seqlz.c {{ch15.backend.head.a}}-{{ch15.backend.head.b}}
 
 `pr_fmt` comes before the first include: `pr_err()` and its relatives wrap their format string in it.
+The `static_assert` says what zram's `Kconfig` makes sure of, `depends on PAGE_SIZE_4KB`: zram hands the
+backend whole pages, and seqlz takes blocks of 4 KiB.
 `ZCOMP_RW_SPLIT` is no kernel macro but a marker: `port.py` keeps the `#ifdef` parts if the tree's
 `zcomp.h` has `struct zcomp_cstrm`, else the `#ifndef` parts, and removes the marker's lines.
 `seqlz_release_params()` is empty but must exist, since zram calls it without a check for `NULL`. A
