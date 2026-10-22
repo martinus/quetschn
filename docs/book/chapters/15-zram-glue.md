@@ -2,8 +2,8 @@
 
 Everything up to here is a library: functions that take a block and work memory, and know nothing
 about their caller. `src/zram_seqlz.c`, {{ch15.zram_lines}} lines, is the piece between seqlz and zram
-for the project's benchmark harness: it builds the tables, hands out the work memory per CPU,
-checks the lengths and turns seqlz's return values into zram's. The kernel does not get this file. Its
+for the project's benchmark harness: it hands out the work memory per CPU, checks the page size and
+turns seqlz's return values into zram's. The kernel does not get this file. Its
 copy is written by `tools/kernel-port/port.py` from the rest of `src/` and a few files of its own. This
 chapter goes through `src/zram_seqlz.c`, then what changes on the way into the kernel, and ends with the
 tests that hold it together.
@@ -68,23 +68,22 @@ tables, e.g. tables trained on one phone's pages, and measured, those saved too 
 dictionary is ignored here; the kernel's backend refuses one. The file includes `seqlz.h`, the
 userspace interface ([chapter 6](#ch-header--tables)).
 
-## Setting up a device: the tables, built and checked {#ch-zram-glue--setup}
+## Setting up a device: one block size {#ch-zram-glue--setup}
 
 @listing src/zram_seqlz.c 10-16
 
 `setup()` is `setup_params()`. seqlz is compiled for one block size, so a 4 KiB build given a corpus of
-16 KiB pages fails here instead of reading past each page. Then it builds the one global
-`seqlz_tables` from the code lengths ([chapter 8](#ch-codes)); a second device builds the same bytes
-again. `seqlz_all_symbols()` checks that the encoder has a code for every symbol it may have to write;
-with fixed tables that can only fail after a bad training, and then before the first page instead of
-in the middle of a benchmark.
+16 KiB pages fails here instead of reading past each page. It builds no tables: they are compiled in,
+and lengths from a bad training stop the build that generates them ([chapter 8](#ch-codes--kernel)),
+not a benchmark.
 
 ::: why One set of tables for all devices, here and in the kernel
-The kernel's tables are `const` data, generated when the kernel is built ([below](#ch-zram-glue--init)),
-and all devices and CPUs read them. Building {{ch15.tables_kb}} KB of tables in `setup_params()` for
-every zram device and priority, from constant data, was what the kernel copy did until commit
-`aaa381e`; the review asked for the global. Until 22nd October 2026 the harness still allocated a set
-per device and passed it to every call, and every function of the codec took it as a parameter.
+The tables are `const` data, generated when seqlz is built, in the kernel ([below](#ch-zram-glue--init))
+as here, and all devices and CPUs read them. Building {{ch15.tables_kb}} KB of tables in
+`setup_params()` for every zram device and priority, from constant data, was what the kernel copy did
+until commit `aaa381e`; the review asked for the global. Until 22nd October 2026 the harness still
+allocated a set per device and passed it to every call, and every function of the codec took it as a
+parameter; later that day it built the global in every `setup()`, and then nowhere.
 :::
 
 @listing src/zram_seqlz.c 18-27
@@ -195,7 +194,7 @@ into `src/` or `tools/kernel-port/`, never into the copy.
 | `include/linux/seqlz.h` | `tools/kernel-port/seqlz.h`: the interface, two functions |
 | `lib/seqlz/seqlz_format.h`, `seqlz_tables.h`, `seqlz_internal.h` | `src/`, without what only the harness uses |
 | `lib/seqlz/seqlz_compress.c`, `seqlz_compress_literals.c`, `seqlz_decompress.c`, `seqlz_decompress_literals.c` | `src/`; `seqlz_compress.c` and `seqlz_decompress.c` each with its part of the interface from `api_*.c`, the matcher of `seqlz_match.h` inside `seqlz_compress.c` |
-| `lib/seqlz/gen_seqlz_tables.c` | `src/seqlz_codes.c` and `gen_tables_main.c`: a program for the build machine, which writes the tables, `seqlz_tables.c`, when the kernel is built |
+| `lib/seqlz/gen_seqlz_tables.c` | `src/seqlz_codes.c` and `tools/gen-tables/gen_seqlz_tables.c`: a program for the build machine, which writes the tables, `seqlz_tables.c`, when the kernel is built |
 | `lib/seqlz/seqlz_lengths.h` | the code lengths, written in the tree by its `scripts/gen-seqlz-lengths.py` from `lib/seqlz/seqlz_counts.txt` |
 | `scripts/gen-seqlz-lengths.py`, `lib/seqlz/seqlz_counts.txt` | `tools/kernel-port/gen-seqlz-lengths.py` and `bench/seqlz_counts_4k.txt` |
 | `lib/seqlz/tests/seqlz_kunit.c` | `tools/kernel-port/seqlz_kunit.c`, with values from `docs/format.md` filled in |
@@ -258,16 +257,15 @@ The diff between `src/seqlz_decompress.c` and its copy, on the tree CI uses, `98
 - **`seqlz_compress_block()`.** The interface takes the name `seqlz_compress()`, and the codec's
   function is renamed, without its test of the level, which the interface does.
 - **`seqlz_codes.c` as a program for the build machine**, `gen_seqlz_tables.c`
-  ([chapter 8](#ch-codes--kernel)), without the global, `seqlz_tables_init()` and
-  `seqlz_all_symbols()`.
+  ([chapter 8](#ch-codes--kernel)), the one that writes the tables of `src/` too, with
+  `seqlz_tables_build()` `static`.
 - **The matcher inside `seqlz_compress.c`**, right before its callers, `compress_block()` and
   `compress_own()`, with its `emit` callback a direct call of `encode_seq(e, ..., lazy)`: the lazy copy,
   level 3's, is the one with the records for the deltas, so the wrappers `encode_emit()` and
   `encode_emit_rec()` are cut ([chapter 10](#ch-encoder--wrappers)). In `src/` the matcher has one
   more user, `seqlz_find()`.
-- **What only the harness uses is cut**: all of `src/seqlz.h` but `seqlz_token()`, which goes into
-  `seqlz_compress.c`, its one user there; `seqlz_find()`, `seqlz_encode()` and `encode_raw()`; the
-  `all_symbols` field and its checks. The `raw` parameter of `code_literals()` stays: at level 3 it carries the deltas
+- **What only the harness uses is cut**: all of `src/seqlz.h`; `seqlz_find()`, `seqlz_encode()` and
+  `encode_raw()`. The `raw` parameter of `code_literals()` stays: at level 3 it carries the deltas
   ([chapter 11](#ch-literals-enc--code-own)).
 
 Every textual replacement goes through `must()` or `cut()`, which assert that the text occurs exactly as
@@ -337,7 +335,9 @@ again from the counts, and the patch carries counts, lengths and two generators,
 {{size.tables|grp}} bytes of tables. The result is `const struct seqlz_tables seqlz_tables`, the
 kernel's one set, shared by every device and CPU: read-only data costs nothing to share, each core
 caches its own copy of the lines, and a stray write faults instead of corrupting every page compressed
-later. There is nothing to build at boot, so the module has no init and no exit function.
+later. There is nothing to build at boot, so the module has no init and no exit function. In
+userspace `tools/gen-tables/gen-tables.sh` runs the same program, so the harness, the tests and the
+kernel use the same bytes.
 
 `CONFIG_SEQLZ` is a tristate, but the bool `CONFIG_ZRAM_BACKEND_SEQLZ` selects it, so it is built in
 whenever the backend is enabled, also with `ZRAM=m`, as `ZRAM_BACKEND_LZ4` selects `LZ4_COMPRESS`.
@@ -449,8 +449,8 @@ runs `port.py`, and then:
    and on the x86 patch;
 5. runs `scripts/kernel-doc -none -Wall -Werror` on the codec's files and the headers;
 6. parses `Documentation/staging/seqlz.rst` with docutils, if Python has it;
-7. compares the `seqlz_tables.c` that the build generated with the tables `src/` builds in userspace,
-   printed the same way, and fails if a 64-bit division calls a library function, which the kernel
+7. compares the `seqlz_tables.c` that the build generated with the one `gen-tables.sh` writes in
+   userspace, and fails if a 64-bit division calls a library function, which the kernel
    does not have on 32-bit CPUs;
 8. on arm64, builds the library and its tests again with 16 KiB and 64 KiB pages, with zram's backend
    off, as zram's `Kconfig` keeps it to 4 KiB pages.
