@@ -137,7 +137,7 @@ its offset ([chapter 10](#ch-encoder)). The longest such pair is an escaped toke
 offset, so the escape's code may have $31 - 12 - 12 = {{ch06.MAX_ESCAPE_LEN}}$ bits on 4 KiB pages and
 {{k16.ch06.MAX_ESCAPE_LEN}} on 16 KiB pages. With the trained {{ch06.esc_len}} bits the longest pair
 is {{ch06.esc_pair}} bits on 4 KiB pages; any other token code is at most 11 bits, $11 + 12 = 23$.
-`has_all_symbols()` checks the limit when the tables are built ([chapter 8](#ch-codes--all-symbols)).
+`has_all_symbols()` checks the limit when the tables are generated ([chapter 8](#ch-codes--all-symbols)).
 @assert ch06.esc_len <= ch06.MAX_ESCAPE_LEN and k16.ch06.esc_len <= k16.ch06.MAX_ESCAPE_LEN and ch04.longest.tok == 11
 
 The caps are the largest value of each field and its flag at once: a token with `ll` 15 means "15 or
@@ -283,30 +283,28 @@ The compressor itself does not use it; its matcher hands each sequence to the en
 arguments, as soon as it is found ([chapter 9](#ch-matcher)).
 
 No function here takes the tables as a parameter. The codes for the encoder and the decode tables,
-{{size.tables|grp}} bytes on both block sizes, are one global struct, `seqlz_tables`
-([chapter 7](#ch-internal--tables)), built once and then only read, by every CPU, so they are no
-part of the per-CPU work memory. In userspace `seqlz_tables_init()` builds them when a program starts.
-In the kernel they are `const`, written as C by a program that runs when the kernel is built
-([chapter 15](#ch-zram-glue--init)). The `/**` comments are kernel-doc, the kernel's format for
-documenting a function ([chapter 15](#ch-zram-glue--interface)).
+{{size.tables|grp}} bytes on both block sizes, are one global `const` struct, `seqlz_tables`
+([chapter 7](#ch-internal--tables)), read by every CPU, so they are no part of the per-CPU work
+memory. A program for the build machine writes it as C when seqlz is built, in userspace as in the
+kernel ([chapter 8](#ch-codes--kernel)), so a program that compresses calls nothing first. The `/**`
+comments are kernel-doc, the kernel's format for documenting a function
+([chapter 15](#ch-zram-glue--interface)).
 @assert size.tables == k16.size.tables
 
-@listing src/seqlz.h 19-32
+@listing src/seqlz.h 19-33
 
 The decoder needs only a complete prefix code ([chapter 2](#ch-compression--complete)): every pattern
 of bits then starts with a code, and a symbol without one cannot be in a valid block. The encoder needs a
 code for every symbol it may have to write, as it cannot refuse a block for a rare token: for a token a
-code or the escape, for a length value and a literal a code. `seqlz_tables_init()` checks that and
-stores the answer that `seqlz_all_symbols()` returns; `seqlz_encode()` and `seqlz_compress()` return 0
-when it is false. The kernel's copy has no such check per block: the program that writes the kernel's
-tables fails the build instead ([chapter 8](#ch-codes--kernel)).
+code or the escape, for a length value and a literal a code. `seqlz_tables_build()` refuses lengths
+that leave one out, so the program that writes the tables fails the build instead
+([chapter 8](#ch-codes--kernel)), and the encoder needs no check per block.
 
-The four failures of `seqlz_tables_init()` are the ways lengths are no complete prefix code: a code
-longer than its table, e.g. a token code of 12 bits; a sum of $2^{-l}$ above 1, where codes would share
-entries; below 1, a gap; or no code at all. `-EINVAL` is the kernel's convention, a negative error
-number, 0 for success. The tests pass made-up lengths to check that bad ones are refused, and then build
-the real tables again: `seqlz_tables_init()` replaces the one global, so nothing may compress or
-decompress meanwhile.
+The other four failures are the ways lengths are no complete prefix code: a code longer than its
+table, e.g. a token code of 12 bits; a sum of $2^{-l}$ above 1, where codes would share entries; below
+1, a gap; or no code at all. `-EINVAL` is the kernel's convention, a negative error number, 0 for
+success. The tests pass made-up lengths to check that bad ones are refused, into a struct of their
+own: the global is `const`, nothing can replace it.
 
 ## The literal tables and their header {#ch-header--literals}
 
