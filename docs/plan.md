@@ -116,10 +116,10 @@ more than 43 bytes, (1494.9 - 1038.0) / (19.38 - 8.77). With `r = 0.34` the hull
 `lzo-rle` takes the place of `lz4`, whose swap-ins are faster; with the times of zram's read
 benchmark, which decodes every page several times, the ranges are higher ([explored-designs.md, "The
 designs by the score"](explored-designs.md#the-designs-by-the-score)).
-Since 21st October `seqlz-3` stores its literals as deltas; in the VM run of that day the hull is `lz4`,
-`seqlz-1`, `seqlz-2` and `seqlz-3` at 618, 143 and 20 bytes per µs, and `zstd` 3 is off it on every
-sample: it stores more than `seqlz-3` in more time ([explored-designs.md, "Level 3 stores its literals as
-deltas"](explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept)).
+Since 21st October `seqlz-3` stores its literals as deltas; in the VM run of 22nd October the hull is
+`lz4`, `seqlz-1`, `seqlz-2` and `seqlz-3` at 689, 131 and 22 bytes per µs, and `zstd` 3 is off it on every
+sample: it stores more than `seqlz-3` in more time ([explored-designs.md, "One rule for which literals are
+deltas"](explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
 Recompression is not pursued:
 with `zstd` it pays only where the CPU time of an idle machine counts for less, and it makes each read
 of a recompressed page 2.3 µs slower. `seqlz-opt` is removed

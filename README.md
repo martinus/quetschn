@@ -15,24 +15,24 @@ written is a swap-out plus 0.73 swap-ins, the reads per write of a phone in dail
 
 | codec | memory per page | swap-out | swap-in, cold | time per page written |
 | --- | ---: | ---: | ---: | ---: |
-| `lz4` | 36.5% | 6.84 µs | 3.57 µs | 9.45 µs |
-| `lzo-rle` | 34.9% | 6.67 µs | 4.05 µs | 9.63 µs |
-| `zstd` 3 | 25.3% | 15.29 µs | 7.03 µs | 20.42 µs |
-| **`seqlz-1`** | **29.1%** | **7.09 µs** | **3.88 µs** | **9.93 µs** |
-| **`seqlz-2`** | **26.5%** | **7.68 µs** | **4.14 µs** | **10.70 µs** |
-| **`seqlz-3`** | **24.5%** | **11.58 µs** | **4.48 µs** | **14.86 µs** |
+| `lz4` | 36.5% | 6.69 µs | 3.50 µs | 9.25 µs |
+| `lzo-rle` | 34.9% | 6.50 µs | 3.95 µs | 9.38 µs |
+| `zstd` 3 | 25.3% | 15.01 µs | 6.86 µs | 20.02 µs |
+| **`seqlz-1`** | **29.1%** | **6.92 µs** | **3.78 µs** | **9.68 µs** |
+| **`seqlz-2`** | **26.5%** | **7.53 µs** | **4.10 µs** | **10.52 µs** |
+| **`seqlz-3`** | **24.4%** | **11.22 µs** | **4.39 µs** | **14.42 µs** |
 
 - `seqlz-1` stores 20% less than `lz4` for 5% more time per page written.
-- `seqlz-2`, zram's default level, stores 27% less for 13% more.
-- `seqlz-3` stores 3.4% less than `zstd` 3, in 73% of its time per page written, and a swap-in takes 36%
+- `seqlz-2`, zram's default level, stores 27% less for 14% more.
+- `seqlz-3` stores 3.8% less than `zstd` 3, in 72% of its time per page written, and a swap-in takes 36%
   less time than with `zstd` 3.
 - In these means, from the fastest to the smallest, `lz4`, `seqlz-1`, `seqlz-2` and `seqlz-3` each have
-  the lowest score for some exchange rate of bytes against µs, the dashed line in the chart: 618, 143 and
-  20 bytes per µs from one to the next. `zstd` 3 stores more than `seqlz-3` in more time. `lzo-rle` is
-  above the line: it stores 4.5% less than `lz4`, but its slower swap-ins make it 2.0% slower per page
+  the lowest score for some exchange rate of bytes against µs, the dashed line in the chart: 689, 131 and
+  22 bytes per µs from one to the next. `zstd` 3 stores more than `seqlz-3` in more time. `lzo-rle` is
+  above the line: it stores 4.5% less than `lz4`, but its slower swap-ins make it 1.5% slower per page
   written.
 
-All three swap in 9% to 25% slower than `lz4`, so the case for seqlz is memory, at a cost in time. The
+All three swap in 8% to 26% slower than `lz4`, so the case for seqlz is memory, at a cost in time. The
 work memory is 8 KiB per CPU for `seqlz-1` and 16 KiB for the other two, against 20 KiB for `lz4`, as
 `kmalloc()` hands them out.
 
@@ -67,9 +67,9 @@ larger than on the PC, most of all on the little core, and cold reads there cost
 than `lz4`. Chart and details:
 [seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time). This table's `seqlz-3` is
 the level of 15th October. Since 21st October it stores its literals as deltas: on the same pages, in
-userspace on the Mi 9T, it stores 861.2 instead of 926.6 bytes per page, and a write takes about 4 µs more
-on the A76 and 8 µs more on the A55
-([explored-designs.md](docs/explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept)).
+userspace on the Mi 9T, it stores 850.9 instead of 926.6 bytes per page, and a write takes about 3.5 µs
+more on the A76 and 7.6 µs more on the A55
+([explored-designs.md](docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
 
 On a current phone, a Pixel 9a with Google's Tensor G4, the codecs in userspace on each of its three
 kinds of core, the same pages, each page timed once per pass over all of them, as a swap-in sees it:

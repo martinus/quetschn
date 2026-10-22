@@ -204,8 +204,8 @@ sequence, or the byte as far back as the last match's offset, one choice per pag
 the fixed tables code in the fewest bits. Pages are full of 4- and 8-byte fields whose high bytes
 repeat, or whose values grow by a little from one record to the next, and a literal after a match often
 differs only a little from the byte the match would have copied. On the ten 20 000-page samples level 3
-stores 4.6% less with it, 873.6 instead of 915.6 bytes per page; on the Mi 9T's big core a write takes
-about 4 µs more and a read 0.5 µs more, in userspace. A XOR with the same bytes, the first form, stored
+stores 5.0% less with it, 869.7 instead of 915.6 bytes per page; on the Mi 9T's big core a write takes
+about 3.5 µs more and a read 0.6 µs more, in userspace. A XOR with the same bytes, the first form, stored
 881.0 ([explored-designs.md](explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept),
 [format.md](format.md#literals-as-deltas)). The numbers below are from 15th October, before it.
 
@@ -228,9 +228,9 @@ dumps of desktops and phones it stores 0.30% more than `zstd` 3 on average, betw
 more. Its reads are 0.4 and 1.1 µs slower than `seqlz-2`'s warm, 0.5 and 2.9 µs cold, and its work memory
 is the same, 16 KiB per CPU
 ([explored-designs.md](explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
-In the kernel VM on 21st October, the mean over four zram dumps, level 3 stores 24.5% of a page in 14.86
-µs per page written with its deltas, `zstd` 3 25.3% in 20.42 µs ([README](../README.md)); without them,
-in another run that day, 25.4% in 12.96 µs.
+In the kernel VM on 22nd October, the mean over four zram dumps, level 3 stores 24.4% of a page in 14.42
+µs per page written with its deltas, `zstd` 3 25.3% in 20.02 µs ([README](../README.md)); without them,
+in a run of 21st October, 25.4% in 12.96 µs.
 
 ## What is not known yet
 
