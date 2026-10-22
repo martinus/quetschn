@@ -107,8 +107,9 @@ ZRAM_DOC = """seqlz (CONFIG_ZRAM_BACKEND_SEQLZ) is for 4 KiB pages only. It supp
 `level`, but no dictionary. Level 1 stores the literals, the bytes that are
 not copied from earlier in the page, as they are. Level 2, the default,
 Huffman codes them where that saves space, which takes more time. Level 3
-also searches longer for matches and gives a page a code of its own for its
-literals, which saves more space and takes more time again::
+also searches longer for matches, can store the literals as their difference
+to an earlier byte and gives a page a code of its own for its literals, which
+saves more space and takes more time again::
 
 	echo "algo=seqlz level=1" > /sys/block/zram0/algorithm_params
 
@@ -624,8 +625,9 @@ def main():
               "\t  compiled in. It stores pages in less memory than lz4, and\n"
               "\t  takes more time to compress and decompress them. Level 1\n"
               "\t  keeps the literals raw, level 2, the default, codes them\n"
-              "\t  too, level 3 also searches longer for matches and codes\n"
-              "\t  the literals of a page with a table of its own.\n\n")
+              "\t  too, level 3 also searches longer for matches, can store\n"
+              "\t  the literals as differences to earlier bytes and codes\n"
+              "\t  them with a table of the page's own.\n\n")
     kc = must(kc, "\t\t!ZRAM_BACKEND_842\n", "\t\t!ZRAM_BACKEND_842 && !ZRAM_BACKEND_SEQLZ\n")
     # without help, as the other ZRAM_DEF_COMP_* entries: checkpatch's CONFIG_DESCRIPTION stays
     kc = must(kc, "config ZRAM_DEF_COMP_842\n\tbool \"842\"\n\tdepends on ZRAM_BACKEND_842\n\n",

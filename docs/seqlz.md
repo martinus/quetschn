@@ -191,7 +191,7 @@ first two in part, below.
 
 ## Level 3: zstd 3's memory in less than half its time
 
-Level 3 is level 2 with two more steps. The matcher looks one position further before it takes a match
+Level 3 is level 2 with two more steps, and since 21st October a third, below. The matcher looks one position further before it takes a match
 shorter than 20 bytes, and extends a match backwards over the literals before it. And a page with 512
 literals or more gets a literal table of its own where that and the table's description save 16 bytes
 against the best of the 8 fixed tables. The description is the code length of each byte, in the order of

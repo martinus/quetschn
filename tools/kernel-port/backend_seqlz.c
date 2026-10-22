@@ -32,8 +32,9 @@ static void seqlz_release_params(struct zcomp_params *params)
 
 /*
  * Level 1 keeps the literals as they are, level 2, the default, Huffman codes
- * them where that saves enough, level 3 searches longer for matches and gives
- * a page a literal table of its own: smaller pages for more time each.
+ * them where that saves enough, level 3 searches longer for matches, can store
+ * the literals as deltas to earlier bytes and gives a page a literal table of
+ * its own: smaller pages for more time each.
  * The tables are the library's, built once.
  */
 static int seqlz_setup_params(struct zcomp_params *params)

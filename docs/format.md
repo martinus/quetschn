@@ -470,8 +470,8 @@ with lz4 or zstd. For reference, `seqlz_compress()` writes:
   description take at least 16 bytes less than the best fixed table. Its code lengths are close to a
   Huffman code's, at most 10 bits;
 - at level 3, literals as deltas, with the `dt` whose deltas take the fewest bits in the best fixed
-  table, 8 bits added for `dt`, counted for every 5th literal of the page, where that is not `e = 0`
-  and the deltas get coded; else the literals as they are.
+  table, counted for every 5th literal of the page, with `dt`'s 8 bits scaled the same way, as 1, where
+  that is not `e = 0` and the deltas get coded; else the literals as they are.
 
 The compressed page fits the buffer the compressor is given, or the compressor fails. zram gives it two
 pages, which every page fits, and stores a page that does not compress well enough as it is, so that
@@ -499,10 +499,13 @@ every input it was given, valid and damaged pages of both page sizes; the number
 is valid or what it decodes to. `fuzz/smoke.sh` runs it for a minute in CI, `fuzz/afl.sh` for longer:
 on 6 October, 10 AFL++ instances for 2 hours, 1.7 billion inputs, found no difference, and on 9 October,
 with the encoder and decoder of `5342a9b`, 12 instances for 2 hours, 1.94 billion inputs on this target,
-found none either.
+found none either. Both runs were before literals as deltas; for those, the CI's seeds include pages with
+`dt` 1 and 3, and on 22nd October both decoders got every delta byte, every cut and random damage of
+15 000 pages of 4 KiB from zram dumps and 2088 of 16 KiB from a process's resident pages, 5.8 million
+pages in all, and agreed on every one.
 `test/seqlz_ref_test.cpp` checks the example above, the compressor's pages at every level, damaged
-pages, and pages made by hand for the rules that damage rarely reaches: the codes above 8 and the values of `dt`
-other than 1 to 3, a literal code outside its stream, a page of literals only, a last sequence with a token, which
+pages, pages whose literals are deltas of each kind, and pages made by hand for the rules that damage rarely
+reaches: the codes above 8 and the values of `dt` other than 1 to 3, a literal code outside its stream, a page of literals only, a last sequence with a token, which
 is invalid, and pages' own tables that overfill the code space, name a byte value above 255 or have
 bits after their end.
 <!-- end -->

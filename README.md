@@ -6,7 +6,7 @@ A compression codec for Linux zram, the compressed swap in RAM that Android phon
 use. The codec is `seqlz`: one format, one decoder, three levels of the compressor. The goal is `lz4`'s
 speed and the size of `zstd` at level 3, zram's default level for it.
 
-<img src="docs/plots/levels-vm.svg" alt="Memory per page against the time per page written for lz4, lzo-rle, zstd 3 and seqlz levels 1 to 3. seqlz-1 to seqlz-3 lie between lz4 and zstd 3, seqlz-3 at zstd 3's memory in less time.">
+<img src="docs/plots/levels-vm.svg" alt="Memory per page against the time per page written for lz4, lzo-rle, zstd 3 and seqlz levels 1 to 3. seqlz-1 to seqlz-3 lie between lz4 and zstd 3 in time; seqlz-3 stores less than zstd 3, in less time. A dashed line joins lz4 and the three levels, the codecs with the lowest score for some exchange rate of bytes against time.">
 
 The numbers behind the chart: zram as swap in a Linux VM on a Ryzen 9 7950X, the means over four zram
 dumps, two of a phone and two of a desktop. Memory is what zsmalloc holds per page, the time per page
