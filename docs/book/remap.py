@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""remap.py <rev> [--write]: after a change of src/, the book's @listing lines and the line numbers
-its prose quotes ("line 24", "lines 21 to 26", "seqlz_decompress.c:17"), moved from the files at <rev>,
-the commit the book was written against, to the files as they are now. The old and the new file
-are matched line by line (difflib); a number moves with its line, or with the nearest line that kept
-its text.
+"""remap.py [<commit>] [--write]: the book brought up to the code of <commit>, HEAD if not given.
+The book describes the code of one commit, "src" in book.json; this moves its @listing lines and the
+line numbers its prose quotes ("line 24", "lines 21 to 26", "seqlz_decompress.c:17") from the files at
+that commit to the files at <commit>. The old and the new file are matched line by line (difflib); a
+number moves with its line, or with the nearest line that kept its text. --write also sets "src" to
+<commit>, so a second run finds nothing to move.
 
 It prints every change; a listing whose lines changed their text is marked CHANGED, and the prose
 around it needs a look by hand. "line N" in the prose is taken as a line of the file of the
@@ -11,20 +12,36 @@ chapter's last listing; a sentence about cache lines or table rows that says "li
 moved too, so read the output before --write rewrites the chapters. Then build.py --check.
 """
 import difflib
+import json
 import pathlib
 import re
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-old_rev, write = sys.argv[1], "--write" in sys.argv
+BOOK_JSON = ROOT / "docs" / "book" / "book.json"
+args = [a for a in sys.argv[1:] if a != "--write"]
+write = "--write" in sys.argv
+
+
+def git(*a):
+    return subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True, text=True, check=True).stdout
+
+
+old_rev = json.loads(BOOK_JSON.read_text())["src"]
+new_rev = git("rev-parse", "--verify", f"{args[0] if args else 'HEAD'}^{{commit}}").strip()
 maps, oldtext, newtext = {}, {}, {}
+
+
+def exists(path):
+    return subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", f"{new_rev}:{path}"],
+                          capture_output=True).returncode == 0
 
 
 def linemap(path):
     if path not in maps:
-        o = subprocess.run(["git", "-C", str(ROOT), "show", f"{old_rev}:{path}"], capture_output=True, text=True, check=True).stdout.split("\n")
-        n = (ROOT / path).read_text().split("\n")
+        o = git("show", f"{old_rev}:{path}").split("\n")
+        n = git("show", f"{new_rev}:{path}").split("\n")
         m = {}
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, o, n, autojunk=False).get_opcodes():
             if tag == "equal":
@@ -62,7 +79,7 @@ for ch in sorted((ROOT / "docs/book/chapters").glob("*.md")):
         # file:line references in the prose, e.g. src/seqlz_decompress.c:17 or seqlz_decompress.c:544
         def fileref(mm):
             path = mm.group(1) if mm.group(1).startswith("src/") else "src/" + mm.group(1)
-            if not (ROOT / path).exists():
+            if not exists(path):
                 return mm.group(0)
             mp = linemap(path)
             new = re.sub(r"\d+", lambda d: str(near(mp, int(d.group(0)), 1) or d.group(0)), mm.group(2))
@@ -81,3 +98,7 @@ for ch in sorted((ROOT / "docs/book/chapters").glob("*.md")):
             changed = True
     if write and changed:
         ch.write_text("\n".join(lines))
+if write:
+    book = BOOK_JSON.read_text()
+    BOOK_JSON.write_text(book.replace(f'"src": "{old_rev}"', f'"src": "{new_rev}"', 1))
+    print(f"book.json: src {old_rev[:7]} -> {new_rev[:7]}")

@@ -8,15 +8,15 @@ paths:
 
 - Before changing or simplifying `src/` code: grep `docs/book/chapters` for the function. The book
   records why code is as it is ("on purpose", "measured"); tell review subagents the same.
-- `docs/book/` lists `src/` by line numbers. A `src/` change that moves lines fails CI `book` ("not
-  covered") or silently shifts a listing. After the last `src/` edit: `python3 docs/book/remap.py
-  <ref>`, `<ref>` = the commit the listings last matched (`origin/main` on a fresh branch, `HEAD` when
-  the branch's book was in sync before the edit); it shows moves, `--write` applies them. `--write`
-  shifts again on every run: if `src/` changes after it, `git checkout <ref> -- docs/book/chapters`,
-  redo hand edits there, remap once more.
-- Then reread the prose next to each listing marked CHANGED, then `docs/book/build.py --check`
-  (`npm install` in `docs/book` once, or `ln -s` another worktree's `docs/book/node_modules`; git
-  ignores it).
+- The book describes the code of one commit, `"src"` in `docs/book/book.json`, and builds from it, not
+  from the checkout. A `src/` change does not touch the book: no remap, no prose, CI `book` stays
+  green. Update the book only when Martin asks for it, in a PR of its own (one pass for many changes
+  is cheaper than one per change).
+- Book update: on a branch whose code is committed, `python3 docs/book/remap.py [<commit>]` (default
+  `HEAD`) shows how listings move from the book's commit; `--write` applies them and moves `"src"`.
+  Then reread the prose next to each listing marked CHANGED, grep the chapters for every name the
+  changes removed or renamed, then `docs/book/build.py --check` (`npm install` in `docs/book` once, or
+  `ln -s` another worktree's `docs/book/node_modules`; git ignores it).
 - Computed values are `{{key}}` from `docs/book/facts/*.c`, `@program`/`@output` or `@assert`
   (`docs/book/README.md`): format/table changes fail the build where prose needs a look.
 - Writing chapters: `docs/book/STYLE.md` (the reader knows C and C++; one number per measurement, the

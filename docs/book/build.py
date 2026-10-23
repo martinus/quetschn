@@ -4,8 +4,8 @@ r"""Builds the book: chapters/*.md -> seqlz-line-by-line.html.
 Directives, each on a line of its own, outside fenced code:
 
   @listing src/seqlz_match.h 13-22
-      the lines 13 to 22 of that file, as they are in the repository, with their
-      real line numbers and syntax highlighting
+      the lines 13 to 22 of that file, as they are at the book's commit, "src" in
+      book.json, with their real line numbers and syntax highlighting
 
   ::: why Optional title
   markdown ...
@@ -61,6 +61,7 @@ import atexit
 import base64
 import html
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -77,17 +78,40 @@ from pygments.token import Token
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent  # docs/book in the repository
 GITHUB = "https://github.com/martinus/quetschn/blob"
-
-
-def git(*args):
-    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True,
-                           check=True).stdout.strip()
-
-
-# the commit of the last change to src/: the listings are src/ as it is in the checkout, and their
-# links on GitHub point to that commit
-SRC_COMMIT = git("log", "-1", "--format=%H", "--", "src")
 OUT_DIR = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else HERE
+
+# The book describes the code of one commit, "src" in book.json, not the checkout's: a change of the
+# code needs no change of the book until the book is brought up to date on purpose (remap.py <old
+# commit> --write, the prose, the new commit in book.json). So the build runs again in that commit's
+# tree, extracted to a temporary directory, with the checkout's docs/book over its own: every
+# listing, fact, animation and step-through sees that commit's code, and the facts' programs find it
+# from their own path. PINNED is set in that run.
+PINNED = "QUETSCHN_BOOK_COMMIT"
+if PINNED not in os.environ:
+    pin = json.loads((HERE / "book.json").read_text())["src"]
+    sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", f"{pin}^{{commit}}"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    date = subprocess.run(["git", "-C", str(REPO), "show", "-s", "--format=%cs", sha],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    with tempfile.TemporaryDirectory() as root:
+        archive = subprocess.Popen(["git", "-C", str(REPO), "archive", sha], stdout=subprocess.PIPE)
+        subprocess.run(["tar", "-x", "-C", root], stdin=archive.stdout, check=True)
+        if archive.wait():
+            sys.exit(f"git archive {sha} failed")
+        book = pathlib.Path(root) / "docs" / "book"
+        shutil.rmtree(book, ignore_errors=True)
+        shutil.copytree(HERE, book, ignore=shutil.ignore_patterns("node_modules", "__pycache__",
+                                                                  "seqlz-line-by-line*.html"))
+        if (HERE / "node_modules").exists():
+            (book / "node_modules").symlink_to(HERE / "node_modules")
+        args = [a for i, a in enumerate(sys.argv[1:]) if a != "--out" and sys.argv[i] != "--out"]
+        r = subprocess.run([sys.executable, str(book / "build.py"), *args, "--out", str(OUT_DIR.resolve())],
+                           env={**os.environ, PINNED: sha, "QUETSCHN_BOOK_DATE": date})
+    sys.exit(r.returncode)
+
+# the commit the book describes; its listings link to their lines there
+SRC_COMMIT = os.environ[PINNED]
+SRC_DATE = os.environ["QUETSCHN_BOOK_DATE"]
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT = OUT_DIR / "seqlz-line-by-line.html"
 STANDALONE = OUT_DIR / "seqlz-line-by-line.standalone.html"
@@ -152,17 +176,12 @@ def src_lines(path):
 
 COVERED = {}  # path -> set of line numbers
 LISTINGS = []
-FILE_COMMIT = {}
 LANG = {".c": "c", ".h": "c", ".inc": "c", ".py": "python", ".sh": "bash", ".patch": "diff", ".cpp": "cpp"}
 
 
 def file_commit(path):
-    """the last commit that changed path, which its link on GitHub shows; src/ files share SRC_COMMIT"""
-    if path.startswith("src/"):
-        return SRC_COMMIT
-    if path not in FILE_COMMIT:
-        FILE_COMMIT[path] = git("log", "-1", "--format=%H", "--", path) or SRC_COMMIT
-    return FILE_COMMIT[path]
+    """the commit whose lines a listing's link on GitHub shows: for every file the book's commit"""
+    return SRC_COMMIT
 
 
 def render_listing(path, a, b):
@@ -825,9 +844,7 @@ def build():
             toc_html.append(f'<li class="tocchap" data-for="{cid}"><a href="#{cid}"><span class="tocno">{label}</span>'
                             f'<span class="toct">{html.escape(title)}</span></a>'
                             + (f'<ol class="tocsub">{sub}</ol>' if sub else "") + "</li>")
-    commit = SRC_COMMIT[:7]
-    if git("status", "--porcelain", "--", "src"):
-        print("warning: src/ has changes that are not committed, the listings show them")
+    commit = f"{SRC_COMMIT[:7]}, {SRC_DATE}"
     tpl = (HERE / "template.html").read_text()
     out = (tpl.replace("{{KATEX_CSS}}", katex_css(allhtml))
               .replace("{{TOC}}", "\n".join(toc_html))
