@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
-"""attribute.py <base> <map1> <map2>: gives the pages of a corpus from quetschn-import-raw their process
+"""attribute.py <base> <map1> <map2>: gives the pages of a corpus from seqlz-import-raw their process
 and mapping. <base>.tsv has the page's offset in the zram dump as its address; swap offset n is page n
 of the dump. A slot counts only where swapmap saw the same owners before and after the dd; others keep
 pid 0. A slot shared by several processes, e.g. zygote and the apps forked from it, goes to the one

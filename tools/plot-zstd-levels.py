@@ -6,14 +6,14 @@ MODE=swap and zstd's levels as zram's algorithm_params, e.g. ALGOS=lz4,seqlz-2,z
 One row per corpus, from one or more logs of it; a codec in several logs gets the mean of them. Three
 panels: the swap-out with one page per call, the swap-in with the compressed data cold, and the time per
 page written of the score, docs/plan.md §1.1, all means per page. zstd's levels are one line, in the
-order of the levels. The numbers come from quetschn-score, so they are the score's: the corpus's pages
+order of the levels. The numbers come from seqlz-score, so they are the score's: the corpus's pages
 without the same-filled ones the swap mode adds. Lower left is better.
 
     ALGOS=lz4,seqlz-2,zstd:-5,zstd:-1,zstd:1,zstd:3 MODE=swap KARGS=zram.zram_prefetch=8 \\
         tools/zram-vm/run.sh <linux tree> <corpus> >a.log
     tools/plot-zstd-levels.py --row "Desktop=a.log,b.log" --out zstd-levels.svg
 
-Needs matplotlib, the Noto Sans font, and a build with quetschn-score.
+Needs matplotlib, the Noto Sans font, and a build with seqlz-score.
 """
 
 import argparse
@@ -40,7 +40,7 @@ OTHERS = {"lz4": "lz4", "lzo-rle": "lzo-rle", "seqlz": "seqlz-1", "seqlz-lit": "
 
 
 def score_rows(score, log, r):
-    """bytes per page, write and read in us, per zram device of a log, from quetschn-score"""
+    """bytes per page, write and read in us, per zram device of a log, from seqlz-score"""
     out = subprocess.run([score, "--reads-per-write", str(r), log], capture_output=True, text=True, check=True).stdout
     rows = {}
     for line in out.splitlines()[3:]:
@@ -85,7 +85,7 @@ def main():
     ap.add_argument("--row", action="append", required=True, metavar="TITLE=LOG[,LOG...]",
                     help="a row: its title and the logs of one corpus")
     ap.add_argument("--out", action="append", required=True, help="output file, .png or .svg, can be given more than once")
-    ap.add_argument("--score", default=str(HERE.parent / "build" / "quetschn-score"), help="the quetschn-score binary")
+    ap.add_argument("--score", default=str(HERE.parent / "build" / "seqlz-score"), help="the seqlz-score binary")
     ap.add_argument("--reads-per-write", type=float, default=0.73, help="r of the score, default 0.73, a phone's (docs/plan.md §1.1)")
     ap.add_argument("--max-us", type=float, default=60,
                     help="where the time axes of swap-out and score end; slower levels are arrows at the edge")

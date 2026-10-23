@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-using quetschn::compare;
-using quetschn::compare_options;
-using quetschn::page_result;
-using quetschn::percentile;
+using bench::compare;
+using bench::compare_options;
+using bench::page_result;
+using bench::percentile;
 
 namespace {
 
@@ -48,8 +48,8 @@ TEST_CASE("compare: page results read back exactly as written") {
     pages[2].decompress_cold_ns = 0.1 + 0.2;
 
     auto out = std::stringstream();
-    quetschn::write_page_results(out, pages);
-    auto const back = quetschn::read_page_results(out);
+    bench::write_page_results(out, pages);
+    auto const back = bench::read_page_results(out);
     REQUIRE(back.size() == pages.size());
     for (std::size_t i = 0; i < pages.size(); ++i) {
         CAPTURE(i);
@@ -71,7 +71,7 @@ TEST_CASE("compare: files that are not page results are rejected") {
              "0\t80\t0\t96\t250\t80\t320\n", // no header
          }) {
         auto in = std::istringstream(text);
-        CHECK_THROWS_AS((void)quetschn::read_page_results(in), std::runtime_error);
+        CHECK_THROWS_AS((void)bench::read_page_results(in), std::runtime_error);
     }
     for (auto const* line : {"0\t80\t0\t96\t250\t80\n",         // a field missing
                              "0\t80\t0\t96\t250\t80\t320\t1\n", // one too many
@@ -80,10 +80,10 @@ TEST_CASE("compare: files that are not page results are rejected") {
                              "0\t80\t0\t\t250\t80\t320\n"}) {
         CAPTURE(std::string(line));
         auto in = std::istringstream(header + line);
-        CHECK_THROWS_AS((void)quetschn::read_page_results(in), std::runtime_error);
+        CHECK_THROWS_AS((void)bench::read_page_results(in), std::runtime_error);
     }
     auto in = std::istringstream(header + "0\t80\t0\t96\t250.5\t80\t320\n");
-    CHECK(quetschn::read_page_results(in).size() == 1);
+    CHECK(bench::read_page_results(in).size() == 1);
 }
 
 TEST_CASE("compare: only runs on the same pages can be paired") {

@@ -5,8 +5,8 @@
  * The kernel only ever defines one of __LITTLE_ENDIAN and __BIG_ENDIAN; glibc defines both, which is why
  * these sources are compiled with -nostdinc and never see a libc header.
  */
-#ifndef QUETSCHN_KCONFIG_H
-#define QUETSCHN_KCONFIG_H
+#ifndef SEQLZ_KCONFIG_H
+#define SEQLZ_KCONFIG_H
 
 #if defined(__x86_64__)
 #    define CONFIG_X86 1

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-only */
-#ifndef QUETSCHN_TOOLS_SEQLZ_REF_H
-#define QUETSCHN_TOOLS_SEQLZ_REF_H
+#ifndef SEQLZ_TOOLS_SEQLZ_REF_H
+#define SEQLZ_TOOLS_SEQLZ_REF_H
 
 #include <stddef.h>
 

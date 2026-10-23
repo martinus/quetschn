@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <string>
 
-namespace quetschn {
+namespace bench {
 
 struct split_options {
     double test_fraction = 0.3; // share of process names that go to the test side
@@ -62,4 +62,4 @@ std::size_t sample_corpus(std::filesystem::path const& base,
 // Which side a process name goes to: true for test. Exposed for tests.
 [[nodiscard]] bool is_test_name(std::string const& name, split_options const& opts);
 
-} // namespace quetschn
+} // namespace bench

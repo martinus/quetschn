@@ -57,7 +57,7 @@ HARNESS_ONLY = re.compile(r"\bseqlz_find\b|\bseqlz_encode\b|\bseqlz_sequence\b|\
                           r"\bseqlz_code_raw_literals\b")
 
 # the one reference to this repository the kernel's copy keeps, the project's page in MAINTAINERS
-PROJECT_URL = "https://github.com/martinus/quetschn"
+PROJECT_URL = "https://github.com/martinus/seqlz"
 # as the whole URL: with a path after it, it is not the one
 KEPT_URLS = re.compile(re.escape(PROJECT_URL) + r"(?![\w/#-]|\.\w)")
 SPEC = "Documentation/staging/seqlz.rst"
@@ -71,7 +71,8 @@ Interface
 # nothing in lib/ depends on the CPU model: such a choice is arch code's, a static key at most
 CPU_MODEL = re.compile(r"read_cpuid|\bMIDR_|boot_cpu_data|x86_model")
 # what may not be left in the kernel's copy
-FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.inc\b|src/|#\d{2,3}\b|"
+FORBIDDEN = re.compile(r"docs/|explored|seqlz-bench|seqlz-score|seqlz-train|\bbench_|SEQLZ_PAGE_BITS|tools/|bench/|"
+                       r"CMake|\.inc\b|src/|#\d{2,3}\b|"
                        r"seqlz-fast|seqlz-[0-9]\b|zramphone|\bdump\b|\bcorpus\b|"
                        # the reasons of an old kernel, a distribution or our test machines, which mainline
                        # does not have
@@ -131,8 +132,8 @@ saves more space and takes more time again::
 HEADING = re.compile(r" ?\(\"[^\"]+\"(?:,? [^)]*)?\)")
 # the block size of src/, a setting of the build, and what the kernel's copy has instead: blocks of 4 KiB,
 # whatever PAGE_SIZE is, SEQLZ_BLOCK_SIZE of the interface
-BLOCK_BITS_SRC = re.compile(r"/\*\n \* A block is what seqlz compresses at a time.*?\*/\n#ifndef QUETSCHN_PAGE_BITS\n"
-                            r"#define QUETSCHN_PAGE_BITS 12\n#endif\n#define SEQLZ_BLOCK_BITS QUETSCHN_PAGE_BITS\n"
+BLOCK_BITS_SRC = re.compile(r"/\*\n \* A block is what seqlz compresses at a time.*?\*/\n#ifndef SEQLZ_PAGE_BITS\n"
+                            r"#define SEQLZ_PAGE_BITS 12\n#endif\n#define SEQLZ_BLOCK_BITS SEQLZ_PAGE_BITS\n"
                             r"#define SEQLZ_BLOCK_SIZE \(1U << SEQLZ_BLOCK_BITS\)\n", re.S)
 BLOCK_BITS_KERNEL = """/*
  * A block is what seqlz compresses at a time: SEQLZ_BLOCK_SIZE bytes of the

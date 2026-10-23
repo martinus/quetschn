@@ -24,11 +24,11 @@
 #include <system_error>
 #include <vector>
 
-using quetschn::collect_options;
-using quetschn::collect_process;
-using quetschn::corpus_writer;
-using quetschn::is_anonymous_private;
-using quetschn::parse_maps;
+using bench::collect_options;
+using bench::collect_process;
+using bench::corpus_writer;
+using bench::is_anonymous_private;
+using bench::parse_maps;
 
 TEST_CASE("resident: parse_maps and the anonymous private filter") {
     auto const text =
@@ -237,7 +237,7 @@ private:
 class temp_dir {
 public:
     temp_dir() {
-        auto tmpl = (std::filesystem::temp_directory_path() / "quetschn-test-XXXXXX").string();
+        auto tmpl = (std::filesystem::temp_directory_path() / "seqlz-test-XXXXXX").string();
         REQUIRE(::mkdtemp(tmpl.data()) != nullptr);
         m_path = tmpl;
     }
@@ -376,7 +376,7 @@ TEST_CASE("resident: collects exactly the resident private anonymous pages of a 
     auto dir = temp_dir();
     auto const base = dir.path() / "corpus";
 
-    auto result = quetschn::collect_result{};
+    auto result = bench::collect_result{};
     {
         auto writer = corpus_writer(base, child.page_size());
         result = collect_process(child.pid(), opts, writer);
@@ -438,7 +438,7 @@ TEST_CASE("resident: swapped pages are counted, not read, and stay in swap") {
 
     auto dir = temp_dir();
     auto const base = dir.path() / "corpus";
-    auto result = quetschn::collect_result{};
+    auto result = bench::collect_result{};
     {
         auto writer = corpus_writer(base, page_size);
         result = collect_process(child.pid(), opts, writer);
@@ -453,7 +453,7 @@ TEST_CASE("resident: max_pages_per_process takes a sample") {
     auto dir = temp_dir();
     auto const base = dir.path() / "corpus";
 
-    auto result = quetschn::collect_result{};
+    auto result = bench::collect_result{};
     {
         auto writer = corpus_writer(base, child.page_size());
         result = collect_process(child.pid(), collect_options{.max_pages_per_process = 3}, writer);

@@ -35,11 +35,11 @@ done.
   survived.
 - **Time a decoder the way zram calls it.** A userspace loop over a sample streams megabytes of
   compressed pages; prefetch each page's compressed bytes first, as zram's glue does
-  (`quetschn_prefetch_page()`), and use the kernel's compile flags. On 19 Oct a loop without the
+  (`bench_prefetch_page()`), and use the kernel's compile flags. On 19 Oct a loop without the
   prefetch had seqlz-1 at 11.5 µs per page on the A55 instead of 7.35, and two rounds of research
   chased a read gap that zram does not have.
 - **Compare against the hull, not a neighbour.** A new point is judged against the line between
-  its two neighbours on the current hull (`quetschn-score`), not against one design. On 19 Oct a
+  its two neighbours on the current hull (`seqlz-score`), not against one design. On 19 Oct a
   per-page step choice was estimated 25 bytes per page below the line from step 4 to step 1, and
   measured 6 to 44 bytes above the line from step 4 to step 2.
 - **Kill fast.** An estimate that cannot reach a quarter of the gap it aims at ends the idea; write
@@ -53,7 +53,7 @@ One sentence, measurable, with the data it is measured on. From Martin's argumen
 largest unexplained gap of the last report, else from **Starting questions** below. Write it at the
 top of the log.
 
-The log: `~/quetschn-corpus/research/<yyyy-mm-dd>-<topic>.md`, outside the repository, so it
+The log: `~/seqlz-corpus/research/<yyyy-mm-dd>-<topic>.md`, outside the repository, so it
 survives the session and is never published. It holds predictions, results, surprises, killed ideas,
 commands. Never page contents, only counts and sizes.
 
@@ -62,7 +62,7 @@ commands. Never page contents, only counts and sizes.
 Read `known-bounds.md` in this skill's directory first: what earlier sessions measured, with dates.
 
 On a sample (the ten 20 000-page samples of CLAUDE.md, Measuring; for file data
-`~/quetschn-corpus/erofs-exp/`), per page and per level:
+`~/seqlz-corpus/erofs-exp/`), per page and per level:
 
 1. **Where the stored bytes go**: header, token codes, offset bits, length values, literals (coded and
    raw), pages stored raw. `seqlz_find()` plus the tables' code lengths, or `tools/seqlz-bound/`

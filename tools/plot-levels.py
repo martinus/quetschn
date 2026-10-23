@@ -7,7 +7,7 @@ panel per core.
 
 The times are the means over the rounds that tools/zram-phone/run.sh prints, zram in the phone's own
 kernel; time per page written is write + 0.73 * cold read, a phone's reads per write, as docs/plan.md §1.1. <sizes> is the output
-of quetschn-bench-interleaved --no-timing on the same pages: the zsmalloc cost per page, as % of 4 KiB.
+of seqlz-bench-interleaved --no-timing on the same pages: the zsmalloc cost per page, as % of 4 KiB.
 A module's codecs seqlz-<build>-<level> are seqlz-<level> on the chart; with several builds, the last
 one in the run's table wins.
 
@@ -91,7 +91,7 @@ def main():
         ax.grid(color="#eeeeee")
     fig.suptitle("seqlz's levels against lz4 and zstd 3: memory against time, lower left is better")
     fig.text(0.5, 0.005, "Means over the rounds of tools/zram-phone/run.sh with BUS=1; sizes from "
-             "quetschn-bench-interleaved on the same pages. Grey line: the codecs with the lowest score for "
+             "seqlz-bench-interleaved on the same pages. Grey line: the codecs with the lowest score for "
              "some exchange rate.", ha="center", fontsize=8, color="#555555")
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     for o in outs:

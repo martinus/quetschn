@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Paired comparison of two quetschn-bench-* --out files from the same corpus, see docs/plan.md §5.2.
+// Paired comparison of two seqlz-bench-* --out files from the same corpus, see docs/plan.md §5.2.
 
 #include "compare.h"
 
@@ -17,10 +17,10 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-compare --baseline <file.tsv> --candidate <file.tsv> [--resamples <n>] [--seed <n>]\n"
+                 "usage: seqlz-compare --baseline <file.tsv> --candidate <file.tsv> [--resamples <n>] [--seed <n>]\n"
                  "                        [--threads <n>]\n"
                  "\n"
-                 "Both files come from quetschn-bench-* --out on the same corpus. Confidence intervals are 95%%,\n"
+                 "Both files come from seqlz-bench-* --out on the same corpus. Confidence intervals are 95%%,\n"
                  "from a bootstrap that resamples pages, the same pages for both runs. --resamples default 1000.\n"
                  "--threads default one per CPU, each needs 48 bytes per page.\n");
 }
@@ -31,15 +31,15 @@ bool parse(std::string_view s, T& out) {
     return ec == std::errc{} && ptr == s.data() + s.size();
 }
 
-std::vector<quetschn::page_result> read(std::string const& path) {
+std::vector<bench::page_result> read(std::string const& path) {
     auto in = std::ifstream(path);
     if (!in) {
         throw std::runtime_error("cannot read " + path);
     }
-    return quetschn::read_page_results(in);
+    return bench::read_page_results(in);
 }
 
-void print_latency(char const* what, double p, quetschn::estimate const& e) {
+void print_latency(char const* what, double p, bench::estimate const& e) {
     std::printf("%-16s p%-5g %+9.0f   [%+.0f, %+.0f]\n", what, p, e.value, e.low, e.high);
 }
 
@@ -48,7 +48,7 @@ void print_latency(char const* what, double p, quetschn::estimate const& e) {
 int main(int argc, char** argv) {
     auto baseline_path = std::string();
     auto candidate_path = std::string();
-    auto opts = quetschn::compare_options{};
+    auto opts = bench::compare_options{};
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        auto const r = quetschn::compare(read(baseline_path), read(candidate_path), opts);
+        auto const r = bench::compare(read(baseline_path), read(candidate_path), opts);
         std::printf("baseline     %s\n", baseline_path.c_str());
         std::printf("candidate    %s\n", candidate_path.c_str());
         std::printf(

@@ -68,8 +68,8 @@ for run in ${RUNS:-full:2 lazy:1}; do
         -initrd "$work/initramfs.cpio" \
         -virtfs local,path=/,mount_tag=host,security_model=none,readonly=on \
         -append "console=ttyS0 panic=-1 preempt=$preempt zswap.enabled=0 zram.num_devices=5 \
-quetschn.corpus=$corpus quetschn.mmstat=$first quetschn.level=$level quetschn.minutes=${MINUTES:-10} \
-quetschn.selftests=1" \
+seqlz.corpus=$corpus seqlz.mmstat=$first seqlz.level=$level seqlz.minutes=${MINUTES:-10} \
+seqlz.selftests=1" \
         -nographic -no-reboot >"$log" 2>&1 || true
     first=0
     grep -a '^RESULT\|# seqlz: \|selftest: .*\(PASS\|FAIL\)' "$log" || true
@@ -89,7 +89,7 @@ done
 
 if [[ -n ${BUILD:-} ]]; then
     echo "== zsmalloc memory of phase 1: mm_stat's mem_used_total against the userspace model"
-    "$BUILD/quetschn-bench-interleaved" --codecs lz4,seqlz-1,seqlz-2,seqlz-3 --corpus "${corpus%.pages}" \
+    "$BUILD/seqlz-bench-interleaved" --codecs lz4,seqlz-1,seqlz-2,seqlz-3 --corpus "${corpus%.pages}" \
         --no-timing >"$work/model.txt"
     python3 - "$work/model.txt" "$out"/boot-*.log <<'PY'
 import re, sys

@@ -10,16 +10,16 @@
 #include <string>
 #include <vector>
 
-using quetschn::best_for_some_lambda;
-using quetschn::codec_cost;
-using quetschn::on_device;
-using quetschn::read_bench_results;
-using quetschn::read_vm_boots;
-using quetschn::read_vm_results;
-using quetschn::score_weights;
-using quetschn::us_per_page;
-using quetschn::what_if;
-using quetschn::zram_device;
+using bench::best_for_some_lambda;
+using bench::codec_cost;
+using bench::on_device;
+using bench::read_bench_results;
+using bench::read_vm_boots;
+using bench::read_vm_results;
+using bench::score_weights;
+using bench::us_per_page;
+using bench::what_if;
+using bench::zram_device;
 
 namespace {
 
@@ -173,7 +173,7 @@ TEST_CASE("score: a codec made faster keeps its bytes and the kernel's part of t
     CHECK(p.write_ns == doctest::Approx(2500.0));
 }
 
-TEST_CASE("score: the codecs of a quetschn-bench run, with a level where there is one") {
+TEST_CASE("score: the codecs of a seqlz-bench run, with a level where there is one") {
     auto in = std::istringstream("\n"
                                  "codec      zstd, level -1\n"
                                  "pages                  1974 measured, 26 same-filled skipped\n"

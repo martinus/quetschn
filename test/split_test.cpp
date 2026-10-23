@@ -26,7 +26,7 @@ constexpr std::size_t page_size = 4096;
 class temp_dir {
 public:
     temp_dir() {
-        auto tmpl = (std::filesystem::temp_directory_path() / "quetschn-split-XXXXXX").string();
+        auto tmpl = (std::filesystem::temp_directory_path() / "seqlz-split-XXXXXX").string();
         REQUIRE(::mkdtemp(tmpl.data()) != nullptr);
         m_path = tmpl;
     }
@@ -66,7 +66,7 @@ std::vector<std::string> names() {
 }
 
 void write_corpus(std::filesystem::path const& base) {
-    auto w = quetschn::corpus_writer(base, page_size);
+    auto w = bench::corpus_writer(base, page_size);
     auto pid = 100;
     for (auto const& name : names()) {
         for (std::size_t n = 0; n < 8; ++n) {
@@ -77,11 +77,11 @@ void write_corpus(std::filesystem::path const& base) {
 }
 
 // process name of every page, from the page content
-std::multiset<std::string> names_in(quetschn::corpus const& c) {
+std::multiset<std::string> names_in(bench::corpus const& c) {
     auto result = std::multiset<std::string>();
     for (std::size_t i = 0; i < c.size(); ++i) {
         auto const p = c.page(i);
-        if (quetschn::analyze_page(p).same_filled) {
+        if (bench::analyze_page(p).same_filled) {
             result.insert("<same-filled>");
             continue;
         }
@@ -96,10 +96,10 @@ std::multiset<std::string> names_in(quetschn::corpus const& c) {
 TEST_CASE("split: every process name is on exactly one side, and no page is lost") {
     auto dir = temp_dir();
     write_corpus(dir.path() / "all");
-    auto const r = quetschn::split_corpus(dir.path() / "all", dir.path() / "train", dir.path() / "test", {});
+    auto const r = bench::split_corpus(dir.path() / "all", dir.path() / "train", dir.path() / "test", {});
 
-    auto const train = names_in(quetschn::load_corpus(dir.path() / "train"));
-    auto const test = names_in(quetschn::load_corpus(dir.path() / "test"));
+    auto const train = names_in(bench::load_corpus(dir.path() / "train"));
+    auto const test = names_in(bench::load_corpus(dir.path() / "test"));
     CHECK(r.train_pages + r.test_pages + r.same_filled_dropped == 20 * 8);
     CHECK(r.train_names + r.test_names == 20);
     CHECK(r.train_names > 0);
@@ -112,29 +112,29 @@ TEST_CASE("split: every process name is on exactly one side, and no page is lost
         auto const n_test = test.count(name);
         CHECK(n_train + n_test == 6);
         CHECK((n_train == 0 || n_test == 0));
-        CHECK((n_test > 0) == quetschn::is_test_name(name, {}));
+        CHECK((n_test > 0) == bench::is_test_name(name, {}));
     }
 }
 
 TEST_CASE("split: same-filled pages are left out of the training side only") {
     auto dir = temp_dir();
     write_corpus(dir.path() / "all");
-    auto const r = quetschn::split_corpus(dir.path() / "all", dir.path() / "train", dir.path() / "test", {});
+    auto const r = bench::split_corpus(dir.path() / "all", dir.path() / "train", dir.path() / "test", {});
 
-    CHECK(names_in(quetschn::load_corpus(dir.path() / "train")).count("<same-filled>") == 0);
-    CHECK(names_in(quetschn::load_corpus(dir.path() / "test")).count("<same-filled>") == 2 * r.test_names);
+    CHECK(names_in(bench::load_corpus(dir.path() / "train")).count("<same-filled>") == 0);
+    CHECK(names_in(bench::load_corpus(dir.path() / "test")).count("<same-filled>") == 2 * r.test_names);
     CHECK(r.same_filled_dropped == 2 * r.train_names);
 }
 
 TEST_CASE("split: the side depends on name and seed only") {
-    auto const a = quetschn::split_options{.test_fraction = 0.3, .seed = 1};
-    auto const b = quetschn::split_options{.test_fraction = 0.3, .seed = 2};
+    auto const a = bench::split_options{.test_fraction = 0.3, .seed = 1};
+    auto const b = bench::split_options{.test_fraction = 0.3, .seed = 2};
     auto same = 0;
     auto test_a = 0;
     for (auto const& name : names()) {
-        CHECK(quetschn::is_test_name(name, a) == quetschn::is_test_name(name, a));
-        same += quetschn::is_test_name(name, a) == quetschn::is_test_name(name, b) ? 1 : 0;
-        test_a += quetschn::is_test_name(name, a) ? 1 : 0;
+        CHECK(bench::is_test_name(name, a) == bench::is_test_name(name, a));
+        same += bench::is_test_name(name, a) == bench::is_test_name(name, b) ? 1 : 0;
+        test_a += bench::is_test_name(name, a) ? 1 : 0;
     }
     // another seed gives another split, and 30% of 20 names is about 6
     CHECK(same < 20);
@@ -142,18 +142,18 @@ TEST_CASE("split: the side depends on name and seed only") {
     CHECK(test_a <= 12);
 
     // the extremes put everything on one side
-    auto const none = quetschn::split_options{.test_fraction = 0.0, .seed = 1};
-    auto const all = quetschn::split_options{.test_fraction = 1.0, .seed = 1};
+    auto const none = bench::split_options{.test_fraction = 0.0, .seed = 1};
+    auto const all = bench::split_options{.test_fraction = 1.0, .seed = 1};
     for (auto const& name : names()) {
-        CHECK_FALSE(quetschn::is_test_name(name, none));
-        CHECK(quetschn::is_test_name(name, all));
+        CHECK_FALSE(bench::is_test_name(name, none));
+        CHECK(bench::is_test_name(name, all));
     }
 }
 
 TEST_CASE("split: an empty side is an error, before anything is written") {
     auto dir = temp_dir();
     write_corpus(dir.path() / "all");
-    CHECK_THROWS_WITH_AS((void)quetschn::split_corpus(
+    CHECK_THROWS_WITH_AS((void)bench::split_corpus(
                              dir.path() / "all", dir.path() / "train", dir.path() / "test", {.test_fraction = 0.0, .seed = 1}),
                          doctest::Contains("one side is empty"),
                          std::runtime_error);
@@ -166,7 +166,7 @@ TEST_CASE("split: a training corpus leaves out the pages of the test corpus") {
     // Two dumps, a day apart: proc-0 to proc-9 in the first, proc-5 to proc-14 in the second. The
     // pages of proc-5 to proc-9 are in both, like cold pages that stayed in zram.
     auto write = [&](std::filesystem::path const& base, int first, int last) {
-        auto w = quetschn::corpus_writer(base, page_size);
+        auto w = bench::corpus_writer(base, page_size);
         for (auto i = first; i <= last; ++i) {
             auto const name = "proc-" + std::to_string(i);
             for (std::size_t n = 0; n < 8; ++n) {
@@ -177,8 +177,8 @@ TEST_CASE("split: a training corpus leaves out the pages of the test corpus") {
     write(dir.path() / "monday", 0, 9);
     write(dir.path() / "tuesday", 5, 14);
 
-    auto const r = quetschn::write_training_corpus(dir.path() / "monday", dir.path() / "tuesday", dir.path() / "train");
-    auto const train = names_in(quetschn::load_corpus(dir.path() / "train"));
+    auto const r = bench::write_training_corpus(dir.path() / "monday", dir.path() / "tuesday", dir.path() / "train");
+    auto const train = names_in(bench::load_corpus(dir.path() / "train"));
     // 6 of the 8 pages of a process carry its name, the other 2 are same-filled
     CHECK(r.pages == 5 * 6);
     CHECK(r.excluded == 5 * 6);
@@ -203,12 +203,12 @@ TEST_CASE("split: a training corpus needs the same page size as the test corpus"
     auto dir = temp_dir();
     write_corpus(dir.path() / "a");
     {
-        auto w = quetschn::corpus_writer(dir.path() / "b", 2 * page_size);
+        auto w = bench::corpus_writer(dir.path() / "b", 2 * page_size);
     }
-    CHECK_THROWS_WITH_AS((void)quetschn::write_training_corpus(dir.path() / "a", dir.path() / "b", dir.path() / "train"),
+    CHECK_THROWS_WITH_AS((void)bench::write_training_corpus(dir.path() / "a", dir.path() / "b", dir.path() / "train"),
                          doctest::Contains("different page sizes"),
                          std::runtime_error);
-    CHECK_THROWS_AS((void)quetschn::write_training_corpus(dir.path() / "a", dir.path() / "missing", dir.path() / "train"),
+    CHECK_THROWS_AS((void)bench::write_training_corpus(dir.path() / "a", dir.path() / "missing", dir.path() / "train"),
                     std::runtime_error);
 }
 
@@ -218,18 +218,18 @@ TEST_CASE("split: only a page with the same content is left out of the training 
     auto last_byte = a;
     last_byte.back() = std::byte{1};
     {
-        auto w = quetschn::corpus_writer(dir.path() / "monday", page_size);
+        auto w = bench::corpus_writer(dir.path() / "monday", page_size);
         w.write(1, "x", "", 0x1000, a);
         w.write(1, "x", "", 0x2000, last_byte);
     }
     {
-        auto w = quetschn::corpus_writer(dir.path() / "tuesday", page_size);
+        auto w = bench::corpus_writer(dir.path() / "tuesday", page_size);
         w.write(2, "y", "", 0x1000, a);
     }
-    auto const r = quetschn::write_training_corpus(dir.path() / "monday", dir.path() / "tuesday", dir.path() / "train");
+    auto const r = bench::write_training_corpus(dir.path() / "monday", dir.path() / "tuesday", dir.path() / "train");
     CHECK(r.excluded == 1);
     REQUIRE(r.pages == 1);
-    auto const train = quetschn::load_corpus(dir.path() / "train");
+    auto const train = bench::load_corpus(dir.path() / "train");
     CHECK(std::memcmp(train.page(0).data(), last_byte.data(), page_size) == 0);
 }
 
@@ -237,9 +237,8 @@ TEST_CASE("split: a sample has the requested size, no page twice, and depends on
     auto dir = temp_dir();
     write_corpus(dir.path() / "all"); // 20 names x 8 pages
     auto sample = [&](std::size_t pages, std::uint64_t seed, char const* name) {
-        CHECK(quetschn::sample_corpus(dir.path() / "all", dir.path() / name, pages, seed) ==
-              std::min<std::size_t>(pages, 160));
-        auto const c = quetschn::load_corpus(dir.path() / name);
+        CHECK(bench::sample_corpus(dir.path() / "all", dir.path() / name, pages, seed) == std::min<std::size_t>(pages, 160));
+        auto const c = bench::load_corpus(dir.path() / name);
         auto contents = std::vector<std::string>();
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const p = c.page(i);
@@ -257,7 +256,7 @@ TEST_CASE("split: a sample has the requested size, no page twice, and depends on
     auto unique = std::set<std::string>();
     auto same_filled = 0;
     for (auto const& p : a) {
-        auto const is_same = quetschn::analyze_page(std::as_bytes(std::span(p.data(), p.size()))).same_filled;
+        auto const is_same = bench::analyze_page(std::as_bytes(std::span(p.data(), p.size()))).same_filled;
         same_filled += is_same ? 1 : 0;
         if (!is_same) {
             CHECK(unique.insert(p).second);
@@ -266,7 +265,7 @@ TEST_CASE("split: a sample has the requested size, no page twice, and depends on
     CHECK(unique.size() + static_cast<std::size_t>(same_filled) == 50);
     // asking for more than there is gives everything, in order
     auto const all = sample(1000, 1, "d");
-    auto const full = quetschn::load_corpus(dir.path() / "all");
+    auto const full = bench::load_corpus(dir.path() / "all");
     REQUIRE(all.size() == full.size());
     for (std::size_t i = 0; i < full.size(); ++i) {
         CHECK(std::memcmp(all[i].data(), full.page(i).data(), page_size) == 0);

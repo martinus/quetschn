@@ -6,7 +6,7 @@ decoder can be written from it alone, and it says which compressed blocks are va
 format as `src/` writes and reads it. Sentences marked *Why:* explain a choice and are
 not part of the format; the measurements behind them are in
 [explored-designs.md](explored-designs.md). How seqlz works, for a reader new to compression, is
-in the book [seqlz, line by line](https://martin.ankerl.com/quetschn/), the result and the numbers in
+in the book [seqlz, line by line](https://martin.ankerl.com/seqlz/), the result and the numbers in
 [seqlz.md](seqlz.md).
 
 `seqlz-1`, `seqlz-2` and `seqlz-3`, the levels of `seqlz_compress()`, are the same format: level 1
@@ -223,7 +223,7 @@ Every table is built from counts that are in this repository:
 a literal on the pages that table codes best, and how often each symbol of `OWN` occurred in the
 descriptions of the pages that level 3 gives a table of their own. `tools/kernel-port/gen-seqlz-lengths.py` turns the counts
 into the tables in `src/`, and `tools/seqlz-ref/check.sh` checks in CI that they are its output, byte for
-byte. `quetschn-seqlz-train --from-counts <file>` does the same in C++, see `bench/seqlz_train.cpp`, and
+byte. `seqlz-train --from-counts <file>` does the same in C++, see `bench/seqlz_train.cpp`, and
 the test `seqlz_train` checks that it gives the same tables, for both block sizes. The kernel gets the
 generator as `scripts/gen-seqlz-lengths.py` and the 4 KiB counts.
 
@@ -233,7 +233,7 @@ pressure, the resident pages of a desktop and 200 000 pages of its zram dump of 
 Android 17 emulator with 16 KiB pages. Those pages are not published, because memory dumps hold keys
 and passwords. The counts can't give those back: they are sums over all pages, each literal table's over
 10 590 pages or more for 4 KiB and 453 or more for 16 KiB, and they don't say which symbol came after which
-or on which page. `quetschn-seqlz-train --corpus <pages> --counts <file>` counts other pages the same
+or on which page. `seqlz-train --corpus <pages> --counts <file>` counts other pages the same
 way.
 <!-- end -->
 

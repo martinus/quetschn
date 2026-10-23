@@ -11,14 +11,14 @@ if [ "$3" = psi ]; then
   setprop ctl.restart lmkd; sleep 3
   echo "lmk params: $(ls /sys/module/lowmemorykiller/parameters | wc -l), lmkd $(getprop init.svc.lmkd)"
 fi
-cd /data/local/tmp/quetschn || exit 1
+cd /data/local/tmp/seqlz || exit 1
 svc power stayon usb; input keyevent 224; wm dismiss-keyguard
 # Android's limit on cached processes, 16 here, kills by count and not by memory; device_config does
 # not survive a reboot
 device_config put activity_manager max_cached_processes 96
 # silent: the media apps of the workload start playing on their own
 for s in 1 2 3 4 5; do cmd media_session volume --stream $s --set 0 > /dev/null 2>&1; done
-insmod lz4_compress.ko 2>/dev/null; insmod lz4.ko 2>/dev/null; insmod quetschn_crypto.ko 2>/dev/null
+insmod lz4_compress.ko 2>/dev/null; insmod lz4.ko 2>/dev/null; insmod seqlz_crypto.ko 2>/dev/null
 insmod xxhash.ko 2>/dev/null; insmod zstd_compress.ko 2>/dev/null; insmod zstd_decompress.ko 2>/dev/null; insmod zstd.ko 2>/dev/null
 swapoff /dev/block/zram0 || exit 1
 echo 1 > /sys/block/zram0/reset

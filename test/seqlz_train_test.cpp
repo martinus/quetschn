@@ -14,16 +14,16 @@ extern "C" {
 #include <string>
 #include <vector>
 
-using quetschn::read_seqlz_counts;
-using quetschn::seqlz_build_tables;
-using quetschn::seqlz_counts;
-using quetschn::write_seqlz_counts;
+using bench::read_seqlz_counts;
+using bench::seqlz_build_tables;
+using bench::seqlz_counts;
+using bench::write_seqlz_counts;
 
 namespace {
 
 seqlz_counts committed_counts() {
     auto const path =
-        std::string(QUETSCHN_SOURCE_DIR) + "/bench/seqlz_counts_" + (SEQLZ_BLOCK_SIZE == 4096 ? "4k" : "16k") + ".txt";
+        std::string(SEQLZ_SOURCE_DIR) + "/bench/seqlz_counts_" + (SEQLZ_BLOCK_SIZE == 4096 ? "4k" : "16k") + ".txt";
     auto in = std::ifstream(path);
     REQUIRE_MESSAGE(in.good(), "cannot read ", path);
     return read_seqlz_counts(in);

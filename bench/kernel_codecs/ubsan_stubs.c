@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define QUETSCHN_UBSAN_HANDLER(name)                                \
+#define SEQLZ_UBSAN_HANDLER(name)                                   \
     __attribute__((weak)) void name(void* data, void* a, void* b);  \
     __attribute__((weak)) void name(void* data, void* a, void* b) { \
         (void)data;                                                 \
@@ -18,7 +18,7 @@
         abort();                                                    \
     }
 
-QUETSCHN_UBSAN_HANDLER(__ubsan_handle_out_of_bounds)
-QUETSCHN_UBSAN_HANDLER(__ubsan_handle_out_of_bounds_abort)
-QUETSCHN_UBSAN_HANDLER(__ubsan_handle_shift_out_of_bounds)
-QUETSCHN_UBSAN_HANDLER(__ubsan_handle_shift_out_of_bounds_abort)
+SEQLZ_UBSAN_HANDLER(__ubsan_handle_out_of_bounds)
+SEQLZ_UBSAN_HANDLER(__ubsan_handle_out_of_bounds_abort)
+SEQLZ_UBSAN_HANDLER(__ubsan_handle_shift_out_of_bounds)
+SEQLZ_UBSAN_HANDLER(__ubsan_handle_shift_out_of_bounds_abort)

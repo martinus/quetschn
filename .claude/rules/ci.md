@@ -10,7 +10,7 @@ paths:
   release+sanitize (no kernel tree); fuzz 60 s/target (4 KiB, 16 KiB, MSan); `same-bytes`
   (`test/seqlz_endian.c` on x86-64, `-m32`, s390x/qemu, outputs diffed); `docs`
   (`tools/seqlz-ref/check.sh`, `tools/check-links.py`); `book` (`docs/book/build.py --check`,
-  `lint.py`; job `pages` publishes it from `main` to https://martin.ankerl.com/quetschn/);
+  `lint.py`; job `pages` publishes it from `main` to https://martin.ankerl.com/seqlz/);
   `kernel-port` (`tools/kernel-port/check.sh` x86-64/arm64/arm/s390, arm64 also with 16/64 KiB pages;
   `kunit.sh` UML x86-64 and arm64 qemu with 64 KiB pages).
 - `ci-ok` is the only required check. Jobs may be renamed; add each new job to `ci-ok`'s `needs` and

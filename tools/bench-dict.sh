@@ -11,7 +11,7 @@ usage() {
     cat >&2 <<'EOF'
 usage: tools/bench-dict.sh <build dir> <train corpus> <test corpus> <out dir>
 
-Corpora are <base> paths, as for quetschn-bench-* --corpus. Pages of the train corpus that also are
+Corpora are <base> paths, as for seqlz-bench-* --corpus. Pages of the train corpus that also are
 in the test corpus are not used for training. Environment: CPU (default 2) is the CPU to pin to,
 REPETITIONS (default 5) the runs per page, MAXDICT (default 64KB) the dictionary size.
 EOF
@@ -29,7 +29,7 @@ maxdict=${MAXDICT:-64KB}
 
 mkdir -p "$out"
 chmod 700 "$out"
-"$build/quetschn-split-corpus" --corpus "$train" --train "$out/train" --exclude "$test"
+"$build/seqlz-split-corpus" --corpus "$train" --train "$out/train" --exclude "$test"
 zstd -q -f --train "$out/train.pages" -B4096 --maxdict="$maxdict" -o "$out/dict"
 
 # name, binary, extra arguments
@@ -47,7 +47,7 @@ for run in "${runs[@]}"; do
     read -r name codec args <<<"$run"
     echo "== $name"
     # shellcheck disable=SC2086 # args is split on purpose
-    "$build/quetschn-bench-$codec" --corpus "$test" --cpu "$cpu" --repetitions "$repetitions" $args \
+    "$build/seqlz-bench-$codec" --corpus "$test" --cpu "$cpu" --repetitions "$repetitions" $args \
         --out "$out/$name.tsv" >"$out/$name.txt"
     grep -E '^zsmalloc cost' "$out/$name.txt"
 done
@@ -64,7 +64,7 @@ pairs=(
 )
 for pair in "${pairs[@]}"; do
     read -r baseline candidate <<<"$pair"
-    "$build/quetschn-compare" --baseline "$out/$baseline.tsv" --candidate "$out/$candidate.tsv" \
+    "$build/seqlz-compare" --baseline "$out/$baseline.tsv" --candidate "$out/$candidate.tsv" \
         >"$out/compare-$baseline-$candidate.txt"
     printf '%-10s -> %-12s %s\n' "$baseline" "$candidate" \
         "$(grep -E '^candidate saves' "$out/compare-$baseline-$candidate.txt" | sed 's/^candidate saves *//')"

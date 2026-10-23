@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh <pages> <out dir> <quetschn_<name>.ko> ...: zram's writes and reads in the Mi 9T's own kernel,
+# run.sh <pages> <out dir> <seqlz_<name>.ko> ...: zram's writes and reads in the Mi 9T's own kernel,
 # every codec alone in its own zramphone process, in turns, the order rotated per round. With all codecs
 # in one process a codec's time depends on the others, by up to 1 us (docs/measuring.md). Writes
 # <out dir>/log.txt and prints summary.py's table: the mean over the rounds and the range per codec.
@@ -28,7 +28,7 @@ ndk=${NDK_R21E:-$HOME/opt/android-ndk-r21e}
     -o "$out/zramphone" "$here/zramphone.c"
 names="" codecs=lz4
 for ko in "$@"; do
-    n=$(basename "$ko" .ko); n=${n#quetschn_}
+    n=$(basename "$ko" .ko); n=${n#seqlz_}
     names="$names $n"; codecs="$codecs seqlz-$n-1 seqlz-$n-2 seqlz-$n-3"
 done
 cat >"$out/params.sh" <<PARAMS

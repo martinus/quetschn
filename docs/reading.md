@@ -2,7 +2,7 @@
 
 The codec is about 3800 lines, and the decoder is the part that has to be safe for any input. So read
 it in five passes, each one a piece that can be judged by itself, and the decoder before the
-compressor. The book, [seqlz, line by line](https://martin.ankerl.com/quetschn/), explains every line
+compressor. The book, [seqlz, line by line](https://martin.ankerl.com/seqlz/), explains every line
 when the reason for one is not obvious; it describes the code of the commit it names, the code on
 `main` may be a bit newer.
 

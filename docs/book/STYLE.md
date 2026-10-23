@@ -120,7 +120,7 @@ before and after:
 - Link to listings of other chapters by function name in prose ("`seqlz_br_refill()` in
   [chapter 12](#ch-dec-basics)"); the ids of listings are not stable.
 - Repository files and docs: link to GitHub,
-  `https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#<anchor>`. The anchor is
+  `https://github.com/martinus/seqlz/blob/main/docs/explored-designs.md#<anchor>`. The anchor is
   GitHub's slug of the heading: lowercase, every character that is not a letter, digit, space,
   hyphen or underscore removed, spaces to hyphens (`µ` and `é` stay). Copy the heading exactly from the
   file and derive the slug; e.g. "The matcher without its step: writes 1% to 3% faster, kept" becomes

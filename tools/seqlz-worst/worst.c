@@ -5,19 +5,19 @@
  * Counts instructions and branch misses in user space with perf_event_open: they do not change with the
  * load on the machine, as time does.
  *
- *   quetschn-seqlz-worst pages <base>
+ *   seqlz-worst pages <base>
  *       writes made-up pages of the kinds below as a corpus, <base>.pages and <base>.tsv, with the kind of
  *       each page in the .tsv, for count or for the harness.
- *   quetschn-seqlz-worst count <pages file>
+ *   seqlz-worst count <pages file>
  *       compresses and decodes each page as zram would, one line per page: compressed length,
  *       instructions and branch misses of both. For the made-up pages and for real ones alike.
- *   quetschn-seqlz-worst decode
+ *   seqlz-worst decode
  *       compressed pages written by seqlz_encode() from chosen sequences, valid pages the matcher never
  *       writes: every token escaped, as many sequences as fit, offsets below 8, ... Per kind the most
  *       instructions and branch misses of the decode of its 16 pages.
- *   quetschn-seqlz-worst streams <dir>
+ *   seqlz-worst streams <dir>
  *       writes 4 of those per kind into dir, one file each, as seeds for cost_fuzz.c.
- *   quetschn-seqlz-worst count-streams <file>...
+ *   seqlz-worst count-streams <file>...
  *       the decoder on compressed pages in files, e.g. what cost_fuzz.c found.
  */
 #include <math.h>
@@ -579,7 +579,7 @@ int main(int argc, char** argv) {
     if (argc >= 3 && !strcmp(argv[1], "count-streams"))
         return count_streams(argc - 2, argv + 2);
     fprintf(stderr,
-            "usage: quetschn-seqlz-worst pages <base> | count <pages file> | decode | streams <dir> | "
+            "usage: seqlz-worst pages <base> | count <pages file> | decode | streams <dir> | "
             "count-streams <file>...\n");
     return 1;
 }

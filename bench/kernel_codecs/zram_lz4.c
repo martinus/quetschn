@@ -16,16 +16,16 @@ struct lz4_ctx {
     LZ4_stream_t* cstrm;
 };
 
-static void lz4_release_params(struct quetschn_params* p) {
-    quetschn_free(p->drv_data, &p->allocated);
+static void lz4_release_params(struct bench_params* p) {
+    bench_free(p->drv_data, &p->allocated);
     p->drv_data = NULL;
 }
 
-static int lz4_setup_params(struct quetschn_params* p) {
+static int lz4_setup_params(struct bench_params* p) {
     LZ4_stream_t* dict_stream;
     int ret;
 
-    if (p->level == QUETSCHN_LEVEL_DEFAULT) {
+    if (p->level == BENCH_LEVEL_DEFAULT) {
         p->level = LZ4_ACCELERATION_DEFAULT;
     } else if (p->level < LZ4_ACCELERATION_DEFAULT) {
         return -1;
@@ -33,47 +33,47 @@ static int lz4_setup_params(struct quetschn_params* p) {
     if (!p->dict || !p->dict_size) {
         return 0;
     }
-    dict_stream = quetschn_zalloc(sizeof(*dict_stream), &p->allocated);
+    dict_stream = bench_zalloc(sizeof(*dict_stream), &p->allocated);
     if (!dict_stream) {
         return -1;
     }
     ret = LZ4_loadDict(dict_stream, p->dict, (int)p->dict_size);
     if (ret != (int)p->dict_size) {
-        quetschn_free(dict_stream, &p->allocated);
+        bench_free(dict_stream, &p->allocated);
         return -1;
     }
     p->drv_data = dict_stream;
     return 0;
 }
 
-static void lz4_destroy(struct quetschn_stream* s) {
+static void lz4_destroy(struct bench_stream* s) {
     struct lz4_ctx* zctx = s->context;
 
     if (!zctx) {
         return;
     }
-    quetschn_free(zctx->mem, &s->allocated);
-    quetschn_free(zctx->dstrm, &s->allocated);
-    quetschn_free(zctx->cstrm, &s->allocated);
-    quetschn_free(zctx, &s->allocated);
+    bench_free(zctx->mem, &s->allocated);
+    bench_free(zctx->dstrm, &s->allocated);
+    bench_free(zctx->cstrm, &s->allocated);
+    bench_free(zctx, &s->allocated);
     s->context = NULL;
 }
 
-static int lz4_create(struct quetschn_params* p, struct quetschn_stream* s) {
-    struct lz4_ctx* zctx = quetschn_zalloc(sizeof(*zctx), &s->allocated);
+static int lz4_create(struct bench_params* p, struct bench_stream* s) {
+    struct lz4_ctx* zctx = bench_zalloc(sizeof(*zctx), &s->allocated);
 
     if (!zctx) {
         return -1;
     }
     s->context = zctx;
     if (p->dict_size == 0) {
-        zctx->mem = quetschn_vzalloc(LZ4_MEM_COMPRESS, &s->allocated);
+        zctx->mem = bench_vzalloc(LZ4_MEM_COMPRESS, &s->allocated);
         if (!zctx->mem) {
             goto error;
         }
     } else {
-        zctx->dstrm = quetschn_zalloc(sizeof(*zctx->dstrm), &s->allocated);
-        zctx->cstrm = quetschn_zalloc(sizeof(*zctx->cstrm), &s->allocated);
+        zctx->dstrm = bench_zalloc(sizeof(*zctx->dstrm), &s->allocated);
+        zctx->cstrm = bench_zalloc(sizeof(*zctx->cstrm), &s->allocated);
         if (!zctx->dstrm || !zctx->cstrm) {
             goto error;
         }
@@ -85,12 +85,8 @@ error:
     return -1;
 }
 
-static int lz4_compress(struct quetschn_params* p,
-                        struct quetschn_stream* s,
-                        const void* src,
-                        unsigned int src_len,
-                        void* dst,
-                        unsigned int* dst_len) {
+static int lz4_compress(
+    struct bench_params* p, struct bench_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     struct lz4_ctx* zctx = s->context;
     int ret;
 
@@ -108,12 +104,8 @@ static int lz4_compress(struct quetschn_params* p,
     return 0;
 }
 
-static int lz4_decompress(struct quetschn_params* p,
-                          struct quetschn_stream* s,
-                          const void* src,
-                          unsigned int src_len,
-                          void* dst,
-                          unsigned int* dst_len) {
+static int lz4_decompress(
+    struct bench_params* p, struct bench_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     struct lz4_ctx* zctx = s->context;
     int ret;
 
@@ -134,18 +126,14 @@ static int lz4_decompress(struct quetschn_params* p,
     return 0;
 }
 
-/* lz4 with quetschn_prefetch_page() before the decompression, for a fair comparison */
-static int lz4_prefetch_decompress(struct quetschn_params* p,
-                                   struct quetschn_stream* s,
-                                   const void* src,
-                                   unsigned int src_len,
-                                   void* dst,
-                                   unsigned int* dst_len) {
-    quetschn_prefetch_page(src, src_len, dst, *dst_len);
+/* lz4 with bench_prefetch_page() before the decompression, for a fair comparison */
+static int lz4_prefetch_decompress(
+    struct bench_params* p, struct bench_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    bench_prefetch_page(src, src_len, dst, *dst_len);
     return lz4_decompress(p, s, src, src_len, dst, dst_len);
 }
 
-const struct quetschn_codec quetschn_codec_lz4_prefetch = {
+const struct bench_codec bench_codec_lz4_prefetch = {
     .name = "lz4-prefetch",
     .setup_params = lz4_setup_params,
     .release_params = lz4_release_params,
@@ -155,7 +143,7 @@ const struct quetschn_codec quetschn_codec_lz4_prefetch = {
     .decompress = lz4_prefetch_decompress,
 };
 
-const struct quetschn_codec quetschn_codec_lz4 = {
+const struct bench_codec bench_codec_lz4 = {
     .name = "lz4",
     .setup_params = lz4_setup_params,
     .release_params = lz4_release_params,

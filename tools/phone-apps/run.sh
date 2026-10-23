@@ -2,7 +2,7 @@
 # run.sh: the app switching workload on a rooted Android phone over adb, zram0 on each algorithm in
 # turn, a reboot before every run. The phone needs setup.sh, swapbench.sh, hog (hog.c built with the
 # NDK's clang, --target=aarch64-linux-android30 -static) and the compressor modules in
-# /data/local/tmp/quetschn, the lock screen off, Magisk's su allowed for the shell, and the Play Store's
+# /data/local/tmp/seqlz, the lock screen off, Magisk's su allowed for the shell, and the Play Store's
 # auto update off, so that every run has the same app versions (each run writes them to versions.txt).
 #
 #   ALGOS="lzo lz4 seqlz-1"  the algorithms, each repetition starts at another one
@@ -28,9 +28,9 @@ one() {
   until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 5; done
   # the phone is busy for a while after boot
   sleep 90
-  adb shell "su -mm -c 'sh /data/local/tmp/quetschn/setup.sh $algo ${HOG:-1536} ${LMK:--} $disk'" 2>&1 | tail -6
-  adb shell "su -c 'cd /data/local/tmp/quetschn && rm -rf run && sh swapbench.sh run ${ROUNDS:-4} ${SET:-}'" 2>&1 | tail -1
-  rm -rf -- "${run:?}"; adb pull /data/local/tmp/quetschn/run "$run" > /dev/null
+  adb shell "su -mm -c 'sh /data/local/tmp/seqlz/setup.sh $algo ${HOG:-1536} ${LMK:--} $disk'" 2>&1 | tail -6
+  adb shell "su -c 'cd /data/local/tmp/seqlz && rm -rf run && sh swapbench.sh run ${ROUNDS:-4} ${SET:-}'" 2>&1 | tail -1
+  rm -rf -- "${run:?}"; adb pull /data/local/tmp/seqlz/run "$run" > /dev/null
 }
 spoiled() { awk '($NF == "reset" && $1 > 1) || $NF == "hung"' "$1/limit.txt" 2>/dev/null | grep -q .; }
 end=$([ -n "${END:-}" ] && date -d "$END" +%s || echo 0)

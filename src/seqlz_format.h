@@ -62,10 +62,10 @@
  * SEQLZ_BLOCK_BITS bytes, 12 for 4 KiB and 14 for 16 KiB, the page size the
  * build is for.
  */
-#ifndef QUETSCHN_PAGE_BITS
-#define QUETSCHN_PAGE_BITS 12
+#ifndef SEQLZ_PAGE_BITS
+#define SEQLZ_PAGE_BITS 12
 #endif
-#define SEQLZ_BLOCK_BITS QUETSCHN_PAGE_BITS
+#define SEQLZ_BLOCK_BITS SEQLZ_PAGE_BITS
 #define SEQLZ_BLOCK_SIZE (1U << SEQLZ_BLOCK_BITS)
 /*
  * The longest code of a length value: its decode table has 256 entries, 1 KiB.

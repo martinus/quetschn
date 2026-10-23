@@ -7,7 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -329,4 +329,4 @@ std::vector<std::size_t> best_for_some_lambda(std::vector<codec_cost> const& cod
     return hull;
 }
 
-} // namespace quetschn
+} // namespace bench

@@ -4,10 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef QUETSCHN_PAGE_BITS
-#    define QUETSCHN_PAGE_BITS 12
+#ifndef SEQLZ_PAGE_BITS
+#    define SEQLZ_PAGE_BITS 12
 #endif
-#define KERNEL_PAGE ((size_t)1 << QUETSCHN_PAGE_BITS)
+#define KERNEL_PAGE ((size_t)1 << SEQLZ_PAGE_BITS)
 
 /*
  * Blocks of a page or more are page aligned, like vmalloc and kmalloc of a page in the kernel; smaller
@@ -24,7 +24,7 @@ static size_t alignment(size_t size) {
  * are the powers of 2 from 8 and the two of 96 and 192 bytes, and above it pages from the page
  * allocator, a power of 2 of them.
  */
-size_t quetschn_kmalloc_size(size_t size) {
+size_t bench_kmalloc_size(size_t size) {
     size_t a = size <= 2 * KERNEL_PAGE ? 8 : KERNEL_PAGE;
 
     while (a < size) {
@@ -40,7 +40,7 @@ size_t quetschn_kmalloc_size(size_t size) {
 }
 
 /* what vmalloc() hands out for size bytes: whole pages */
-size_t quetschn_vmalloc_size(size_t size) {
+size_t bench_vmalloc_size(size_t size) {
     return (size + KERNEL_PAGE - 1) / KERNEL_PAGE * KERNEL_PAGE;
 }
 
@@ -57,15 +57,15 @@ static void* zalloc(size_t size, size_t counted, size_t* counter) {
     return p + a;
 }
 
-void* quetschn_zalloc(size_t size, size_t* counter) {
-    return zalloc(size, quetschn_kmalloc_size(size), counter);
+void* bench_zalloc(size_t size, size_t* counter) {
+    return zalloc(size, bench_kmalloc_size(size), counter);
 }
 
-void* quetschn_vzalloc(size_t size, size_t* counter) {
-    return zalloc(size, quetschn_vmalloc_size(size), counter);
+void* bench_vzalloc(size_t size, size_t* counter) {
+    return zalloc(size, bench_vmalloc_size(size), counter);
 }
 
-void quetschn_free(void* p, size_t* counter) {
+void bench_free(void* p, size_t* counter) {
     if (p == NULL) {
         return;
     }

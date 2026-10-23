@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 // One lz4 sequence: literals, then a match, which the last sequence of a block does not have.
 struct sequence {
@@ -26,4 +26,4 @@ struct parsed_page {
 // The bytes the sequences stand for. Throws std::runtime_error for an offset before the start.
 [[nodiscard]] std::vector<std::uint8_t> reconstruct(parsed_page const& p);
 
-} // namespace quetschn
+} // namespace bench

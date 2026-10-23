@@ -6,7 +6,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace quetschn {
+namespace bench {
 
 page_stats analyze_page(std::span<std::byte const> page) {
     if (page.empty() || page.size() % sizeof(std::uint64_t) != 0) {
@@ -44,4 +44,4 @@ page_stats analyze_page(std::span<std::byte const> page) {
     return stats;
 }
 
-} // namespace quetschn
+} // namespace bench

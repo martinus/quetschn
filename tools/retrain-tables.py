@@ -5,7 +5,7 @@
     tools/retrain-tables.py --page-bits 12 --train <build> --corpus <base> [--name <corpus name>]
     tools/retrain-tables.py --page-bits 12 --counts <counts file>
 
---train runs <build>/quetschn-seqlz-train --corpus <base> --counts --lit-sets (a Release build: 11 min
+--train runs <build>/seqlz-train --corpus <base> --counts --lit-sets (a Release build: 11 min
 for the 4 KiB corpus of 13th October), and the counts' head names the corpus as --name, default the
 base's file name. --counts takes counts trained before. Then, from the repository's root:
 
@@ -17,7 +17,7 @@ base's file name. --counts takes counts trained before. Then, from the repositor
 
 The counts' own line comes from the pages level 3 gives a table of their own with the tables <build> has
 compiled in, the old ones: after a retrain, count it again with a build of the new tables,
-quetschn-seqlz-train --corpus <base> --own-counts <counts file>, and run this with --counts.
+seqlz-train --corpus <base> --own-counts <counts file>, and run this with --counts.
 
 Prints which tables changed. Not done here: docs/format.md's example and Status, the example bytes in
 test/seqlz_ref_test.cpp (both from tools/seqlz-compress/compress.c), the book's facts
@@ -98,7 +98,7 @@ def table_hashes(size):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--page-bits", type=int, choices=(12, 14), required=True)
-    ap.add_argument("--train", metavar="BUILD", help="a build dir with quetschn-seqlz-train")
+    ap.add_argument("--train", metavar="BUILD", help="a build dir with seqlz-train")
     ap.add_argument("--corpus", help="the corpus base for --train")
     ap.add_argument("--name", help="the corpus' name in the counts' head, default the base's file name")
     ap.add_argument("--counts", help="counts trained before, instead of --train")
@@ -109,7 +109,7 @@ def main():
     if args.train:
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "counts.txt"
-            train = Path(args.train) / "quetschn-seqlz-train"
+            train = Path(args.train) / "seqlz-train"
             r = subprocess.run([str(train), "--corpus", args.corpus, "--counts", str(out), "--lit-sets"],
                                capture_output=True, text=True)
             if r.returncode:

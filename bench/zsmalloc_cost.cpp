@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -139,4 +139,4 @@ zsmalloc_config const& zsmalloc_model::config() const {
     return m_cfg;
 }
 
-} // namespace quetschn
+} // namespace bench

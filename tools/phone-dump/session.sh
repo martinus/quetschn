@@ -9,7 +9,7 @@
 # of workload.sh in /sdcard/Download/qdocs.
 set -u
 name=$1; mins=$2; seed=$3; urls=$4; hog=$5
-OUT=${OUT:-$HOME/quetschn-corpus/phone-dump}; mkdir -p "$OUT"
+OUT=${OUT:-$HOME/seqlz-corpus/phone-dump}; mkdir -p "$OUT"
 S() { adb shell "su -c '$1'"; }
 log() { echo "$(date +%T) $*" | tee -a "$OUT/$name.log"; }
 adb push "$urls" /data/local/tmp/urls.txt > /dev/null && adb shell "su -c 'mv /data/local/tmp/urls.txt /data/local/tmp/qdump/'"

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// The kernel's lz4, lzo and zstd, built in userspace from QUETSCHN_KERNEL_TREE. Only compiled when that is set.
+// The kernel's lz4, lzo and zstd, built in userspace from SEQLZ_KERNEL_TREE. Only compiled when that is set.
 
 #include "harness.h"
 #include "kernel_codecs/zram_codec.h"
@@ -113,22 +113,22 @@ std::vector<page> test_pages() {
     return {random_page(1), random_page(2), pointer_page(), text_page(), zero_runs_page(), record_page(1)};
 }
 
-std::vector<quetschn_codec const*> codecs() {
-    return {&quetschn_codec_lz4,
-            &quetschn_codec_lz4_prefetch,
-            &quetschn_codec_lz4hc,
-            &quetschn_codec_lzo,
-            &quetschn_codec_lzo_rle,
-            &quetschn_codec_zstd,
-            &quetschn_codec_seqlz_1,
-            &quetschn_codec_seqlz_2,
-            &quetschn_codec_seqlz_3};
+std::vector<bench_codec const*> codecs() {
+    return {&bench_codec_lz4,
+            &bench_codec_lz4_prefetch,
+            &bench_codec_lz4hc,
+            &bench_codec_lzo,
+            &bench_codec_lzo_rle,
+            &bench_codec_zstd,
+            &bench_codec_seqlz_1,
+            &bench_codec_seqlz_2,
+            &bench_codec_seqlz_3};
 }
 
 // A zram device (params) with the per-CPU contexts of one CPU, set up the way zram does it.
 class device {
 public:
-    explicit device(quetschn_codec const& codec, int level = QUETSCHN_LEVEL_DEFAULT, page dict = {})
+    explicit device(bench_codec const& codec, int level = BENCH_LEVEL_DEFAULT, page dict = {})
         : m_codec(codec)
         , m_dict(std::move(dict)) {
         m_params.dict = m_dict.empty() ? nullptr : m_dict.data();
@@ -136,7 +136,7 @@ public:
         m_params.level = level;
         m_params.page_size = page_size;
         REQUIRE(codec.setup_params(&m_params) == 0);
-        m_contexts = std::make_unique<quetschn::codec_contexts>(codec, &m_params);
+        m_contexts = std::make_unique<bench::codec_contexts>(codec, &m_params);
     }
 
     ~device() {
@@ -168,26 +168,26 @@ public:
         return ret;
     }
 
-    [[nodiscard]] quetschn_params const& params() const {
+    [[nodiscard]] bench_params const& params() const {
         return m_params;
     }
-    [[nodiscard]] quetschn::codec_contexts const& contexts() const {
+    [[nodiscard]] bench::codec_contexts const& contexts() const {
         return *m_contexts;
     }
 
 private:
-    quetschn_codec const& m_codec;
+    bench_codec const& m_codec;
     page m_dict;
-    quetschn_params m_params{};
-    std::unique_ptr<quetschn::codec_contexts> m_contexts;
+    bench_params m_params{};
+    std::unique_ptr<bench::codec_contexts> m_contexts;
 };
 
-page compress(quetschn_codec const& codec, page const& src) {
+page compress(bench_codec const& codec, page const& src) {
     return device(codec).compress(src);
 }
 
-bool rejects(quetschn_codec const& codec, int level) {
-    auto p = quetschn_params{};
+bool rejects(bench_codec const& codec, int level) {
+    auto p = bench_params{};
     p.level = level;
     p.page_size = page_size;
     auto const failed = codec.setup_params(&p) != 0;
@@ -247,7 +247,7 @@ page record_dict() {
 }
 
 std::filesystem::path temp_path(std::string const& name) {
-    return std::filesystem::temp_directory_path() / ("quetschn-" + std::to_string(::getpid()) + "-" + name);
+    return std::filesystem::temp_directory_path() / ("seqlz-" + std::to_string(::getpid()) + "-" + name);
 }
 
 void write_file(std::filesystem::path const& path, page const& data) {
@@ -297,7 +297,7 @@ TEST_CASE("kernel codecs: every page roundtrips through every codec, with and wi
                 CAPTURE(name);
                 CAPTURE(dict.size());
                 CAPTURE(i);
-                auto d = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict);
+                auto d = device(*codec, BENCH_LEVEL_DEFAULT, dict);
                 auto const c = d.compress(pages[i]);
                 auto out = page();
                 REQUIRE(d.decompress(c, out) == 0);
@@ -310,8 +310,8 @@ TEST_CASE("kernel codecs: every page roundtrips through every codec, with and wi
 TEST_CASE("kernel codecs: lz4 output is valid LZ4 for an independent decoder") {
     auto const dict = record_dict();
     for (auto const& p : test_pages()) {
-        CHECK(lz4_reference_decode(compress(quetschn_codec_lz4, p)) == p);
-        CHECK(lz4_reference_decode(device(quetschn_codec_lz4, QUETSCHN_LEVEL_DEFAULT, dict).compress(p), dict) == p);
+        CHECK(lz4_reference_decode(compress(bench_codec_lz4, p)) == p);
+        CHECK(lz4_reference_decode(device(bench_codec_lz4, BENCH_LEVEL_DEFAULT, dict).compress(p), dict) == p);
     }
 }
 
@@ -330,12 +330,12 @@ TEST_CASE("kernel codecs: compressed sizes are plausible") {
 
 TEST_CASE("kernel codecs: a dictionary of similar pages makes lz4 and zstd output smaller") {
     auto const dict = record_dict();
-    for (auto const* codec : {&quetschn_codec_lz4, &quetschn_codec_zstd}) {
+    for (auto const* codec : {&bench_codec_lz4, &bench_codec_zstd}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
         auto const p = record_page(1);
         auto const without = device(*codec).compress(p).size();
-        auto const with = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p).size();
+        auto const with = device(*codec, BENCH_LEVEL_DEFAULT, dict).compress(p).size();
         // 15% for lz4 and 9% for zstd on these pages; ignoring the dictionary gives 0%
         CHECK(with < without * 95 / 100);
     }
@@ -346,10 +346,10 @@ TEST_CASE("kernel codecs: every page is compressed on its own, also with a dicti
     // history leaked from one page to the next, the second compression of the same page would differ,
     // and zram could not decompress pages in any order.
     auto const dict = record_dict();
-    for (auto const* codec : {&quetschn_codec_lz4, &quetschn_codec_zstd}) {
+    for (auto const* codec : {&bench_codec_lz4, &bench_codec_zstd}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
-        auto d = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict);
+        auto d = device(*codec, BENCH_LEVEL_DEFAULT, dict);
         auto const a = record_page(1);
         auto const b = record_page(2);
         auto const first = d.compress(a);
@@ -369,18 +369,18 @@ TEST_CASE("kernel codecs: seqlz takes no dictionary, its tables are part of the 
     // no code at all, would have failed the setup.
     auto const dict = page(sizeof(seqlz_lengths));
     auto const p = text_page();
-    for (auto const* codec : {&quetschn_codec_seqlz_1, &quetschn_codec_seqlz_2, &quetschn_codec_seqlz_3}) {
+    for (auto const* codec : {&bench_codec_seqlz_1, &bench_codec_seqlz_2, &bench_codec_seqlz_3}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
-        CHECK(device(*codec, QUETSCHN_LEVEL_DEFAULT, dict).compress(p) == device(*codec).compress(p));
+        CHECK(device(*codec, BENCH_LEVEL_DEFAULT, dict).compress(p) == device(*codec).compress(p));
     }
 }
 
 TEST_CASE("kernel codecs: lzo-rle writes the lzo-rle stream, lzo does not") {
     // lzo1x_compress.c starts an lzo-rle stream with the marker 17 and the bitstream version 1, which
     // lzo1x_decompress_safe() checks for. Plain lzo output of a page starting with a literal does not.
-    auto const rle = compress(quetschn_codec_lzo_rle, zero_runs_page());
-    auto const plain = compress(quetschn_codec_lzo, zero_runs_page());
+    auto const rle = compress(bench_codec_lzo_rle, zero_runs_page());
+    auto const plain = compress(bench_codec_lzo, zero_runs_page());
     REQUIRE(rle.size() >= 2);
     CHECK(rle[0] == 17);
     CHECK(rle[1] == 1);
@@ -391,43 +391,43 @@ TEST_CASE("kernel codecs: memory per CPU and per device") {
     // docs/plan.md §3.3, what the kernel's allocators hand out: LZO1X_MEM_COMPRESS = 16384 from kzalloc(),
     // LZ4_MEM_COMPRESS = 16416 from vmalloc(), 5 pages, zstd's workspaces far larger. On top, lz4 and zstd
     // allocate a small context struct of pointers per stream.
-    auto per_cpu = [](quetschn_codec const& codec, page dict = {}) {
-        auto d = device(codec, QUETSCHN_LEVEL_DEFAULT, std::move(dict));
+    auto per_cpu = [](bench_codec const& codec, page dict = {}) {
+        auto d = device(codec, BENCH_LEVEL_DEFAULT, std::move(dict));
         (void)d.compress(text_page()); // zstd allocates part of it lazily
         return d.contexts().compression_bytes() + d.contexts().decompression_bytes();
     };
-    CHECK(per_cpu(quetschn_codec_lzo) == 16384);
-    CHECK(per_cpu(quetschn_codec_lzo_rle) == 16384);
-    CHECK(per_cpu(quetschn_codec_lz4) > 20480);
-    CHECK(per_cpu(quetschn_codec_lz4) <= 20480 + 64);
-    CHECK(per_cpu(quetschn_codec_zstd) > 4 * 16416);
+    CHECK(per_cpu(bench_codec_lzo) == 16384);
+    CHECK(per_cpu(bench_codec_lzo_rle) == 16384);
+    CHECK(per_cpu(bench_codec_lz4) > 20480);
+    CHECK(per_cpu(bench_codec_lz4) <= 20480 + 64);
+    CHECK(per_cpu(bench_codec_zstd) > 4 * 16416);
     // vzalloc()'d workspaces are whole pages
-    CHECK(per_cpu(quetschn_codec_zstd) % 4096 < 64);
+    CHECK(per_cpu(bench_codec_zstd) % 4096 < 64);
 
     // With a dictionary lz4 holds a compression and a decompression stream per CPU instead of the
     // workspace, and the prepared dictionary once per device.
     auto const dict = record_dict();
-    CHECK(per_cpu(quetschn_codec_lz4, dict) >= 16416);
-    CHECK(device(quetschn_codec_lz4, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated == 32768);
-    CHECK(device(quetschn_codec_lz4).params().allocated == 0);
+    CHECK(per_cpu(bench_codec_lz4, dict) >= 16416);
+    CHECK(device(bench_codec_lz4, BENCH_LEVEL_DEFAULT, dict).params().allocated == 32768);
+    CHECK(device(bench_codec_lz4).params().allocated == 0);
     // zstd with a dictionary still has a cctx and a dctx per CPU, allocated by zstd itself through
     // kvzalloc(), which kmalloc() rounds up to a power of 2 of pages: more than the vzalloc()'d workspaces
     // without one, at most twice as much
-    CHECK(per_cpu(quetschn_codec_zstd, dict) > per_cpu(quetschn_codec_zstd) * 9 / 10);
-    CHECK(per_cpu(quetschn_codec_zstd, dict) < per_cpu(quetschn_codec_zstd) * 2);
-    CHECK(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).params().allocated > 0);
+    CHECK(per_cpu(bench_codec_zstd, dict) > per_cpu(bench_codec_zstd) * 9 / 10);
+    CHECK(per_cpu(bench_codec_zstd, dict) < per_cpu(bench_codec_zstd) * 2);
+    CHECK(device(bench_codec_zstd, BENCH_LEVEL_DEFAULT, dict).params().allocated > 0);
 }
 
 TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-2 decompresses with the scratch") {
     // the split of zram's series of October 2026 costs seqlz no memory: what the one context had, the
     // compression context and the decompression context have now
-    auto fast = device(quetschn_codec_seqlz_1);
-    auto lit = device(quetschn_codec_seqlz_2);
-    CHECK(fast.contexts().compression_bytes() == quetschn_kmalloc_size(sizeof(seqlz_state)));
+    auto fast = device(bench_codec_seqlz_1);
+    auto lit = device(bench_codec_seqlz_2);
+    CHECK(fast.contexts().compression_bytes() == bench_kmalloc_size(sizeof(seqlz_state)));
     CHECK(fast.contexts().decompression_bytes() == 0);
-    CHECK(quetschn_codec_seqlz_1.create_dctx == nullptr);
-    CHECK(lit.contexts().compression_bytes() == quetschn_kmalloc_size(sizeof(seqlz_state)));
-    CHECK(lit.contexts().decompression_bytes() == quetschn_kmalloc_size(SEQLZ_SCRATCH));
+    CHECK(bench_codec_seqlz_1.create_dctx == nullptr);
+    CHECK(lit.contexts().compression_bytes() == bench_kmalloc_size(sizeof(seqlz_state)));
+    CHECK(lit.contexts().decompression_bytes() == bench_kmalloc_size(SEQLZ_SCRATCH));
     // docs/plan.md §3.3: 8 KiB each, the scratch's 16 bytes past a page take the next cache
     CHECK(lit.contexts().compression_bytes() + lit.contexts().decompression_bytes() == 16384);
 
@@ -436,19 +436,18 @@ TEST_CASE("kernel codecs: seqlz compresses with the hash table, seqlz-2 decompre
         auto const c = fast.compress(src);
         auto out = page(page_size);
         auto len = static_cast<unsigned int>(out.size());
-        auto none = quetschn_stream{};
+        auto none = bench_stream{};
         auto p = fast.params();
-        CHECK(quetschn_codec_seqlz_1.decompress(&p, &none, c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) ==
-              0);
+        CHECK(bench_codec_seqlz_1.decompress(&p, &none, c.data(), static_cast<unsigned int>(c.size()), out.data(), &len) == 0);
         CHECK(out == src);
     }
 }
 
 TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts what the kernel hands out") {
     auto counter = std::size_t{0};
-    auto* small = quetschn_zalloc(100, &counter);
-    auto* page_block = quetschn_zalloc(4096, &counter);
-    auto* large = quetschn_vzalloc(70000, &counter);
+    auto* small = bench_zalloc(100, &counter);
+    auto* page_block = bench_zalloc(4096, &counter);
+    auto* large = bench_vzalloc(70000, &counter);
     REQUIRE(small != nullptr);
     REQUIRE(page_block != nullptr);
     REQUIRE(large != nullptr);
@@ -463,26 +462,26 @@ TEST_CASE("kernel codecs: the allocator aligns like the kernel, and counts what 
         return b == 0;
     }));
     std::memset(large, 1, 70000);
-    quetschn_free(large, &counter);
-    quetschn_free(small, &counter);
-    quetschn_free(page_block, &counter);
-    quetschn_free(nullptr, &counter);
+    bench_free(large, &counter);
+    bench_free(small, &counter);
+    bench_free(page_block, &counter);
+    bench_free(nullptr, &counter);
     CHECK(counter == 0);
 
     // kmalloc()'s caches up to 2 pages, then a power of 2 of pages; vmalloc() whole pages
-    CHECK(quetschn_kmalloc_size(1) == 8);
-    CHECK(quetschn_kmalloc_size(64) == 64);
-    CHECK(quetschn_kmalloc_size(65) == 96);
-    CHECK(quetschn_kmalloc_size(97) == 128);
-    CHECK(quetschn_kmalloc_size(129) == 192);
-    CHECK(quetschn_kmalloc_size(193) == 256);
-    CHECK(quetschn_kmalloc_size(4112) == 8192);
-    CHECK(quetschn_kmalloc_size(8192) == 8192);
-    CHECK(quetschn_kmalloc_size(8193) == 16384);
-    CHECK(quetschn_kmalloc_size(61440) == 65536);
-    CHECK(quetschn_kmalloc_size(70000) == 131072);
-    CHECK(quetschn_vmalloc_size(16416) == 20480);
-    CHECK(quetschn_vmalloc_size(4096) == 4096);
+    CHECK(bench_kmalloc_size(1) == 8);
+    CHECK(bench_kmalloc_size(64) == 64);
+    CHECK(bench_kmalloc_size(65) == 96);
+    CHECK(bench_kmalloc_size(97) == 128);
+    CHECK(bench_kmalloc_size(129) == 192);
+    CHECK(bench_kmalloc_size(193) == 256);
+    CHECK(bench_kmalloc_size(4112) == 8192);
+    CHECK(bench_kmalloc_size(8192) == 8192);
+    CHECK(bench_kmalloc_size(8193) == 16384);
+    CHECK(bench_kmalloc_size(61440) == 65536);
+    CHECK(bench_kmalloc_size(70000) == 131072);
+    CHECK(bench_vmalloc_size(16416) == 20480);
+    CHECK(bench_vmalloc_size(4096) == 4096);
 }
 
 TEST_CASE("kernel codecs: every allocation is released again") {
@@ -491,14 +490,14 @@ TEST_CASE("kernel codecs: every allocation is released again") {
             auto const name = std::string(codec->name);
             CAPTURE(name);
             CAPTURE(dict.size());
-            auto p = quetschn_params{};
+            auto p = bench_params{};
             p.dict = dict.empty() ? nullptr : dict.data();
             p.dict_size = dict.size();
-            p.level = QUETSCHN_LEVEL_DEFAULT;
+            p.level = BENCH_LEVEL_DEFAULT;
             p.page_size = page_size;
             REQUIRE(codec->setup_params(&p) == 0);
-            auto s = quetschn_stream{};
-            auto d = quetschn_stream{};
+            auto s = bench_stream{};
+            auto d = bench_stream{};
             REQUIRE(codec->create_cctx(&p, &s) == 0);
             REQUIRE((codec->create_dctx == nullptr || codec->create_dctx(&p, &d) == 0));
             auto dst = page(2 * page_size);
@@ -558,59 +557,59 @@ TEST_CASE("kernel codecs: lz4 uses zram's default acceleration") {
     };
     // the page has to tell the two apart, otherwise this test proves nothing
     REQUIRE(direct(1) != direct(8));
-    CHECK(compress(quetschn_codec_lz4, p) == direct(1));
+    CHECK(compress(bench_codec_lz4, p) == direct(1));
     // and a configured level reaches LZ4_compress_fast() as the acceleration
-    CHECK(device(quetschn_codec_lz4, 8).compress(p) == direct(8));
+    CHECK(device(bench_codec_lz4, 8).compress(p) == direct(8));
 }
 
 TEST_CASE("kernel codecs: lz4hc writes lz4, defaults to level 9, and zram's level range") {
     // lz4hc_setup_params(): LZ4HC_DEFAULT_CLEVEL (9) unless set, levels 1 to LZ4HC_MAX_CLEVEL (16)
     auto const dict = record_dict();
     for (auto const& p : test_pages()) {
-        CHECK(lz4_reference_decode(compress(quetschn_codec_lz4hc, p)) == p);
-        CHECK(lz4_reference_decode(device(quetschn_codec_lz4hc, QUETSCHN_LEVEL_DEFAULT, dict).compress(p), dict) == p);
+        CHECK(lz4_reference_decode(compress(bench_codec_lz4hc, p)) == p);
+        CHECK(lz4_reference_decode(device(bench_codec_lz4hc, BENCH_LEVEL_DEFAULT, dict).compress(p), dict) == p);
     }
-    CHECK(device(quetschn_codec_lz4hc).params().level == 9);
-    CHECK(rejects(quetschn_codec_lz4hc, 0));
-    CHECK(rejects(quetschn_codec_lz4hc, 17));
-    CHECK_FALSE(rejects(quetschn_codec_lz4hc, 1));
-    CHECK_FALSE(rejects(quetschn_codec_lz4hc, 16));
+    CHECK(device(bench_codec_lz4hc).params().level == 9);
+    CHECK(rejects(bench_codec_lz4hc, 0));
+    CHECK(rejects(bench_codec_lz4hc, 17));
+    CHECK_FALSE(rejects(bench_codec_lz4hc, 1));
+    CHECK_FALSE(rejects(bench_codec_lz4hc, 16));
     // the level reaches the compressor: on the text page, level 1 is larger than 9, and 9 is smaller than lz4
     auto const t = text_page();
-    auto const hc1 = device(quetschn_codec_lz4hc, 1).compress(t).size();
-    auto const hc9 = compress(quetschn_codec_lz4hc, t).size();
+    auto const hc1 = device(bench_codec_lz4hc, 1).compress(t).size();
+    auto const hc9 = compress(bench_codec_lz4hc, t).size();
     CHECK(hc9 < hc1);
-    CHECK(hc9 < compress(quetschn_codec_lz4, t).size());
+    CHECK(hc9 < compress(bench_codec_lz4, t).size());
 }
 
 TEST_CASE("kernel codecs: levels zram rejects are rejected") {
     // lz4_setup_params(): below LZ4_ACCELERATION_DEFAULT. zstd_setup_params(): outside
     // [zstd_min_clevel(), zstd_max_clevel()], and the maximum is 22.
-    CHECK(rejects(quetschn_codec_lz4, 0));
-    CHECK(rejects(quetschn_codec_lz4, -1));
-    CHECK_FALSE(rejects(quetschn_codec_lz4, 1));
-    CHECK(rejects(quetschn_codec_zstd, 23));
-    CHECK(rejects(quetschn_codec_zstd, 100));
+    CHECK(rejects(bench_codec_lz4, 0));
+    CHECK(rejects(bench_codec_lz4, -1));
+    CHECK_FALSE(rejects(bench_codec_lz4, 1));
+    CHECK(rejects(bench_codec_zstd, 23));
+    CHECK(rejects(bench_codec_zstd, 100));
     for (int level : {-1, 1, 3, 22}) {
         CAPTURE(level);
-        CHECK_FALSE(rejects(quetschn_codec_zstd, level));
-        CHECK(device(quetschn_codec_zstd, level).params().level == level);
+        CHECK_FALSE(rejects(bench_codec_zstd, level));
+        CHECK(device(bench_codec_zstd, level).params().level == level);
     }
 }
 
 TEST_CASE("kernel codecs: zstd defaults to level 3, and the level changes the output") {
     // ZSTD_CLEVEL_DEFAULT is 3, and zram uses zstd_default_clevel() when no level is configured
-    CHECK(device(quetschn_codec_zstd).params().level == 3);
+    CHECK(device(bench_codec_zstd).params().level == 3);
 
     auto const p = pointer_page();
-    auto const fast = device(quetschn_codec_zstd, -1).compress(p);
-    auto const l3 = device(quetschn_codec_zstd, 3).compress(p);
-    auto const l19 = device(quetschn_codec_zstd, 19).compress(p);
+    auto const fast = device(bench_codec_zstd, -1).compress(p);
+    auto const l3 = device(bench_codec_zstd, 3).compress(p);
+    auto const l19 = device(bench_codec_zstd, 19).compress(p);
     CHECK(fast != l3);
     CHECK(l19.size() <= l3.size());
     CHECK(l3.size() < fast.size());
     for (auto const& c : {fast, l3, l19}) {
-        auto d = device(quetschn_codec_zstd);
+        auto d = device(bench_codec_zstd);
         auto out = page();
         REQUIRE(d.decompress(c, out) == 0);
         CHECK(out == p);
@@ -624,8 +623,8 @@ TEST_CASE("kernel codecs: zstd output is a valid zstd frame for the zstd command
     }
     auto const dict = record_dict();
     for (int level : {-1, 1, 3}) {
-        auto plain = device(quetschn_codec_zstd, level);
-        auto with_dict = device(quetschn_codec_zstd, level, dict);
+        auto plain = device(bench_codec_zstd, level);
+        auto with_dict = device(bench_codec_zstd, level, dict);
         for (auto const& p : test_pages()) {
             CAPTURE(level);
             auto out = page();
@@ -672,10 +671,10 @@ TEST_CASE("kernel codecs: a dictionary trained by zstd --train works for zstd an
     CHECK(dict[3] == 0xec);
 
     auto const p = record_page(5);
-    for (auto const* codec : {&quetschn_codec_lz4, &quetschn_codec_zstd}) {
+    for (auto const* codec : {&bench_codec_lz4, &bench_codec_zstd}) {
         auto const name = std::string(codec->name);
         CAPTURE(name);
-        auto d = device(*codec, QUETSCHN_LEVEL_DEFAULT, dict);
+        auto d = device(*codec, BENCH_LEVEL_DEFAULT, dict);
         auto const c = d.compress(p);
         CHECK(c.size() < device(*codec).compress(p).size());
         auto out = page();
@@ -683,6 +682,6 @@ TEST_CASE("kernel codecs: a dictionary trained by zstd --train works for zstd an
         CHECK(out == p);
     }
     auto out = page();
-    REQUIRE(zstd_cli_decompress(device(quetschn_codec_zstd, QUETSCHN_LEVEL_DEFAULT, dict).compress(p), out, dict));
+    REQUIRE(zstd_cli_decompress(device(bench_codec_zstd, BENCH_LEVEL_DEFAULT, dict).compress(p), out, dict));
     CHECK(out == p);
 }

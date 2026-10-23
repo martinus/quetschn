@@ -11,7 +11,7 @@
 > 1.9 times the time to read. Each pair of numbers is for two sets of pages, see below.
 
 This page is the overview: the result, what is not known yet, and the choices with their numbers. The
-book [seqlz, line by line](https://martin.ankerl.com/quetschn/) explains every line of `src/`, with
+book [seqlz, line by line](https://martin.ankerl.com/seqlz/) explains every line of `src/`, with
 step-throughs of the real decoder and matcher; read it to learn how `seqlz` works in detail. The exact
 bytes of a compressed page, for writing a decoder, are in [format.md](format.md); the history of every
 idea, also of the ones that failed, is in [explored-designs.md](explored-designs.md).
@@ -34,7 +34,7 @@ How to read the numbers:
 * **Time per page written** is the mean time to write a page plus 0.73 times the mean time to read
   one back cold, with its compressed bytes in no CPU cache: my phone, in daily use, read 0.73 pages back
   from zram for every page it wrote, my desktop 0.34 ([plan.md](plan.md#11-the-score-memory-against-time-not-bars),
-  [the book](https://martin.ankerl.com/quetschn/#ch-zram--score)). How many bytes one µs per page is
+  [the book](https://martin.ankerl.com/seqlz/#ch-zram--score)). How many bytes one µs per page is
   worth to you, an exchange rate, decides which codec is the best choice.
 * **When it was measured.** [The result](#the-result-lz4s-time-zstds-size-almost) is from 14th
   October 2026, with the code and the tables of that day. The tables are trained on three sessions of a
@@ -119,60 +119,60 @@ some literals, bytes stored as they are, and then a match: copy `ml` bytes from 
 the page. Memory pages are full of such repeats, because programs store arrays of similar things. The
 codecs differ in how they write the numbers of a sequence down: `lz4` in whole bytes, `zstd` and
 `seqlz` in bits, with codes that give the frequent values the short ones
-([compression from zero](https://martin.ankerl.com/quetschn/#ch-compression),
-[one sequence in each format](https://martin.ankerl.com/quetschn/#ch-compression--formats)).
+([compression from zero](https://martin.ankerl.com/seqlz/#ch-compression),
+[one sequence in each format](https://martin.ankerl.com/seqlz/#ch-compression--formats)).
 
 **The page.** A compressed page has a small header, then all literals of the page in one block, then
 the sequences as one stream of bits, the bitstream. There is no count of the sequences: the last one
 is the one whose literals fill the page
-([two layouts](https://martin.ankerl.com/quetschn/#ch-format--layout),
-[how a page ends](https://martin.ankerl.com/quetschn/#ch-format--end)).
+([two layouts](https://martin.ankerl.com/seqlz/#ch-format--layout),
+[how a page ends](https://martin.ankerl.com/seqlz/#ch-format--end)).
 
 **The token.** Each sequence starts with a token, one number for the literal count `ll`, the match
 length `ml - 4` and the offset class. The token gets a Huffman code from a fixed table, so a frequent
 sequence takes only a few bits. The rare tokens share one code, the escape, which the token's number
 follows in plain bits
-([one sequence: the token](https://martin.ankerl.com/quetschn/#ch-format--token),
-[the escape and the caps](https://martin.ankerl.com/quetschn/#ch-header--escape)).
+([one sequence: the token](https://martin.ankerl.com/seqlz/#ch-format--token),
+[the escape and the caps](https://martin.ankerl.com/seqlz/#ch-header--escape)).
 
 **The offset classes.** The class in the token says how the offset is stored. Class 0 is the repeat
 offset, the offset of the match before, and takes no bits. Classes 1 to 3 store a short, a medium and
 a long offset in plain bits. Memory is full of 8-byte pointers and fields, so classes 4 and 5 store an
 offset that is a multiple of 8 divided by 8, in 3 bits less
-([offset classes](https://martin.ankerl.com/quetschn/#ch-format--offsets)).
+([offset classes](https://martin.ankerl.com/seqlz/#ch-format--offsets)).
 
 **The length values.** Short literal runs and short matches fit into the token. For a longer one the
 rest follows the offset bits as a length value: a code from one of two more fixed tables and some plain
-bits ([length values](https://martin.ankerl.com/quetschn/#ch-format--length-values)).
+bits ([length values](https://martin.ankerl.com/seqlz/#ch-format--length-values)).
 
 **The literals, in 8 streams.** `seqlz-2` codes the literals of a page with one of 8 fixed
 literal tables, the one that takes the fewest bits for this page, and only where that saves 1/16 of
 them; otherwise they stay as they are. The coded literals are dealt out to 8 streams, literal `k` to
 stream `k mod 8`, so that the decoder can decode 8 of them side by side
-([coding the literals](https://martin.ankerl.com/quetschn/#ch-literals-enc),
-[decoding them](https://martin.ankerl.com/quetschn/#ch-literals-dec)).
+([coding the literals](https://martin.ankerl.com/seqlz/#ch-literals-enc),
+[decoding them](https://martin.ankerl.com/seqlz/#ch-literals-dec)).
 
 **Fixed tables.** All tables are trained once, on many pages, and are part of the format. At levels 1
 and 2 a page carries no table, and the decoder builds nothing from it. A table of the page's own fits
 the page better, but it has to be stored in the page and built for every page: only level 3 does that,
 see [Level 3](#level-3-zstd-3s-memory-in-less-than-half-its-time)
-([where the code lengths come from](https://martin.ankerl.com/quetschn/#ch-codes--lengths)).
+([where the code lengths come from](https://martin.ankerl.com/seqlz/#ch-codes--lengths)).
 
 **The encoder.** The matcher is greedy. At every position of the page it checks two candidates, the
 repeat offset and the last position whose next 5 bytes had the same hash, from a table of 8 KiB that is
 cleared for each page. It takes the first match it finds, counts how far it goes forwards, and hands the
 sequence to the encoder right away. The encoder writes the literals from the front of zram's output
 buffer and the bits from its back, and codes the literals at the end
-([the matcher](https://martin.ankerl.com/quetschn/#ch-matcher),
-[the encoder](https://martin.ankerl.com/quetschn/#ch-encoder)).
+([the matcher](https://martin.ankerl.com/seqlz/#ch-matcher),
+[the encoder](https://martin.ankerl.com/seqlz/#ch-encoder)).
 
 **The decoder.** It decodes coded literals first, 8 streams side by side, into a buffer. Then, per
 sequence, it looks up the next 11 bits in the token table, whose entry has `ll`, `ml` and how to cut
 the offset out of the bits after the token, takes the offset without a branch, and copies the literals
 and the match. Every length and offset is checked against the page before it is used, so a damaged page
 is rejected, and fuzz tests hold the decoder against a second one written from [format.md](format.md)
-alone ([seqlz_decode()](https://martin.ankerl.com/quetschn/#ch-decode),
-[one page through every function](https://martin.ankerl.com/quetschn/#ch-trace)).
+alone ([seqlz_decode()](https://martin.ankerl.com/seqlz/#ch-decode),
+[one page through every function](https://martin.ankerl.com/seqlz/#ch-trace)).
 
 **Why it is nearly as fast as `lz4`.** The decoder runs more instructions per page than `lz4`'s, but
 more of them are independent of each other, so the CPU runs more of them per cycle. There is one table
@@ -180,13 +180,13 @@ lookup per sequence, because the token holds all three numbers. The tables are s
 cache. All codes are complete, so the decoder never checks for bits that are no code. The common short
 sequence needs no loop and no length value, the literals are 8 chains of work instead of one, and the
 compressed page can be prefetched before decoding starts
-([what makes code slow on a CPU](https://martin.ankerl.com/quetschn/#ch-cpu),
-[the decoder's choices](https://martin.ankerl.com/quetschn/#ch-decisions--decoder)).
+([what makes code slow on a CPU](https://martin.ankerl.com/seqlz/#ch-cpu),
+[the decoder's choices](https://martin.ankerl.com/seqlz/#ch-decisions--decoder)).
 
 **Why `zstd` still stores pages smaller.** `zstd` 3 searches more for matches, codes a page's literals
 with a table built for that page, and codes `ll`, `ml` and the offset with tables it can fit to the
 data. Each of these costs time that zram's writes and reads cannot spend
-([where zstd still wins](https://martin.ankerl.com/quetschn/#ch-decisions--zstd)). Level 3 does the
+([where zstd still wins](https://martin.ankerl.com/seqlz/#ch-decisions--zstd)). Level 3 does the
 first two in part, below.
 
 ## Level 3: zstd 3's memory in less than half its time

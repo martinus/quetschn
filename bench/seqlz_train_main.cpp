@@ -65,7 +65,7 @@ lit_result lit_sets(std::vector<std::array<double, 256>> const& pages, lit_searc
         throw std::runtime_error("too few pages with literals for the literal tables");
     }
     auto code = [](std::array<double, 256> const& h) {
-        return quetschn::seqlz_lit_lengths(h);
+        return bench::seqlz_lit_lengths(h);
     };
     auto bits = [](std::array<double, 256> const& h, std::vector<unsigned char> const& l) {
         auto b = 0.0;
@@ -254,7 +254,7 @@ bool count_own(std::span<unsigned char const> c, std::vector<double>& own) {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-seqlz-train (--corpus <base> [--counts <file> | --own-counts <file>] |\n"
+                 "usage: seqlz-train (--corpus <base> [--counts <file> | --own-counts <file>] |\n"
                  "                             --from-counts <file>)\n"
                  "                            [--lit-sets [--seeds n] [--first-seed n] [--rounds n]]\n"
                  "\n"
@@ -269,7 +269,7 @@ void usage() {
                  "the pages level 3 gives one, and writes them into <file>, the other counts as they are.\n");
 }
 
-void print_lengths(quetschn::seqlz_built_tables const& t, std::string const& what) {
+void print_lengths(bench::seqlz_built_tables const& t, std::string const& what) {
     auto print = [](char const* name, std::vector<unsigned char> const& l) {
         std::printf("    .%s = {", name);
         for (std::size_t i = 0; i < l.size(); ++i) {
@@ -340,7 +340,7 @@ int main(int argc, char** argv) {
             if (!in) {
                 throw std::runtime_error("cannot read " + counts_in);
             }
-            auto const t = quetschn::seqlz_build_tables(quetschn::read_seqlz_counts(in));
+            auto const t = bench::seqlz_build_tables(bench::read_seqlz_counts(in));
             if (want_lit_sets) {
                 print_lit_sets(t.lit, "from " + counts_in);
             } else {
@@ -348,12 +348,12 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
-        auto const c = quetschn::load_corpus(base);
+        auto const c = bench::load_corpus(base);
         if (c.page_size != SEQLZ_BLOCK_SIZE) {
             throw std::invalid_argument("the corpus has pages of " + std::to_string(c.page_size) + " bytes, this build " +
                                         std::to_string(SEQLZ_BLOCK_SIZE));
         }
-        auto counts = quetschn::seqlz_counts{};
+        auto counts = bench::seqlz_counts{};
         counts.token.assign(SEQLZ_TOKEN_SYMBOLS, 0.0);
         counts.ll.assign(SEQLZ_LEN_SYMBOLS, 0.0);
         counts.ml.assign(SEQLZ_LEN_SYMBOLS, 0.0);
@@ -366,7 +366,7 @@ int main(int argc, char** argv) {
         auto page_lits = std::vector<std::array<double, 256>>(); // per page with more than 64 literals
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const src = c.page(i);
-            if (quetschn::analyze_page(src).same_filled) {
+            if (bench::analyze_page(src).same_filled) {
                 continue;
             }
             ++pages;
@@ -422,7 +422,7 @@ int main(int argc, char** argv) {
             if (!in) {
                 throw std::runtime_error("cannot read " + own_out);
             }
-            auto c2 = quetschn::read_seqlz_counts(in);
+            auto c2 = bench::read_seqlz_counts(in);
             in.close();
             c2.own = counts.own;
             std::erase_if(c2.comments, [](std::string const& l) {
@@ -430,7 +430,7 @@ int main(int argc, char** argv) {
             });
             c2.comments.push_back(own_comment);
             auto out = std::ofstream(own_out);
-            quetschn::write_seqlz_counts(out, c2);
+            bench::write_seqlz_counts(out, c2);
             if (!out) {
                 throw std::runtime_error("cannot write " + own_out);
             }
@@ -445,18 +445,18 @@ int main(int argc, char** argv) {
         if (!counts_out.empty()) {
             counts.lit = lit.sources;
             counts.lit_pages = lit.pages;
-            counts.comments = {
-                "The symbol counts seqlz's tables for " + std::to_string(SEQLZ_BLOCK_SIZE / 1024) +
-                    " KiB pages are built from: quetschn-seqlz-train --from-counts <this file>",
-                "[--lit-sets] gives the code lengths. Made by quetschn-seqlz-train --corpus " + base + " --counts,",
-                std::to_string(pages) + " pages, " + std::to_string(page_lits.size()) +
-                    " of them with more than 64 literals, k-means seeds " + std::to_string(search.first_seed) + " to " +
-                    std::to_string(search.first_seed + search.seeds - 1) + ". token, ll and ml: how often",
-                "each symbol occurred, by number; lit: a literal table's pages, then how often each byte",
-                "occurred as a literal on them.",
-                own_comment};
+            counts.comments = {"The symbol counts seqlz's tables for " + std::to_string(SEQLZ_BLOCK_SIZE / 1024) +
+                                   " KiB pages are built from: seqlz-train --from-counts <this file>",
+                               "[--lit-sets] gives the code lengths. Made by seqlz-train --corpus " + base + " --counts,",
+                               std::to_string(pages) + " pages, " + std::to_string(page_lits.size()) +
+                                   " of them with more than 64 literals, k-means seeds " + std::to_string(search.first_seed) +
+                                   " to " + std::to_string(search.first_seed + search.seeds - 1) +
+                                   ". token, ll and ml: how often",
+                               "each symbol occurred, by number; lit: a literal table's pages, then how often each byte",
+                               "occurred as a literal on them.",
+                               own_comment};
             auto out = std::ofstream(counts_out);
-            quetschn::write_seqlz_counts(out, counts);
+            bench::write_seqlz_counts(out, counts);
             if (!out) {
                 throw std::runtime_error("cannot write " + counts_out);
             }
@@ -466,7 +466,7 @@ int main(int argc, char** argv) {
                            "trained on the " + std::to_string(page_lits.size()) + " pages with more than 64 literals of " +
                                std::to_string(pages) + " pages of " + base);
         } else {
-            print_lengths(quetschn::seqlz_build_tables(counts), what);
+            print_lengths(bench::seqlz_build_tables(counts), what);
         }
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

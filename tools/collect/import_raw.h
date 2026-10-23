@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <string>
 
-namespace quetschn {
+namespace bench {
 
 struct import_result {
     std::size_t pages_written = 0;
@@ -21,4 +21,4 @@ import_result import_raw(std::filesystem::path const& dump,
                          std::string const& name,
                          std::size_t page_size);
 
-} // namespace quetschn
+} // namespace bench

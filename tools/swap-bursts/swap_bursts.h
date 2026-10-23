@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
-// The grouping of quetschn-swap-bursts: swap-ins per interval into bursts, bursts by size.
+// The grouping of seqlz-swap-bursts: swap-ins per interval into bursts, bursts by size.
 #pragma once
 
 #define SWAP_BURST_CLASSES 24

@@ -160,7 +160,7 @@ static int sz_compress(struct zcomp_params *params, struct zcomp_ctx *ctx, struc
 static int sz_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx, struct zcomp_req *req)
 {
 	/* EXPERIMENT: the compressed data requested first, here instead of in zram_drv.c, every cache
-	 * line from the second on, as quetschn_prefetch_page() of bench/kernel_codecs/zram_codec.h */
+	 * line from the second on, as bench_prefetch_page() of bench/kernel_codecs/zram_codec.h */
 	if (READ_ONCE(zram_prefetch) & 8)
 		for (unsigned int q = 64; q < req->src_len; q += 64)
 			prefetch((const char *)req->src + q);

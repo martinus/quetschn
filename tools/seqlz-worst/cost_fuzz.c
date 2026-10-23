@@ -8,7 +8,7 @@
  *   seqlz_compress_cost_fuzz  the input is a page: the compressor's instructions, and in the upper
  *                             half of the buckets the decoder's on what it wrote
  *   seqlz_decode_cost_fuzz    the input is a compressed page: the decoder's instructions if it is valid
- *   <codec>_cost_fuzz         with -DCOST_CODEC=quetschn_codec_<codec>: any of the codecs of
+ *   <codec>_cost_fuzz         with -DCOST_CODEC=bench_codec_<codec>: any of the codecs of
  *                             bench/kernel_codecs/zram_codec.h, built with kernel flags, as zram calls
  *                             it: the input is a page, the compressor's instructions and the decoder's
  *                             on what it wrote, if zram would keep that compressed
@@ -16,7 +16,7 @@
  *                             a valid page of: the decoder's instructions. A mutation changes a
  *                             sequence instead of breaking the Huffman coded stream
  *
- * seqlz is linked without coverage instrumentation, so the counts are those of quetschn-seqlz-worst
+ * seqlz is linked without coverage instrumentation, so the counts are those of seqlz-worst
  * count and count-streams. Built with -DCOST_MAIN and without the fuzzer, the same file counts inputs
  * the fuzzer found.
  */
@@ -132,13 +132,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         /* as zram: params once per device with the codec's default level, the contexts per CPU, a buffer
          * of two pages, pages of 3625 bytes and more stored as they are; decompression with its own
          * context where the codec has one */
-        static struct quetschn_params params;
-        static struct quetschn_stream stream, dstream;
+        static struct bench_params params;
+        static struct bench_stream stream, dstream;
         static int ready;
         unsigned int clen = sizeof c, dlen = SEQLZ_BLOCK_SIZE;
 
         if (!ready) {
-            params.level = QUETSCHN_LEVEL_DEFAULT;
+            params.level = BENCH_LEVEL_DEFAULT;
             params.page_size = SEQLZ_BLOCK_SIZE;
             if (COST_CODEC.setup_params(&params) || COST_CODEC.create_cctx(&params, &stream) ||
                 (COST_CODEC.create_dctx && COST_CODEC.create_dctx(&params, &dstream)))
@@ -248,7 +248,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     len = seqlz_encode(NULL, seq, n, lits, n_lit, NULL, c, sizeof c, 2);
     if (!len)
         abort();
-    /* COST_DUMP=<file>: the compressed page this input makes, for quetschn-seqlz-worst count-streams */
+    /* COST_DUMP=<file>: the compressed page this input makes, for seqlz-worst count-streams */
     if (getenv("COST_DUMP")) {
         FILE* f = fopen(getenv("COST_DUMP"), "wb");
 

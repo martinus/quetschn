@@ -7,8 +7,8 @@
 #include <stdexcept>
 #include <vector>
 
-using quetschn::zsmalloc_config;
-using quetschn::zsmalloc_model;
+using bench::zsmalloc_config;
+using bench::zsmalloc_model;
 
 namespace {
 

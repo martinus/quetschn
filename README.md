@@ -1,6 +1,6 @@
-# quetschn
+# seqlz
 
-[![CI](https://github.com/martinus/quetschn/actions/workflows/ci.yml/badge.svg)](https://github.com/martinus/quetschn/actions/workflows/ci.yml)
+[![CI](https://github.com/martinus/seqlz/actions/workflows/ci.yml/badge.svg)](https://github.com/martinus/seqlz/actions/workflows/ci.yml)
 
 A compression codec for Linux zram, the compressed swap in RAM that Android phones and many desktops
 use. The codec is `seqlz`: one format, one decoder, three levels of the compressor. The goal is `lz4`'s
@@ -112,9 +112,9 @@ As of 22nd October 2026. The details, and what comes next, are in [the plan, §9
 You need CMake 3.25, Ninja, and a C and C++20 compiler. doctest is fetched by CMake.
 
 ```sh
-cmake -S . -B build -G Ninja -DQUETSCHN_WERROR=ON
+cmake -S . -B build -G Ninja -DSEQLZ_WERROR=ON
 cmake --build build
-./build/quetschn_test
+./build/seqlz_test
 ```
 
 That builds the codec, the tests and the tools that need no kernel. The benchmarks against zram's own
@@ -127,7 +127,7 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 | --- | --- |
 | [`src/`](src) | the codec, freestanding C: encoder, decoder, matcher, and the trained tables |
 | [`bench/`](bench) | the benchmark harness: per-page timing, zsmalloc's cost model, table training, zram's codecs built in userspace |
-| [`test/`](test) | the doctest unit tests, `quetschn_test` |
+| [`test/`](test) | the doctest unit tests, `seqlz_test` |
 | [`fuzz/`](fuzz) | libFuzzer and AFL++ targets: the decoder, the roundtrip, the decoder against the reference decoder |
 | [`tools/`](tools) | page collectors, reference decoders, the kernel VM, the phone tests, plots, see [`tools/README.md`](tools/README.md) |
 | [`docs/`](docs) | how seqlz works, the format, the plan, how to measure, and every design measured, see [`docs/README.md`](docs/README.md) |
@@ -138,7 +138,7 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 | document | read it if you want to |
 | --- | --- |
 | [seqlz in short](docs/seqlz.md) | see the result against zram's codecs and the choices with their numbers; the book below has the details |
-| [seqlz, line by line](https://martin.ankerl.com/quetschn/) | read every line of `src/` explained, with the decoder and the matcher step by step on real pages; the book's sources are in [`docs/book/`](docs/book) |
+| [seqlz, line by line](https://martin.ankerl.com/seqlz/) | read every line of `src/` explained, with the decoder and the matcher step by step on real pages; the book's sources are in [`docs/book/`](docs/book) |
 | [The seqlz format](docs/format.md) | write a decoder, or check one |
 | [Reading the code](docs/reading.md) | read and review `src/`, in an order and with what to check |
 | [Measuring](docs/measuring.md) | benchmark, in a kernel VM, in userspace or on a phone, and collect pages |
@@ -147,10 +147,10 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 
 ## License
 
-quetschn is dual licensed under **`MIT OR GPL-2.0-only`**, at your option:
+seqlz is dual licensed under **`MIT OR GPL-2.0-only`**, at your option:
 [LICENSE-MIT](LICENSE-MIT), [LICENSE-GPL-2.0](LICENSE-GPL-2.0). The GPL-2.0-only option is there so
 the codec can go into the Linux kernel, the MIT option so that userspace and non-GPL projects can use
 it too. zstd does the same.
 
-The `quetschn-bench-*` binaries are an exception: they link GPL-2.0-only kernel code, so they are
+The `seqlz-bench-*` binaries are an exception: they link GPL-2.0-only kernel code, so they are
 GPL-2.0 works. They are for measuring and not for distribution.

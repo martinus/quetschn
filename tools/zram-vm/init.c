@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
-// /init of the VM of run.sh. One zram device per algorithm of quetschn.algos= on the kernel command
-// line, e.g. quetschn.algos=lz4,zstd:-1,zstd:3, a level after the colon; writes /pages to each and reads
+// /init of the VM of run.sh. One zram device per algorithm of seqlz.algos= on the kernel command
+// line, e.g. seqlz.algos=lz4,zstd:-1,zstd:3, a level after the colon; writes /pages to each and reads
 // each page back with O_DIRECT, timed, so that zram decompresses straight into this program's page. Per
 // page all algorithms and the prefetches of zram-prefetch.patch
 // (0 none, 2 the compressed data in zram, 8 the same in the backend, which lz4's ignores) in turn, one
@@ -10,7 +10,7 @@
 // write of the same or another page. Prints p50 / p90 / p99 and the mean over the pages of the median
 // of 3 runs per page.
 //
-// With quetschn.mode=swap on the kernel command line it measures zram as swap instead, the whole page
+// With seqlz.mode=swap on the kernel command line it measures zram as swap instead, the whole page
 // fault: swap_main().
 #define _GNU_SOURCE
 #include <fcntl.h>
@@ -399,15 +399,15 @@ int main(void) {
         int cf = open("/proc/cmdline", O_RDONLY);
         read(cf, cmdline, sizeof cmdline - 1);
         close(cf);
-        swap = strstr(cmdline, "quetschn.mode=swap") != NULL;
-        /* quetschn.decomp=1: also zcomp_decompress() alone in the timed reads, as the swap mode has it */
-        decomp = strstr(cmdline, "quetschn.decomp=1") != NULL;
-        /* quetschn.cond=N: only condition N of the reads, e.g. 3, the one closest to a fault */
-        char* cs = strstr(cmdline, "quetschn.cond=");
-        only = cs ? atoi(cs + strlen("quetschn.cond=")) : -1;
-        char* a = strstr(cmdline, "quetschn.algos=");
+        swap = strstr(cmdline, "seqlz.mode=swap") != NULL;
+        /* seqlz.decomp=1: also zcomp_decompress() alone in the timed reads, as the swap mode has it */
+        decomp = strstr(cmdline, "seqlz.decomp=1") != NULL;
+        /* seqlz.cond=N: only condition N of the reads, e.g. 3, the one closest to a fault */
+        char* cs = strstr(cmdline, "seqlz.cond=");
+        only = cs ? atoi(cs + strlen("seqlz.cond=")) : -1;
+        char* a = strstr(cmdline, "seqlz.algos=");
         if (a) {
-            a += strlen("quetschn.algos=");
+            a += strlen("seqlz.algos=");
             a[strcspn(a, " \n")] = 0;
         } else {
             a = "lz4";

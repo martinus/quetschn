@@ -1,6 +1,6 @@
 #!/bin/bash
 # build.sh <name> <src dir> <out dir>: the codec in <src dir> (a copy of src/) as a module for the Mi 9T's
-# Linux 4.14, <out dir>/quetschn_<name>.ko, registering the crypto compressors seqlz-<name>-1 and so on,
+# Linux 4.14, <out dir>/seqlz_<name>.ko, registering the crypto compressors seqlz-<name>-1 and so on,
 # one per level, for zram. Built as the phone's kernel is, with NDK r21e's clang 9, the codec with -O3
 # as lib/lz4, every function aligned to 64 bytes so that a change in one does not move the others. The
 # module's symbol versions get the phone's CRCs (patch_versions.py), else 4.14 refuses it. OPT=-O2
@@ -30,7 +30,7 @@ gen=$src/../tools/gen-tables/gen-tables.sh
 objs=$(cd "$out" && ls seqlz*.c | sed 's/\.c$/.o/' | tr '\n' ' ')
 sed -e "s/\"seqlz-\" #level/\"seqlz-$name-\" #level/g" "$here/glue.c" >"$out/glue.c"
 grep -q "\"seqlz-$name-\" #level \"-generic\"" "$out/glue.c" || { echo "glue.c: no name to put $name into" >&2; exit 1; }
-printf 'obj-m += quetschn_%s.o\nquetschn_%s-y := glue.o %s\n' "$name" "$name" "$objs" >"$out/Kbuild"
+printf 'obj-m += seqlz_%s.o\nseqlz_%s-y := glue.o %s\n' "$name" "$name" "$objs" >"$out/Kbuild"
 for o in $objs; do
     printf 'CFLAGS_%s += %s\n' "$o" "${OPT:--O3}" >>"$out/Kbuild"
 done
@@ -38,5 +38,5 @@ done
 export PATH=$T/llvm/prebuilt/linux-x86_64/bin:$T/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin:$PATH
 make -C "$K/src" O="$K/out" ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- \
     HOSTCFLAGS=-I"$K/hoststub" M="$out" modules 2>&1 | grep -E ' error|warning:' || true
-python3 "$here/patch_versions.py" "$K/phone-crcs.txt" "$K/out/Module.symvers" "$out/quetschn_$name.ko" >/dev/null
-ls -l "$out/quetschn_$name.ko"
+python3 "$here/patch_versions.py" "$K/phone-crcs.txt" "$K/out/Module.symvers" "$out/seqlz_$name.ko" >/dev/null
+ls -l "$out/seqlz_$name.ko"

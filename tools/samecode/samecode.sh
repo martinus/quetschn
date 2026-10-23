@@ -8,14 +8,14 @@
 # lib/seqlz/ and zram's backend are built with W=1 as the kernel builds them: gcc and clang for x86-64,
 # clang for arm64 (ARCHS="x86 x86-clang arm64"). Prints per build "same code" or the functions that
 # differ, and fails then; SHOW=1 prints their diff, MAP="old=new ..." names renamed functions.
-# The copy of the tree and the builds stay in $SAMECODE_CACHE (default ~/.cache/quetschn-samecode,
+# The copy of the tree and the builds stay in $SAMECODE_CACHE (default ~/.cache/seqlz-samecode,
 # about 3 GB) for the next call, until the tree's HEAD changes. It compiles: not while a benchmark times.
 set -euo pipefail
 [[ $# -eq 2 || $# -eq 3 ]] || { echo "usage: [ARCHS=...] [SHOW=1] [MAP='old=new ...'] tools/samecode/samecode.sh <linux tree> <old> [<new>]" >&2; exit 2; }
 tree=$1
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-cache=${SAMECODE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/quetschn-samecode}
+cache=${SAMECODE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/seqlz-samecode}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

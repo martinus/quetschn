@@ -13,7 +13,7 @@
  */
 #include "seqlz.h"
 
-#if QUETSCHN_PAGE_BITS != 12
+#if SEQLZ_PAGE_BITS != 12
 #include "seqlz_lit_sets_16k.inc"
 #else
 #include "seqlz_lit_sets_4k.inc"

@@ -30,7 +30,7 @@ unsigned int size_width(std::vector<unsigned char> const& c) {
 std::unique_ptr<seqlz_ref> make_ref() {
     auto r = std::make_unique<seqlz_ref>();
     auto const t = format_tables();
-    REQUIRE(seqlz_ref_init(r.get(), &t, QUETSCHN_PAGE_BITS) == 0);
+    REQUIRE(seqlz_ref_init(r.get(), &t, SEQLZ_PAGE_BITS) == 0);
     return r;
 }
 
@@ -208,7 +208,7 @@ std::vector<unsigned char> one_match(seqlz_ref const& r, unsigned int* padding) 
 
 } // namespace
 
-#if QUETSCHN_PAGE_BITS == 12
+#if SEQLZ_PAGE_BITS == 12
 TEST_CASE("seqlz_ref: the example of docs/format.md is ab 2048 times") {
     auto const r = make_ref();
     auto const c = std::array<unsigned char, 9>{0x02, 0x00, 0x61, 0x62, 0x23, 0xf2, 0xff, 0xfb, 0x60};
@@ -383,7 +383,7 @@ TEST_CASE("seqlz_ref: damaged pages are valid or invalid for both decoders alike
 TEST_CASE("seqlz_ref: tables that are no complete prefix code, and other page sizes, are refused") {
     auto r = std::make_unique<seqlz_ref>();
     auto t = format_tables();
-    CHECK(seqlz_ref_init(r.get(), &t, QUETSCHN_PAGE_BITS) == 0);
+    CHECK(seqlz_ref_init(r.get(), &t, SEQLZ_PAGE_BITS) == 0);
     CHECK(seqlz_ref_init(r.get(), &t, 13) == -1);
     // one code a bit longer leaves a gap
     auto tok = std::vector<unsigned char>(seqlz_default_lengths.token, seqlz_default_lengths.token + SEQLZ_TOKEN_SYMBOLS + 1);
@@ -394,7 +394,7 @@ TEST_CASE("seqlz_ref: tables that are no complete prefix code, and other page si
         }
     }
     t.tok = tok.data();
-    CHECK(seqlz_ref_init(r.get(), &t, QUETSCHN_PAGE_BITS) == -1);
+    CHECK(seqlz_ref_init(r.get(), &t, SEQLZ_PAGE_BITS) == -1);
 }
 
 TEST_CASE("seqlz_ref: a page of literals only has no bits, and as many literals as the page") {

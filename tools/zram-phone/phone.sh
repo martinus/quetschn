@@ -40,14 +40,14 @@ restore() {
 		esac
 	done
 	[ -n "${dev:-}" ] && { echo 1 > /sys/block/zram$dev/reset; echo "$dev" > /sys/class/zram-control/hot_remove; }
-	for n in $mods; do rmmod "quetschn_$n" 2>/dev/null; done
+	for n in $mods; do rmmod "seqlz_$n" 2>/dev/null; done
 	rm -f pages zramphone ./*.ko phone.sh params.sh
 	state end
 	echo "RESTORED"
 }
 trap restore EXIT
 
-for n in $mods; do insmod "./quetschn_$n.ko" || exit 1; grep -q "seqlz-$n-3" /proc/crypto || exit 1; done
+for n in $mods; do insmod "./seqlz_$n.ko" || exit 1; grep -q "seqlz-$n-3" /proc/crypto || exit 1; done
 read -r dev < /sys/class/zram-control/hot_add
 for cc in $cores; do
 	f=/sys/devices/system/cpu/cpu${cc%%:*}/cpufreq

@@ -5,8 +5,8 @@
  * what an earlier input left there. The bytes stay as they are, so a run behaves the same again. The
  * targets fill their buffers with known bytes before, which is all there is without MSan.
  */
-#ifndef QUETSCHN_FUZZ_UNWRITTEN_H
-#define QUETSCHN_FUZZ_UNWRITTEN_H
+#ifndef SEQLZ_FUZZ_UNWRITTEN_H
+#define SEQLZ_FUZZ_UNWRITTEN_H
 
 #include <stddef.h>
 

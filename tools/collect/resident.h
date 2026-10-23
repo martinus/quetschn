@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 // One line of /proc/<pid>/maps
 struct mapping {
@@ -82,4 +82,4 @@ struct collect_result {
 // std::system_error when /proc/<pid>/maps or /proc/<pid>/pagemap cannot be read.
 collect_result collect_process(pid_t pid, collect_options const& opts, corpus_writer& out);
 
-} // namespace quetschn
+} // namespace bench

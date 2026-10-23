@@ -5,11 +5,11 @@ time per page written, the mean over several zram dumps.
 
     ALGOS=lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 BOOTS=3 MODE=swap KARGS=zram.zram_prefetch=8 \\
         tools/zram-vm/run.sh <linux tree> <corpus> >p3.log
-    ./build/quetschn-score p3.log >p3.score
+    ./build/seqlz-score p3.log >p3.score
     tools/plot-readme.py --title "..." --note "..." --out docs/plots/levels-vm.svg p3.score p5.score ...
 
-The inputs are the output of quetschn-score, one per dump: bytes per page and µs per page written,
-write + r * read as docs/plan.md §1.1, here a swap-out and a cold swap-in, r as quetschn-score's header
+The inputs are the output of seqlz-score, one per dump: bytes per page and µs per page written,
+write + r * read as docs/plan.md §1.1, here a swap-out and a cold swap-in, r as seqlz-score's header
 says, all inputs with the same r. The chart shows the mean
 over the dumps of both, memory as % of a 4 KiB page, and the hull of the means: the codecs that have
 the lowest bytes + lambda * µs for some lambda, from the fastest to the smallest, each segment with its
@@ -36,7 +36,7 @@ CODECS = {
 
 
 def parse(path):
-    """codec: (bytes per page, µs per page written) of a quetschn-score output, and its r"""
+    """codec: (bytes per page, µs per page written) of a seqlz-score output, and its r"""
     rows, r = {}, None
     for line in open(path):
         m = re.match(r"time per page written = write \+ ([\d.]+) \* cold read", line)

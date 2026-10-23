@@ -6470,7 +6470,7 @@ z
    </g>
   </g>
   <g id="text_196">
-   <!-- Linux kernel in a VM, zram as the only swap, zsmalloc, one device per codec (quetschn 15a5881, Linux 986c24e0fe44, gcc 16.2.1). AMD Ryzen 9 7950X 16-Core Processor, one CPU at a fixed 4.5 GHz. The levels are zram's algorithm_params, the numbers next to -->
+   <!-- Linux kernel in a VM, zram as the only swap, zsmalloc, one device per codec (seqlz 15a5881, Linux 986c24e0fe44, gcc 16.2.1). AMD Ryzen 9 7950X 16-Core Processor, one CPU at a fixed 4.5 GHz. The levels are zram's algorithm_params, the numbers next to -->
    <g style="fill: #555555" transform="translate(12.24 755.226) scale(0.085 -0.085)">
     <defs>
      <path id="NotoSans-Regular-4c" d="M 621 0 

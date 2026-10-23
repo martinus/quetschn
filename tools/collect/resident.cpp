@@ -19,7 +19,7 @@
 #include <stdexcept>
 #include <system_error>
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -367,4 +367,4 @@ collect_result collect_process(pid_t pid, collect_options const& opts, corpus_wr
     return result;
 }
 
-} // namespace quetschn
+} // namespace bench

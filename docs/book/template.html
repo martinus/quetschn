@@ -232,14 +232,14 @@ try { var z = +localStorage.getItem('book-size'); if (z >= 0.8 && z <= 2) docume
 <main id="top">
 <div class="col">
 <header class="title">
-  <p class="kicker">A book about one directory: quetschn/src</p>
+  <p class="kicker">A book about one directory: seqlz/src</p>
   <h1>seqlz, line by line</h1>
   <p class="sub">How a memory page of 4096 bytes becomes a few hundred, and back, in the code that does it. For developers who have never written a compressor or kernel code.</p>
   <div class="hexpage" aria-label="the 9 bytes 02 00 61 62 dc 65 ef db 8a">
     <span class="h-hdr">02</span><span class="h-hdr">00</span><span class="h-lit">61</span><span class="h-lit">62</span><span class="h-bits">dc</span><span class="h-bits">65</span><span class="h-bits">ef</span><span class="h-bits">db</span><span class="h-bits">8a</span>
   </div>
   <p class="hexcap">A page of <code>ab</code> 2048 times, 4096 bytes, compressed by seqlz: a 2-byte header, the 2 literals <code>a</code> and <code>b</code>, and 40 bits that say "copy the rest". <a href="#ch-format">Chapter 4</a> reads it bit by bit.</p>
-  <div class="meta"><span>Source: <code>martinus/quetschn</code> at <code>{{COMMIT}}</code></span><span>Every listing is taken from the repository at build time and links to its lines on GitHub</span></div>
+  <div class="meta"><span>Source: <code>martinus/seqlz</code> at <code>{{COMMIT}}</code></span><span>Every listing is taken from the repository at build time and links to its lines on GitHub</span></div>
 </header>
 {{BODY}}
 <p class="endnote">This book describes the code at commit <code>{{COMMIT}}</code>; the code on <code>main</code> may be newer. The listings are the files as they are at that commit, with their real line numbers.</p>

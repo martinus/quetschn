@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 // What seqlz's tables are built from: how often each symbol occurred on the training pages, summed over
 // all of them. The literal tables have one histogram each, of the pages k-means gave that table in its
@@ -50,4 +50,4 @@ struct seqlz_built_tables {
 void write_seqlz_counts(std::ostream& out, seqlz_counts const& c);
 [[nodiscard]] seqlz_counts read_seqlz_counts(std::istream& in);
 
-} // namespace quetschn
+} // namespace bench

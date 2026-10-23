@@ -43,8 +43,8 @@ for lengths, every in [([1, 2, 2, 2], True), ([1, 2, 3], True), ([1, 2, 4, 4, 4,
     sys.exit(f"gen-seqlz-lengths.py takes the lengths {lengths}, which seqlz_tables_build() refuses")
 EOF
 
-"$repo/tools/gen-tables/gen-tables.sh" "$out/seqlz_tables.c" -DQUETSCHN_PAGE_BITS=12
-${CC:-cc} -O2 -DQUETSCHN_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-compress/compress.c" \
+"$repo/tools/gen-tables/gen-tables.sh" "$out/seqlz_tables.c" -DSEQLZ_PAGE_BITS=12
+${CC:-cc} -O2 -DSEQLZ_PAGE_BITS=12 -I"$repo/src" -o "$out/compress" "$repo/tools/seqlz-compress/compress.c" \
     "$repo/src/seqlz_codes.c" "$repo/src/seqlz_compress.c" "$repo/src/seqlz_compress_literals.c" "$repo/src/seqlz_decompress.c" "$repo/src/seqlz_decompress_literals.c" \
     "$repo/src/seqlz_default_tables.c" "$repo/src/seqlz_lit_sets.c" "$out/seqlz_tables.c"
 cp "$repo"/tools/seqlz-worst/pages/*.page "$out/"
