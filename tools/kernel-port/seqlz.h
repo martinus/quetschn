@@ -40,15 +40,17 @@
  * @src: the block, SEQLZ_BLOCK_SIZE bytes
  * @dst: where the compressed block goes
  * @dst_len: the bytes at @dst; SEQLZ_COMPRESS_BOUND are always enough
- * @wrkmem: SEQLZ_MEM_COMPRESS bytes, as kmalloc() aligns them
+ * @wrkmem: SEQLZ_MEM_COMPRESS bytes, aligned to 8 bytes as from kmalloc()
  * @level: from SEQLZ_LEVEL_MIN to SEQLZ_LEVEL_MAX
  *
  * Context: Any context. It does not sleep and allocates nothing.
  *
  * Return: the length of the compressed block, -E2BIG if it does not fit into
  * @dst_len bytes, which never happens with SEQLZ_COMPRESS_BOUND, or -EINVAL for
- * another @level. With less room, -E2BIG can come for a block whose coded
- * literals would fit: it is written with raw literals first.
+ * another @level. With less room, -E2BIG can also come for a block that would
+ * fit: the compressor needs up to 32 bytes beyond the block while it writes it,
+ * and at levels 2 and 3 room for the block with raw literals, which it writes
+ * first.
  */
 int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 		   void *wrkmem, int level);
@@ -62,7 +64,8 @@ int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
  *          compressed at SEQLZ_LEVEL_MIN
  *
  * Safe for any input: it never reads outside @src and @src_len, and never
- * writes outside @dst and @wrkmem, and its time is bounded by the block size.
+ * writes outside @dst and @wrkmem, and its time is bounded by the block size,
+ * not by @src_len. After an error, @dst holds bytes of no meaning.
  *
  * Context: Any context. It does not sleep and allocates nothing.
  *
