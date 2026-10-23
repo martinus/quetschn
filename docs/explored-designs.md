@@ -66,6 +66,9 @@ are measured") is about 90 KB.
   `seqlz-1` 15.79 / 50.28, `seqlz-2` 17.61 / 55.91, `seqlz-3` 22.24 / 67.63, `zstd` 3 52.03 / 164.62
   ([Level 3](#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)
   has the write and read times).
+  With the deltas, 23 Oct, same pages: `lz4` 14.61 / 43.58, `seqlz-1` 15.63 / 49.52, `seqlz-2` 17.42 / 56.31,
+  `seqlz-3` 26.38 / 79.33 at 874.9 bytes per page, `zstd` 3 51.35 / 165.73 at 951.4
+  ([in the Mi 9T's kernel](#level-3-with-its-deltas-in-the-mi-9ts-kernel-81-less-memory-than-on-15th-october-41-and-117-µs-more-per-page-written)).
 - Why the ratio: the gap from `lz4` to `zstd` is mostly how the sequences are coded
   ([Where the ratio of `zstd` comes from](#where-the-ratio-of-zstd-comes-from)); `zstd` 3's remaining
   lead over `seqlz-2` was its literal table per page, which `seqlz-3` now has.
@@ -208,6 +211,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 - 2026-10-21 **not kept** [More transforms, a parse that knows them, Huffman's floor, near matches](#more-transforms-for-level-3s-literals-a-parse-that-knows-them-huffmans-floor-near-matches-at-most-06-on-phone-pages-not-kept): ten samples, level 3 with the XOR 881.05 bytes per page; the same three bytes subtracted 873.62 (kept as deltas); other distances, XOR or subtraction at 1 to 64: at most 1.6 more; words with carries worse than bytes; Paeth or the gradient as a fourth choice -3.5 (phone -4.9, 0.6%); XOR or subtraction per page 0.7 even with the best known; a parse that knows the XOR -2.1 on phone samples; Huffman's floor 0.5 to 1.2; near matches at most 3.2 to 7.4. Code: not committed, `r15/` in the research tools. Now: current. Untried: timing Paeth or the gradient.
 - 2026-10-21 **kept** [Level 3 stores its literals as deltas](#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept): the XOR's three choices as subtractions, modulo 256. Ten samples: level 3 873.6 bytes per page instead of 881.0 (-0.84%; phone -1.15%, desktop -0.30%). Mi 9T: reads +0.13 to +0.24 µs A76, +0.34 to +0.46 A55, writes +0.12 to +0.27 A76; about 22 bytes per µs with the phone's mix. Fast path in registers: inside the noise, not kept. Code: `sub_bytes()`, `delta_literals()`, `add4()`, `add8()`, `undelta_literals()`, `undelta_fast()`, PR #229. Now: current; [tables trained for deltas](#literal-tables-trained-for-deltas-at-most-30-bytes-per-page-at-level-3-with-12-tables-not-kept) 22 Oct, at most 0.35%. Untried: zram in the phone's kernel.
+- 2026-10-23 **measurement** [Level 3 with its deltas in the Mi 9T's kernel](#level-3-with-its-deltas-in-the-mi-9ts-kernel-81-less-memory-than-on-15th-october-41-and-117-µs-more-per-page-written): Mi 9T, zram in its own kernel, p3, `BUS=1`, 3 rounds: level 3 874.9 bytes per page (952.0 on 15 Oct), `zstd` 3 951.4; `write + 0.73 * cold read` A76 / A55: `lz4` 14.61 / 43.58, levels 1 to 3 15.63 / 49.52, 17.42 / 56.31, 26.38 / 79.33, `zstd` 3 51.35 / 165.73. Code: main 00073f1. Now: current; the README's phone table. Untried: COUNTS=1; another phone.
 - 2026-10-22 **kept** [One rule for which literals are deltas](#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept): `p >= x` for all three deltas instead of the 5th / 9th literal of a sequence for the byte 4 / 8 before. Ten samples: level 3 869.7 bytes per page instead of 873.6 (-0.45%; phone -5.4, desktop -0.5). Mi 9T: writes 0.2 µs faster, reads within noise. Kernel VM, 4 dumps: 24.4% in 14.42 µs against 24.5% in 14.54 (zsmalloc -4.1 bytes). Code: `delta_literals()`, `undelta_literals()`, `undelta_fast()`, commit 689dad5, PR #229. Now: current.
 - 2026-10-22 **not kept** [Literal tables for deltas](#literal-tables-trained-for-deltas-at-most-30-bytes-per-page-at-level-3-with-12-tables-not-kept): 98% of the pages whose deltas a fixed table codes use table 1. Trained on train-mix-1012, ten samples, level 3: today's 8 + 1 / 2 / 4 tables for deltas -1.0 / -2.2 / -3.0 bytes per page (at most 0.35%); 7 plain + 1 for deltas -0.8 at level 3, +1.0 at level 2; 8 trained on both -2.4 at level 3, +4.2 at level 2. Code: not committed, `xt2/` in the research tools. Now: current.
 - 2026-10-21 **not kept** [Literal tables for XORed literals](#literal-tables-trained-for-xored-literals-at-most-28-bytes-per-page-at-level-3-with-12-tables-not-kept): 99% of XORed pages on a fixed table use table 1. Trained on train-mix-1012, ten samples, level 3: today's 8 + 1 / 2 / 4 tables for XORed literals -0.9 / -1.6 / -2.8 bytes per page (at most 0.3%); 7 plain + 1 XORed -0.4 at level 3, +1.4 at level 2; 8 to 10 trained on both at most -1.5 at level 3, up to +3.5 at level 2. Not worth more tables, a format change and level 2's pricing cost. Code: not committed; ~/quetschn-corpus/research/2026-10-21-tools/xt/. Now: again for deltas on 22 Oct, [at most 3.0 bytes](#literal-tables-trained-for-deltas-at-most-30-bytes-per-page-at-level-3-with-12-tables-not-kept).
@@ -355,6 +359,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **16 KiB pages**
 
+- 2026-10-23 **measurement** [16 KiB pages as four blocks of 4 KiB](#16-kib-pages-as-four-blocks-of-4-kib-70-to-86-more-memory-than-one-block-of-16-kib-measured): emu-a17-16k-b, zsmalloc cost with 16 KiB pages: four blocks with the 4 KiB tables 7.7%, 8.6%, 7.0% more than one block with the 16 KiB tables at levels 1 to 3; level 3 2775 against 2593 bytes, `zstd` 3 2710; x86-64 kernel flags, compress +4.8% / +3.2% / +8.0% instructions, decompress +3.6% / -1.4% / -4.0%; work memory 16 against 48 KiB per CPU, four blocks smaller in all only at 32 CPUs and 64 MiB. Code: not committed. Now: current. Untried: times; a phone with 16 KiB pages; lz4 and zstd as four blocks.
 - 2026-10-07 **kept** [Android 17 emulator: 16 KiB tables retrained](#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller): Android 17 emulator zram dumps: 16 KiB token, length and literal tables trained on the first dump make seqlz-2 2.6% smaller on the second (2924.5 to 2849.4 bytes per page). 4 KiB tables within 0.6% of emulator-trained ones, unchanged. Code: src/seqlz_default_tables_16k.inc, src/seqlz_lit_sets_16k.inc, tools/android-emu/. Now: 16 KiB tables retrained 11 Oct on emu-a17-16k-a-train ("The tables trained again without the last sequences"); offset classes changed 14 Oct ("Offset 2 in 1 bit"); work memory priced since #203; Android 13 and 15 emulators 16 Oct: tables of their own 1.4% and 2.0% smaller at level 2 ([five new populations](#the-tables-on-five-new-page-populations-tables-of-their-own-12-smaller-at-level-2-07-at-level-3-kept-as-they-are)). Untried: A phone with 16 KiB pages; kernel times at 16 KiB; work memory at 16 KiB (twice lz4's).
 - 2026-09-30 **not kept** [16 KiB: decode literals into the output page](#16-kib-pages-tuned-c5-does-not-hold-the-literals-in-the-page-would-fix-it-not-kept): 16 KiB pages: seqlz-2 needs 32 816 bytes per CPU, twice lz4's 16 440. Literals decoded into the output page: 16 384, but 4 KiB cold reads 0.08 to 0.22 us slower in the kernel VM. Other 16 KiB tuning: no gain. Code: branch feat/codec-ideas, bfb8e19 (reverted). Now: C5 no longer a hard limit since #203, priced in the score: "Work memory per CPU in the score" (14 Oct). zram's own buffer idea in "Not evaluated yet". Untried: Into the page only for 16 KiB builds; any 16 KiB kernel measurement; why the kernel reads slower.
 - 2026-09-24 **measurement** [16 KiB pages, first sizes and times](#16-kib-pages): Userspace, resident-16k (2088 pages of 16 KiB, tables trained on them, optimistic): seqlz-1 26.1% against lzo-rle 32.1%, 19% less (20% at 4 KiB); bytelz 7.2% less, below C1's 8%. Compress 1.28 times lz4's cycles after an offset-class fix. Code: QUETSCHN_PAGE_BITS=14, src/seqlz_default_tables_16k.inc; explore/ (removed 7 Oct). Now: Tables retrained on Android 17 emulator dumps: "Android 17 in the emulator" (7 Oct), again 11 Oct. Tuning in "16 KiB pages, tuned". Offset classes changed 14 Oct. Untried: No real 16 KiB dump at the time; L1 sharing and matcher step at 16 KiB (answered in "16 KiB pages, tuned").
@@ -2036,7 +2041,7 @@ means of 3 rounds in µs, and the score `write + 0.34 * cold read`:
 From level 2 to level 3 a µs saves 10.2 bytes per page on the A76 and 4.2 on the A55, from level 3 to
 `zstd` 3 0.02 and 0.01: `zstd` 3 is the better choice only where a µs is worth less than that.
 
-![seqlz's levels against lz4 and zstd 3 on the Mi 9T, memory against time](plots/levels-phone.svg)
+![seqlz's levels against lz4 and zstd 3 on the Mi 9T, memory against time](plots/levels-phone-2026-10-15.svg)
 
 The chart is `tools/plot-levels.py` on this run.
 
@@ -2245,9 +2250,51 @@ table's part is already the entropy first and the code only where it pays ([Leve
 and from how many literals on it is built was measured there. Not measured: the phone, where the A55's
 write is the one that matters most.
 
+## Level 3 with its deltas in the Mi 9T's kernel: 8.1% less memory than on 15th October, 4.1 and 11.7 µs more per page written
+
+Status: measurement, 2026-10-23. Now: current.
+
+*The phone's numbers of the README were from 15th October, before level 3 stored its literals as
+deltas. Again in the Mi 9T's own kernel, with the code of 23rd October: level 3 stores 874.9 bytes per
+page instead of 952.0, 8.1% less and 8.0% less than `zstd` 3, and a page written takes 26.4 instead of
+22.2 µs on the A76 and 79.3 instead of 67.6 µs on the A55, `write + 0.73 * cold read`. That is about half
+of `zstd` 3's time, 51% and 48%. The other codecs are within 1.1 µs of 15th October on both cores. In
+userspace the deltas had cost about 3.5 µs per write on the A76 and 7.6 on the A55; in the kernel the
+writes take 3.1 and 9.4 µs more and the cold reads 1.4 and 3.2.*
+
+Code: `main` at `00073f1` with `d8937df`, which only moves the harness's `seqlz_encode()` and does not
+change what zram calls. The chart is `docs/plots/levels-phone.svg`, the one of 15th October
+`docs/plots/levels-phone-2026-10-15.svg`.
+
+**Setup.** As on 15th October
+([level 3](#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)):
+`tools/zram-phone/run.sh` with `BUS=1`, 3 rounds, `CODECS="lz4 zstd seqlz-a-1 seqlz-a-2 seqlz-a-3"`,
+the A55 (cpu2) at 1804.8 MHz and the A76 (cpu7) at 2208 MHz, the 19 775 pages of p3, NDK r21e's clang 9
+with the module's flags, `lz4` and `zstd` 3 as the phone kernel's modules. Every run held its core's
+clock; the clusters were at 35.4 to 53.2 C after the runs. Bytes per page are the zsmalloc cost of
+`quetschn-bench-interleaved --no-timing` on the same pages, which gives the same numbers as on 15th
+October for every codec but level 3. Means of 3 rounds in µs, the range in the run's log:
+
+| codec | bytes per page | A76 write | A76 warm / cold read | A76 score | A55 write | A55 warm / cold read | A55 score |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `lz4` | 1364.0 | 10.16 | 3.72 / 6.09 | 14.61 | 25.64 | 9.00 / 24.57 | 43.58 |
+| `zstd` 3 | 951.4 | 36.16 | 16.04 / 20.81 | 51.35 | 114.64 | 39.17 / 69.99 | 165.73 |
+| level 1 | 1071.1 | 10.44 | 3.93 / 7.11 | 15.63 | 28.17 | 11.35 / 29.24 | 49.52 |
+| level 2 | 997.0 | 11.70 | 4.59 / 7.84 | 17.42 | 32.23 | 12.95 / 32.99 | 56.31 |
+| level 3 | 874.9 | 19.31 | 5.77 / 9.69 | 26.38 | 51.77 | 15.69 / 37.76 | 79.33 |
+
+The score is `write + 0.73 * cold read`. The table of 15th October has 0.34; with 0.73 its level 3 is
+22.24 and 67.63 ([current state](#current-state-16-october-2026)). zram's `mem_used` per page in these
+runs: `lz4` 1424.6, `zstd` 3 998.6, levels 1 to 3 1118.9, 1043.5 and 913.7.
+
+From level 2 to level 3 a µs now saves 13.6 bytes per page on the A76 and 5.3 on the A55; `zstd` 3
+stores more than level 3 and takes longer, so it is off the hull on both cores.
+
+Not measured: `COUNTS=1`'s instructions; another phone; the app test.
+
 ## One rule for which literals are deltas: 0.45% fewer bytes, a simpler spec, kept
 
-Status: kept, 2026-10-22. Now: current.
+Status: kept, 2026-10-22. Now: current; in the Mi 9T's kernel 23 Oct, level 3 8.1% smaller than on 15 Oct for 4.1 and 11.7 µs more per page written ([in the Mi 9T's kernel](#level-3-with-its-deltas-in-the-mi-9ts-kernel-81-less-memory-than-on-15th-october-41-and-117-µs-more-per-page-written)).
 
 *Level 3's [deltas](#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept)
 had two rules for the literals that stay as they are: the deltas to the byte 4 or 8 before started at the
@@ -8880,9 +8927,83 @@ behind it. Mutations, each caught: the fast path with 16 bytes of room to the li
 (a crash), the copies of the literals and of the matches bounded by the page and not by the literals
 (3 tests each), the last block of literals written straight into the page (ASan, a write behind the
 page).
+## 16 KiB pages as four blocks of 4 KiB: 7.0% to 8.6% more memory than one block of 16 KiB, measured
+
+Status: measurement, 2026-10-23. Now: current.
+
+*The question of [plan.md §3.5](plan.md#35-page-size-is-not-always-4-kib) for a second
+series: on a kernel with 16 KiB pages, does zram's backend cut each page into four blocks of 4 KiB,
+with the format and tables Linux would already have, or does the library get the format's 16 KiB block
+size with its own tables? On the Android 17 emulator's 16 KiB pages, four blocks take 7.7%, 8.6% and
+7.0% more zsmalloc memory at levels 1, 2 and 3. Level 3 then stores 2775 bytes per page instead of
+2593, 2.4% more than `zstd` 3 instead of 4.3% less. Four blocks compress with 4.8%, 3.2% and 8.0% more
+instructions, and decompress with 3.6% more, 1.4% and 4.0% fewer. Their work memory is 16 KiB per CPU
+against 48 KiB, which pays only when zram holds little: with 32 CPUs and 64 MiB in zram four blocks
+are 74 bytes per page smaller in all, with 8 CPUs or 1 GiB one block is, by 118 to 182 bytes. Not
+decided here: one block costs a second block size in the kernel's library, with tables trained on
+one emulator, and no phone with 16 KiB pages was measured.*
+
+Code: not committed, the programs are described below; `src/` at `00073f1` (main of 23rd October).
+
+**Setup.** `emu-a17-16k-b`, the measured dump of the Android 17 emulator with 16 KiB pages: 38 396
+pages, of which 8 same-filled ones are left out, as zram stores them without zsmalloc. The 16 KiB
+tables are trained on `emu-a17-16k-a-train`, the 4 KiB tables on `train-mix-1012`, phones and a
+desktop; on the emulator's 4 KiB pages these were within 0.6% of tables trained there
+([Android 17 in the emulator](#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)).
+One block: `src/` built with `QUETSCHN_PAGE_BITS=14`. Four blocks: each 4 KiB part compressed alone, a
+part that does not compress counted as its 4096 raw bytes, plus 6 bytes for the lengths of three
+parts, which the backend has to store with them. Every block decoded back and compared. Memory is
+the zsmalloc cost of `bench/zsmalloc_cost.cpp` with 16 KiB pages: `huge_class_size` 14 553, a page at
+or above it stored raw. `lz4` and `zstd` 3 on the whole 16 KiB page: Python's `lz4.block.compress()`
+in its default mode, as `LZ4_compress_default()`, and `zstandard` at level 3 without a checksum.
+
+| codec | bytes per page | zsmalloc cost | % of a page |
+| --- | ---: | ---: | ---: |
+| `lz4` | 3952.6 | 4036.0 | 24.63% |
+| level 1, one block | 2934.0 | 2999.0 | 18.30% |
+| level 1, four blocks | 3160.2 | 3229.5 | 19.71% |
+| level 2, one block | 2758.2 | 2819.8 | 17.21% |
+| level 2, four blocks | 2997.3 | 3062.9 | 18.69% |
+| level 3, one block | 2535.4 | 2593.3 | 15.83% |
+| level 3, four blocks | 2714.5 | 2775.0 | 16.94% |
+| `zstd` 3 | 2650.2 | 2710.1 | 16.54% |
+
+**Instructions** per 16 KiB page on x86-64, `src/` built with the kernel's flags (`-O3`, no SSE, gcc
+16.2.1), `perf stat -e instructions:u` over 3 passes of the first 8000 pages, minus a run that only
+loads and compresses them once. The clock of the machine was not fixed, so no times:
+
+| level | one block: compress / decompress | four blocks: compress / decompress | four against one |
+| --- | ---: | ---: | ---: |
+| 1 | 166 906 / 64 234 | 174 882 / 66 538 | +4.8% / +3.6% |
+| 2 | 190 725 / 77 157 | 196 923 / 76 072 | +3.2% / -1.4% |
+| 3 | 300 692 / 94 462 | 324 772 / 90 684 | +8.0% / -4.0% |
+
+**Work memory per CPU**, zram's split contexts, as `kmalloc()` hands them out on a kernel with 16 KiB
+pages, where its largest cache is 32 KiB: one block needs the 16 384-byte state and the 16 400-byte
+scratch, 16 + 32 KiB, four blocks the 4 KiB ones, 8 + 8 KiB. Level 1 has no decompression context, so
+16 and 8 KiB. Level 3 with this added as in [plan.md §1.1](plan.md#11-the-score-memory-against-time-not-bars),
+work memory times CPUs divided by the pages in zram, 4096 pages of 16 KiB in 64 MiB, bytes per page:
+
+| | 8 CPUs, 64 MiB | 8 CPUs, 1 GiB | 32 CPUs, 64 MiB | 32 CPUs, 1 GiB |
+| --- | ---: | ---: | ---: | ---: |
+| level 3, one block | 2689 | 2599 | 2977 | 2617 |
+| level 3, four blocks | 2807 | 2777 | 2903 | 2783 |
+
+**Where the 7% go.** Four blocks lose the matches across the 4 KiB borders, offsets up to 16 KiB, and
+each block's coder starts again: its hash table and the offset it repeats. Tables trained on these
+pages would take at most the 0.6% the 4 KiB tables lost on the emulator's 4 KiB pages.
+
+Not measured: times, on any core; a phone with 16 KiB pages; `lz4` and `zstd` on four blocks, which
+lose the same matches; zram's real `mem_used` instead of the cost model.
+
+Commands: the 16 KiB and 4 KiB tables with `tools/gen-tables/gen-tables.sh t16.c
+-DQUETSCHN_PAGE_BITS=14` and `t4.c`, a program per block size that compresses each page at levels 1 to
+3 as one block or four and prints the lengths, `bench/zsmalloc_cost.cpp` with `page_size = 16384` over
+them; the instruction counts with the same files built with the kernel's flags.
+
 ## Android 17 in the emulator: the 4 KiB tables fit, the 16 KiB ones trained again, 2.6% smaller
 
-Status: kept, 2026-10-07. Now: 16 KiB tables retrained 11 Oct on emu-a17-16k-a-train ("The tables trained again without the last sequences"); offset classes changed 14 Oct ("Offset 2 in 1 bit"); work memory priced since #203; Android 13 and 15 emulators 16 Oct: tables of their own 1.4% and 2.0% smaller at level 2 ([five new populations](#the-tables-on-five-new-page-populations-tables-of-their-own-12-smaller-at-level-2-07-at-level-3-kept-as-they-are)).
+Status: kept, 2026-10-07. Now: a 16 KiB page as four blocks of 4 KiB measured 23 Oct, 7.0% to 8.6% more memory ([four blocks](#16-kib-pages-as-four-blocks-of-4-kib-70-to-86-more-memory-than-one-block-of-16-kib-measured)); 16 KiB tables retrained 11 Oct on emu-a17-16k-a-train ("The tables trained again without the last sequences"); offset classes changed 14 Oct ("Offset 2 in 1 bit"); work memory priced since #203; Android 13 and 15 emulators 16 Oct: tables of their own 1.4% and 2.0% smaller at level 2 ([five new populations](#the-tables-on-five-new-page-populations-tables-of-their-own-12-smaller-at-level-2-07-at-level-3-kept-as-they-are)).
 
 *The 16 KiB tables were trained on desktop pages, four adjacent 4 KiB pages each, and measured on the
 same pages: there was no real 16 KiB page. The Android 17 emulator has an image with 16 KiB pages. Its

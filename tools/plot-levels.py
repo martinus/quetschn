@@ -35,7 +35,7 @@ CODECS = {
     "zstd": ("zstd 3", (0.62, 0.45)),
     "seqlz-1": ("seqlz-1: raw literals", (0.42, 0.82)),
     "seqlz-2": ("seqlz-2: fixed literal tables", (0.42, 0.72)),
-    "seqlz-3": ("seqlz-3: lazy, the page's own literal table", (0.30, 0.30)),
+    "seqlz-3": ("seqlz-3: lazy, own literal table, deltas", (0.30, 0.30)),
 }
 CORES = [(7, "A76", 2208), (2, "A55", 1805)]
 

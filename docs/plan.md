@@ -491,8 +491,12 @@ first review comment, and today the kernel copy is that: `seqlz_compress()` take
 size, and builds on every configuration; the zram backend depends on 4 KiB pages in the first series.
 For 16 KiB pages there are two ways: the 16 KiB tables as a second block size of the format, or the
 backend cutting a page into four blocks of 4 KiB, which needs no second format but gives up matches
-across the blocks. What that costs is measured on the 16 KiB pages of the Android 17 emulator before
-the second series.
+across the blocks. On the 16 KiB pages of the Android 17 emulator that costs 7.7%, 8.6% and 7.0% more
+memory at levels 1 to 3, level 3 then stores 2.4% more than `zstd` 3 instead of 4.3% less, and
+compresses with 8% more instructions; its work memory, 16 instead of 48 KiB per CPU, makes up for that
+only with 32 CPUs and 64 MiB in zram
+([explored-designs.md](explored-designs.md#16-kib-pages-as-four-blocks-of-4-kib-70-to-86-more-memory-than-one-block-of-16-kib-measured)).
+No phone with 16 KiB pages was measured yet.
 
 The same argument holds for multi-page compression in zram, e.g. whole large folios (mTHP) compressed
 as one unit. Tangquan Zheng (OPPO) proposed it in March 2024, "mTHP-friendly compression in zsmalloc
@@ -1083,13 +1087,12 @@ Next, in this order:
    compression libraries, with its own Kconfig symbol and `MAINTAINERS` entry, and the zram backend
    on top of it, no crypto API. The question in it: which tree to base the series on, as
    `backend_seqlz.c` follows his zcomp rework of 5th October (Phase 7).
-2. The library on blocks of 4 KiB, not on `PAGE_SIZE` (§3.5): `seqlz.h` and its kernel-doc, the
-   Kconfig, `port.py` without the `#error`; `tools/kernel-port/check.sh` builds the library with 16 KiB
-   and 64 KiB pages too, with the backend off there.
+2. Done in #231 and #232: the library on blocks of 4 KiB, whatever `PAGE_SIZE` is (§3.5), its tables
+   generated when the kernel is built.
 3. The numbers for today's level 3. The Mi 9T, zram in its own kernel: the phone's table in the README
-   is from 15th October, before the deltas. And on the 16 KiB pages of the Android 17 emulator, a page
-   cut into four blocks of 4 KiB against the 16 KiB tables (§3.5), which decides the form of the
-   second series.
+   is from 15th October, before the deltas. On the 16 KiB pages of the Android 17 emulator a page cut
+   into four blocks of 4 KiB takes 7.0% to 8.6% more memory than one block with the 16 KiB tables
+   (§3.5), which is for the form of the second series.
 4. The cover letter (Martin), with the two questions of Phase 7 first: why a new library in `lib/`,
    and why a fixed block size.
 5. The checklist of `.claude/skills/kernel-patches/SKILL.md`: a cleanup pass over the kernel files,
