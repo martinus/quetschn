@@ -1,0 +1,1019 @@
+diff --git a/docs/book/chapters/03-cpu.md b/docs/book/chapters/03-cpu.md
+index 0a6546f..e8667cd 100644
+--- a/docs/book/chapters/03-cpu.md
++++ b/docs/book/chapters/03-cpu.md
+@@ -65,7 +65,7 @@ of 4 KiB pages, from `struct seqlz_tables` in `src/seqlz_internal.h` ([chapter 7
+ | table | entries | bytes | cache lines | read |
+ | --- | --- | ---: | ---: | --- |
+ | token decode table | 2048 of 4 bytes | 8192 | 128 | once per sequence |
+-| `LL` and `ML` decode tables | 256 of 4 bytes, each | 1024 each | 16 each | for length values |
++| `LL` and `ML` decode tables | 256 of 4 bytes, each | 1024 each | 16 each | for [length values](#ch-format--length-values) |
+ | one literal decode table, of 8 | 1024 of 2 bytes | 2048 | 32 | once per coded literal |
+ | token codes for the encoder | 3073 of 2 bytes | 6146 | about 96 | once per sequence |
+ | the matcher's hash table, per CPU | 4096 of 2 bytes | 8192 | 128 | once per position |
+@@ -77,10 +77,11 @@ because their codes have at most 8 (`SEQLZ_MAX_BITS`), the literal tables 1024 b
+ have at most 10 (`SEQLZ_LIT_BITS`). Longer codes would compress a little better and double a table.
+ 
+ ::: measured Tables have to stay in L1
+-In an early version of the format, a token table for codes of up to 12 bits, 8 KiB of 2-byte entries
+-then, made the slowest 1% of cold reads 650 ns slower than a smaller token. With codes of up to 11
+-bits, a table of 4 KiB, the p99 of cold reads went from 5070 to 4350 ns. Measured in the userspace
+-harness on the Ryzen 9 7950X
++In an early version of the format, the token had 512 symbols, and its decode table, for codes of up to
++12 bits, was 8 KiB of 2-byte entries. With the three tables of the other values that was 20 KiB, and
++the slowest 1% of cold reads took 650 ns longer than with a token of 256 symbols. Limiting the
++token's codes to 11 bits, a table of 4 KiB, took the p99 of cold reads from 5070 to 4350 ns. Both
++measured in the userspace harness on the Ryzen 9 7950X
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
+ The comment at `SEQLZ_MAX_BITS` in `src/seqlz.h` says the same for the length tables: one twice as
+ large made cold reads slower.
+@@ -96,24 +97,13 @@ code has to ask for the lines ahead of time. That is a **prefetch**: an instruct
+ CPU to bring a line into the cache and does not wait for it. On x86-64 it is `prefetcht0`, on arm64
+ `prfm`, and the kernel's name for it is `prefetch()`.
+ 
+-`seqlz_decode()` prefetches every line of its tables before it reads the first byte of the page:
+-
+-@listing src/seqlz_decompress.c 7-26
+-
+-`prefetch_lines()` takes the table as a `const void *` and copies it into `q`, a `const u8 *`,
+-because C defines pointer arithmetic only for pointers to complete types: `q + size` is `size` bytes
+-on. It walks the table in steps of `PREFETCH_STEP`, 512 bytes, and the inner loop
+-issues one `prefetch()` every `L1_CACHE_BYTES`, 64 bytes, so 8 per step. For the token table, 8192
+-bytes, that is 16 steps and 128 prefetches; for each length table 2 steps and 16 prefetches; for the
+-page's literal table, in `decode_literals()`, 4 steps and 32. The inner loop has a constant count of
+-8, which lets the compiler unroll it: gcc 16.2.1 at `-O3`, the level the kernel copy is built with,
+-writes the prefetches out one after the other, and the loop's own instructions, the add and the
+-compare, run far less often than once per line. With one line per iteration,
+-the comment says, the loop took more instructions than the prefetches. That was measured on the
+-phone: a plain loop made the big core's cold reads of pages with coded literals 0.8 µs slower
++`seqlz_decode()` prefetches the lines of its tables before it reads the first byte of the page. It
++asks for 8 lines per round of its loop, which the compiler writes out one after the other; with one
++line per round the loop took more instructions than the prefetches, and on the phone a plain loop made
++the big core's cold reads of pages with coded literals 0.8 µs slower
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
+-The three `static_assert()` lines after it check that each table's size is a multiple of 512 bytes,
+-which `prefetch_lines()` needs ([chapter 12](#ch-dec-basics)).
++A table that does not start at a line misses its last line, and in the kernel the literal tables
++always do. [Chapter 12](#ch-dec-basics--prefetch) goes through `prefetch_lines()` line by line.
+ 
+ ::: measured What the prefetches give
+ On the Mi 9T's little core, a Cortex-A55, in the phone's own kernel: without any table prefetch, cold
+@@ -447,7 +437,8 @@ of the pages are the same either way: the change was the order, not the codes.
+ ::: measured The bit order on the phone
+ On the Mi 9T's big core, a Cortex-A76, with the token table not prefetched on that core as it was
+ then: with the table's codes in one range, cold reads were 9.57 to 9.73 µs in every run; with the codes spread, one build of the same decoder read in 9.39 µs and
+-another in 10.50, depending on where the module's tables landed in memory. On the PC the change
++another in 10.50, depending on where the tables landed in memory when the codec was loaded into the
++kernel as a module ([chapter 15](#ch-zram-glue--init)). On the PC the change
+ cost nothing: 7370 against 7410 cycles per page in the decode loop
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-sequences-bitstream-most-significant-bit-first-the-token-tables-codes-in-one-range-on-every-cpu-kept)).
+ :::
+@@ -481,48 +472,26 @@ page once. Since then, the decode times the project trusts come from `MODE=swap`
+ which swaps each page in once per pass, with 20 000 other pages in between.
+ 
+ Three branches of the sequence loop made 58% of the mispredictions of a page seen once:
+-whether the bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, 24;
++whether the bit buffer needs a refill, 32 per page; whether the sequence takes the fast path, the
++decoder's loop for the common case of short lengths away from the end of the page, 24;
+ and whether the match's offset is below 8, 20 to 22
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once)).
+ The first one could be removed. Whether 23 bits are left in the buffer depends on the lengths of the
+ codes before, which no predictor knows for a new page. But a refill leaves at least 56 bits, and two
+-fast sequences take at most 50. So the fast path refills every second time, without asking:
+-
+-@listing src/seqlz_decompress.c 500-514
+-
+-The four lines inside the `if` are the refill of `seqlz_br_refill()` without its check that 8 bytes of
+-input are left: the fast path runs only where they are, see `FAST_IN_ROOM` below. `get_unaligned_be64()`
+-loads the next 8 bytes with the first byte on top, `v >> br->count` moves them below the `count` bits
+-that are still in the register, `br->p` moves on by the bytes that went in whole, and `count |= 56` is
+-the new count, explained in [registers](#ch-cpu--registers). The last line looks up the next token by
+-the top 11 bits. `*skip ^= 1U` flips between 0 and 1, so the `if` alternates: refill, no refill, refill. That is a
+-branch every predictor gets right. After a slow sequence, which may have taken more bits,
+-`seqlz_decode()` sets `skip` to 0, so the next fast one refills. In the kernel VM this took the
+-decoder in a swap-in from 1995 to 2008 ns to 1936 to 1942 ns, 63 ns less
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
+-The function is explained in [chapter 14](#ch-decode).
++fast sequences take at most 46 bits on 4 KiB pages and 50 on 16 KiB pages. So the fast path refills every second
++time without asking: a branch that alternates, which every predictor gets right.
++`next_token_fast()` in [chapter 14](#ch-decode--next-token) shows the code and what it saved in a
++swap-in.
+ 
+ ### Code without a branch
+ 
+ The other way to avoid a misprediction is code without a branch: compute the outcome with
+-arithmetic. `seqlz_off_class()` picks the offset class of a match for the encoder. The classes come
+-in no order a predictor could learn, so it has no `if`:
+-
+-@listing src/seqlz.h 186-206
+-
+-A comparison in C is an `int`, 0 or 1, and the code uses it as a number. For `off = 24` after a match
+-with `last = 16`:
+-
+-- `is_new = (24 == 16) - 1U = 0 - 1U`, which wraps to `0xffffffff`: all bits set.
+-- `aligned = (24 >= 16) & ((24 & 7) == 0) = 1 & 1 = 1`.
+-- `cls = (1 + 1 + 0 + 2 * 1) & 0xffffffff = 4`.
+-
+-For `off = 24` after `last = 24`, `is_new = 1 - 1U = 0`, and the `& 0` makes the class 0, the repeat
+-offset. For `off = 300`, `aligned` is 0 because `300 & 7 = 4`, and the class is `1 + 1 + 1 = 3`. The
+-offset bits of the class come from `SEQLZ_RAW_BITS()`, a shift and a mask of the constant `0x95C840`,
+-one hex digit per class: `(0x95C840 >> 16) & 15 = 5` bits for class 4. The comment above it in
+-`seqlz.h` says why it is a constant: computing class 3's bits from the page size made gcc branch on
+-the class. [Chapter 6](#ch-header) goes through both.
++arithmetic. A comparison in C is an `int`, 0 or 1, and code can use it as a number.
++`seqlz_off_class()` picks the offset class of a match for the encoder, and the classes come in no
++order a predictor could learn, so it has no `if`. E.g. `is_new = (off == last) - 1U` is 0 for the
++repeat offset and wraps to `0xffffffff`, all bits set, for a new one, and an `&` with `is_new` makes
++the class 0 or leaves it as it is. [Chapter 6](#ch-header--offsets) goes through the function line
++by line.
+ 
+ Code without branches is not always faster. It runs every instruction of both outcomes, and a branch
+ that the predictor gets right costs almost nothing. An early version of the decoder replaced its
+@@ -542,7 +511,7 @@ mispredictions.
+ The matcher in `src/page_lz.h` asks two questions at every position of the page: do the next 4 bytes
+ match at the repeat offset, and do they match at the candidate from the hash table? Both answers are
+ close to random. It reads both candidates first and decides with one branch on `rep_hit | cand_hit`.
+-The listing is in [in-order cores](#ch-cpu--in-order) below. With three
++[Chapter 9](#ch-matcher--position) shows the loop. With three
+ branches per position, the matcher mispredicted 539 times per page; with one branch, 329, and the p99 of
+ compressing a cold page went from 15.4 to 12.6 µs
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-seqlz-fast)).
+@@ -554,23 +523,14 @@ sequence of steps where each needs the result of the one before. A chain sets a
+ time, whatever the width of the core: if each step takes 5 cycles and there are 100 of them, it takes
+ 500 cycles, even if the core could run 6 instructions per cycle.
+ 
+-Decoding Huffman codes is such a chain. To decode a literal, the decoder looks at the next 10 bits of
++Decoding Huffman codes is such a chain. To decode a literal, the decoder takes the next 10 bits of
+ its stream, looks them up in the literal table, writes the byte, and shifts the stream by the code's
+-length:
+-
+-@listing src/seqlz_decompress.c 291-298
+-
+-`bits >> (64U - SEQLZ_LIT_BITS)` is the top 10 bits of the stream, the index into the page's literal
+-table `lt`. The entry `e` has the byte in bits 8 to 15 and the code's length in its low bits, so
+-`(u8)(e >> 8)` is the literal and `e & mask` how far the stream moves on. `mask` is 63 for a literal
+-that counts. In the last step of a page it is 0 for a stream that has no literal left: that stream
+-decodes a byte too, which lands behind the literals, but does not move on
+-([chapter 13](#ch-literals-dec)). The next literal's 10 bits are known only after the shift, and the
+-shift needs the code's length, which is in the entry the load returns. So in one stream every literal waits for the load and the
+-shift of the one before: an L1 load takes a few cycles, the shift one more. That is the chain of
+-the top row in the figure. The 8 streams of a page with coded literals are 8 such chains that do not
+-depend on each other ([chapter 4](#ch-format--layout)): the decoder steps all 8 in turn, and while one
+-stream's load is on its way, the next stream's load can start.
++length, which is in the entry the lookup returns. The next literal's 10 bits are known only after that
++shift. So in one stream every literal waits for the load and the shift of the one before: an L1 load
++takes a few cycles, the shift one more. That is the chain of the top row in the figure. The 8 streams
++of a page with coded literals are 8 such chains that do not depend on each other
++([chapter 4](#ch-format--layout)): the decoder steps all 8 in turn, and while one stream's load is on
++its way, the next stream's load can start. [Chapter 13](#ch-literals-dec--decode) shows the code.
+ 
+ <figure class="diagram">
+ <div class="scroll">
+@@ -664,15 +624,8 @@ stream's load is on its way, the next stream's load can start.
+ <figcaption>Schematic, not to scale: one stream is one chain, lookup then shift then the next lookup. 8 streams are 8 chains that start one or two cycles apart.</figcaption>
+ </figure>
+ 
+-::: measured 4 streams and 8
+-With 4 streams, a literal took about 2.9 cycles to decode. With 8, decoding a page in the cache took
+-8676 instead of 9070 cycles, and in the kernel, cold, p50 and p99 went from 2940 and 4810 ns to 2860
+-and 4531 ns, for 8 more bytes of header with the stream sizes of 2 bytes of the time
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
+-Measured again in October with today's header, 4 streams made reads 0.7% to 1.8% slower in the kernel
+-VM and saved 1.1 to 2.8 bytes per page, so 8 stayed
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#five-simplifications-measured-in-the-vm-and-on-the-phone-the-literal-streams-as-arrays-kept-four-not)).
+-:::
++8 streams read faster than 4, for a few bytes more per page; the measurements are in
++[chapter 13](#ch-literals-dec--cost).
+ 
+ The encoder has the same chain the other way round: appending a code to a stream is a shift and an
+ or on that stream's accumulator. `lit_streams()` in `src/seqlz_compress.c` writes 4 streams at a time,
+@@ -714,21 +667,14 @@ the A55, and together with three smaller changes from 17 842
+ **A load has to start early.** If a value is loaded right before it is used, an in-order core waits
+ for the whole latency of the load. If the load is issued a few instructions earlier, the instructions
+ in between fill the wait. Compilers do some of this, but only within what they can prove is safe and
+-worth it. The matcher does it by hand: it loads the next position's 8 bytes, hash, table entry and
+-candidate bytes while it compares the current one. This is called **software pipelining**:
+-
+-@listing src/page_lz.h 124-149
+-
+-`v_next` and `h_next` are the next position's bytes and hash, computed at the top of the loop, before
+-anything about the current position is decided. On a miss, the next position's table entry `cand` and
+-its bytes `cand_bytes` are loaded right away, so the next iteration starts with them on their way. The
+-same lines show the [one branch for two questions](#ch-cpu--branches): `rep_hit` and `cand_hit` are
+-computed as numbers, and only `!(rep_hit | cand_hit)` is a branch. On the A55 the loads ahead, with two smaller changes to the same loop, took
+-compression from 43 841 to 42 349 cycles per page, 3.4%, with the same output; on the PC from 16 489
+-to 16 148
++worth it. The matcher does it by hand: it computes the next position's bytes and hash at the top of
++the loop, and on a miss loads the next position's table entry and candidate bytes right away, while it
++still works on the current position. This is called **software pipelining**. On the A55 the loads
++ahead, with two smaller changes to the same loop, took compression from 43 841 to 42 349 cycles per
++page, 3.4%, with the same output; on the PC from 16 489 to 16 148
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-on-an-in-order-core-34-fewer-compress-cycles-on-the-a55-same-output-kept)).
+ An earlier try of the same idea on the PC alone did nothing: an out-of-order core already loads the
+-next position ahead by itself. [Chapter 9](#ch-matcher) explains the loop.
++next position ahead by itself. [Chapter 9](#ch-matcher--position) shows the loop.
+ 
+ The decoder does the same: in the fast path, `next_token_fast()` looks up the next token before the
+ copies of the current sequence, and the copies fill the time the load takes. On the phone that made
+@@ -738,17 +684,13 @@ cold reads at the median 162 ns closer to `lz4` on the little core and 126 ns on
+ **A miss it did not see coming stops it.** An out-of-order core finds the table lookups of the next
+ sequences in its window and starts their misses early. An in-order core reaches each one only when it
+ gets there. So the table prefetches above matter far more on the A55: 14.5 µs per cold read. On the PC,
+-prefetching the tables once made about 100 ns of difference, within the scatter of that measurement
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow)).
++when the decoder first got them, prefetching the tables made about 100 ns of difference, within the
++scatter of that measurement
++([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow));
++the 6 to 25 ns above are a later test of the same question.
+ 
+-::: why One decode loop for all cores
+-Until 10th October 2026, the arm64 build of the decoder asked which core it ran on and took a loop
+-written for in-order cores on a Cortex-A55. The kernel copy now has one loop for every core: nothing
+-else in `lib/` reads the CPU's model, and the list of in-order cores would need an entry for every new
+-little core. Measured on the Mi 9T, the out-of-order loop costs the A55 at most about 0.3 µs per warm
+-read, 3%, and nothing that shows on the A76
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
+-:::
++The kernel copy has one decode loop for both kinds of core, not one written for in-order cores;
++[chapter 17](#ch-decisions--decoder) says why and what it costs the A55.
+ 
+ ## Registers and the 64-bit bit buffer {#ch-cpu--registers}
+ 
+@@ -776,7 +718,8 @@ at a refill, once per 5 literals of a stream.
+ 
+ Registers also decided a choice in the matcher. Like lz4, it once moved on faster and faster when it
+ found no match for a while. That step needs one more value in the loop, and "the matcher's loop has no
+-register to spare". Without it, pages that compress are written 1% to 3% faster in the kernel VM
++register to spare". Without it, the pages that compress are written 5% faster, and in the kernel VM
++`seqlz-fast-lit` writes 0.21 and 0.25 µs faster per page, 3%
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-matcher-without-its-step-writes-1-to-3-faster-kept)).
+ 
+ ## Loads at any address {#ch-cpu--unaligned}
+@@ -788,23 +731,13 @@ architectures fault on such a load. And reading bytes through a pointer of anoth
+ aliasing rules, which the compiler may use to reorder loads and stores. The kernel builds with
+ `-fno-strict-aliasing`, but the alignment rule stays.
+ 
+-The answer in `src/seqlz_compat.h` is `memcpy()` into a local variable; the kernel's own
+-`get_unaligned_le64()` gets the same single load another way. This is the version for builds outside
+-the kernel ([chapter 5](#ch-compat)):
+-
+-@listing src/seqlz_compat.h 163-169
+-
+-`SEQLZ_LE64()` is nothing on a little-endian CPU and a byte swap on a big-endian one, see
+-[byte order](#ch-cpu--endian). A `memcpy()` of a constant 8 bytes is not a call: the compiler knows what it does and writes one load.
+-x86-64 and arm64 both load from any address. gcc 16.2.1 at `-O2` turns `get_unaligned_le64()` into
+-`movq (%rdi), %rax`, and clang for arm64 into `ldr x0, [x0]`.
+-
+-There is one catch in the kernel. With `CONFIG_FORTIFY_SOURCE`, `memcpy()` is a checked wrapper, and
+-the Mi 9T's 4.14 kernel and its clang did not inline it: a module had 63 calls to `memcpy()`, one per
+-copy of 8 or 16 bytes in the matcher, the encoder and the decoder. So the copies in `src/` call
+-`__builtin_memcpy()`, as lib/lz4's `LZ4_memcpy()` and lib/zstd's `ZSTD_memcpy()` do, which the
+-compiler always inlines (commit `48a7043`). `copy8()` and `copy16()` in [chapter 12](#ch-dec-basics)
+-are such copies.
++The answer is `memcpy()` into a local variable, in the accessors of `src/seqlz_compat.h`
++([chapter 5](#ch-compat--userspace)); the kernel's own `get_unaligned_le64()` gets the same single
++load another way. A `memcpy()` of a constant 8 bytes is not a call: the compiler knows what it does
++and writes one load, since x86-64 and arm64 both load from any address. gcc 16.2.1 at `-O2` turns
++`get_unaligned_le64()` into `movq (%rdi), %rax`, and clang for arm64 into `ldr x0, [x0]`. In a kernel
++with `CONFIG_FORTIFY_SOURCE`, `memcpy()` is a checked wrapper, so the copies call
++`__builtin_memcpy()`, which is always inlined; [chapter 6](#ch-header--summary) has the story.
+ 
+ ## Byte order {#ch-cpu--endian}
+ 
+@@ -812,34 +745,17 @@ A number of several bytes can be stored with its lowest byte first, **little end
+ byte first, **big endian**. x86-64 and arm64 as Linux runs it are little endian; s390x, IBM's
+ mainframe, which Linux also runs on, is big endian. The format fixes the order where it matters: the
+ 2-byte header and the stream sizes are little endian ([chapter 4](#ch-format--layout)), and the bits
+-of the bitstream are read from the top bit of each byte down. `src/seqlz_compat.h` gives each load
+-its order explicitly, `get_unaligned_le64()` or `get_unaligned_be64()`, and on a CPU of the other
+-order the load includes a byte swap. So a page has the same bytes on every CPU. Before commit
+-`91fa53e` some loads used the CPU's own order, and on s390x under qemu every page failed to decode
+-again, 4656 of 4656; CI now compresses 600 pages on x86-64, on 32-bit x86 and on s390x and compares
+-the bytes.
++of the bitstream are read from the top bit of each byte down. Each load in `src/` names its order, so
++a page has the same bytes on every CPU; [chapter 5](#ch-compat--endian) shows the accessors, and the
++bug that made the project compare the bytes on s390x in CI.
+ 
+-Both orders are used on purpose:
++**Big endian for the bitstream.** The decoder wants the next bits on top of a 64-bit register. Loaded
++big endian, the first byte of the stream lands in the top 8 bits, and its bit 7 in bit 63. On x86-64
++that load is `movq` and `bswap`, on arm64 `ldr` and `rev`: one instruction more per refill.
+ 
+-**Little endian for comparing bytes.** `seqlz_match_len()` in [chapter 9](#ch-matcher) finds where two
+-strings of bytes first differ. It loads 8 bytes of each as little-endian numbers and XORs them: the
+-result has 0 bits where the bytes agree. Byte 0 of the string is the lowest byte of the number, so the
+-first differing byte holds the lowest set bit. Counting the trailing zero bits, `__builtin_ctzll()`,
+-and dividing by 8 gives its position. For `abcdefgh` against `abcXefgh`, only byte 3 differs, `d` is
+-`0x64` and `X` is `0x58`, their XOR `0x3c` has its lowest set bit at bit 2, so the count is `24 + 2 =
+-26`, and `26 >> 3 = 3`.
+-
+-**Big endian for the bitstream.** The decoder wants the next bits on top of a 64-bit register. If 8
+-bytes are loaded big endian, the first byte of the stream lands in the top 8 bits, and its bit 7 in
+-bit 63. For the page of `ab` in [chapter 4](#ch-format--example), the bitstream starts `dc 65 ef db
+-8a`; loaded big endian that is `0xdc65efdb8a......`, and its top 11 bits, `0xdc65efdb8a000000 >> 53`,
+-are 1763, binary `11011100011`, the index of token 1010's entry. On x86-64 the big-endian load is
+-`movq` and `bswap`, on arm64 `ldr` and `rev`: one instruction more per refill.
+-
+-The encoder writes the literal streams the same way round. `lit_flush()` in [chapter 11](#ch-literals-enc)
+-swaps a stream's 64 bits once with `__builtin_bswap64()` and then stores them little endian, which
+-is a big-endian store; its comment says why not `put_unaligned_be64()`: in both branches that gave
+-`code_literals()` other code on arm64.
++**Little endian for comparing bytes.** `seqlz_match_len()` XORs 8 bytes of two strings loaded little
++endian, so the first byte that differs holds the lowest set bit of the result
++([chapter 9](#ch-matcher--match-len)).
+ 
+ ## Eight sums in one register {#ch-cpu--swar}
+ 
+@@ -848,31 +764,13 @@ once, as long as no lane overflows into the next. This is called **SWAR**, SIMD
+ The kernel may not use the vector registers of the CPU in most places, so SWAR is how seqlz does 8
+ things at once.
+ 
+-The encoder uses it to choose the literal table of a page ([chapter 11](#ch-literals-enc)). It has to
+-know how many bits the page's literals take in each of the 8 tables. `lit_cost` in `struct
+-seqlz_tables` holds, for each of the 256 byte values, one `u64` with the byte's code length in all 8
+-tables, table `k` in bits `8k` to `8k + 7`. For the byte `0x65`, the letter `e`, the code lengths in
+-tables 0 to 7 are 4, 9, 10, 5, 9, 9, 10 and 10 bits, so its `u64` is `0x0a0a0909050a0904`: table 0's 4
+-in the lowest byte. Adding the `u64` of every literal sums all 8 tables with one add per literal.
+-For the 4 literals `65 20 65 00`:
+-
+-```text
+-  0x0a0a0909050a0904   65, the letter e
+-+ 0x0808090706070704   20, a space
+-+ 0x0a0a0909050a0904   65
+-+ 0x0803090202020208   00
+-= 0x241f241b121d1b14   table 0: 0x14 = 20 bits, table 3: 0x12 = 18 bits, ...
+-```
+-
+-The 8 lanes are 20, 27, 29, 18, 27, 36, 31 and 36 bits: table 3 codes these 4 bytes in 18 bits, where
+-they take 32 raw. A lane holds at most 255. A literal code has at most 10 bits, so 25 literals are
+-safe, `255 / 10 = 25`, and that is `LIT_COST_RUN`. After 25 literals per stream, `lit_cost()` moves
+-the sums into wider lanes: `x & 0x00ff00ff00ff00ff` keeps tables 0, 2, 4 and 6 as four 16-bit lanes,
+-`(x >> 8) & 0x00ff00ff00ff00ff` tables 1, 3, 5 and 7. For the sum above that is `0x001f001b001d0014`,
+-the lanes 20, 29, 27 and 31, and `0x002400240012001b`, the lanes 27, 18, 36 and 36. In the kernel the
+-whole choice costs 30 to 40 ns per write, about 0.5% of a write of about 6900 ns; in userspace it was
+-at most 400 cycles, 1.5% of a write
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
++The encoder uses it to choose the literal table of a page. It has to know how many bits the page's
++literals take in each of the 8 tables. `lit_cost` holds, for each of the 256 byte values, one `u64`
++with the byte's code length in all 8 tables, one table per byte lane, so adding the `u64` of every
++literal sums all 8 tables with one add per literal. A lane holds at most 255, so after 25 literals of
++at most 10 bits the sums move into lanes of 16 bits.
++[Chapter 11](#ch-literals-enc--pricing) works through the 4 literals `65 20 65 00` and gives what
++the choice costs in the kernel.
+ 
+ Three more places use a register as 8 bytes at once:
+ 
+@@ -972,34 +870,14 @@ and two stores, whatever the length, and then moves on by the real length:
+ <figcaption>The fixed copy for <code>ll = 3</code>: 16 bytes written, 3 of them kept. Grey are bytes of the page written before.</figcaption>
+ </figure>
+ 
+-The bytes past the real length are wrong, but the next sequence writes over them. This is sometimes
+-called a **wild copy**. It needs room: the copy may write past the last byte the sequence needs, and
+-read past the last literal. So the fast path of `seqlz_decode()` is taken only where there is enough,
+-which it checks with one compare per buffer against limits computed once per page
+-([chapter 14](#ch-decode)):
+-
+-- in the page, 64 bytes, `FAST_PAGE_ROOM`: a fast sequence writes at most 54 bytes past where it
+-  starts, up to 14 literals and then up to 40 bytes of match;
+-- in the literals, 16 bytes, `FAST_LIT_ROOM`, for one copy of 16;
+-- in the input, 8 bytes, `FAST_IN_ROOM`, for a refill without a check.
+-
+-Near the end of the page the slow path copies 16 or 8 bytes at a time while they fit, and the last
+-bytes one by one. The buffer coded literals are decoded into, `SEQLZ_SCRATCH`, is 4112 bytes, a page
+-and 16 bytes, so that the copy of 16 literal bytes never reads past it. The encoder does the same on
+-its side, with `ENC_ROOM`, 32 bytes, kept free between the literals and the bitstream it writes
+-([chapter 10](#ch-encoder)).
+-
+-::: measured 16 bytes, not 32
+-Copying 32 bytes of every match made the mean faster and the p99 slower, 3570 to 4150 ns: the slowest
+-pages have many short matches, and each paid for 32 bytes
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes)).
+-On the phone, fixed copies of 32 or 40 bytes made warm reads 0.1 µs slower on the big core and 0.5 to
+-0.8 µs on the little one
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#6-the-fast-paths-copies-as-they-are)).
+-The other way, copying byte by byte up to the end of the page, made the slowest pages 10 times
+-slower than lz4: with offset 1 every byte waited for the store before it
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026)).
+-:::
++The bytes past the real length are wrong, but the next sequence writes over them. This is called a
++**wild copy**. It needs room: the copy may write past the last byte the sequence needs, and read past
++the last literal. So the decoder takes its fast path only where the page, the literals and the input
++have room left, which it checks with one compare per buffer against limits computed once per page
++([chapter 14](#ch-decode--rooms)); near the end of the page the slow path copies less at a time. The
++encoder keeps room the same way between the literals and the bitstream it writes
++([chapter 10](#ch-encoder--layout)). Why the copy is 16 bytes and not 32, measured, is in
++[chapter 12](#ch-dec-basics--copies).
+ 
+ When the offset is below 16, the bytes a copy of 16 reads overlap the bytes it writes, and the copy
+ has to be careful:
+@@ -1018,21 +896,11 @@ that look odd until you know which one.
+ when `n` is 64 or more. The hardware does not agree on a result either. x86 uses only the low 5 bits of
+ the count for a 32-bit shift and the low 6 bits for a 64-bit one, so a shift by the width shifts by
+ 0 and returns `x`. 32-bit arm uses the low byte of the count, and a 32-bit value shifted by 32 is 0. Bit readers meet this whenever a field can have 0 bits: "the top `x` bits" is
+-`v >> (64 - x)`, a shift by 64 for `x = 0`. `seqlz_br_value()` reads the `x` extra bits of a length value,
+-and `x` is 0 for a value below 16, so it shifts twice:
+-
+-@listing src/seqlz_decompress.c 229-243
+-
+-The first line looks up the top 8 bits, `SEQLZ_MAX_BITS`, in the table of `ll` or `ml` values. Its
+-entry holds the code's length `n` in bits 0 to 3, the number of extra bits `x` in bits 4 to 7, and
+-the base value from bit 8 on, which `(e >> 8) & 0xffffU` takes out. In the sum,
+-`r->bits << n` drops the code of `n` bits, the `>> 1` clears the top bit, and the last shift, by `63U
+-- x`, is at most 63. `seqlz_br_drop()` then takes the code and the extra bits off the register, and the base plus the extra
+-bits is the value. [Chapter 12](#ch-dec-basics) explains the rest of the function. For the page of
+-`ab`, the `ML` code `111101` has `n = 6` and `x = 11`, and the expression is the 11 bits after the
+-code, 2011. For a value below 16, `x = 0`, the shift by 63 of a number whose top bit is clear gives
+-0, which is right. Written the obvious way, the same `x = 0` would shift by 64, and on x86-64 return
+-the whole register instead of 0.
++`v >> (64 - x)`, a shift by 64 for `x = 0`. `seqlz_br_value()` reads the `x` extra bits of a length
++value, and `x` is 0 for a value below 16. So it shifts twice: once by 1, which clears the top bit,
++and then by `63U - x`, at most 63. For `x = 0` that gives 0, which is right; the obvious single
++shift by 64 would return the whole register on x86-64.
++[Chapter 12](#ch-dec-basics--bit-reader) goes through the function.
+ 
+ The token table's entries use a mask instead. An entry holds the shift that cuts the offset out of
+ the bits, `64 - raw_bits`, but `& 63`: for class 0, without offset bits, that is 0 instead of 64, the
+@@ -1041,13 +909,10 @@ shift is harmless, and the decoder then takes the repeat offset because the fiel
+ reason.
+ 
+ **Counting the zeros of 0.** `__builtin_ctzll(x)`, the number of trailing zero bits, is undefined for
+-`x = 0`, and here the hardware differs again. gcc writes `rep bsf`, which runs as `tzcnt` on CPUs
+-that have it and returns 64, and as the older `bsf` on CPUs that do not, which Intel documents as
+-undefined for 0. arm64 has no such instruction; clang writes a bit reversal and a count of leading
+-zeros, which gives 64. `seqlz_match_len()` calls it only where the XOR is not 0, and makes that plain
+-with `x | 1ULL << 63`, one instruction, `bts` or `orr`: a number with bit 63 set is never 0, and for a
+-number that is not 0, the OR does not change the count. The literal streams never pass 0 either: their marker bit, the 1 below
+-the last real bit ([registers](#ch-cpu--registers)), is never shifted out.
++`x = 0`, and here the hardware differs again: Intel documents the older x86 instruction `bsf` as
++undefined for 0. `seqlz_match_len()` calls it only where its XOR is not 0, and makes that plain to the
++compiler ([chapter 9](#ch-matcher--match-len)). The literal streams never pass 0 either: their marker
++bit, the 1 below the last real bit ([registers](#ch-cpu--registers)), is never shifted out.
+ 
+ **A pointer outside its buffer.** In C, computing a pointer before the start of an array, or more
+ than one past its end, is undefined even if it is never used to load. `seqlz_decode()` needs the
+@@ -1061,7 +926,7 @@ written: for `off = 0`, `off - 1U` is `0xffffffff`, larger than any page. The sa
+ 
+ ## What the kernel's sanitizers add {#ch-cpu--ubsan}
+ 
+-The kernel can check for some undefined behaviour at run time. `CONFIG_UBSAN_SHIFT` checks every
++The kernel can check for some undefined behaviour at run time, with **UBSan**, the undefined behaviour sanitizer. `CONFIG_UBSAN_SHIFT` checks every
+ shift whose count the compiler cannot prove to be in range, and `CONFIG_UBSAN_BOUNDS` every array
+ index it cannot prove to be inside the array. Fedora's x86-64 kernel enables both, and the project
+ builds its benchmark copies of every codec with the same flags, `-fsanitize=shift` and
+diff --git a/docs/book/chapters/09-matcher.md b/docs/book/chapters/09-matcher.md
+index 43c4d3f..f77bc99 100644
+--- a/docs/book/chapters/09-matcher.md
++++ b/docs/book/chapters/09-matcher.md
+@@ -10,9 +10,10 @@ before the matcher looks at the next byte.
+ The file has three functions and a type. `seqlz_hash5()` turns 5 bytes into a slot of a hash table,
+ `seqlz_match_len()` counts how long a match is, and `seqlz_match_page()` is the loop over the page. The
+ loop is about 90 lines with its comments, and on its own it takes about as much time as all of `lz4`
+-takes to compress a page: 17 300 to 17 900 cycles per page against `lz4`'s 17 203, x86-64, when it was
+-last measured alone
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
++takes to compress a page: 17 300 to 17 900 cycles per page, x86-64, against 17 100 to 17 203 for all
++of `lz4` in the two rounds that measured it
++([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions),
++[third round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-third-round-ideas-from-the-literature)).
+ That is why most lines below have a measurement behind them, and why some of them look odd at first:
+ a value loaded one position early, two compares joined with `|` instead of `||`, a hash of 5 bytes
+ where every other codec in zram hashes 4.
+@@ -21,10 +22,8 @@ where every other codec in zram hashes 4.
+ 
+ @listing src/page_lz.h 1-11
+ 
+-Line 1 is the licence, in the form the kernel wants for a header: a `/* */` comment, where a `.c`
+-file has `//`. seqlz is `MIT OR GPL-2.0-only`: two licences to choose from, with the SPDX line in every
+-file, as `zstd` does it (the kernel's `zstd` is `GPL-2.0+ OR BSD-3-Clause`). Lines 2, 3 and 183 are the
+-include guard.
++Line 1 is the licence and lines 2, 3 and 183 are the include guard, as in every file of `src/`
++([chapter 5](#ch-compat--top); the kernel's `zstd` is `GPL-2.0+ OR BSD-3-Clause`).
+ 
+ The comment on lines 5 to 9 says why this is a header and not a `.c` file. Every function in it is
+ `static inline`: it has no symbol of its own, and each file that includes it gets a private copy that
+@@ -141,7 +140,7 @@ When it was introduced on 24th September 2026, the 5-byte hash took 5% fewer cyc
+ (20 425 against 21 440 per page, x86-64, userspace) and cost 0.6 points of memory (27.2% against
+ 26.6% of the page). In the kernel it took `seqlz-fast`'s write p99 from 11 650 to 10 480 ns, twice what
+ the cycles say: the slowest pages are the ones with many short matches, and the 5-byte hash finds fewer
+-of them ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
++of them ([explored-designs.md, "A hash of 5 bytes: C3 in the kernel"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
+ "A hash of 5 bytes: C3 in the kernel"). With today's tables and coded literals the 4-byte hash is
+ not even smaller: `seqlz-fast-lit` gets 18 to 35 bytes per page larger with it. Most likely a match of 4
+ bytes at a new offset takes more bits than the 4 coded literals it replaces, and the greedy matcher
+@@ -286,7 +285,7 @@ is what a hash chain does. `lz4`'s fast mode is greedy in the same way.
+ ::: why Lazy matching and hash chains: smaller pages, too slow
+ One step of lazy matching, taking the next position's candidate if it is longer by 2 bytes or more, took
+ 24 808 instead of 20 400 compress cycles per page, 21% more, and `seqlz-fast` stayed at 27.0% of the
+-page ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
++page ([explored-designs.md, "A hash of 5 bytes: C3 in the kernel"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
+ September 2026). Searching harder was built in full as levels 3 and 4: a hash chain, priced by the
+ tables' code lengths, with one or two lazy steps. Level 3 stored pages 2.7% to 4.3% smaller than level
+ 2 for 1.8 to 1.9 times the time to write, and was not kept: "Who values memory that much more than time
+@@ -297,8 +296,11 @@ uses zstd 3"
+ **Two candidates.** At each position there are two places where the next 4 bytes might have been
+ before. One is the **repeat offset**: the offset of the match before, which costs no lookup and which
+ the format sends in 0 bits (offset class 0). On memory pages it repeats often, e.g. in an array of
+-structs, where the same field comes back every 16 or 24 bytes; 18% to 25% of seqlz's matches use it
+-([docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#finding-the-matches)). The
++structs, where the same field comes back every 16 or 24 bytes; 18% to 25% of seqlz's matches use it on
++the desktop dumps of
++[docs/seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#finding-the-matches). The
++30.55% in [chapter 2](#ch-compression--entropy) is another count: of all sequences in the training
++counts, which include a phone dump. The
+ other is the last position whose 5 bytes had the same hash, from the table.
+ 
+ **Every position.** `lz4` and `lzo` skip ahead faster and faster when they find no match, which saves
+@@ -503,21 +505,11 @@ same".
+ Lines 143 to 148 are the miss: move to the next position, take over its 8 bytes and hash computed on
+ lines 125 and 126, and load its table entry and the 4 bytes at its candidate.
+ 
+-::: cpu An in-order core waits at every link of a chain
+-A big core such as the Cortex-A76 or a Ryzen is **out of order**: when an instruction waits for a load,
+-the core runs later instructions that do not depend on it. A small core such as the Cortex-A55, which
+-phones use for most of their background work, is **in order**: it starts instructions in program
+-order, at most two per cycle, and when one needs a value that is not there yet, everything behind it
+-waits too. A load from the L1 cache takes a few cycles, a 64-bit multiplication a few more.
+-
+ Without a match, one position of the matcher is one chain: load 8 bytes, multiply for the hash, load
+-the table entry at the hash, load 4 bytes at the entry, compare, branch. On the A55 every link waited for
+-the one before, at 0.91 instructions per cycle. Moving work of the next iteration into this one, so that
+-independent instructions sit between a load and its use, is called **software pipelining**. Here the
+-loop starts the next position's 8-byte load and multiplication first; they do not depend on the
+-compares, so an in-order core can issue them next to the compares, and the compares do not wait,
+-because their operands were loaded during the iteration before.
+-:::
++the table entry at the hash, load 4 bytes at the entry, compare, branch. On the Cortex-A55, an in-order
++core, every link waited for the one before, at 0.91 instructions per cycle; the loop below starts the
++next position's load and multiplication early, the software pipelining of
++[chapter 3](#ch-cpu--in-order).
+ 
+ The loop before commit `996248b` loaded and hashed at the top of each position and compared right away
+ (its comment left out):
+diff --git a/docs/book/chapters/10-encoder.md b/docs/book/chapters/10-encoder.md
+index 598eab2..d1efe78 100644
+--- a/docs/book/chapters/10-encoder.md
++++ b/docs/book/chapters/10-encoder.md
+@@ -19,7 +19,7 @@ code the literals with Huffman codes, which is [chapter 11](#ch-literals-enc).
+ 
+ @listing src/seqlz_compress.c 1-37
+ 
+-Line 1 is the licence line in the form the kernel wants for a `.c` file, with `//`. Line 6 includes
++Line 1 is the licence ([chapter 5](#ch-compat--top)). Line 6 includes
+ `seqlz_internal.h` ([chapter 7](#ch-internal)) for the layout of `struct seqlz_tables`, which the
+ encoder reads its codes from, and line 8 the matcher.
+ 
+@@ -104,8 +104,9 @@ The obvious alternatives cost something. Two passes, the matcher into an array a
+ were 6% slower ([chapter 9](#ch-matcher--emit)). Writing the bitstream into a second buffer needs more
+ work memory per CPU. Until 8th October 2026 the encoder wrote the bitstream forwards, starting behind
+ room for a page of literals, at `d + 2 + 4096`, and moved it down at the end; that needed a `dst` of two
+-pages and refused anything smaller. zram gives two pages, zswap gives one, and `lz4`, `lzo` and `zstd`
+-take any buffer and fail when the page does not fit (#122). The layout from both ends takes any `dst`,
++pages and refused anything smaller. zram gives two pages; zswap, the kernel's compressed cache in front
++of a swap device, gives one; and `lz4`, `lzo` and `zstd` take any buffer and fail when the page does not
++fit ([#122](https://github.com/martinus/quetschn/issues/122)). The layout from both ends takes any `dst`,
+ writes the same bytes, and made writes in the kernel VM 0.16 to 0.24 µs faster per page; on the Mi 9T
+ they stayed within 0.22 µs
+ ([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept),
+@@ -124,12 +125,8 @@ bytes are what one sequence can write beyond its literals, counted in bytes:
+   flushes write no lower than `p - 7 - 8 = p - 15`.
+ 
+ With `p - lit >= ll + 32`, the literals end at or below `p - 16`, and the bits start at or above `p - 15`:
+-they never meet. The comment on lines 53 and 54 counts more loosely, with a move of up to 8 bytes per
+-flush: the first flush writes the 8 bytes below `p` and moves `p` down by at most 8, the second writes
+-the 8 bytes below that, so the bits reach `p - 16` at most, and 16 bytes of copies plus 16 of bits are
+-the 32 of `ENC_ROOM`. Its words "move the bitstream down by at most 16 bytes, writing 8 bytes below
+-it" add up to 32 only with that count; read as 16 and then 8 more, they would make 24, and 40 in all. The exact
+-count, `p - 15`, leaves 1 byte spare. "It can happen up to `ENC_ROOM` bytes before dst is full" means that a page can fail
++they never meet. The comment on lines 53 and 54 counts more loosely than needed, 16 bytes of copies
++plus 16 of bits; the exact bound above, `p - 15`, leaves 1 byte spare. "It can happen up to `ENC_ROOM` bytes before dst is full" means that a page can fail
+ although its compressed form would have fit with up to 32 bytes to spare. Running the compressor on
+ about 22 500 made-up pages, each into the smallest `dst` it would take, that smallest `dst` was at most
+ 31 bytes larger than the compressed page; the page of pointers from chapter 9 compresses to 817 bytes
+@@ -201,17 +198,10 @@ The comment states the second; every call below keeps both.
+ **The masks.** `n & 63U` does nothing for any `n` the encoder uses, all of them below 64. It is there for
+ the kernel's sanitizer.
+ 
+-::: kernel UBSan and masked shifts
+-Shifting a 64-bit value by 64 or more is undefined in C. The kernel can be built with
+-`CONFIG_UBSAN_SHIFT` and `CONFIG_UBSAN_BOUNDS`, which many distributions enable: then the compiler adds a
+-compare and a branch before every shift and every array index it cannot prove in range, to report a bug
+-at run time. `n & 63U` is in range by construction, so the check disappears, at the cost of one AND that
+-the CPU does in a cycle (x86-64 masks shift counts in hardware anyway, so there the AND often vanishes
+-too). `seqlz_internal.h` gives the rule in its comment on lines 22 to 26 ([chapter 7](#ch-internal)).
+-In the second round of compressor work, arrays of a power of 2 entries with masked indices and masked
+-shifts gave 4.7% fewer instructions, 25 225 to 25 064 cycles per page
+-([explored-designs.md](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-compressor-second-round-fewer-instructions)).
+-:::
++A kernel built with `CONFIG_UBSAN_SHIFT` adds a check and a branch before every shift it cannot prove in
++range, and the mask lets the compiler drop it, for one AND that x86-64 often does not need, since it
++masks shift counts in hardware ([chapter 3](#ch-cpu--ubsan); `seqlz_internal.h` gives the rule on lines
++22 to 26, [chapter 7](#ch-internal)).
+ 
+ `enc_put_code()` appends a code and then extra bits, in one put. `entry` is an element of a
+ `value_table`'s `enc[]`, which holds the code in its low 16 bits and the code's length in bits 16 to 19;
+@@ -541,7 +531,8 @@ literal (line 307).
+ 31, so a length value follows, and `seqlz_len_symbol()` gives it 31 extra bits. That breaks the bit
+ budget of the accumulator and the 31 bits per 4 bytes of the room proof. Before commit `256768e` the
+ encoder checked only that the literals were there, and 1025 such sequences wrote past the two pages of
+-`dst`; AddressSanitizer reported it in `enc_flush()` (#121). None of the fuzzers had found it, because each
++`dst`; AddressSanitizer, which checks every memory access at run time, reported it in `enc_flush()`
++([#121](https://github.com/martinus/quetschn/issues/121)). None of the fuzzers ([chapter 15](#ch-zram-glue--tests)) had found it, because each
+ reached `seqlz_encode()` with valid sequences only. `fuzz/seqlz_encode_fuzz.c` gives it raw sequences now,
+ and failed within seconds against the old encoder. `seqlz_compress()` was never affected: its matcher
+ makes only valid sequences.
+@@ -584,9 +575,8 @@ sequences, and the round trip fuzzer checks that for `seqlz_find()`'s sequences
+ 
+ The kernel's copy keeps only `compress_page()` and `seqlz_compress()`, the latter renamed to
+ `seqlz_compress_page()`, because the kernel's interface function, which takes the level and the work
+-memory, is called `seqlz_compress()`. It also drops the `!t->all_symbols` test from line 612: `tools/kernel-port/gen-seqlz-tables.py`
+-checks the code lengths when it writes the kernel's tables, so tables built from them always have a
+-code for every symbol (commit `4c42cc5`).
++memory, is called `seqlz_compress()`. It also drops the `!t->all_symbols` test from line 612, since the kernel's tables always have a code for
++every symbol ([chapter 15](#ch-zram-glue--init)).
+ 
+ ## The page of ab, bit by bit {#ch-encoder--example}
+ 
+diff --git a/docs/book/chapters/12-dec-basics.md b/docs/book/chapters/12-dec-basics.md
+index 0d3d0cb..7f28e49 100644
+--- a/docs/book/chapters/12-dec-basics.md
++++ b/docs/book/chapters/12-dec-basics.md
+@@ -20,11 +20,7 @@ tests and the fuzzers reach them only through `seqlz_decode()`.
+ 
+ @listing src/seqlz_decompress.c 1-5
+ 
+-Line 1 is the licence, as an SPDX tag, the form the kernel wants in the first line of every file. `MIT
+-OR GPL-2.0-only` is a dual licence, as zstd has one: the GPL half for the kernel, the MIT half so that
+-userspace and other kernels can use the code too
+-([plan.md, "Project constraints"](https://github.com/martinus/quetschn/blob/main/docs/plan.md#project-constraints)).
+-The comment names the one function that the rest of
++Line 1 is the licence, as in every file ([chapter 5](#ch-compat--top)). The comment names the one function that the rest of
+ the kernel can call; everything else in the file is `static`. `seqlz_internal.h` brings in `seqlz.h`,
+ which brings in `seqlz_compat.h`: the format's constants ([chapter 6](#ch-header)), the layout of the
+ tables and the token table's entries ([chapter 7](#ch-internal)), and the kernel's names for types and
+@@ -37,19 +33,9 @@ comes, the decoder's tables may no longer be in the CPU's caches: the token tabl
+ whatever ran in between used the cache for its own data. Then every first lookup into a line of the
+ table is a cache miss, and the decoder waits for memory.
+ 
+-::: cpu Cache lines, misses and prefetches
+-Memory moves between RAM and the CPU's caches in **cache lines** of 64 bytes. A load from a line that
+-is in no cache is a **miss** and takes about 100 ns, a few hundred cycles; a load from L1 takes about 1
+-ns. A **prefetch** is an instruction that asks for a line without waiting for it: the program goes on,
+-and the line arrives in the background. It never faults, also for a bad address, and it changes no
+-result, only the time.
+-
+-An out-of-order core, such as a PC's or a phone's big Cortex-A76, keeps working past a load that missed
+-and can have several misses in flight at once. An **in-order** core, such as the phone's little
+-Cortex-A55, stops at the first instruction that needs the missing data. It takes its misses one after
+-the other, at about 100 ns each. Prefetches issued back to back turn that row of misses into one
+-wait for all of them. [Chapter 3](#ch-cpu) has more.
+-:::
++A miss costs about 100 ns. A **prefetch** asks for a line without waiting for it, and never faults, so
++an in-order core such as the phone's Cortex-A55 can wait for many misses at once instead of one after
++the other ([chapter 3](#ch-cpu--prefetch)).
+ 
+ @listing src/seqlz_decompress.c 7-26
+ 
+@@ -98,9 +84,8 @@ prefetch, the Cortex-A55 read cold pages 14.5 µs slower on average and 30 µs s
+ lines of the two length tables were worth 2.8 µs to it. The A76 was 1.2 µs faster without any
+ prefetch in that run
+ ([explored-designs.md, "Six choices made on the PC", item 4](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#4-prefetching-the-tables-the-a55-needs-it-the-a76-is-faster-without)).
+-For a while the decoder therefore prefetched the token table only on in-order cores, which it found
+-by asking the CPU for its model number. The kernel's `lib/` does not do that anywhere, so on 10th
+-October 2026 every core got the prefetch, and on the A76 the cost did not show again: cold reads in
++Since 10th October 2026 every core gets the prefetch, as there is one decode loop for all cores
++([chapter 17](#ch-decisions--decoder), "One loop for all cores"), and on the A76 the cost did not show again: cold reads in
+ 7.44 and 7.65 µs with it, 8.07 and 7.60 µs without, in two runs
+ ([explored-designs.md, "The kernel copy's choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
+ :::
+@@ -152,12 +137,8 @@ undefined behaviour: `*(const u64 *)s` would be undefined when `s` is not a mult
+ `d` and `s` here are anywhere in the page. The compiler knows what `__builtin_memcpy()` of 8 bytes means
+ and writes one 8-byte load and one 8-byte store on x86-64 and arm64, which both load from any address.
+ 
+-Why the builtin and not `memcpy()`: the kernel can be built with `CONFIG_FORTIFY_SOURCE`, which turns
+-`memcpy()` into a function that checks its sizes, and not every compiler inlines that. The Mi 9T's 4.14
+-kernel has it, and a module built with its clang had 63 calls to `memcpy()`, one for every copy of 8 or 16
+-bytes in the codec (commit `48a7043`). `lib/lz4` and `lib/zstd` use `__builtin_memcpy()` for the same
+-reason, in `LZ4_memcpy()` and `ZSTD_memcpy()`. The comment on line 37 says the same, with "see seqlz.h",
+-where the top of the file lists all builtins the codec uses.
++The builtin and not `memcpy()`, because `CONFIG_FORTIFY_SOURCE` can turn `memcpy()` into a call
++([chapter 6](#ch-header--summary)); the comment on line 37 says so, with "see seqlz.h".
+ 
+ `__always_inline` is the kernel's spelling of `inline __attribute__((__always_inline__))`. Plain `inline`
+ is a hint the compiler may ignore; this one it may not. A copy of 8 bytes that becomes a call costs more
+@@ -189,7 +170,7 @@ bytes of one store, not parts of two. With offsets from 9 to 15, the second `cop
+ which some come from the store just before and some from older memory, and then the load waits until
+ the store reached the cache. `ls_bad_status2.stli_other`, a counter of the Ryzen 9 7950X, counted 359
+ such loads per page for `seqlz-fast`'s decoder and 363 for `lz4`'s in September 2026
+-([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
++([explored-designs.md, "A fast path in seqlz's decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+ That is the price of correct overlapping copies. Offsets below 8 cannot use `copy8()` at all, and the
+ copy they get below stores one register again and again, with no load after the first.
+ :::
+diff --git a/docs/book/chapters/14-decode.md b/docs/book/chapters/14-decode.md
+index 6bedbe6..4d2465c 100644
+--- a/docs/book/chapters/14-decode.md
++++ b/docs/book/chapters/14-decode.md
+@@ -186,15 +186,14 @@ above, so `count` cannot have gone negative, and `v >> count` is a defined shift
+ once: branch misses per page went from 130 to 101, cycles from about 6960 to about 6700. Refilling on
+ every fast sequence instead took out the branch too, but its loads cost 500 cycles more on a page the
+ predictor knows, and was not kept. In the kernel VM, `MODE=swap`, CPU 2 of the Ryzen 9 7950X at 4.5 GHz,
+-3 boots each: `zcomp_decompress()` of `seqlz-fast-lit` took 1935 to 1941 ns instead of 2010 to 2011 with
+-gcc, 1976 to 1983 instead of 2020 to 2040 with clang 22.1.8. On the Mi 9T the big Cortex-A76 decoded a
++3 boots each, the two kernels in turns: `zcomp_decompress()` of `seqlz-fast-lit` took 1935 to 1941 ns
++instead of 2010 to 2011 with gcc (a second series of 3 boots, with the code as kept, gave 1936 to 1942
++against 1995 to 2008), 1976 to 1983 instead of 2020 to 2040 with clang 22.1.8. On the Mi 9T the big Cortex-A76 decoded a
+ page seen once 3241 to 3272 ns instead of 3309 to 3340, and the little Cortex-A55 got slower, so at
+ first it kept a loop of its own
+ ([explored-designs.md, "The refill without its branch"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
+-That second loop needed a list of in-order cores by their model numbers in the kernel's `lib/`, which
+-nothing else there has. Since 10th October 2026 every core runs this one loop; it costs the A55 at most
+-about 0.3 µs per warm read, 3%
+-([explored-designs.md, "The kernel copy's choices"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16)).
++Since 10th October 2026 every core runs this one loop
++([chapter 17](#ch-decisions--decoder), "One loop for all cores").
+ :::
+ 
+ ## The fast path's three rooms {#ch-decode--rooms}
+@@ -208,7 +207,7 @@ these three constants say how much.
+   moves `d` on by at most 14 literals, then writes at most 40 bytes of match: at most 54 bytes from where
+   it started. 64 is the round number above 54. The fast path of September 2026, which copied 16 or 32
+   bytes of match, already needed 64 bytes
+-  ([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
++  ([explored-designs.md, "A fast path in seqlz's decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+ - **`FAST_LIT_ROOM`, 16 bytes of literals.** One `copy16()` reads 16 bytes at `lit`.
+ - **`FAST_IN_ROOM`, 8 bytes of input.** The refill in `next_token_fast()` loads 8 bytes at `br.p`.
+ 
+@@ -449,7 +448,7 @@ The first fast path, in September 2026, needed a check of `nl` that no test cove
+ runs past the literals, and the slow path then computed `lit_end - lit` as a negative number, cast to
+ unsigned, so every `nl` passed, and `copy_literals()` read behind the input. A test builds such a page
+ since then
+-([explored-designs.md, "zram: prefetch the compressed data"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
++([explored-designs.md, "A fast path in seqlz's decoder"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+ When the check was taken out of the fast path on purpose, on 3rd October 2026, the `lit > lit_end` on
+ the slow path came with it; without that, AddressSanitizer reported a heap overflow in the existing test
+ ([explored-designs.md, "seqlz's decoder for an in-order core"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlzs-decoder-for-an-in-order-core-15-fewer-instructions-07-to-08-µs-less-at-cold-p99-on-the-a55-kept)).
+@@ -521,11 +520,9 @@ last `count` bits of the last byte of the input, `br.end[-1]`. `(1U << count) -
+ a shift by `64 - count`, which would be 64 for `count = 0`; the `count > 0 &&` skips the read when no bits
+ are left. And `br.end[-1]` is in the input: with `count > 0` some byte was read.
+ 
+-Why so strict: zram stores no checksum with a page. A damaged page that still decodes gives the process
+-that swaps it in wrong memory without any error. The strict end is what catches damage that hits the
+-bytes after the last code, and `lz4` also rejects input it did not use. It was added on 8th October 2026;
+-in the kernel VM the swap-ins took the same time within 0.01 µs, and on the Mi 9T's A55 a warm read took
+-0.07 to 0.10 µs more, for these checks and those at the end of each literal stream
++Why so strict: zram stores no checksum with a page ([chapter 4](#ch-format--end)), and `lz4` also
++rejects input it did not use. The check came on 8th October 2026; in the kernel VM the swap-ins took the
++same time within 0.01 µs, and on the Mi 9T's A55 a warm read took 0.07 to 0.10 µs more, for these checks and those at the end of each literal stream
+ ([explored-designs.md, "A page ends where its bits end"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#a-page-ends-where-its-bits-end-no-damaged-page-with-bytes-or-bits-too-many-decodes-01-µs-on-the-a55-kept)).
+ The compressor always wrote pages that pass: it fills the last byte with zero bits.
+ 
+@@ -581,29 +578,20 @@ input that is not valid, which ends earlier with `-EINVAL`. Each round does a bo
+ plus copies that are bounded by the bytes they write, and `decode_literals()` is bounded by the 4096
+ literals a page can have. The slowest valid page found for the decoder is made up: a match of 4 bytes at
+ an offset below 8 in every sequence, every token escaped, 1022 sequences. It takes 107 099 instructions
+-on arm64 and 71 468 cycles on the Mi 9T's A55, about 40 µs at 1.8 GHz. Against the p99 of real pages,
+-the costliest pages found decode in 1.59 times that p99 with `seqlz-fast-lit`; the same search found 2.58
+-times for `lz4`
++on arm64 and 71 468 cycles on the Mi 9T's A55, about 40 µs at 1.8 GHz. Counted in instructions, the
++costliest pages found decode in 1.59 times the p99 of real pages with `seqlz-fast-lit`; the same search
++found 2.58 times for `lz4`. In time on the A55 the slowest took 1.33 times the p99, the figure
++[chapter 1](#ch-zram) quotes
+ ([explored-designs.md, "The worst case"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4)).
+ 
+-**How it is checked.** An argument like the one above is easy to get wrong, so the repository tests it
+-by running the decoder on input nobody wrote:
+-
+-- `fuzz/seqlz_decode_fuzz.c` gives `seqlz_decode()` any input up to 2 pages, with and without a scratch.
+-  The input, the page and the scratch each get an allocation of exactly their size, so that
+-  AddressSanitizer reports a read or write of one byte too far. A page that decodes without the scratch
+-  must decode to the same bytes with one.
+-- `fuzz/seqlz_diff_fuzz.c` gives the same input to `seqlz_decode()` and to `tools/seqlz-ref/seqlz_ref.c`,
+-  a second decoder written from `docs/format.md` alone, slow on purpose. Both must call the same inputs
+-  valid and decode them to the same page. A difference is a bug in one of them, or a sentence of the
+-  format that is not clear. `tools/seqlz-ref/seqlz_ref.py` is a third one, in Python, which checks the
+-  table hashes and the example.
+-- CI runs every target for 60 s with AddressSanitizer and UndefinedBehaviorSanitizer, and with
+-  MemorySanitizer, which finds reads of bytes nobody wrote. ClusterFuzzLite runs them for an hour each
+-  day.
+-- Before the format was declared ready, AFL++ ran 12 instances for 2 hours on 9th October 2026: 1.42
+-  billion inputs on the decoder, 1.94 billion on the decoder against the reference, nothing found
+-  ([plan.md, Phase 4](https://github.com/martinus/quetschn/blob/main/docs/plan.md#phase-4-reference-implementation-format-spec-fuzzing-20-weeks)).
++**How it is checked.** An argument like the one above is easy to get wrong, so the repository also runs
++the decoder on input nobody wrote: fuzzers, programs that generate millions of inputs and keep those that
++reach new code, under AddressSanitizer, UndefinedBehaviorSanitizer and MemorySanitizer in CI and with
++ClusterFuzzLite every day, and a target that compares it with a second decoder written from
++`docs/format.md` alone; [chapter 15](#ch-zram-glue--tests) has the targets and the tools. Before the
++format was declared ready, the fuzzer AFL++ ran 12 instances for 2 hours on 9th October 2026: 1.42
++billion inputs on the decoder, 1.94 billion on the decoder against the reference, nothing found
++([plan.md, Phase 4](https://github.com/martinus/quetschn/blob/main/docs/plan.md#phase-4-reference-implementation-format-spec-fuzzing-20-weeks)).
+ 
+ ## The example page, sequence by sequence {#ch-decode--example}
+ 
+diff --git a/docs/book/chapters/15-zram-glue.md b/docs/book/chapters/15-zram-glue.md
+index fc7b036..28c33f5 100644
+--- a/docs/book/chapters/15-zram-glue.md
++++ b/docs/book/chapters/15-zram-glue.md
+@@ -441,7 +441,7 @@ FORBIDDEN = re.compile(r"docs/|explored|quetschn|QUETSCHN|tools/|bench/|CMake|\.
+ `HARNESS_ONLY` catches a harness function that is still named somewhere, e.g. in a comment.
+ `CPU_MODEL` applies to `lib/` only: nothing in the library may depend on which CPU model it runs on.
+ The decoder once had two loops, one for in-order cores chosen by the arm64 MIDR register, and the
+-review of the kernel copy (#152) replaced them with one loop for all cores; this check keeps it that
++review of the kernel copy ([#152](https://github.com/martinus/quetschn/issues/152)) replaced them with one loop for all cores; this check keeps it that
+ way. `FORBIDDEN` catches references a kernel reader cannot follow: the repository's documents and
+ tools, issue numbers like `#152`, the names `seqlz-fast` and `quetschn`, and reasons that only hold
+ for the project's machines, such as the Mi 9T's 4.14 kernel. The one URL allowed is the project's
+@@ -810,7 +810,7 @@ resident for good whether the phone swaps or not.
+ 
+ ::: why The union is safe because of zram's mutex
+ Compression and decompression share the bytes. That is safe for two reasons, both from the commit that
+-made the change, `6063362` (#154). zram holds the stream's mutex for either operation, so they never
++made the change, `6063362` ([#154](https://github.com/martinus/quetschn/issues/154)). zram holds the stream's mutex for either operation, so they never
+ run at the same time on one context. And neither keeps anything in the memory from one page to the
+ next: the matcher clears its table at the start of every page, and the decoder writes its scratch
+ before it reads it. The `BUILD_BUG_ON` keeps the union within `KMALLOC_MAX_CACHE_SIZE`: whoever turns
+@@ -1071,7 +1071,7 @@ AFL++, which can run the same entry point):
+   The page must come back, fit into 2 pages, and be the same bytes as `seqlz_encode()` writes for
+   `seqlz_find()`'s sequences.
+ - `seqlz_encode_fuzz.c`: any list of sequences through `seqlz_encode()`, also lists that do not make a
+-  page. It was added after an encoder overflow (#121) that none of the other targets reached, because
++  page. It was added after an encoder overflow ([#121](https://github.com/martinus/quetschn/issues/121)) that none of the other targets reached, because
+   they only give the encoder the matcher's sequences, which are always valid.
+ - `seqlz_diff_fuzz.c`: the decoder against a second decoder.
+ 
+diff --git a/docs/book/chapters/17-decisions.md b/docs/book/chapters/17-decisions.md
+index 0df4743..372696a 100644
+--- a/docs/book/chapters/17-decisions.md
++++ b/docs/book/chapters/17-decisions.md
+@@ -128,13 +128,13 @@ the pages.
+ <figcaption>Stored bytes per page against time per page written (write + 0.34 × cold read), kernel VM, both desktop dumps; the dashed line joins the codecs on the hull. Lower left is better.</figcaption>
+ </figure>
+ 
+-On the first dump `seqlz-fast-lit` saves 247 bytes per µs more than `lzo-rle`, and `zstd` 3 saves only 3
++In the boot of this chart, on the first dump `seqlz-fast-lit` saves 247 bytes per µs more than `lzo-rle`, and `zstd` 3 saves only 3
+ bytes per µs more than `seqlz-fast-lit`; on the second dump 238 and 16. The chart leaves out
+ `seqlz-fast`, which was measured in the same boot: with it on the hull, `seqlz-fast-lit` has the lowest
+ score from 3 to 153 bytes per µs on the first dump and from 16 to 190 on the second. Below that range
+ `zstd` is the better choice, above it `seqlz-fast`
+ ([The numbers again](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-numbers-again-with-the-format-as-it-is-now-reads-03-µs-faster-than-on-29th-september)).
+-These numbers have the tables of #69, before they were trained again on 7th October 2026.
++These numbers come from one boot of the read benchmark, with the tables from before 7th October 2026.
+ 
+ The read benchmark of that chart decodes every page several times, which trains the branch predictor on
+ the page and flatters seqlz. With the times of a real swap-out and swap-in, each page compressed and
+@@ -234,7 +234,7 @@ column, with the entry that has the numbers.
+ 
+ | decision | instead of | gain | price | entry |
+ | --- | --- | --- | --- | --- |
+-| `ll`, `ml − 4` and the offset class in one token | a symbol each | 22% fewer decode cycles for the lengths, 7% more for the offset class | | [seqlz](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables) |
++| `ll`, `ml − 4` and the offset class in one token | a symbol each | 22% fewer decode cycles for the lengths, 7% fewer for the offset class | | [seqlz](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-lz4s-matches-huffman-coded-sequences-with-static-tables) |
+ | 4 bits of `ll`, 5 of `ml` in the token | 4 and 4 | a length value after 8.5% of the matches instead of 18.7%, 9180 instead of 9400 decode cycles | a larger token alphabet | [second round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#second-round-branches-tails-and-table-sizes) |
+ | one repeat offset | three, as `zstd` | 17% fewer decode cycles, 89 instead of 124 mispredictions per page | 26.6% instead of 26.4% | [third decoder round](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-third-decoder-round-one-repeat-offset-offset-class-in-the-token-and-why-cold-is-slow) |
+ | two classes for multiples of 8 | plain offsets only | 24 and 1.9 bytes per page in the kernel | 0.20 µs per page written, over both dumps | [by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8) |
+@@ -271,7 +271,8 @@ are multiples of 8 sent divided by 8, in 5 and 9 bits. The last two are the newe
+ what memory pages hold: arrays of 8-byte values. Of the offsets from 16 to 255 that are not the repeat
+ offset, 72% and 56% are multiples of 8; from 256 on, 62% and 41%. The low 3 bits of an offset carry 1.8
+ and 2.4 bits of information, not 3. In the kernel the two classes saved 24 and 1.9 bytes per page, for 0.20 µs more per page
+-written over both dumps: 65 bytes per µs, against 10 for the step from `seqlz-fast-lit` to `zstd` 3
++written over both dumps: 65 bytes per µs, against 10 for the step from `seqlz-fast-lit` to `zstd` 3 in
++the same run
+ ([seqlz-fast-lit by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8)). The
+ decoder still does one table lookup per sequence, and one more shift. The price is in the format: the
+ token alphabet grew from 2048 to 3072, so the escape needs 12 bits.
+@@ -286,7 +287,7 @@ that size
+ Class 1 for offsets 1 to 7 only, so that a short offset is known before its bits are read, was larger,
+ 27.1% instead of 27.0%, and took 7625 instead of 6883 decode cycles per page; the cold p50 was faster,
+ 1410 against 1470 ns, the cold p99 slower, 3280 against 3040 ns
+-([zram: prefetch the compressed data](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
++([prefetch section, "The harness now times each page after other pages"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)).
+ 
+ ### One repeat offset, not three
+ 
+@@ -312,7 +313,7 @@ same token bits as halving the counts
+ 2048 codes are fewer than 3072 tokens. Only 576 tokens have a code of their own; the others share one
+ code, the escape, followed by the token in 12 plain bits, 16 bits for a rare token. On the phone 10 bits
+ were measured again: cold reads 2.0 and 2.3 µs faster on the A76 and 2.4 and 2.3 on the A55, for 4.8
+-bytes per page
++bytes per page on these pages and 2 to 6 bytes on the four dumps
+ ([Six choices made on the PC, item 1](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#1-the-token-table-in-10-bits-cold-reads-2-to-3-µs-faster-on-both-cores-for-3-to-6-bytes)).
+ With the bit order below, and the token table then prefetched on in-order cores only, 10 bits gave the
+ A76 nothing and the A55 2 to 2.6 µs of cold reads for the same 4.8 bytes
+@@ -329,7 +330,7 @@ the table's 128 cache lines, counted on 20 000 pages
+ The bytes of every page are the same. On the PC it cost nothing, 7370 against 7410 decode cycles per
+ page. On the A76, with the token table not prefetched there as it was then, it made a faster cold read
+ hold from one build of the module to the next, where the spread layout depended on where the module's
+-tables landed. Since #152 every core prefetches the token table.
++tables landed. Since [#152](https://github.com/martinus/quetschn/issues/152) every core prefetches the token table.
+ 
+ ### Complete codes only
+ 
+@@ -516,7 +517,7 @@ of the matcher's branches, which had predicted them
+ Searching harder was measured many times and always cost more than it saved
+ ([chapter 9](#ch-matcher) has the code that stayed). One step of lazy matching: 24 808 instead of
+ 20 400 compress cycles, 21% more, for no smaller pages at the time
+-([zram: prefetch the compressed data](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)). A
++([prefetch section, "A hash of 5 bytes"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)). A
+ hash chain with one lazy step: 24.0% and 31.0% instead of 24.6% and 31.8%, for 39 500 cycles and 2.3
+ times the mispredictions
+ ([seqlz-fast-lit: one of 8 literal tables per page](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page)).
+@@ -536,12 +537,12 @@ A hash of 5 bytes finds fewer short matches at new offsets than one of 4. At fir
+ loss: 2.6% faster for 0.5 points more memory, and it was dropped. Measured again it was worth more:
+ 20 425 instead of 21 440 compress cycles in userspace, for 0.6 points, and in the kernel
+ `seqlz-fast`'s write p99 went from 11 650 to 10 480 ns, 10%, twice what the cycles say, because the slowest pages to write are the ones with many
+-short matches ([zram: prefetch the compressed data](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
++short matches ([prefetch section, "A hash of 5 bytes"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression),
+ section "A hash of 5 bytes"). With coded literals the 4-byte hash is also larger, by 18 to 35 bytes per
+ page with the tables of then: a match of 4 bytes at a new offset costs more bits than the 4 coded literals
+ it replaces, and the greedy matcher then skips the longer match behind it
+ ([Six choices, item 5](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#5-the-matchers-hash-5-bytes-into-4096-slots-stays)). A hash of 6 bytes made
+-pages 27.9% instead of 27.0% ([zram: prefetch the compressed data](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)). Matches of 4 bytes still come from the repeat offset.
++pages 27.9% instead of 27.0% ([prefetch section, "A hash of 5 bytes"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression)). Matches of 4 bytes still come from the repeat offset.
+ 
+ The table has 4096 slots of 2 bytes, 8 KiB. 2048 slots: 939.6 instead of 936.9 bytes per page on the
+ phone, no faster. 8192 slots: 937.1 bytes, 1.6 µs slower per write on the A55, and 16 KiB per CPU, right
+@@ -554,7 +555,7 @@ Checking the repeat offset first, at every position, was worth 0.5 points when `
+ matcher. Offline on phone pages, checking it only up to 16 positions after a match cost 0.3%, and not
+ checking it at all 3.7%
+ ([Ratio from the parse and the tables on phone pages](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#ratio-from-the-parse-and-the-tables-on-phone-pages-measured-offline-not-built)).
+-It costs no table lookup, and 18% to 25% of the matches have it.
++It costs no table lookup, and 18% to 25% of the matches have it on the desktop dumps of `docs/seqlz.md`.
+ 
+ ### No step, and a cleared table
+ 
+@@ -659,7 +660,7 @@ seen
+ A refill leaves at least 56 bits, and two fast sequences take at most 2 × (11 + 14) = 50. So a fast
+ sequence now refills every second time without asking, and a branch that alternates is one any predictor
+ gets right. In a swap-in on x86-64 that took `zcomp_decompress()` from 1995 to 2008 ns down to 1936 to
+-1942 ns; on the A76 a page seen once decoded about 70 ns faster. Refilling on every fast sequence took
++1942 ns, in the 3 boots measured with the code as kept; on the A76 a page seen once decoded about 70 ns faster. Refilling on every fast sequence took
+ out as many misses, but its loads ate the gain, and it cost 500 cycles more on a page the predictor
+ knows
+ ([The refill without its branch](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept)).
+@@ -672,8 +673,8 @@ four ways around it were all slower
+ The refill without its check made the in-order A55 slower, because it waits for every load and pays less
+ for a miss. For a while the decoder had two loops: an arm64 kernel read the core's id from the MIDR
+ register and ran the old loop on Cortex-A53, A55, A510, A520 and Qualcomm's small Kryo cores, and on
+-arm64 only those prefetched the token table; other architectures always did. The review of the kernel copy (#152) removed it: nothing else in
+-`lib/` depends on the CPU model, and, as issue #152 says, the list needs an entry for every new little
++arm64 only those prefetched the token table; other architectures always did. The review of the kernel copy ([#152](https://github.com/martinus/quetschn/issues/152)) removed it: nothing else in
++`lib/` depends on the CPU model, and, as the issue says, the list needs an entry for every new little
+ core. Measured, one
+ out-of-order loop costs the A55 at most about 0.3 µs per warm read, 3%, and nothing that shows on the
+ A76; the token prefetch that had cost the A76 1.3 to 2.6 µs of cold reads did not show again on 10th
+@@ -738,8 +739,8 @@ A55, still below the slowest compression.
+ The limit is `lz4`'s work memory, 16 416 bytes per CPU. It was 4 KiB at first, and moved to `lz4`'s
+ 16 KiB on 23rd September 2026: 8 points less memory on the compressed pages are worth far more than a few
+ KiB per CPU, and a budget of 4 KiB costs the matcher speed or ratio
+-([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)). On a phone with 16 cores every 4
+-KiB below `lz4` is 64 KiB, resident for good.
++([plan.md §3.3](https://github.com/martinus/quetschn/blob/main/docs/plan.md#33-per-cpu-workspace-is-real-memory-on-a-phone)). On a phone with 8 cores, as the Mi 9T,
++every 4 KiB below `lz4` is 32 KiB, resident for good.
+ 
+ What counts is what `kmalloc()` and `vmalloc()` hand out, not what is asked for. `lz4` asks `vmalloc()`
+ for 16 416 bytes and gets 5 pages, 20 480 bytes. seqlz needs the 8192 bytes of the hash table to compress
+@@ -799,7 +800,7 @@ memory per CPU.
+ The largest difference to `zstd` is that `zstd` codes a page's literals with a table built for that
+ page. It was built three times. With `seqlz-opt`, cold p99 went from 4809 to 5849 ns and the scratch grew
+ by 3.3 KB ([seqlz-opt with a literal table per page](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-opt-with-a-literal-table-per-page-less-memory-than-zstd-slower-reads-not-kept)).
+-In `seqlz-fast-lit` (#43, #44) writes were 13% and 15% slower for 0.3% and 4.6% less memory, and with 4
++In `seqlz-fast-lit` ([#43](https://github.com/martinus/quetschn/issues/43), [#44](https://github.com/martinus/quetschn/issues/44)) writes were 13% and 15% slower for 0.3% and 4.6% less memory, and with 4
+ token tables per page as well 43% slower for 2.6% and 6.6%
+ ([Per page: its own literal table and one of 4 token tables](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#per-page-its-own-literal-table-and-one-of-4-token-tables-measured-not-kept)).
+ At level 3 it gave 2.5% to 3.4% in the VM, but "a second way to code the literals: a table description
+@@ -864,9 +865,9 @@ whole page.
+ | Tunstall codes | 7.1 to 9.3 bits per byte, the entropy is 6.1 to 6.7 | dropped without building | [one of 8 tables](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page) |
+ | a literal XOR the byte at the repeat offset, as LZMA | 0.1 and 0.25 points | read p99 700 to 1000 ns slower, write p99 1.3 µs | [one of 8 tables](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-one-of-8-literal-tables-per-page) |
+ | a literal's table by its context, as Brotli | 5 to 18 bytes per page | 64 KiB of tables | [by the score](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-lit-by-the-score-no-budget-offsets-in-steps-of-8) |
+-| two literals per lookup | 12% faster with the data in the cache | slower cold | [prefetch](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression) |
++| two literals per lookup | 12% faster with the data in the cache | slower cold | [prefetch section, "Where `seqlz-fast`'s decoder still spends"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression) |
+ | the literal coder in AVX2 | 2.53 instead of 3.09 ticks per literal | the kernel would need `kernel_fpu_begin()`, and arm64 a NEON version | [#29 and #31](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#the-ideas-of-29-and-31-measured) |
+-| offsets as whole bytes in a stream of their own | | 28.1% instead of 27.0%, no faster in the kernel | [prefetch](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression) |
++| offsets as whole bytes in a stream of their own | | 28.1% instead of 27.0%, no faster in the kernel | [prefetch section, "Where `seqlz-fast`'s decoder still spends"](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#zram-prefetch-the-compressed-data-before-decompression) |
+ | two sequence streams for the in-order A55 | | slower everywhere, 2.4 bytes per page more | [seqlz-fast on the phone](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#seqlz-fast-on-the-phone-time-goes-per-sequence-and-code-layout-moves-reads-by-130-ns) |
+ 
+ FSST is the one with the clearest lesson: "what is left of a page after the matcher has no multi-byte
+@@ -890,14 +891,14 @@ first dump.
+ As Σ zsmalloc cost on four whole dumps, desktop 1, desktop 2, phone 1 and phone 2
+ ([Levels 3 and 4](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#levels-3-and-4-a-hash-chain-priced-by-the-tables-as-small-as-zstd-3-on-two-of-four-dumps-and-faster-to-write-and-read-not-kept)):
+ 
+-| codec | desktop 1 | desktop 2 | phone 1 | phone 2 |
++| codec | desktop, 23rd Sep | desktop, 28th Sep | phone 1 | phone 2 |
+ | --- | --- | --- | --- | --- |
+ | `lz4` | 34.5% | 39.6% | 25.8% | 30.5% |
+ | `seqlz-fast-lit` | 24.4% | 30.3% | 17.2% | 21.9% |
+ | `zstd` 3 | 23.6% | 27.3% | 16.8% | 20.9% |
+ 
+-In this table desktop 1 is the dump of 23rd September and desktop 2 the one of 28th September 2026.
+-Elsewhere in this chapter the second desktop dump is the one of 24th September.
++The desktop columns are the dumps of 23rd and 28th September 2026. Elsewhere in this chapter the
++second desktop dump is the one of 24th September.
+ 
+ Three things make the difference, each measured
+ ([seqlz.md](https://github.com/martinus/quetschn/blob/main/docs/seqlz.md#why-zstd-still-stores-pages-smaller)):
+@@ -964,6 +965,6 @@ The design rests on measurements of few machines, and seqlz.md says so
+   ([lz4 in hardware, a what-if](https://github.com/martinus/quetschn/blob/main/docs/explored-designs.md#lz4-in-hardware-a-what-if-seqlz-fast-lit-stays-on-the-hull-up-to-73-and-72-bytes-per-µs-instead-of-155-and-211)).
+ 
+ The merge argument the project ends up with is not the one it started with. The plan hoped for a decoder
+-faster than `lz4`'s at p99. In a real swap-in it is 17% to 25% slower cold. What it has is memory: about 28%
++faster than `lz4`'s at p99. In a real swap-in it is 17% to 25% slower cold on the Mi 9T, and about 20% on the PC. What it has is memory: about 28%
+ less than `lz4` for a small cost in time, measured in the kernel, with a decoder that is fuzzed, bounded
+ and specified in a document two independent decoders were written from.
