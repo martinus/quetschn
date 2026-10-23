@@ -31,12 +31,13 @@ static __always_inline void copy16(u8 *d, const u8 *s)
 /*
  * Copies the nl literals of a sequence from lit to d; the caller has checked
  * that they fit. It copies 16 bytes at a time, also past nl, as long as 16
- * bytes fit in the block and in the input: what it writes past nl, the next
- * sequence overwrites. Only near the end of the block or of the input does it
- * copy byte by byte, at most 15 bytes.
+ * bytes fit in the block and before lit_bound, the end of the buffer the
+ * literals are in: what it writes past nl, the next sequence overwrites. Only
+ * near the end of the block or of that buffer does it copy byte by byte, at
+ * most 15 bytes.
  */
 static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
-					  const u8 *s_end, unsigned int nl)
+					  const u8 *lit_bound, unsigned int nl)
 {
 	unsigned int k = 0;
 
@@ -45,12 +46,12 @@ static __always_inline void copy_literals(u8 *d, const u8 *d_end, const u8 *lit,
 	 * one copy without a loop, which could mispredict.
 	 */
 	if ((unsigned int)(d_end - d) >= 16U &&
-	    (unsigned int)(s_end - lit) >= 16U) {
+	    (unsigned int)(lit_bound - lit) >= 16U) {
 		copy16(d, lit);
 		k = 16;
 	}
 	while (k < nl && (unsigned int)(d_end - d) >= k + 16U &&
-	       (unsigned int)(s_end - lit) >= k + 16U) {
+	       (unsigned int)(lit_bound - lit) >= k + 16U) {
 		copy16(d + k, lit + k);
 		k += 16;
 	}
@@ -381,8 +382,8 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 
 /*
  * The room the fast path of seqlz_decode() needs. In the block: it writes at
- * most 54 bytes, 14 literals and 40 bytes of match. In the literals: one copy
- * of 16 bytes. In the input: the 8 bytes of a refill.
+ * most 54 bytes, 14 literals and 40 bytes of match, rounded up to 64. In the
+ * literals: one copy of 16 bytes. In the input: the 8 bytes of a refill.
  */
 #define FAST_BLOCK_ROOM 64U
 #define FAST_LIT_ROOM 16U
@@ -390,9 +391,9 @@ static __always_inline u32 next_token_fast(struct seqlz_bit_reader *br,
 
 /*
  * seqlz_decode() for a block whose literals are deltas, see SEQLZ_LIT_DELTA_AT,
- * or not, deltas a constant: two copies of the loop over the sequences, so
- * that a block without deltas runs none of their code. A check of it for every
- * sequence made those blocks slower to read.
+ * or are not. deltas is a constant at both calls, so the loop over the
+ * sequences is compiled twice, and a block without deltas runs none of their
+ * code. A check of it for every sequence made those blocks slower to read.
  */
 static __always_inline int decode_block(const void *src, unsigned int src_len,
 					void *dst, void *scratch, bool deltas)
@@ -417,12 +418,13 @@ static __always_inline int decode_block(const void *src, unsigned int src_len,
 		       sizeof(seqlz_tables.token.decode));
 	prefetch_lines(seqlz_tables.ll.decode, sizeof(seqlz_tables.ll.decode));
 	prefetch_lines(seqlz_tables.ml.decode, sizeof(seqlz_tables.ml.decode));
-	n_lit = get_unaligned_le16(s);
-	if (n_lit & SEQLZ_LIT_CODED) {
+	n_lit = get_unaligned_le16(s) & (SEQLZ_LIT_CODED - 1U);
+	if (n_lit > SEQLZ_BLOCK_SIZE)
+		return -EINVAL;
+	if (get_unaligned_le16(s) & SEQLZ_LIT_CODED) {
 		/* decoded into the scratch first, the bitstream follows them */
 		const u8 *q;
 
-		n_lit &= SEQLZ_LIT_CODED - 1U;
 		if (!scratch)
 			return -EINVAL;
 		q = seqlz_decode_literals(s, src_len, n_lit, scratch, d,
@@ -446,15 +448,15 @@ static __always_inline int decode_block(const void *src, unsigned int src_len,
 	/*
 	 * The fast path below copies without checking the room left, so it is
 	 * taken only where there is enough, one compare each, see
-	 * FAST_BLOCK_ROOM. lit_fast and in_fast are numbers, not pointers: with
-	 * less input, lit_bound - FAST_LIT_ROOM would point before it.
+	 * FAST_BLOCK_ROOM. lit_fast and in_fast are numbers, not pointers: in
+	 * a block shorter than that room they would point before the input.
+	 * As numbers they are then below lit and br.p, which never point
+	 * before the input's byte SEQLZ_HEADER, and the fast path is not
+	 * taken. The scratch of coded literals always has the room.
 	 */
 	d_fast = d_end - FAST_BLOCK_ROOM;
 	lit_fast = (unsigned long)lit_bound - FAST_LIT_ROOM;
-	/* 0 if the input is shorter than a refill: no refill without a check */
-	in_fast = src_len >= FAST_IN_ROOM ?
-			  (unsigned long)s_end - FAST_IN_ROOM :
-			  0;
+	in_fast = (unsigned long)s_end - FAST_IN_ROOM;
 
 	/*
 	 * The literals left fill the rest of the block when d_end - d is
@@ -499,9 +501,10 @@ static __always_inline int decode_block(const void *src, unsigned int src_len,
 		 * The fast path: no length value follows, and there is room,
 		 * see d_fast. Then nl is at most 14 and len at most 34, and the
 		 * copies are 16 literal bytes and 16 to 40 bytes of match,
-		 * without loops. The block's last match never takes it: after
-		 * it fewer than 8 bits are left, and the fast path needs 8
-		 * bytes of input, so it never misses the end below.
+		 * without loops but for long matches at an offset below 8, see
+		 * copy_match_fast(). The block's last match never takes it:
+		 * after it fewer than 8 bits are left, and the fast path needs
+		 * 8 bytes of input, so it never misses the end below.
 		 */
 		if (!(tok & (1U << TOK_VALUE_AT)) && d <= d_fast &&
 		    (unsigned long)lit <= lit_fast &&
@@ -511,9 +514,10 @@ static __always_inline int decode_block(const void *src, unsigned int src_len,
 			 * No check of nl against the literals left, a few
 			 * instructions less per sequence. The 16 bytes read are
 			 * inside lit_bound, so lit stays inside it. If nl goes
-			 * past lit_end, bytes of the bitstream were taken as
-			 * literals, and the slow path below, where every block
-			 * ends, rejects the block because lit > lit_end.
+			 * past lit_end, bytes after the literals were taken as
+			 * literals, of the bitstream or of the scratch, and the
+			 * slow path below, where every block ends, rejects the
+			 * block because lit > lit_end.
 			 */
 			copy16(d, lit);
 			if (deltas)
@@ -573,9 +577,10 @@ last_literals:
 	 * The block must end where its bits end: every byte read, fewer than 8
 	 * bits left in the last one, and those 0, as the compressor writes
 	 * them. zram has no checksum, so this is what tells a damaged block.
+	 * count is negative where the block wanted more bits than it has.
 	 */
-	if (br.count < 0 || br.p != br.end || br.count >= 8 ||
-	    (br.count > 0 && (br.end[-1] & ((1U << br.count) - 1U))))
+	if ((unsigned int)br.count >= 8U || br.p != br.end ||
+	    (br.end[-1] & ((1U << br.count) - 1U)))
 		return -EINVAL;
 	return 0;
 }

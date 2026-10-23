@@ -122,11 +122,16 @@ static_assert(((OWN_QUAD_NONE + 1U) * 256U <= SEQLZ_SCRATCH &&
  * per length from 1 to OWN_QUAD_NONE, the last for none. Then the entries are
  * written length by length, which is the order of the canonical codes. Each
  * step decodes up to two lengths with one lookup of own->quad[]; the checks of
- * the bytes wait until the end, nothing reads the table before. Each step moves
- * on by at least one code, so the loop ends for any input: past its end the
- * block reads as zeros, and a code of zeros is a length. Not inlined: in
- * seqlz_decode_literals() its locals made the stack frame larger than the
- * kernel allows with KASAN.
+ * the bytes wait until the end, nothing reads the table before.
+ *
+ * The loop ends for any input, also one that runs past the block's end, which
+ * reads as zeros: a step with a length adds at least 1 to space, and the loop
+ * ends once space reaches 1 << SEQLZ_LIT_BITS; a step with a run alone adds at
+ * least 1 to b, and the table is invalid once b passes 256. So it takes at
+ * most 1024 + 257 steps, whatever src_len is.
+ *
+ * Not inlined: in seqlz_decode_literals() its locals made the stack frame
+ * larger than the kernel allows with KASAN.
  */
 static noinline const u8 *read_own_table(const struct own_table *own,
 					 const u8 *p, const u8 *end, u16 *lt,
@@ -168,6 +173,9 @@ static noinline const u8 *read_own_table(const struct own_table *own,
 			     (unsigned int)((bits >> 1) >> (64U - nb));
 			bits <<= nb - 1U;
 			avail -= (d >> 8) + nb - 1U;
+			/* runs move b on, not space: they end the loop here */
+			if (b > 256U)
+				return NULL;
 			continue;
 		}
 		l1 = e & 15U;
@@ -239,7 +247,7 @@ noinline const u8 *seqlz_decode_literals(const u8 *s, unsigned int src_len,
 	/*
 	 * byte 2: the literals' code in bits 0 to 3,
 	 * width - SEQLZ_SIZE_BITS_MIN in bits 4 to 6, in bit 7 whether they are
-	 * deltas, then their byte
+	 * deltas; then byte 3 says which delta
 	 */
 	const unsigned int width =
 		SEQLZ_SIZE_BITS_MIN +
@@ -258,6 +266,10 @@ noinline const u8 *seqlz_decode_literals(const u8 *s, unsigned int src_len,
 	u64 total = 0;
 	const u16 *lt;
 
+	/*
+	 * The caller has checked n_lit already. Checked here too, the compiler
+	 * knows its bound, and the loops below took fewer instructions.
+	 */
 	if (src_len < SEQLZ_LIT_HEADER(width) + deltas ||
 	    (s[2] & SEQLZ_LIT_CODE_MASK) > SEQLZ_LIT_OWN ||
 	    n_lit > SEQLZ_BLOCK_SIZE)

@@ -83,6 +83,8 @@ REWRITES = [
     ("docs/format.md is the specification.", f"{SPEC} specifies the format."),
     # the interface has the name seqlz_compress() now, the function of src/ is seqlz_compress_block()
     ("seqlz_compress()", "seqlz_compress_block()"),
+    # and seqlz_decode() of src/ is the interface's seqlz_decompress()
+    ("seqlz_decode()", "seqlz_decompress()"),
     # the library works on blocks of 4 KiB whatever PAGE_SIZE is, see BLOCK_BITS_KERNEL
     ("seqlz compresses one block at a time, a memory page for zram.",
      "seqlz compresses one block of SEQLZ_BLOCK_SIZE bytes at a time, for zram, whatever the kernel's PAGE_SIZE "
@@ -428,9 +430,11 @@ def port_compress():
 
 def port_decompress():
     t = port_c("decompress")
-    t = make_static(t, "seqlz_decode")
-    t = put_doc(t, "seqlz_decode", "/* seqlz_decompress(), see include/linux/seqlz.h */\n")
-    t = t.rstrip("\n") + "\n\n" + (HERE / "api_decompress.c").read_text()
+    # seqlz_decode() of src/ is the interface's seqlz_decompress(), whose kernel-doc is in
+    # include/linux/seqlz.h; the comments get the new name from REWRITES
+    t = must(t, "int seqlz_decode(const void *src, unsigned int src_len, void *dst,\n\t\t void *scratch)\n",
+             "int seqlz_decompress(const void *src, unsigned int src_len, void *dst,\n\t\t     void *scratch)\n")
+    t = t.rstrip("\n") + "\n" + (HERE / "api_decompress.c").read_text()
     return fix_comments(t)
 
 
