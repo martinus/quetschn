@@ -16,7 +16,7 @@ extern "C" {
 #include <string>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 // The optimal code lengths of at most max_bits bits, by package-merge (Larmore and Hirschberg): the
 // lists of the levels from max_bits up to 1 each hold the symbols and the pairs of the level below,
@@ -229,4 +229,4 @@ seqlz_counts read_seqlz_counts(std::istream& in) {
     return c;
 }
 
-} // namespace quetschn
+} // namespace bench

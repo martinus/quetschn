@@ -1,6 +1,6 @@
 # Contributing
 
-quetschn is meant to end up in the Linux kernel, so the codec follows the kernel's rules, and every
+seqlz is meant to end up in the Linux kernel, so the codec follows the kernel's rules, and every
 design decision needs a measurement. This file says how to build, test and measure a change, and what
 a change needs before it is merged.
 
@@ -24,18 +24,18 @@ worse is a reason to find out which pages cause it.
 ## Build
 
 ```sh
-cmake -S . -B build -G Ninja -DQUETSCHN_WERROR=ON
+cmake -S . -B build -G Ninja -DSEQLZ_WERROR=ON
 cmake --build build
 ```
 
 | option | what it does |
 | --- | --- |
-| `-DQUETSCHN_WERROR=ON` | warnings are errors, as in CI |
-| `-DQUETSCHN_SANITIZE=ON` | ASan and UBSan |
-| `-DQUETSCHN_KERNEL_TREE=<linux>` | builds zram's `lz4`, `lzo` and `zstd` from a Linux tree with the kernel's flags, and with them `quetschn-bench-*` and the kernel codec tests |
-| `-DQUETSCHN_PAGE_BITS=14` | seqlz for 16 KiB pages. The tests run with it, except the kernel codecs', so configure it without a kernel tree |
-| `-DQUETSCHN_FUZZ=ON` | the fuzz targets, needs clang or AFL++'s `afl-clang-lto` |
-| `-DQUETSCHN_ALIGN_FUNCTIONS=ON` | every kernel codec function aligned to 64 bytes, for A/B comparisons of two builds |
+| `-DSEQLZ_WERROR=ON` | warnings are errors, as in CI |
+| `-DSEQLZ_SANITIZE=ON` | ASan and UBSan |
+| `-DSEQLZ_KERNEL_TREE=<linux>` | builds zram's `lz4`, `lzo` and `zstd` from a Linux tree with the kernel's flags, and with them `seqlz-bench-*` and the kernel codec tests |
+| `-DSEQLZ_PAGE_BITS=14` | seqlz for 16 KiB pages. The tests run with it, except the kernel codecs', so configure it without a kernel tree |
+| `-DSEQLZ_FUZZ=ON` | the fuzz targets, needs clang or AFL++'s `afl-clang-lto` |
+| `-DSEQLZ_ALIGN_FUNCTIONS=ON` | every kernel codec function aligned to 64 bytes, for A/B comparisons of two builds |
 
 CI builds with the kernel tree at the commit `KERNEL_COMMIT` in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), and fetches only the files the codecs need.
@@ -43,7 +43,7 @@ CI builds with the kernel tree at the commit `KERNEL_COMMIT` in
 ## Test
 
 ```sh
-./build/quetschn_test
+./build/seqlz_test
 ctest --test-dir build
 ```
 
@@ -97,7 +97,7 @@ fuzz/smoke.sh 60 build-fuzz                 # what CI runs, a minute per target,
 AFL=$HOME/AFLplusplus fuzz/afl.sh out 30    # 30 AFL++ instances in the background, a third per target
 ```
 
-`quetschn-seqlz-train` trains the tables, and `src/seqlz_default_tables.c` says on which pages. With
+`seqlz-train` trains the tables, and `src/seqlz_default_tables.c` says on which pages. With
 `--counts bench/seqlz_counts_4k.txt` (or `_16k.txt`) it also writes the counts the tables are built
 from; the test `seqlz_train` fails until the counts in `bench/` give the tables in `src/`.
 

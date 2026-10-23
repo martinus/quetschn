@@ -12,7 +12,7 @@
 #include <thread>
 #include <utility>
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -146,7 +146,7 @@ void write_page_results(std::ostream& out, std::vector<page_result> const& pages
 std::vector<page_result> read_page_results(std::istream& in) {
     auto line = std::string();
     if (!std::getline(in, line) || line != header) {
-        throw std::runtime_error("read_page_results: the first line is not the header of quetschn-bench-* --out");
+        throw std::runtime_error("read_page_results: the first line is not the header of seqlz-bench-* --out");
     }
     auto pages = std::vector<page_result>();
     for (std::size_t line_no = 2; std::getline(in, line); ++line_no) {
@@ -261,4 +261,4 @@ compare(std::vector<page_result> const& baseline, std::vector<page_result> const
     return r;
 }
 
-} // namespace quetschn
+} // namespace bench

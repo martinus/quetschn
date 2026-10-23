@@ -1,6 +1,6 @@
-# quetschn
+# seqlz
 
-[![CI](https://github.com/martinus/quetschn/actions/workflows/ci.yml/badge.svg)](https://github.com/martinus/quetschn/actions/workflows/ci.yml)
+[![CI](https://github.com/martinus/seqlz/actions/workflows/ci.yml/badge.svg)](https://github.com/martinus/seqlz/actions/workflows/ci.yml)
 
 A compression codec for Linux zram, the compressed swap in RAM that Android phones and many desktops
 use. The codec is `seqlz`: one format, one decoder, three levels of the compressor. The goal is `lz4`'s
@@ -17,9 +17,9 @@ written is a swap-out plus 0.73 swap-ins, the reads per write of a phone in dail
 | --- | ---: | ---: | ---: | ---: |
 | `lz4` | 36.5% | 6.69 µs | 3.50 µs | 9.25 µs |
 | `lzo-rle` | 34.9% | 6.50 µs | 3.95 µs | 9.38 µs |
-| `zstd` 3 | 25.3% | 15.01 µs | 6.86 µs | 20.02 µs |
 | **`seqlz-1`** | **29.1%** | **6.92 µs** | **3.78 µs** | **9.68 µs** |
 | **`seqlz-2`** | **26.5%** | **7.53 µs** | **4.10 µs** | **10.52 µs** |
+| `zstd` 3 | 25.3% | 15.01 µs | 6.86 µs | 20.02 µs |
 | **`seqlz-3`** | **24.4%** | **11.22 µs** | **4.39 µs** | **14.42 µs** |
 
 - `seqlz-1` stores 20% less than `lz4` for 5% more time per page written.
@@ -57,9 +57,9 @@ session on the phone, the time per page written as above, write + 0.73 × cold r
 | codec | memory per page | big core, A76 | little core, A55 |
 | --- | ---: | ---: | ---: |
 | `lz4` | 33.3% | 14.6 µs | 43.6 µs |
-| `zstd` 3 | 23.2% | 51.4 µs | 165.7 µs |
 | **`seqlz-1`** | **26.1%** | **15.6 µs** | **49.5 µs** |
 | **`seqlz-2`** | **24.3%** | **17.4 µs** | **56.3 µs** |
+| `zstd` 3 | 23.2% | 51.4 µs | 165.7 µs |
 | **`seqlz-3`** | **21.4%** | **26.4 µs** | **79.3 µs** |
 
 On the phone `seqlz-3` stores 8.0% less than `zstd` 3 in about half its time, 51% on the big core and
@@ -75,13 +75,13 @@ kinds of core, the same pages, each page timed once per pass over all of them, a
 
 <img src="docs/plots/pixel-cores.svg" alt="Memory against the time to write and to read a page on the Cortex-X4, A720 and A520 of a Pixel 9a, for lz4, lzo-rle, zstd 3 and seqlz levels 1 to 3.">
 
-On the big cores `seqlz-1` writes and reads about as fast as `lz4`, 5.49 against 5.56 µs per page
-written on the X4, and `seqlz-2` takes 12% and 19% more time than `lz4` on the X4 and the A720. The
+On the big cores `seqlz-1` writes and reads about as fast as `lz4`, 5.53 against 5.52 µs per page
+written on the X4, and `seqlz-2` takes 14% and 25% more time than `lz4` on the X4 and the A720. The
 little A520 is where seqlz costs: `seqlz-2` takes 1.7 times `lz4`'s time per page written there, and a
-cold read 5.86 instead of 3.70 µs. `seqlz-3`, the level before its deltas of 21st October, stores as
-little as `zstd` 3 in about half its time on every core. These are the codec's times in a harness, not zram in the phone's kernel, with clocks that could
-not be fixed without root; they stayed at their maximum in every run
-([explored-designs.md](docs/explored-designs.md#a-current-phone-the-pixel-9a-seqlz-1-as-fast-as-lz4-on-the-big-cores-seqlz-1-and-seqlz-2-14-and-17-times-lz4s-time-on-the-little-one)).
+cold read 6.18 instead of 3.88 µs. `seqlz-3` stores 8% less than `zstd` 3 in 63% to 68% of its time on
+every core. These are the codec's times in a harness, not zram in the phone's kernel, with clocks that
+could not be fixed without root; every run ended at its core's highest clock, on 23rd October 2026
+([explored-designs.md](docs/explored-designs.md#the-pixel-9a-again-with-level-3s-deltas-seqlz-3-8-below-zstd-3-in-63-to-68-of-its-time)).
 
 ## Where it stands
 
@@ -112,9 +112,9 @@ As of 22nd October 2026. The details, and what comes next, are in [the plan, §9
 You need CMake 3.25, Ninja, and a C and C++20 compiler. doctest is fetched by CMake.
 
 ```sh
-cmake -S . -B build -G Ninja -DQUETSCHN_WERROR=ON
+cmake -S . -B build -G Ninja -DSEQLZ_WERROR=ON
 cmake --build build
-./build/quetschn_test
+./build/seqlz_test
 ```
 
 That builds the codec, the tests and the tools that need no kernel. The benchmarks against zram's own
@@ -127,7 +127,7 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 | --- | --- |
 | [`src/`](src) | the codec, freestanding C: encoder, decoder, matcher, and the trained tables |
 | [`bench/`](bench) | the benchmark harness: per-page timing, zsmalloc's cost model, table training, zram's codecs built in userspace |
-| [`test/`](test) | the doctest unit tests, `quetschn_test` |
+| [`test/`](test) | the doctest unit tests, `seqlz_test` |
 | [`fuzz/`](fuzz) | libFuzzer and AFL++ targets: the decoder, the roundtrip, the decoder against the reference decoder |
 | [`tools/`](tools) | page collectors, reference decoders, the kernel VM, the phone tests, plots, see [`tools/README.md`](tools/README.md) |
 | [`docs/`](docs) | how seqlz works, the format, the plan, how to measure, and every design measured, see [`docs/README.md`](docs/README.md) |
@@ -138,7 +138,7 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 | document | read it if you want to |
 | --- | --- |
 | [seqlz in short](docs/seqlz.md) | see the result against zram's codecs and the choices with their numbers; the book below has the details |
-| [seqlz, line by line](https://martin.ankerl.com/quetschn/) | read every line of `src/` explained, with the decoder and the matcher step by step on real pages; the book's sources are in [`docs/book/`](docs/book) |
+| [seqlz, line by line](https://martin.ankerl.com/seqlz/) | read every line of `src/` explained, with the decoder and the matcher step by step on real pages; the book's sources are in [`docs/book/`](docs/book) |
 | [The seqlz format](docs/format.md) | write a decoder, or check one |
 | [Reading the code](docs/reading.md) | read and review `src/`, in an order and with what to check |
 | [Measuring](docs/measuring.md) | benchmark, in a kernel VM, in userspace or on a phone, and collect pages |
@@ -147,10 +147,10 @@ codecs need a Linux source tree, see [Measuring](docs/measuring.md). How to chan
 
 ## License
 
-quetschn is dual licensed under **`MIT OR GPL-2.0-only`**, at your option:
+seqlz is dual licensed under **`MIT OR GPL-2.0-only`**, at your option:
 [LICENSE-MIT](LICENSE-MIT), [LICENSE-GPL-2.0](LICENSE-GPL-2.0). The GPL-2.0-only option is there so
 the codec can go into the Linux kernel, the MIT option so that userspace and non-GPL projects can use
 it too. zstd does the same.
 
-The `quetschn-bench-*` binaries are an exception: they link GPL-2.0-only kernel code, so they are
+The `seqlz-bench-*` binaries are an exception: they link GPL-2.0-only kernel code, so they are
 GPL-2.0 works. They are for measuring and not for distribution.

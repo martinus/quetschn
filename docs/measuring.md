@@ -26,17 +26,17 @@ is the corpus `corpus/test.pages` and `corpus/test.tsv`.
 
 ```sh
 mkdir -p corpus
-./build/quetschn-collect-resident --out corpus/desktop --max-per-process 2000
+./build/seqlz-collect-resident --out corpus/desktop --max-per-process 2000
 ```
 
 **The pages zram really holds**, the ones reclaim swapped out, come from the zram device itself. zram
 decompresses every page on read. The second `dd` runs as you and leaves free slots as holes:
 
 ```sh
-mkdir -m 700 -p ~/quetschn-corpus
+mkdir -m 700 -p ~/seqlz-corpus
 sudo dd if=/dev/zram0 bs=1M iflag=direct status=progress |
-    dd of=$HOME/quetschn-corpus/zram0.raw bs=4096 iflag=fullblock conv=sparse
-./build/quetschn-import-raw --in ~/quetschn-corpus/zram0.raw --out ~/quetschn-corpus/zram0
+    dd of=$HOME/seqlz-corpus/zram0.raw bs=4096 iflag=fullblock conv=sparse
+./build/seqlz-import-raw --in ~/seqlz-corpus/zram0.raw --out ~/seqlz-corpus/zram0
 ```
 
 A dump of 16 KiB pages needs `--page-size 16384`. Pages from Android with 16 KiB or 4 KiB pages come
@@ -44,8 +44,8 @@ from the emulator, see [tools/android-emu/](../tools/android-emu/README.md).
 
 A dump has no process names, so take a second dump some days later, train on one and measure on the
 other. [The plan, §5.3](plan.md#53-statistical-presentation) says why the pages that are trained on
-must not be the ones that are measured. `quetschn-split-corpus` splits a corpus into a training and a
-test part, and `quetschn-sample-corpus --pages 20000` draws a fixed random sample, the same one for the same
+must not be the ones that are measured. `seqlz-split-corpus` splits a corpus into a training and a
+test part, and `seqlz-sample-corpus --pages 20000` draws a fixed random sample, the same one for the same
 `--seed`, e.g. for the quick benchmark.
 
 ## Fix the clock first
@@ -109,8 +109,8 @@ Some options are for finding where a fault's time goes, all in `KARGS`:
 - `zram.zram_pmu=1` counts cycles, instructions, branch and cache misses around every timed
   `zcomp_decompress()`, in the guest. Each read of a counter exits to the host, about 77 µs, so the times
   of such a boot are useless, only the counts are not.
-- `quetschn.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, and
-  `quetschn.cond=3` runs only its condition "flushed, other page first".
+- `seqlz.decomp=1` times `zcomp_decompress()` alone in the read benchmark too, and
+  `seqlz.cond=3` runs only its condition "flushed, other page first".
 
 A profile of the whole boot comes from the host, with `perf kvm`. Add `nokaslr` to `KARGS`, else the
 guest's addresses move, and give a fixed period, so that the sample counts of two boots compare:
@@ -144,7 +144,7 @@ and ["The decoder in a fault, found"](explored-designs.md#the-decoder-in-a-fault
 > A single boot can be off: `zstd` came out 18% slower in one boot with nothing changed. Compare
 > codecs within one boot, and use `BOOTS=3` before you trust a difference of a few percent: the kernel
 > is built once and booted 3 times, the order of `ALGOS` rotated by one per boot, and the end of the
-> output has the range of every mean over the boots. `quetschn-score` takes the mean over the boots.
+> output has the range of every mean over the boots. `seqlz-score` takes the mean over the boots.
 
 ## In userspace
 
@@ -153,29 +153,29 @@ kernel's compiler flags, and seqlz with `lz4`'s. The kernel sources are compiled
 copied into this repository.
 
 ```sh
-cmake -S . -B build -G Ninja -DQUETSCHN_KERNEL_TREE=$HOME/linux
+cmake -S . -B build -G Ninja -DSEQLZ_KERNEL_TREE=$HOME/linux
 cmake --build build
-./build/quetschn-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-2 --corpus corpus/test --cpu 2 --out results
-./build/quetschn-compare --baseline results/lz4.tsv --candidate results/seqlz-2.tsv
+./build/seqlz-bench-interleaved --codecs lz4,lzo-rle,zstd,seqlz-2 --corpus corpus/test --cpu 2 --out results
+./build/seqlz-compare --baseline results/lz4.tsv --candidate results/seqlz-2.tsv
 ```
 
-`quetschn-bench-interleaved` runs all codecs in one binary, in turns on the same page, so that drift
+`seqlz-bench-interleaved` runs all codecs in one binary, in turns on the same page, so that drift
 of the clock hits all of them alike. Between codecs the kernel VM is still the better judge.
-`--no-timing` gives only the sizes. `quetschn-compare` pairs two runs page by page: the saving, and the
+`--no-timing` gives only the sizes. `seqlz-compare` pairs two runs page by page: the saving, and the
 difference of every latency percentile, with 95% confidence intervals from a bootstrap over the pages.
 
 **For trying out a change, use the quick benchmark.** It takes about 90 s: exact sizes on the whole
 corpus, and the times of a sample of 20 000 pages in 5 separate processes, with the median and the
-range of the 5. Run the full `quetschn-bench-interleaved` only to confirm a result that goes into a
+range of the 5. Run the full `seqlz-bench-interleaved` only to confirm a result that goes into a
 document.
 
 ```sh
 tools/quick-bench.sh build corpus/test results lz4,lzo-rle,zstd,seqlz-2
 ```
 
-**The score.** `quetschn-score` puts memory against time per page, the score of
+**The score.** `seqlz-score` puts memory against time per page, the score of
 [the plan, §1.1](plan.md#11-the-score-memory-against-time-not-bars), from the output of
-`quetschn-bench-*` or of `tools/zram-vm/run.sh`, in either mode; with `MODE=swap` its times are the
+`seqlz-bench-*` or of `tools/zram-vm/run.sh`, in either mode; with `MODE=swap` its times are the
 swap-out with one call per page and the swap-in with the compressed data flushed, the ones the plan
 uses. `--what-if lz4:0.5` adds `lz4` with its own time halved, and with `MODE=swap` the kernel's part
 unchanged, for the question of hardware `lz4` (plan R12). The work memory per CPU is in the bytes per
@@ -184,22 +184,22 @@ log has it in its "memory per CPU" line, what `kmalloc()` and `vmalloc()` hand o
 does not, `--per-cpu` gives it, with the codec's name in the log. `r`, the reads per write, is 0.73 by
 default, a phone's; `--reads-per-write 0.34` is the desktop's. On a running machine it is `pswpin /
 pswpout` of `/proc/vmstat` since boot, which `adb shell` can read on an Android phone without root, or
-from `quetschn-swap-bursts`:
+from `seqlz-swap-bursts`:
 
 ```sh
-./build/quetschn-score --reads-per-write 0.34 run.txt      # the desktop's r
+./build/seqlz-score --reads-per-write 0.34 run.txt      # the desktop's r
 adb shell 'grep -E "^(pswpin|pswpout|workingset_refault_anon) " /proc/vmstat; cat /proc/uptime'
-./build/quetschn-score --what-if lz4:0.5 swap.log
-./build/quetschn-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 --corpus corpus/test | grep -E '^codec|memory per CPU'
-./build/quetschn-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
+./build/seqlz-score --what-if lz4:0.5 swap.log
+./build/seqlz-bench-interleaved --no-timing --codecs lz4,lzo-rle,zstd,seqlz-1,seqlz-2,seqlz-3 --corpus corpus/test | grep -E '^codec|memory per CPU'
+./build/seqlz-score --per-cpu lz4:20512 --per-cpu lzo-rle:16384 --per-cpu zstd:192544 \
     --per-cpu seqlz-1:8192 --per-cpu seqlz-2:16384 --per-cpu seqlz-3:16384 --device 8:256 swap.log
-./build/quetschn-swap-bursts --seconds 3600
-adb shell /data/local/tmp/quetschn-swap-bursts --seconds 900    # an NDK build, on a phone in use, no root
+./build/seqlz-swap-bursts --seconds 3600
+adb shell /data/local/tmp/seqlz-swap-bursts --seconds 900    # an NDK build, on a phone in use, no root
 ```
 
 **Dictionaries and levels.** `--level` is zram's `algorithm_params` level, `--dict` a dictionary as
 zram takes one. `tools/bench-dict.sh` trains one on one dump and measures every codec with and
-without it on another. `quetschn-lz-analysis` prices the matches of `lz4hc` or of seqlz's matcher
+without it on another. `seqlz-lz-analysis` prices the matches of `lz4hc` or of seqlz's matcher
 with other encodings.
 
 **For `perf`.** `--decode-loop <n>` compresses every page once and then only decodes, n times. With
@@ -208,7 +208,7 @@ with other encodings.
 `perf stat -e cycles,instructions,branch-misses`, is the decoder alone.
 
 > [!NOTE]
-> The `quetschn-bench-*` binaries contain GPL-2.0-only kernel code, so they are GPL-2.0 works. They
+> The `seqlz-bench-*` binaries contain GPL-2.0-only kernel code, so they are GPL-2.0 works. They
 > are for measuring, not for distribution.
 
 ## On an Android phone
@@ -219,10 +219,10 @@ For arm64 timings on a rooted Android phone, build with the Android NDK and run 
 ```sh
 cmake -S . -B build-android -G Ninja -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-30 -DANDROID_STL=c++_static \
-    -DQUETSCHN_KERNEL_TREE=$HOME/linux
+    -DSEQLZ_KERNEL_TREE=$HOME/linux
 cmake --build build-android
-adb shell mkdir -p /data/local/tmp/quetschn
-adb push build-android/quetschn-bench-interleaved corpus/test.pages corpus/test.tsv /data/local/tmp/quetschn/
+adb shell mkdir -p /data/local/tmp/seqlz
+adb push build-android/seqlz-bench-interleaved corpus/test.pages corpus/test.tsv /data/local/tmp/seqlz/
 ```
 
 On arm64 the harness counts cycles with `perf_event_open`, which needs root or
@@ -239,7 +239,7 @@ echo 1804800 > scaling_max_freq
 echo 1804800 > scaling_min_freq
 ```
 
-To compare two builds, configure both with `-DQUETSCHN_ALIGN_FUNCTIONS=ON`. With the kernel's
+To compare two builds, configure both with `-DSEQLZ_ALIGN_FUNCTIONS=ON`. With the kernel's
 alignment, a change in one function moves the ones behind it, and on the phone's little core that
 alone moved reads by 130 ns. `tools/phone-apps/` is the app launch test: 25 apps, switched in turn,
 with the same RAM given to zram for every codec.
@@ -248,9 +248,9 @@ For zram in the phone's own kernel, `tools/zram-phone/` builds the codec as a mo
 Linux 4.14 and runs `zramphone` on it, each codec alone in its own process, in turns:
 
 ```sh
-tools/zram-phone/build.sh a <src copy A> out/a     # out/a/quetschn_a.ko: seqlz-a-1 to seqlz-a-3
+tools/zram-phone/build.sh a <src copy A> out/a     # out/a/seqlz_a.ko: seqlz-a-1 to seqlz-a-3
 tools/zram-phone/build.sh b <src copy B> out/b
-BUS=1 tools/zram-phone/run.sh corpus/phone.pages out/run out/a/quetschn_a.ko out/b/quetschn_b.ko
+BUS=1 tools/zram-phone/run.sh corpus/phone.pages out/run out/a/seqlz_a.ko out/b/seqlz_b.ko
 ```
 
 `run.sh` fixes the cores' clocks, logs the clocks and five temperatures before and after every run,

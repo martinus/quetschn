@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <span>
 
-namespace quetschn {
+namespace bench {
 
 struct page_stats {
     std::size_t zero_bytes = 0;
@@ -19,4 +19,4 @@ struct page_stats {
 // page.size() must be a multiple of 8
 [[nodiscard]] page_stats analyze_page(std::span<std::byte const> page);
 
-} // namespace quetschn
+} // namespace bench

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-only */
-#ifndef QUETSCHN_LINUX_LIMITS_H
-#define QUETSCHN_LINUX_LIMITS_H
+#ifndef SEQLZ_LINUX_LIMITS_H
+#define SEQLZ_LINUX_LIMITS_H
 
 #define INT_MAX __INT_MAX__
 #define INT_MIN (-INT_MAX - 1)

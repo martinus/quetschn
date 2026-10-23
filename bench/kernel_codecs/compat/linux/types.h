@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-only */
-#ifndef QUETSCHN_LINUX_TYPES_H
-#define QUETSCHN_LINUX_TYPES_H
+#ifndef SEQLZ_LINUX_TYPES_H
+#define SEQLZ_LINUX_TYPES_H
 
 #include <linux/compiler.h>
 

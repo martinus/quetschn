@@ -18,12 +18,12 @@
 #include <system_error>
 #include <vector>
 
-using quetschn::corpus;
-using quetschn::percentile;
-using quetschn::run_codec;
-using quetschn::run_options;
-using quetschn::summarize_latency;
-using quetschn::zsmalloc_model;
+using bench::corpus;
+using bench::percentile;
+using bench::run_codec;
+using bench::run_options;
+using bench::summarize_latency;
+using bench::zsmalloc_model;
 
 namespace {
 
@@ -55,9 +55,9 @@ int dctx_marker;
 
 // Accepts levels 0 to 9, default 5. Pretends to hold 100 bytes per level per CPU, and the dictionary once
 // per device, so the tests can see the harness report both.
-int trim_setup_params(quetschn_params* p) {
+int trim_setup_params(bench_params* p) {
     ++calls.setup;
-    if (p->level == QUETSCHN_LEVEL_DEFAULT) {
+    if (p->level == BENCH_LEVEL_DEFAULT) {
         p->level = 5;
     }
     if (p->level < 0 || p->level > 9) {
@@ -67,51 +67,50 @@ int trim_setup_params(quetschn_params* p) {
     return 0;
 }
 
-void trim_release_params(quetschn_params* p) {
+void trim_release_params(bench_params* p) {
     ++calls.release;
     p->allocated = 0;
 }
 
 // The stream remembers the level it was created for, so compress can check it got the same params.
-int trim_create(quetschn_params* p, quetschn_stream* s) {
+int trim_create(bench_params* p, bench_stream* s) {
     ++calls.create;
     s->allocated = 100 * static_cast<std::size_t>(p->level + 1);
     s->context = &calls;
     return 0;
 }
 
-int failing_create(quetschn_params*, quetschn_stream*) {
+int failing_create(bench_params*, bench_stream*) {
     ++calls.create;
     return -1;
 }
 
-void trim_destroy(quetschn_stream* s) {
+void trim_destroy(bench_stream* s) {
     ++calls.destroy;
     s->allocated = 0;
     s->context = nullptr;
 }
 
 // a decompression context of 7 bytes, for split_codec
-int split_create_dctx(quetschn_params*, quetschn_stream* s) {
+int split_create_dctx(bench_params*, bench_stream* s) {
     ++calls.create_d;
     s->allocated = 7;
     s->context = &dctx_marker;
     return 0;
 }
 
-int failing_create_dctx(quetschn_params*, quetschn_stream*) {
+int failing_create_dctx(bench_params*, bench_stream*) {
     ++calls.create_d;
     return -1;
 }
 
-void split_destroy_dctx(quetschn_stream* s) {
+void split_destroy_dctx(bench_stream* s) {
     ++calls.destroy_d;
     s->allocated = 0;
     s->context = nullptr;
 }
 
-int trim_compress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int trim_compress(bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     if (s->context != &calls || s->allocated != 100 * static_cast<std::size_t>(p->level + 1)) {
         return -1;
     }
@@ -129,7 +128,7 @@ int trim_compress(
 
 // without a decompression context of its own, a codec gets the compression context
 int trim_decompress(
-    quetschn_params*, quetschn_stream* ctx, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    bench_params*, bench_stream* ctx, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     if (ctx->context != &calls) {
         return -1;
     }
@@ -146,28 +145,27 @@ int trim_decompress(
 
 // trim with a decompression context of its own, which decompress must get
 int split_decompress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     if (s->context != &dctx_marker || s->allocated != 7) {
         return -1;
     }
-    auto cctx = quetschn_stream{&calls, 0};
+    auto cctx = bench_stream{&calls, 0};
     return trim_decompress(p, &cctx, src, src_len, dst, dst_len);
 }
 
 int broken_decompress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     auto ret = trim_decompress(p, s, src, src_len, dst, dst_len);
     static_cast<unsigned char*>(dst)[7] ^= 1;
     return ret;
 }
 
-int failing_compress(quetschn_params*, quetschn_stream*, void const*, unsigned int, void*, unsigned int*) {
+int failing_compress(bench_params*, bench_stream*, void const*, unsigned int, void*, unsigned int*) {
     return -1;
 }
 
 // like trim, with 8 more bytes of zeros at the end, so its sizes differ from trim's
-int pad_compress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int pad_compress(bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     if (trim_compress(p, s, src, src_len, dst, dst_len) != 0 || *dst_len + 8 > 2 * page_size) {
         return -1;
     }
@@ -176,8 +174,7 @@ int pad_compress(
     return 0;
 }
 
-int pad_decompress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int pad_decompress(bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     return src_len < 8 ? -1 : trim_decompress(p, s, src, src_len - 8, dst, dst_len);
 }
 
@@ -185,8 +182,7 @@ int pad_decompress(
 // setup_params. Fails when the bytes changed: the tests pass a dictionary of dict_byte only.
 constexpr unsigned char dict_byte = 0xa5;
 
-int dict_compress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int dict_compress(bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     auto const* d = static_cast<unsigned char const*>(p->dict);
     for (std::size_t i = 0; i < p->dict_size; ++i) {
         if (d[i] != dict_byte) {
@@ -197,11 +193,11 @@ int dict_compress(
 }
 
 // a codec of trim's functions, with the compression context's create, compress and decompress given
-constexpr quetschn_codec
+constexpr bench_codec
 trim_like(char const* name,
-          int (*create)(quetschn_params*, quetschn_stream*),
-          int (*compress)(quetschn_params*, quetschn_stream*, void const*, unsigned int, void*, unsigned int*),
-          int (*decompress)(quetschn_params*, quetschn_stream*, void const*, unsigned int, void*, unsigned int*)) {
+          int (*create)(bench_params*, bench_stream*),
+          int (*compress)(bench_params*, bench_stream*, void const*, unsigned int, void*, unsigned int*),
+          int (*decompress)(bench_params*, bench_stream*, void const*, unsigned int, void*, unsigned int*)) {
     return {.name = name,
             .setup_params = trim_setup_params,
             .release_params = trim_release_params,
@@ -213,21 +209,21 @@ trim_like(char const* name,
             .decompress = decompress};
 }
 
-quetschn_codec const trim_codec = trim_like("trim", trim_create, trim_compress, trim_decompress);
-quetschn_codec const dict_codec = trim_like("dict", trim_create, dict_compress, trim_decompress);
-quetschn_codec const pad_codec = trim_like("pad", trim_create, pad_compress, pad_decompress);
-quetschn_codec const broken_codec = trim_like("broken", trim_create, trim_compress, broken_decompress);
-quetschn_codec const failing_codec = trim_like("failing", trim_create, failing_compress, trim_decompress);
-quetschn_codec const failing_create_codec = trim_like("failing-create", failing_create, trim_compress, trim_decompress);
+bench_codec const trim_codec = trim_like("trim", trim_create, trim_compress, trim_decompress);
+bench_codec const dict_codec = trim_like("dict", trim_create, dict_compress, trim_decompress);
+bench_codec const pad_codec = trim_like("pad", trim_create, pad_compress, pad_decompress);
+bench_codec const broken_codec = trim_like("broken", trim_create, trim_compress, broken_decompress);
+bench_codec const failing_codec = trim_like("failing", trim_create, failing_compress, trim_decompress);
+bench_codec const failing_create_codec = trim_like("failing-create", failing_create, trim_compress, trim_decompress);
 
-quetschn_codec split_like(char const* name, int (*create_dctx)(quetschn_params*, quetschn_stream*)) {
+bench_codec split_like(char const* name, int (*create_dctx)(bench_params*, bench_stream*)) {
     auto c = trim_like(name, trim_create, trim_compress, split_decompress);
     c.create_dctx = create_dctx;
     c.destroy_dctx = split_destroy_dctx;
     return c;
 }
-quetschn_codec const split_codec = split_like("split", split_create_dctx);
-quetschn_codec const failing_dctx_codec = split_like("failing-dctx", failing_create_dctx);
+bench_codec const split_codec = split_like("split", split_create_dctx);
+bench_codec const failing_dctx_codec = split_like("failing-dctx", failing_create_dctx);
 
 // page with the first `nonzero` bytes set to non-zero values, the rest zero
 std::vector<std::byte> page_with_prefix(std::size_t nonzero) {
@@ -239,7 +235,7 @@ std::vector<std::byte> page_with_prefix(std::size_t nonzero) {
 }
 
 // run_options without timing, and optionally a level and a dictionary
-run_options untimed(int level = QUETSCHN_LEVEL_DEFAULT, std::vector<std::byte> dict = {}) {
+run_options untimed(int level = BENCH_LEVEL_DEFAULT, std::vector<std::byte> dict = {}) {
     auto o = run_options{};
     o.measure_time = false;
     o.level = level;
@@ -291,7 +287,7 @@ TEST_CASE("harness: sizes, costs and the uncompressed-page threshold come from t
     CHECK(r.pages[1].cost == doctest::Approx(4096.0));
     CHECK(r.pages[3].cost == doctest::Approx(4096.0));
 
-    auto const s = quetschn::summarize(r, page_size);
+    auto const s = bench::summarize(r, page_size);
     CHECK(s.pages == 4);
     CHECK(s.same_filled == 1);
     CHECK(s.huge == 2);
@@ -346,8 +342,8 @@ TEST_CASE("harness: compress gets the compression context, decompress its own on
     CHECK(split.cctx_bytes == 600);
     CHECK(split.dctx_bytes == 7);
     CHECK(split.stream_bytes == 607);
-    auto const codecs = std::array<quetschn_codec const*, 2>{&split_codec, &trim_codec};
-    auto const both = quetschn::run_interleaved(c, codecs, model, untimed());
+    auto const codecs = std::array<bench_codec const*, 2>{&split_codec, &trim_codec};
+    auto const both = bench::run_interleaved(c, codecs, model, untimed());
     CHECK(both[0].dctx_bytes == 7);
     CHECK(both[1].dctx_bytes == 0);
 
@@ -363,9 +359,9 @@ TEST_CASE("harness: the dictionary stays valid for the whole run") {
     auto const c = make_corpus({page_with_prefix(100), page_with_prefix(200)});
     auto const dict = std::vector<std::byte>(1000, std::byte{dict_byte});
 
-    CHECK(run_codec(c, dict_codec, model, untimed(QUETSCHN_LEVEL_DEFAULT, dict)).pages.size() == 2);
-    auto const codecs = std::array<quetschn_codec const*, 2>{&dict_codec, &dict_codec};
-    CHECK(quetschn::run_interleaved(c, codecs, model, untimed(QUETSCHN_LEVEL_DEFAULT, dict)).size() == 2);
+    CHECK(run_codec(c, dict_codec, model, untimed(BENCH_LEVEL_DEFAULT, dict)).pages.size() == 2);
+    auto const codecs = std::array<bench_codec const*, 2>{&dict_codec, &dict_codec};
+    CHECK(bench::run_interleaved(c, codecs, model, untimed(BENCH_LEVEL_DEFAULT, dict)).size() == 2);
 }
 
 TEST_CASE("harness: what was set up is released, also when the run fails") {
@@ -402,8 +398,8 @@ TEST_CASE("harness: interleaved runs give every codec the result of its own run"
         page_with_prefix(page_size),
         page_with_prefix(3000),
     });
-    auto const codecs = std::array<quetschn_codec const*, 2>{&trim_codec, &pad_codec};
-    auto const both = quetschn::run_interleaved(c, codecs, model, untimed());
+    auto const codecs = std::array<bench_codec const*, 2>{&trim_codec, &pad_codec};
+    auto const both = bench::run_interleaved(c, codecs, model, untimed());
     REQUIRE(both.size() == 2);
     CHECK(both[0].pages[0].comp_len == 102);
     CHECK(both[1].pages[0].comp_len == 110);
@@ -426,31 +422,31 @@ TEST_CASE("harness: interleaved runs give every codec the result of its own run"
 TEST_CASE("harness: interleaved, each codec can have its own level") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100)});
-    auto const codecs = std::array<quetschn_codec const*, 2>{&trim_codec, &trim_codec};
+    auto const codecs = std::array<bench_codec const*, 2>{&trim_codec, &trim_codec};
     auto opts = untimed(4);
     opts.levels = {2, 7};
-    auto const r = quetschn::run_interleaved(c, codecs, model, opts);
+    auto const r = bench::run_interleaved(c, codecs, model, opts);
     CHECK(r[0].level == 2);
     CHECK(r[1].level == 7);
     CHECK(r[0].stream_bytes == 300);
     CHECK(r[1].stream_bytes == 800);
 
     opts.levels = {};
-    auto const same = quetschn::run_interleaved(c, codecs, model, opts);
+    auto const same = bench::run_interleaved(c, codecs, model, opts);
     CHECK(same[0].level == 4);
     CHECK(same[1].level == 4);
 
     opts.levels = {2};
-    CHECK_THROWS_AS((void)quetschn::run_interleaved(c, codecs, model, opts), std::invalid_argument);
+    CHECK_THROWS_AS((void)bench::run_interleaved(c, codecs, model, opts), std::invalid_argument);
 }
 
 TEST_CASE("harness: interleaved, every codec is timed on every page") {
     auto const model = zsmalloc_model();
     auto const c = make_corpus({page_with_prefix(100), page_with_prefix(page_size), page_with_prefix(2000)});
-    auto const codecs = std::array<quetschn_codec const*, 3>{&trim_codec, &trim_codec, &trim_codec};
+    auto const codecs = std::array<bench_codec const*, 3>{&trim_codec, &trim_codec, &trim_codec};
     auto opts = run_options{};
     opts.repetitions = 2;
-    auto const results = quetschn::run_interleaved(c, codecs, model, opts);
+    auto const results = bench::run_interleaved(c, codecs, model, opts);
     REQUIRE(results.size() == 3);
     for (std::size_t k = 0; k < results.size(); ++k) {
         CAPTURE(k);
@@ -470,8 +466,8 @@ TEST_CASE("harness: interleaved, a failing codec releases the others too") {
     for (auto const* second : {&broken_codec, &failing_codec, &failing_create_codec}) {
         CAPTURE(second->name);
         calls = lifecycle{};
-        auto const codecs = std::array<quetschn_codec const*, 2>{&trim_codec, second};
-        CHECK_THROWS((void)quetschn::run_interleaved(c, codecs, model, untimed()));
+        auto const codecs = std::array<bench_codec const*, 2>{&trim_codec, second};
+        CHECK_THROWS((void)bench::run_interleaved(c, codecs, model, untimed()));
         CHECK(calls.setup == 2);
         CHECK(calls.release == 2);
         CHECK(calls.create == 2);
@@ -501,20 +497,18 @@ namespace {
 // the trimmed length of each page trim's compress and decompress got, in order
 std::vector<unsigned int> compressed_pages, decompressed_pages;
 
-int log_compress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int log_compress(bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     compressed_pages.push_back(trimmed_length(src, src_len));
     return trim_compress(p, s, src, src_len, dst, dst_len);
 }
 
-int log_decompress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+int log_decompress(bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     auto const* b = static_cast<unsigned char const*>(src);
     decompressed_pages.push_back(static_cast<unsigned int>(b[0] | (b[1] << 8)));
     return trim_decompress(p, s, src, src_len, dst, dst_len);
 }
 
-quetschn_codec const log_codec = trim_like("log", trim_create, log_compress, log_decompress);
+bench_codec const log_codec = trim_like("log", trim_create, log_compress, log_decompress);
 
 } // namespace
 
@@ -580,7 +574,7 @@ TEST_CASE("harness: the latency summary has the mean, which a few slow pages mov
 }
 
 TEST_CASE("harness: a corpus written by the collector loads back unchanged") {
-    auto tmpl = (std::filesystem::temp_directory_path() / "quetschn-harness-XXXXXX").string();
+    auto tmpl = (std::filesystem::temp_directory_path() / "seqlz-harness-XXXXXX").string();
     REQUIRE(::mkdtemp(tmpl.data()) != nullptr);
     auto const dir = std::filesystem::path(tmpl);
     auto const base = dir / "corpus";
@@ -588,11 +582,11 @@ TEST_CASE("harness: a corpus written by the collector loads back unchanged") {
     auto const a = page_with_prefix(10);
     auto const b = page_with_prefix(4000);
     {
-        auto writer = quetschn::corpus_writer(base, page_size);
+        auto writer = bench::corpus_writer(base, page_size);
         writer.write(1, "x", "", 0x1000, a);
         writer.write(1, "x", "", 0x2000, b);
     }
-    auto const c = quetschn::load_corpus(base);
+    auto const c = bench::load_corpus(base);
     CHECK(c.page_size == page_size);
     REQUIRE(c.size() == 2);
     CHECK(std::memcmp(c.page(0).data(), a.data(), page_size) == 0);
@@ -602,7 +596,7 @@ TEST_CASE("harness: a corpus written by the collector loads back unchanged") {
     auto tsv = base;
     tsv += ".tsv";
     std::ofstream(tsv) << "page\tpid\n";
-    CHECK_THROWS_AS((void)quetschn::load_corpus(base), std::runtime_error);
+    CHECK_THROWS_AS((void)bench::load_corpus(base), std::runtime_error);
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
@@ -611,7 +605,7 @@ TEST_CASE("harness: a corpus written by the collector loads back unchanged") {
 TEST_CASE("harness: the clock resolves differences far below a page's decode time") {
     // The TSC of a Ryzen 9 7950X steps by 10 ns. cntvct_el0, which steady_clock reads on arm64, steps by
     // 52 ns on a Snapdragon 730 and by 18.5 ns at 54 MHz, which is more than codecs often differ by.
-    CHECK(quetschn::timer_step_ns() < 15.0);
+    CHECK(bench::timer_step_ns() < 15.0);
 }
 
 namespace {
@@ -636,14 +630,14 @@ void spin() {
 }
 
 int spin_decompress(
-    quetschn_params* p, quetschn_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
+    bench_params* p, bench_stream* s, void const* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     auto const t0 = std::chrono::steady_clock::now();
     spin();
     spin_wall_ns.push_back(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
     return trim_decompress(p, s, src, src_len, dst, dst_len);
 }
 
-quetschn_codec const spin_codec = trim_like("spin", trim_create, trim_compress, spin_decompress);
+bench_codec const spin_codec = trim_like("spin", trim_create, trim_compress, spin_decompress);
 
 } // namespace
 

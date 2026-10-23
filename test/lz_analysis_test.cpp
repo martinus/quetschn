@@ -12,17 +12,17 @@
 namespace {
 
 std::vector<std::uint8_t> lz4hc(std::vector<std::uint8_t> const& src) {
-    auto p = quetschn_params{};
+    auto p = bench_params{};
     p.level = 9;
     p.page_size = 4096;
-    REQUIRE(quetschn_codec_lz4hc.setup_params(&p) == 0);
-    auto s = quetschn_stream{};
-    REQUIRE(quetschn_codec_lz4hc.create_cctx(&p, &s) == 0);
+    REQUIRE(bench_codec_lz4hc.setup_params(&p) == 0);
+    auto s = bench_stream{};
+    REQUIRE(bench_codec_lz4hc.create_cctx(&p, &s) == 0);
     auto dst = std::vector<std::uint8_t>(2 * src.size() + 64);
     auto len = static_cast<unsigned int>(dst.size());
-    REQUIRE(quetschn_codec_lz4hc.compress(&p, &s, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) == 0);
-    quetschn_codec_lz4hc.destroy_cctx(&s);
-    quetschn_codec_lz4hc.release_params(&p);
+    REQUIRE(bench_codec_lz4hc.compress(&p, &s, src.data(), static_cast<unsigned int>(src.size()), dst.data(), &len) == 0);
+    bench_codec_lz4hc.destroy_cctx(&s);
+    bench_codec_lz4hc.release_params(&p);
     dst.resize(len);
     return dst;
 }
@@ -56,9 +56,9 @@ TEST_CASE("lz analysis: every page comes back from the parsed lz4 sequences") {
             }
         }
         auto const c = lz4hc(page);
-        auto const parsed = quetschn::parse_lz4(c.data(), c.size());
+        auto const parsed = bench::parse_lz4(c.data(), c.size());
         CHECK(parsed.lz4_size == c.size());
-        CHECK(quetschn::reconstruct(parsed) == page);
+        CHECK(bench::reconstruct(parsed) == page);
     }
 }
 
@@ -74,14 +74,14 @@ TEST_CASE("lz analysis: truncated blocks and bad offsets are errors") {
     for (std::size_t n = 1; n < c.size(); ++n) {
         auto const cut = std::vector<std::uint8_t>(c.begin(), c.begin() + static_cast<std::ptrdiff_t>(n));
         try {
-            (void)quetschn::parse_lz4(cut.data(), cut.size());
+            (void)bench::parse_lz4(cut.data(), cut.size());
         } catch (std::runtime_error const&) {
             ++errors;
         }
     }
     CHECK(errors > 0);
-    auto parsed = quetschn::parse_lz4(c.data(), c.size());
+    auto parsed = bench::parse_lz4(c.data(), c.size());
     REQUIRE(parsed.sequences.size() > 1);
     parsed.sequences[1].offset = 60000;
-    CHECK_THROWS_AS((void)quetschn::reconstruct(parsed), std::runtime_error);
+    CHECK_THROWS_AS((void)bench::reconstruct(parsed), std::runtime_error);
 }

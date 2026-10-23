@@ -2,7 +2,7 @@
 
 *Or how to get a new compressor into zram, which has worked once and failed once.*
 
-quetschn is a compression codec for memory pages, aimed at the Linux kernel's zram module: 4 KiB pages
+seqlz is a compression codec for memory pages, aimed at the Linux kernel's zram module: 4 KiB pages
 first, and 16 KiB pages as a parameter from the start (§3.5). This document is the goal, the evidence
 behind it, the phases with their gates, and where the project stands.
 
@@ -67,7 +67,7 @@ at most `lz4`'s 16 416 B, a number that was never priced (#203); it is in the sc
 kernels are built from `gki_defconfig`, and turning a new backend on there is a separate decision of
 the Android kernel team, made after the mainline merge. Phase 7 has to plan for it.
 
-**Not a goal:** beating `zstd` level 3 on ratio. If quetschn lands as `lz4`-class latency at
+**Not a goal:** beating `zstd` level 3 on ratio. If seqlz lands as `lz4`-class latency at
 `zstd -1`-class ratio, that is a win.
 
 ### 1.1 The score: memory against time, not bars
@@ -94,14 +94,14 @@ the Pixel 9a in daily use swapped in 78 335 824 pages against 106 938 781 out in
 phones, so the score uses that. A desktop with zram as its only swap had 0.34, 3 146 179 in against
 9 210 320 out in 27.5 days; the Mi 9T 0.45 to 0.61 in scripted sessions and 0.16 idle on a desk
 ([explored-designs.md](explored-designs.md#reads-per-write-on-phones-073-on-a-pixel-9a-in-daily-use-the-score-uses-it)).
-`quetschn-score --reads-per-write 0.34` gives the desktop's score. `b` weighs
+`seqlz-score --reads-per-write 0.34` gives the desktop's score. `b` weighs
 the time of recompression, which zram runs on idle pages when told to, against the time of reads and
 writes, which a task waits for or kswapd spends. `b = 1` counts every µs the same. A recompression on
 an otherwise idle CPU costs energy and not latency, which would argue for less. The choice of `b`
 decides whether recompression pays at all, so every result states it.
 
-lambda is not fixed. `quetschn-score` reads the logs of `tools/zram-vm/run.sh` or of
-`quetschn-bench-*` and prints the codecs that have the lowest score for some lambda, the lower left
+lambda is not fixed. `seqlz-score` reads the logs of `tools/zram-vm/run.sh` or of
+`seqlz-bench-*` and prints the codecs that have the lowest score for some lambda, the lower left
 convex hull of (time, bytes), with the exchange rate between neighbours: the lambda at which the
 faster one starts to win. A design is worth keeping if it is on the hull at a lambda that matters.
 
@@ -128,7 +128,7 @@ of a recompressed page 2.3 µs slower. `seqlz-opt` is removed
 
 **Work memory per CPU moves only the step to `zstd` 3, and only when zram holds little.** Per page it
 is bytes per CPU × CPUs / pages in zram, with the bytes that the kernel's allocators hand out for the
-backends of zram's split contexts, 4 KiB pages, measured by `quetschn-bench-*`:
+backends of zram's split contexts, 4 KiB pages, measured by `seqlz-bench-*`:
 
 | codec | bytes per CPU | 8 CPUs, 64 MiB | 8 CPUs, 1 GiB | 32 CPUs, 64 MiB | 32 CPUs, 1 GiB |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -167,7 +167,7 @@ same for every codec, which moves no exchange rate. The read benchmark decodes e
 times, which trains the branch predictor on it: in a fault `seqlz-2` mispredicts about 110
 branches per page more, and cold caches add 0.12 µs ([explored-designs.md, "The decoder in a fault"](explored-designs.md#the-decoder-in-a-fault-028-µs-slower-than-in-zrams-read-benchmark-warm-caches-give-back-012)).
 
-**Swap-ins come in bursts.** `quetschn-swap-bursts` samples `pswpin` every 10 ms and groups the
+**Swap-ins come in bursts.** `seqlz-swap-bursts` samples `pswpin` every 10 ms and groups the
 swap-ins into bursts. On the Pixel 9a in use, 15 minutes: single swap-ins were 0.0% of the pages, 92%
 came in bursts of 1024 pages and more, 61% in bursts of 8192 and more, and the reads per write were 0.732
 ([explored-designs.md](explored-designs.md#swap-ins-on-a-pixel-9a-in-use-92-of-the-pages-in-bursts-of-1024-or-more-073-reads-per-write-again)). A task waits for the sum of a burst, which is what the
@@ -212,7 +212,7 @@ That commit message is the template. The plan below is built to produce exactly 
 
 ### 2.2 The failure: zBeWalgo (Benjamin Warnke, 2018, reached v7, never merged)
 
-The same problem statement as quetschn: *"ZRAM compresses each page individually. As a result the
+The same problem statement as seqlz: *"ZRAM compresses each page individually. As a result the
 compression algorithm is forced to use a very small sliding window. None of the available compression
 algorithms is designed to achieve high compression ratios with small inputs."* It did not get in.
 
@@ -227,7 +227,7 @@ against 5.95 to 6.70 for `zstd`, writing 47 Mbit/s (189 with other combinations)
 `zstd` level 1, writing 28 Mbit/s against 430 and 200. So there was no single format to specify, a
 decoder for every step, and a time per page that depended on how many combinations a page tried.
 
-Eric Biggers's objections are the checklist quetschn has to pass before the first patch is sent:
+Eric Biggers's objections are the checklist seqlz has to pass before the first patch is sent:
 
 1. **No rigorous comparison to zstd.** *"This still isn't a valid excuse for not comparing it to
    Zstandard."*
@@ -243,7 +243,7 @@ wrote *"Unfortunately, I don't have the time to look into."* Maintainer time is 
 in this project, so every patch has to be clean on the first read.
 
 One obstacle from 2018 is gone. zBeWalgo had to go through the crypto API, but since 2024 zram has its
-own backend API (`917a59e81c34`, "zram: introduce custom comp backends API"). So quetschn touches only
+own backend API (`917a59e81c34`, "zram: introduce custom comp backends API"). So seqlz touches only
 `lib/` and `drivers/block/zram/`, and the format-stability objection is weaker: zram data does not
 survive a reboot.
 
@@ -349,7 +349,7 @@ from 354k to 997k and the read p99.99 from 5669 µs to 137 µs. The rules below 
 
 What follows for the design:
 
-- quetschn has to be a **synchronous backend**: no sleeping, no allocation, no page faults in
+- seqlz has to be a **synchronous backend**: no sleeping, no allocation, no page faults in
   compress or decompress, and correct with preemption disabled.
 - The metric is the **latency distribution per page**, p50, p99, p99.9 and max, not MB/s.
 - **A bound on the worst-case runtime** is a feature to advertise.
@@ -370,7 +370,7 @@ more.
 ### 3.3 Per-CPU workspace is real memory on a phone
 
 `zcomp_strm_init()` already allocates 3 pages per CPU, `local_copy` of 4 KiB and `buffer` of 8 KiB.
-On top of that, the backend's work memory, with 4 KiB pages, as `quetschn-bench-*` counts it:
+On top of that, the backend's work memory, with 4 KiB pages, as `seqlz-bench-*` counts it:
 
 | backend | asked per CPU | handed out per CPU |
 | --- | ---: | ---: |
@@ -483,7 +483,7 @@ Which means that:
 - The corpus needs 16 KiB pages too (Phase 1). Four adjacent 4 KiB pages are a first approximation,
   but real kernels with 16 KiB pages allocate differently.
 - Larger inputs help `lz4` and `zstd` more than a word model, because their match window gets 4 times
-  the history. quetschn's advantage may shrink on 16 KiB pages. That has to be measured, not assumed.
+  the history. seqlz's advantage may shrink on 16 KiB pages. That has to be measured, not assumed.
 
 A library in `lib/` that is defined by `PAGE_SIZE` and builds only with 4 KiB pages would draw the
 first review comment, and today the kernel copy is that: `seqlz_compress()` takes "the page, PAGE_SIZE bytes", and `port.py` adds an
@@ -620,12 +620,12 @@ adjacent 4 KiB pages of the same mapping are an approximation (§3.5).
 
 Where it stands:
 
-- [x] Collector 1, `quetschn-collect-resident` in `tools/collect/`. It finds resident pages with the
+- [x] Collector 1, `seqlz-collect-resident` in `tools/collect/`. It finds resident pages with the
   `PAGEMAP_SCAN` ioctl (Linux 6.7 and newer) and falls back to `/proc/<pid>/pagemap` on older kernels,
   so it runs on the old phone too. Pages that are swapped already are counted but never read, because
   reading them would swap them back in. A first run on the development machine (Fedora, zram swap)
   found 1.8 million resident and 313 000 swapped pages.
-- [x] Collector 2 with `dd`: `quetschn-import-raw` turns a `dd` of `/dev/zram0` into a corpus, see
+- [x] Collector 2 with `dd`: `seqlz-import-raw` turns a `dd` of `/dev/zram0` into a corpus, see
   [measuring.md](measuring.md#pages-to-measure-on). The first dump of the development machine has
   460 923 pages that are not zero. It also checks the harness against the kernel: `lzo-rle` built in
   userspace reproduces zram's `mm_stat` for these pages to the last digit, 11 852 pages stored
@@ -659,9 +659,9 @@ WKdm, WK4x4, memlz, LZAV.
 Plus one system configuration, because it is the first alternative a maintainer will suggest: **`lz4`
 as the primary codec, and `zstd` recompression of idle pages** with `CONFIG_ZRAM_MULTI_COMP`. Modelled
 as `lz4` for the pages that are read back soon and `zstd` for the rest, with the idle fraction
-measured in the workload. The cover letter has to say why quetschn is still worth it next to that.
+measured in the workload. The cover letter has to say why seqlz is still worth it next to that.
 
-**The compiler flags match the kernel's.** Every codec in the harness, quetschn too, is built with the
+**The compiler flags match the kernel's.** Every codec in the harness, seqlz too, is built with the
 flags the kernel uses for `lib/`: `-O2 -fno-strict-aliasing`, and no SIMD registers
 (`-mno-sse -mno-mmx -mno-avx -mno-sse2` on x86-64, `-mgeneral-regs-only` on arm64). Otherwise the
 compiler vectorizes loops in userspace that it cannot vectorize in the kernel, and the userspace
@@ -707,7 +707,7 @@ Copy the shape of the lzo-rle commit message, because it worked:
 - 95% bootstrap confidence intervals, resampling pages, for every Σ cost and every difference of
   percentiles;
 - a **train/test split by workload**. Dictionaries for `lz4` and `zstd` are trained on some workloads
-  and measured on the others, and everything tuned for quetschn later (Phase 3) uses the same split. A
+  and measured on the others, and everything tuned for seqlz later (Phase 3) uses the same split. A
   dictionary trained on the pages it is measured on overstates C4, and so does a codec tuned on them.
   A zram dump has no process names, so there the split is by time: train on one dump, measure on a dump
   taken days later, and leave the pages that are in both out of the training side
@@ -716,7 +716,7 @@ Copy the shape of the lzo-rle commit message, because it worked:
 *Gate, go or no-go: headroom cannot be measured on a codec that does not exist yet, so the gate uses a
 proxy. On the test corpus, does `zstd -1` without a dictionary need at least 12% less Σ zsmalloc cost
 than the better of `lz4` with a dictionary and `lzo-rle`?* `zstd -1` stands in for "how much redundancy
-is left that a fast codec could still find". It is not a strict bound, and quetschn will not get all
+is left that a fast codec could still find". It is not a strict bound, and seqlz will not get all
 of it, so the gate asks for more than the 8% of C1. The 12% is a judgment call. If the proxy shows
 less, go to §8.
 
@@ -768,7 +768,7 @@ instead: the stored index for exact and partial words, which the encoder wrote f
 the hash of the stored word for literals. Then no store address depends on a table load, and an exact
 match needs no store at all.
 
-`quetschn-bench-interleaved` runs several codecs in one process, and each repetition runs every codec
+`seqlz-bench-interleaved` runs several codecs in one process, and each repetition runs every codec
 once on the same page, so a drift of the CPU frequency hits all of them alike. On the 455 239 pages of
 the first zram dump, Ryzen 9 7950X pinned to one core, `powersave` governor, median of 5 runs per page,
 percentiles over the 344 955 pages that both store compressed:
@@ -891,12 +891,12 @@ and 298 million on the roundtrip, nothing found.
 
 ### Phase 5: kernel port and validation in a VM (16 weeks)
 
-- [x] `lib/quetschn/` and `include/linux/quetschn.h`, **free of any zram API dependency**. The zram
+- [x] `lib/seqlz/` and `include/linux/seqlz.h`, **free of any zram API dependency**. The zram
   backend API has changed again and again (the rewrite of 2024, the preemption series of 2025, the
-  parameter handling of 2026). A thin `backend_quetschn.c` absorbs that. Done as `lib/seqlz/`,
+  parameter handling of 2026). A thin `backend_seqlz.c` absorbs that. Done as `lib/seqlz/`,
   `include/linux/seqlz.h` with only `seqlz_compress()` and `seqlz_decompress()`, which
   `tools/kernel-port/port.py` writes into a kernel tree.
-- [x] `backend_quetschn.c` modelled on `backend_lz4.c`, including the validation in `setup_params`
+- [x] `backend_seqlz.c` modelled on `backend_lz4.c`, including the validation in `setup_params`
   (`7b0f677c7bd5`) and `pr_fmt` (`70922d5ef84a`): `backend_seqlz.c`.
 - [x] A QEMU test rig: a VM with zram, reads, writes and the whole page fault, `tools/zram-vm/run.sh`.
   It measures the **actual** memory of `mm_stat`, which is where the fragmentation of §3.1 shows up and
@@ -914,7 +914,7 @@ and 298 million on the roundtrip, nothing found.
   x86-64 has no `preempt=none` any more, its choices are `full` and `lazy`, and `stress.sh` boots
   both.
 
-*Gate: a kernel with quetschn survives sustained swap thrash under KASAN, and `mm_stat` in the VM
+*Gate: a kernel with seqlz survives sustained swap thrash under KASAN, and `mm_stat` in the VM
 confirms the userspace prediction within 2%.* Passed on 8th October 2026, kernel `986c24e0fe44`: 4
 boots of `stress.sh` on the whole second phone dump, `preempt=full` and `lazy`, levels 1 and 2, 15
 minutes each. 34.9 million pages swapped out and 33.6 million in, 37.2 million compared, none
@@ -989,7 +989,7 @@ src/                        the codec, freestanding C
   zram_seqlz.c                seqlz as a zram backend calls it, for the harness
 bench/                      the harness: per-page timing, zsmalloc's cost model, table training
   kernel_codecs/              zram's calls into lib/lz4, lib/lzo and zstd, built in userspace
-cmake/kernel_codecs.cmake   builds those from QUETSCHN_KERNEL_TREE with the kernel's flags, sources never copied
+cmake/kernel_codecs.cmake   builds those from SEQLZ_KERNEL_TREE with the kernel's flags, sources never copied
 test/                       doctest unit tests
 fuzz/                       libFuzzer and AFL++ targets, the CI smoke run and the long runs
 tools/                      see tools/README.md
@@ -1011,7 +1011,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 - `wuzl`, the sibling with a high ratio for recompression. A real opportunity with
   `CONFIG_ZRAM_MULTI_COMP`, but splitting the effort before the main codec lands would stall both.
 - zswap. A different allocator, different constraints. Later.
-  If quetschn ever is an acomp algorithm: zswap's load path without a lock (Usama Arif,
+  If seqlz ever is an acomp algorithm: zswap's load path without a lock (Usama Arif,
   [linux-mm PR #5153](https://github.com/linux-mm/linux-mm/pull/5153), patch 2) works only for
   synchronous algorithms that need no request context. Before such a port, check whether the
   scratch for the literals, from the crypto layer's per-CPU streams, counts as such a context.
@@ -1030,7 +1030,7 @@ docs/                       this plan, the format, how seqlz works, measuring, e
 | R2 | **Not enough headroom over `lz4` with a dictionary.** Nobody had measured it, and the project rested on it. | the gate of Phase 2: `zstd -1` needs 16.9% less than `lzo-rle` | Answered before any codec work. The fallback would have been the benchmark, and then *a targeted improvement of `lz4` or `lzo-rle` for page-sized inputs*. That is what lzo-rle was, and it is a much easier merge. |
 | R3 | **The maintainers do not want another backend.** Each one is maintenance for good. | zBeWalgo reached v7 and was not merged | Asked before the kernel port, [on 9th October 2026](https://lore.kernel.org/linux-mm/CAAFOosa2WLf--T17cujJu5CUsN12NNjgTitOvno2LY7jAr1gfw@mail.gmail.com/), with the phone's numbers. Sergey Senozhatsky [answered](https://lore.kernel.org/linux-mm/atl35k5lvs34BIej@google.com/) on 22nd October: a codec in `lib/` zram can use, one private to zram he cannot decide. So the risk moves to the library: Andrew Morton and the reviewers of `lib/` decide, and the cover letter has to win them (Phase 7). A "no" there sends the project to the fallback of R2. |
 | R4 | **A codec tuned on desktop pages loses on Android pages.** Another heap layout, another allocator. | two zram dumps of the Mi 9T (Android 11): `seqlz-2` stores 28% less than `lz4` there, as on the desktop | The tables are trained on phone pages too, the phone counted 5 times, so that desktop pages do not cost the phone. On the Android 17 emulator they are within 0.6% of tables trained on its own pages, and its 16 KiB pages have tables of their own ([explored-designs.md](explored-designs.md#android-17-in-the-emulator-the-4-kib-tables-fit-the-16-kib-ones-trained-again-26-smaller)). Open: a current phone. |
-| R5 | **The zram backend API changes.** The rewrite of 2024, the preemption series of 2025, parameter and naming changes in 2026. | `git log drivers/block/zram/`, and the split of zcomp into read and write streams posted in October 2026 (§3.2) | The codec has no kernel API dependency, `backend_quetschn.c` absorbs the changes. Rebase against mainline in CI. |
+| R5 | **The zram backend API changes.** The rewrite of 2024, the preemption series of 2025, parameter and naming changes in 2026. | `git log drivers/block/zram/`, and the split of zcomp into read and write streams posted in October 2026 (§3.2) | The codec has no kernel API dependency, `backend_seqlz.c` absorbs the changes. Rebase against mainline in CI. |
 | R6 | **A fuzzing bug or a sleep in atomic context burns the maintainers' goodwill.** | Biggers's objection, Minchan's panic | Phase 4, and the gate of Phase 5 with KASAN and `DEBUG_ATOMIC_SLEEP`, exist for this. Continuous fuzzing with ClusterFuzzLite before the submission, OSS-Fuzz if it takes the project. |
 | R7 | **Time.** 3 to 8 hours a week against a path of 18 to 24 months. | lzo-rle: 4 months, v5, paid work, an existing codec | Each phase can be published on its own. Phase 2 alone is worth it. |
 | R8 | **Employer rules on open-source side projects**, especially kernel work with a `MAINTAINERS` entry. | checked on 23rd September 2026: side projects are fine | Resolved. |

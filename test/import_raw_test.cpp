@@ -25,7 +25,7 @@ constexpr std::size_t page_size = 4096;
 class temp_dir {
 public:
     temp_dir() {
-        auto tmpl = (std::filesystem::temp_directory_path() / "quetschn-import-XXXXXX").string();
+        auto tmpl = (std::filesystem::temp_directory_path() / "seqlz-import-XXXXXX").string();
         REQUIRE(::mkdtemp(tmpl.data()) != nullptr);
         m_path = tmpl;
     }
@@ -100,10 +100,10 @@ std::vector<std::uintptr_t> addresses(std::filesystem::path const& base) {
 TEST_CASE("import_raw: every non-zero page of a sparse dump, at its offset") {
     auto dir = temp_dir();
     write_dump(dir.path() / "zram0.raw");
-    auto const r = quetschn::import_raw(dir.path() / "zram0.raw", dir.path() / "c", "zram0", page_size);
+    auto const r = bench::import_raw(dir.path() / "zram0.raw", dir.path() / "c", "zram0", page_size);
 
     CHECK(r.pages_written == 3);
-    auto const c = quetschn::load_corpus(dir.path() / "c");
+    auto const c = bench::load_corpus(dir.path() / "c");
     REQUIRE(c.size() == 3);
     CHECK(std::memcmp(c.page(0).data(), page_with(1).data(), page_size) == 0);
     CHECK(std::memcmp(c.page(1).data(), page_with(3).data(), page_size) == 0);
@@ -119,7 +119,7 @@ TEST_CASE("import_raw: every non-zero page of a sparse dump, at its offset") {
 TEST_CASE("import_raw: a dump that is not a whole number of pages is an error") {
     auto dir = temp_dir();
     std::ofstream(dir.path() / "bad.raw") << "not a page";
-    CHECK_THROWS_WITH_AS((void)quetschn::import_raw(dir.path() / "bad.raw", dir.path() / "c", "x", page_size),
+    CHECK_THROWS_WITH_AS((void)bench::import_raw(dir.path() / "bad.raw", dir.path() / "c", "x", page_size),
                          doctest::Contains("whole number"),
                          std::runtime_error);
 }
@@ -128,9 +128,9 @@ TEST_CASE("import_raw: a dump that is all holes gives an empty corpus") {
     auto dir = temp_dir();
     auto const path = dir.path() / "empty.raw";
     write_sparse(path, page_size, 64, {});
-    auto const r = quetschn::import_raw(path, dir.path() / "c", "x", page_size);
+    auto const r = bench::import_raw(path, dir.path() / "c", "x", page_size);
     CHECK(r.pages_written == 0);
-    CHECK(quetschn::load_corpus(dir.path() / "c").size() == 0);
+    CHECK(bench::load_corpus(dir.path() / "c").size() == 0);
 }
 
 TEST_CASE("import_raw: a dump of 16 KiB pages, a page with data only in its last 4 KiB kept") {
@@ -141,9 +141,9 @@ TEST_CASE("import_raw: a dump of 16 KiB pages, a page with data only in its last
     auto b = std::vector<std::byte>(size);
     b[size - 1] = std::byte{9};
     write_sparse(path, size, 16, {{2, a}, {9, b}});
-    auto const r = quetschn::import_raw(path, dir.path() / "c", "x", size);
+    auto const r = bench::import_raw(path, dir.path() / "c", "x", size);
     CHECK(r.pages_written == 2);
-    auto const c = quetschn::load_corpus(dir.path() / "c");
+    auto const c = bench::load_corpus(dir.path() / "c");
     CHECK(c.page_size == size);
     REQUIRE(c.size() == 2);
     CHECK(std::memcmp(c.page(0).data(), a.data(), size) == 0);
@@ -155,7 +155,6 @@ TEST_CASE("import_raw: a page size that is no kernel's is an error") {
     auto dir = temp_dir();
     write_dump(dir.path() / "zram0.raw");
     for (std::size_t size : {std::size_t{0}, std::size_t{2048}, std::size_t{6144}, std::size_t{131072}}) {
-        CHECK_THROWS_AS((void)quetschn::import_raw(dir.path() / "zram0.raw", dir.path() / "c", "x", size),
-                        std::invalid_argument);
+        CHECK_THROWS_AS((void)bench::import_raw(dir.path() / "zram0.raw", dir.path() / "c", "x", size), std::invalid_argument);
     }
 }

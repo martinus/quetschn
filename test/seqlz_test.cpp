@@ -24,8 +24,8 @@ extern "C" {
 
 namespace {
 
-// The page size seqlz is built for, 4 KiB or 16 KiB (QUETSCHN_PAGE_BITS): the tests run with both.
-constexpr unsigned page_bits = QUETSCHN_PAGE_BITS;
+// The page size seqlz is built for, 4 KiB or 16 KiB (SEQLZ_PAGE_BITS): the tests run with both.
+constexpr unsigned page_bits = SEQLZ_PAGE_BITS;
 constexpr unsigned page_size = SEQLZ_BLOCK_SIZE;
 // zram's huge_class_size, from which on a page is stored as it is (docs/plan.md §3.1 and §3.5)
 constexpr unsigned zram_huge = page_bits == 12 ? 3625U : 14553U;
@@ -148,7 +148,7 @@ TEST_CASE("seqlz: the largest length value a page needs is the last length symbo
     auto extra = 0U;
     // ll - 15 of all literals but a last match of 4 bytes, and ml - 35 of a match of all but the first byte
     CHECK(seqlz_len_symbol(page_size - 4 - SEQLZ_LL_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
-    CHECK(extra == QUETSCHN_PAGE_BITS - 1);
+    CHECK(extra == SEQLZ_PAGE_BITS - 1);
     CHECK(seqlz_len_symbol(page_size - 1 - 4 - SEQLZ_ML_CAP, &extra) == SEQLZ_LEN_SYMBOLS - 1);
     // the direct symbols end at 15, the ranges start at 16
     CHECK(seqlz_len_symbol(15, &extra) == 15);
@@ -771,7 +771,7 @@ TEST_CASE("seqlz: the tables need a code for every symbol the compressor may wri
     // 2/4 + 11/32 + 10/64 = 1. 16 KiB pages: two of 2 bits, nine of 5 and fourteen of 6,
     // 2/4 + 9/32 + 14/64 = 1. The last symbol none.
     auto l = seqlz_default_lengths;
-#if QUETSCHN_PAGE_BITS == 12
+#if SEQLZ_PAGE_BITS == 12
     unsigned char const ml[SEQLZ_LEN_SYMBOLS] = {2, 2, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0};
 #else
     unsigned char const ml[SEQLZ_LEN_SYMBOLS] = {2, 2, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0};

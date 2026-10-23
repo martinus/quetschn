@@ -24,7 +24,7 @@
 #    include <unistd.h>
 #endif
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -203,7 +203,7 @@ double timer_step_ns() {
 
 namespace {
 
-[[noreturn]] void fail(quetschn_codec const& codec, std::size_t page, char const* what) {
+[[noreturn]] void fail(bench_codec const& codec, std::size_t page, char const* what) {
     throw std::runtime_error(std::string(codec.name) + ": page " + std::to_string(page) + ": " + what);
 }
 
@@ -249,12 +249,12 @@ corpus load_corpus(std::filesystem::path const& base) {
     return c;
 }
 
-run_result run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& model, run_options const& opts) {
-    auto const codecs = std::array<quetschn_codec const*, 1>{&codec};
+run_result run_codec(corpus const& c, bench_codec const& codec, zsmalloc_model const& model, run_options const& opts) {
+    auto const codecs = std::array<bench_codec const*, 1>{&codec};
     return std::move(run_interleaved(c, codecs, model, opts)[0]);
 }
 
-codec_contexts::codec_contexts(quetschn_codec const& codec, quetschn_params* params)
+codec_contexts::codec_contexts(bench_codec const& codec, bench_params* params)
     : m_codec(codec) {
     if (codec.create_cctx(params, &m_cctx) != 0) {
         throw std::runtime_error(std::string(codec.name) + ": create_cctx failed");
@@ -278,7 +278,7 @@ namespace {
 // again in the destructor, also when a run fails halfway.
 class codec_instance {
 public:
-    codec_instance(quetschn_codec const& codec, std::size_t page_size, run_options const& opts)
+    codec_instance(bench_codec const& codec, std::size_t page_size, run_options const& opts)
         : m_codec(codec)
         , m_slot_size(4 * page_size)
         , m_compressed(block_pages * 4 * page_size + page_size)
@@ -318,7 +318,7 @@ public:
     codec_instance(codec_instance const&) = delete;
     codec_instance& operator=(codec_instance const&) = delete;
 
-    [[nodiscard]] quetschn_codec const& codec() const {
+    [[nodiscard]] bench_codec const& codec() const {
         return m_codec;
     }
 
@@ -360,9 +360,9 @@ private:
         return v.data() + ((alignment - p % alignment) % alignment);
     }
 
-    quetschn_codec const& m_codec;
+    bench_codec const& m_codec;
     std::size_t m_slot_size;
-    quetschn_params m_params{};
+    bench_params m_params{};
     std::unique_ptr<codec_contexts> m_contexts;
     bool m_have_params = false;
     std::vector<std::byte> m_compressed;
@@ -376,7 +376,7 @@ private:
 } // namespace
 
 std::vector<run_result> run_interleaved(corpus const& c,
-                                        std::span<quetschn_codec const* const> codecs,
+                                        std::span<bench_codec const* const> codecs,
                                         zsmalloc_model const& model,
                                         run_options const& opts) {
     auto const page_size = c.page_size;
@@ -584,4 +584,4 @@ run_summary summarize(run_result const& r, std::size_t page_size) {
     return s;
 }
 
-} // namespace quetschn
+} // namespace bench

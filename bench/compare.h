@@ -8,9 +8,9 @@
 #include <iosfwd>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
-// The per-page lines of quetschn-bench-* --out, one page_result per line after a header line.
+// The per-page lines of seqlz-bench-* --out, one page_result per line after a header line.
 void write_page_results(std::ostream& out, std::vector<page_result> const& pages);
 
 // Throws std::runtime_error when the header or a line is not what write_page_results writes.
@@ -58,4 +58,4 @@ struct comparison {
 [[nodiscard]] comparison
 compare(std::vector<page_result> const& baseline, std::vector<page_result> const& candidate, compare_options const& opts);
 
-} // namespace quetschn
+} // namespace bench

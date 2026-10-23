@@ -10,9 +10,9 @@
 #include <span>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
-// A page corpus as quetschn-collect-resident writes it: <base>.pages and <base>.tsv.
+// A page corpus as seqlz-collect-resident writes it: <base>.pages and <base>.tsv.
 struct corpus {
     std::size_t page_size = 0;
     std::vector<std::byte> data;
@@ -29,8 +29,8 @@ struct run_options {
     // taken across pages afterwards, so they describe slow pages and not slow measurements.
     unsigned repetitions = 5;
     bool measure_time = true;
-    // zram's algorithm_params level, QUETSCHN_LEVEL_DEFAULT for the codec's default
-    int level = QUETSCHN_LEVEL_DEFAULT;
+    // zram's algorithm_params level, BENCH_LEVEL_DEFAULT for the codec's default
+    int level = BENCH_LEVEL_DEFAULT;
     // run_interleaved only: one level per codec, instead of level for all. Empty for level.
     std::vector<int> levels;
     // zram's algorithm_params dict, empty for none. Codecs that do not use dictionaries ignore it, like zram.
@@ -48,19 +48,19 @@ struct page_result {
 };
 
 // The per-CPU contexts of a codec as zram creates them: create_cctx, and create_dctx where the codec
-// has it. Without it, decompress() gets the compression context, see quetschn_codec. Both are released
+// has it. Without it, decompress() gets the compression context, see bench_codec. Both are released
 // in the destructor. Throws std::runtime_error when the codec fails to create one; then nothing stays.
 class codec_contexts {
 public:
-    codec_contexts(quetschn_codec const& codec, quetschn_params* params);
+    codec_contexts(bench_codec const& codec, bench_params* params);
     ~codec_contexts();
     codec_contexts(codec_contexts const&) = delete;
     codec_contexts& operator=(codec_contexts const&) = delete;
 
-    [[nodiscard]] quetschn_stream* compression() {
+    [[nodiscard]] bench_stream* compression() {
         return &m_cctx;
     }
-    [[nodiscard]] quetschn_stream* decompression() {
+    [[nodiscard]] bench_stream* decompression() {
         return m_codec.create_dctx != nullptr ? &m_dctx : &m_cctx;
     }
     // what the codec holds per CPU for compression and for decompression, as the kernel's allocators hand
@@ -73,9 +73,9 @@ public:
     }
 
 private:
-    quetschn_codec const& m_codec;
-    quetschn_stream m_cctx{};
-    quetschn_stream m_dctx{};
+    bench_codec const& m_codec;
+    bench_stream m_cctx{};
+    bench_stream m_dctx{};
 };
 
 struct run_result {
@@ -93,13 +93,13 @@ struct run_result {
 // output, page_size for the decompressed one. Throws std::runtime_error when the codec fails or the
 // roundtrip does not reproduce the page, std::invalid_argument when zram would reject the level.
 [[nodiscard]] run_result
-run_codec(corpus const& c, quetschn_codec const& codec, zsmalloc_model const& model, run_options const& opts);
+run_codec(corpus const& c, bench_codec const& codec, zsmalloc_model const& model, run_options const& opts);
 
 // Like run_codec for several codecs, with the timing interleaved: for every page and every repetition,
 // each codec runs once, starting with another codec each time. A drift of CPU frequency or temperature
 // then hits all codecs alike, which separate runs cannot promise. One result per codec, in order.
 [[nodiscard]] std::vector<run_result> run_interleaved(corpus const& c,
-                                                      std::span<quetschn_codec const* const> codecs,
+                                                      std::span<bench_codec const* const> codecs,
                                                       zsmalloc_model const& model,
                                                       run_options const& opts);
 
@@ -137,4 +137,4 @@ struct run_summary {
 
 [[nodiscard]] run_summary summarize(run_result const& r, std::size_t page_size);
 
-} // namespace quetschn
+} // namespace bench

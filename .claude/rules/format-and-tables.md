@@ -20,14 +20,14 @@ paths:
 - Reference decoders are written from `docs/format.md` only; never copy from `src/`.
 - `tools/seqlz-ref/seqlz_ref.py` parses `docs/format.md` rows ``| `TOK_4k` | `<sha256>` |``: keep
   them exact. Retrained tables need new hashes there (else `check.sh` fails) and new
-  `bench/seqlz_counts_*.txt` (`quetschn-seqlz-train --counts`, else test `seqlz_train` fails).
+  `bench/seqlz_counts_*.txt` (`seqlz-train --counts`, else test `seqlz_train` fails).
 - `.inc` tables: not format-checked, never clang-format or hand-edit. Written by
   `tools/kernel-port/gen-seqlz-lengths.py` from `bench/seqlz_counts_*.txt` (command in each file's
   head); `tools/seqlz-ref/check.sh` fails if they differ from its output.
 - Retrain: `tools/retrain-tables.py --page-bits 12|14 --train <Release build> --corpus <base>
   --name <name>` (counts, lit lines in committed order, `.inc`, SHA-256 rows of format.md). 4 KiB:
-  `~/quetschn-corpus/phone-dump/train-mix`, name `train-mix-1012`, 11 min; 16 KiB:
-  `~/quetschn-corpus/emu-a17-16k-a-train`, 20 s. Then by hand: format.md example (`ab` 2048 times
+  `~/seqlz-corpus/phone-dump/train-mix`, name `train-mix-1012`, 11 min; 16 KiB:
+  `~/seqlz-corpus/emu-a17-16k-a-train`, 20 s. Then by hand: format.md example (`ab` 2048 times
   through `tools/seqlz-compress/compress.c`), its bytes in `test/seqlz_ref_test.cpp`, the book.
 - `docs/format.md` is also the kernel's `Documentation/staging/seqlz.rst` via
   `tools/kernel-port/format_rst.py`. HTML comments mark repo-only and kernel-only parts. The converter

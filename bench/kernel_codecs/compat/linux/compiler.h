@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-only */
-#ifndef QUETSCHN_LINUX_COMPILER_H
-#define QUETSCHN_LINUX_COMPILER_H
+#ifndef SEQLZ_LINUX_COMPILER_H
+#define SEQLZ_LINUX_COMPILER_H
 
 #define __always_inline inline __attribute__((__always_inline__))
 #define noinline __attribute__((__noinline__))

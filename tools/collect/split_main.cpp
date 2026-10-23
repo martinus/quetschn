@@ -15,9 +15,9 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-split-corpus --corpus <base> --train <base> --test <base> [--test-fraction <f>]\n"
+                 "usage: seqlz-split-corpus --corpus <base> --train <base> --test <base> [--test-fraction <f>]\n"
                  "                             [--seed <n>]\n"
-                 "       quetschn-split-corpus --corpus <base> --train <base> --exclude <base>\n"
+                 "       seqlz-split-corpus --corpus <base> --train <base> --exclude <base>\n"
                  "\n"
                  "With --test: all pages of a process name go to the same side. --test-fraction is the share\n"
                  "of process names on the test side, default 0.3.\n"
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     auto train = std::string();
     auto test = std::string();
     auto exclude = std::string();
-    auto opts = quetschn::split_options{};
+    auto opts = bench::split_options{};
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     }
     try {
         if (!exclude.empty()) {
-            auto const r = quetschn::write_training_corpus(base, exclude, train);
+            auto const r = bench::write_training_corpus(base, exclude, train);
             std::printf("train: %zu pages (%zu same-filled and %zu also in %s left out)\n",
                         r.pages,
                         r.same_filled_dropped,
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
                         exclude.c_str());
             return 0;
         }
-        auto const r = quetschn::split_corpus(base, train, test, opts);
+        auto const r = bench::split_corpus(base, train, test, opts);
         std::printf("train: %zu pages from %zu process names (%zu same-filled pages left out)\n",
                     r.train_pages,
                     r.train_names,

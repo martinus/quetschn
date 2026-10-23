@@ -6,10 +6,10 @@
 #include <string>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 // What a page costs in memory and in time, from one zram device of a run of tools/zram-vm/run.sh or
-// one codec of quetschn-bench-*.
+// one codec of seqlz-bench-*.
 struct codec_cost {
     std::string name;
     double pages = 0.0;          // VM: orig_data_size / 4096, same-filled pages included, without the ones
@@ -48,7 +48,7 @@ struct zram_device {
 // has no results or lacks a codec of the first one.
 [[nodiscard]] std::vector<codec_cost> read_vm_boots(std::istream& in, std::string const& prefix);
 
-// The codecs of the output of quetschn-bench-* with timing, same-filled pages excluded, in the order
+// The codecs of the output of seqlz-bench-* with timing, same-filled pages excluded, in the order
 // they appear, with their memory per CPU and the corpus's page size where the log has them. Throws
 // std::runtime_error when a codec lacks its cost or the mean of compress or of decompress cold.
 [[nodiscard]] std::vector<codec_cost> read_bench_results(std::istream& in, std::string const& prefix);
@@ -78,4 +78,4 @@ struct score_weights {
 // us k) bytes per us: above it the faster one wins, below it the smaller one.
 [[nodiscard]] std::vector<std::size_t> best_for_some_lambda(std::vector<codec_cost> const& codecs, score_weights const& w);
 
-} // namespace quetschn
+} // namespace bench

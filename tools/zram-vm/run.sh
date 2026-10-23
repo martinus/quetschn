@@ -11,7 +11,7 @@
 # to the kernel command line, e.g. KARGS=zram.zram_prefetch=8 for the backends' own prefetch. BOOTS=n
 # boots the kernel n times, the order of ALGOS rotated by one per boot, each boot's lines after a line
 # "BOOT k of n", and prints the range of every mean over the boots at the end; one boot can be off by
-# 18%. quetschn-score takes the mean over the boots. VARIANTS="name=dir[:cflags] ..." adds more builds of
+# 18%. seqlz-score takes the mean over the boots. VARIANTS="name=dir[:cflags] ..." adds more builds of
 # seqlz as backends <name>-1 to <name>-3, from <dir>/src, e.g. another worktree, with cflags after its
 # -O3, e.g. VARIANTS="o2=.:-O2 le16=../other": variants compared within one boot, the codecs taking turns.
 # PORT=1 builds seqlz as tools/kernel-port/port.py writes it into the tree, the kernel's own copy, with
@@ -171,7 +171,7 @@ algos=${ALGOS:-lz4}
 for ((k = 1; k <= boots; k++)); do
     [[ $boots -eq 1 ]] || echo "BOOT $k of $boots: ALGOS=$algos"
     taskset -c 2 qemu-system-x86_64 -enable-kvm -cpu host -smp 1 -m 2G -kernel "$work/build/arch/x86/boot/bzImage" \
-        -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=8 quetschn.algos=$algos quetschn.mode=${MODE:-read} zswap.enabled=0 ${KARGS:-}" \
+        -initrd "$work/initramfs.cpio" -append "console=ttyS0 quiet panic=-1 zram.num_devices=8 seqlz.algos=$algos seqlz.mode=${MODE:-read} zswap.enabled=0 ${KARGS:-}" \
         -nographic -no-reboot |
         grep -a RESULT | tee -a "$work/boots.log"
     # the first codec goes last, so that each one is in every place once in as many boots as codecs

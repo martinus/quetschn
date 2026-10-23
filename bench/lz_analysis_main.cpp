@@ -38,8 +38,8 @@ extern "C" {
 
 namespace {
 
-using quetschn::parse_lz4;
-using quetschn::parsed_page;
+using bench::parse_lz4;
+using bench::parsed_page;
 
 // symbol and extra bits: values below 16 directly, above as 16 + bucket with bucket extra bits
 struct symbol {
@@ -358,7 +358,7 @@ void normalize(auto& table) {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-lz-analysis --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>]\n"
+                 "usage: seqlz-lz-analysis --corpus <base> [--codec lz4|lz4hc|seqlz] [--level <n>]\n"
                  "\n"
                  "The matches come from --codec, default lz4hc, at zram's default level unless --level; seqlz is\n"
                  "seqlz-1's own matcher.\n");
@@ -368,8 +368,8 @@ void usage() {
 
 int main(int argc, char** argv) {
     auto base = std::string();
-    int level = QUETSCHN_LEVEL_DEFAULT;
-    auto const* codec = &quetschn_codec_lz4hc;
+    int level = BENCH_LEVEL_DEFAULT;
+    auto const* codec = &bench_codec_lz4hc;
     auto own_matcher = false;
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
@@ -378,7 +378,7 @@ int main(int argc, char** argv) {
         } else if (arg == "--codec" && i + 1 < argc) {
             auto const name = std::string_view(argv[++i]);
             if (name == "lz4") {
-                codec = &quetschn_codec_lz4;
+                codec = &bench_codec_lz4;
             } else if (name == "seqlz") {
                 own_matcher = true;
             } else if (name != "lz4hc") {
@@ -402,16 +402,16 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
-        auto const c = quetschn::load_corpus(base);
-        auto const zs = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
+        auto const c = bench::load_corpus(base);
+        auto const zs = bench::zsmalloc_model(bench::zsmalloc_config{.page_size = c.page_size});
 
-        auto params = quetschn_params{};
+        auto params = bench_params{};
         params.level = level;
         params.page_size = static_cast<unsigned int>(c.page_size);
         if (codec->setup_params(&params) != 0) {
             throw std::invalid_argument(std::string(codec->name) + " rejects level " + std::to_string(level));
         }
-        auto stream = quetschn_stream{};
+        auto stream = bench_stream{};
         if (codec->create_cctx(&params, &stream) != 0) {
             throw std::runtime_error(std::string(codec->name) + ": create_cctx failed");
         }
@@ -421,7 +421,7 @@ int main(int argc, char** argv) {
         auto seqs = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
         for (std::size_t i = 0; i < c.size(); ++i) {
             auto const src = c.page(i);
-            if (quetschn::analyze_page(src).same_filled) {
+            if (bench::analyze_page(src).same_filled) {
                 continue;
             }
             auto parsed = parsed_page{};
@@ -444,7 +444,7 @@ int main(int argc, char** argv) {
                 parsed = parse_lz4(dst.data(), len);
             }
             // the estimate is only as good as the parse, so every page must come back from it
-            auto const back = quetschn::reconstruct(parsed);
+            auto const back = bench::reconstruct(parsed);
             if (back.size() != src.size() || std::memcmp(back.data(), src.data(), src.size()) != 0) {
                 throw std::runtime_error("page " + std::to_string(i) + " does not come back from its sequences");
             }

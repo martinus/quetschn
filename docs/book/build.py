@@ -77,7 +77,7 @@ from pygments.token import Token
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent  # docs/book in the repository
-GITHUB = "https://github.com/martinus/quetschn/blob"
+GITHUB = "https://github.com/martinus/seqlz/blob"
 OUT_DIR = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else HERE
 
 # The book describes the code of one commit, "src" in book.json, not the checkout's: a change of the
@@ -86,7 +86,7 @@ OUT_DIR = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.
 # tree, extracted to a temporary directory, with the checkout's docs/book over its own: every
 # listing, fact, animation and step-through sees that commit's code, and the facts' programs find it
 # from their own path. PINNED is set in that run.
-PINNED = "QUETSCHN_BOOK_COMMIT"
+PINNED = "SEQLZ_BOOK_COMMIT"
 if PINNED not in os.environ:
     pin = json.loads((HERE / "book.json").read_text())["src"]
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", f"{pin}^{{commit}}"],
@@ -106,12 +106,12 @@ if PINNED not in os.environ:
             (book / "node_modules").symlink_to(HERE / "node_modules")
         args = [a for i, a in enumerate(sys.argv[1:]) if a != "--out" and sys.argv[i] != "--out"]
         r = subprocess.run([sys.executable, str(book / "build.py"), *args, "--out", str(OUT_DIR.resolve())],
-                           env={**os.environ, PINNED: sha, "QUETSCHN_BOOK_DATE": date})
+                           env={**os.environ, PINNED: sha, "SEQLZ_BOOK_DATE": date})
     sys.exit(r.returncode)
 
 # the commit the book describes; its listings link to their lines there
 SRC_COMMIT = os.environ[PINNED]
-SRC_DATE = os.environ["QUETSCHN_BOOK_DATE"]
+SRC_DATE = os.environ["SEQLZ_BOOK_DATE"]
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT = OUT_DIR / "seqlz-line-by-line.html"
 STANDALONE = OUT_DIR / "seqlz-line-by-line.standalone.html"
@@ -227,6 +227,8 @@ TABLES_LOCK = threading.Lock()
 def tables_c(flags=()):
     """seqlz_tables.c, the codec's tables, which tools/gen-tables/gen-tables.sh generates, once per build
     and block size: flags, a program's -D flags, may set QUETSCHN_PAGE_BITS"""
+    # the name the book's commit knows: QUETSCHN_PAGE_BITS before the rename to seqlz of 23 Oct 2026,
+    # SEQLZ_PAGE_BITS once the book is brought up to a commit after it
     bits = tuple(f for f in flags if f.startswith("-DQUETSCHN_PAGE_BITS="))
     with TABLES_LOCK:
         if bits not in TABLES:

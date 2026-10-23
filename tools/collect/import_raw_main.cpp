@@ -3,9 +3,9 @@
 // Turns a raw page dump into a corpus. The dump of a zram device is the real thing, the pages that
 // reclaim swapped out (docs/plan.md Phase 1, collector 2):
 //
-//   mkdir -m 700 -p ~/quetschn-corpus
+//   mkdir -m 700 -p ~/seqlz-corpus
 //   sudo dd if=/dev/zram0 bs=1M iflag=direct status=progress |
-//       dd of=$HOME/quetschn-corpus/zram0.raw bs=4096 iflag=fullblock conv=sparse
+//       dd of=$HOME/seqlz-corpus/zram0.raw bs=4096 iflag=fullblock conv=sparse
 
 #include "import_raw.h"
 
@@ -23,7 +23,7 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-import-raw --in <dump> --out <base> [--name <process name>] [--page-size <bytes>]\n"
+                 "usage: seqlz-import-raw --in <dump> --out <base> [--name <process name>] [--page-size <bytes>]\n"
                  "\n"
                  "Writes every page of the dump that is not all zero to <base>.pages and <base>.tsv, mode 0600.\n"
                  "--name is stored as the process name of every page, default: the dump's file name.\n"
@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
         name = std::filesystem::path(in).stem().string();
     }
     try {
-        auto const r = quetschn::import_raw(in, out, name, page_size);
+        auto const r = bench::import_raw(in, out, name, page_size);
         std::fprintf(stderr, "%zu pages written, %zu all-zero pages skipped\n", r.pages_written, r.zero_pages);
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

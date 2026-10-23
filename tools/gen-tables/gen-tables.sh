@@ -3,7 +3,7 @@
 #
 # gen-tables.sh <out.c> [cc args]: seqlz's codes and decode tables as C, the seqlz_tables.c that every
 # build of src/ compiles with its other files. Builds gen_seqlz_tables.c with src/seqlz_codes.c and the
-# code lengths, and runs it. cc args go to that build, e.g. -DQUETSCHN_PAGE_BITS=14 for 16 KiB blocks.
+# code lengths, and runs it. cc args go to that build, e.g. -DSEQLZ_PAGE_BITS=14 for 16 KiB blocks.
 # The compiler is the build host's, $HOSTCC or cc, also when seqlz itself is cross-compiled: the
 # tables are numbers, the same for every target.
 set -euo pipefail

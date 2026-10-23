@@ -8,21 +8,21 @@
 #include "zram_codec.h"
 
 /* the tables are one object for all devices, built in, as the kernel's */
-static int setup(struct quetschn_params *p)
+static int setup(struct bench_params *p)
 {
 	if (p->page_size != SEQLZ_BLOCK_SIZE)
 		return -1;
 	return 0;
 }
 
-static void release(struct quetschn_params *p)
+static void release(struct bench_params *p)
 {
 	(void)p;
 }
 
-static void destroy(struct quetschn_stream *s)
+static void destroy(struct bench_stream *s)
 {
-	quetschn_free(s->context, &s->allocated);
+	bench_free(s->context, &s->allocated);
 	s->context = NULL;
 }
 
@@ -30,14 +30,14 @@ static void destroy(struct quetschn_stream *s)
  * The compression context is the matcher's hash table, for all levels.
  * seqlz-1 decompresses without a context.
  */
-static int create_cctx(struct quetschn_params *p, struct quetschn_stream *s)
+static int create_cctx(struct bench_params *p, struct bench_stream *s)
 {
 	(void)p;
-	s->context = quetschn_zalloc(sizeof(struct seqlz_state), &s->allocated);
+	s->context = bench_zalloc(sizeof(struct seqlz_state), &s->allocated);
 	return s->context ? 0 : -1;
 }
 
-static int compress(struct quetschn_params *p, struct quetschn_stream *s,
+static int compress(struct bench_params *p, struct bench_stream *s,
 		    const void *src, unsigned int src_len, void *dst,
 		    unsigned int *dst_len, unsigned int level)
 {
@@ -52,7 +52,7 @@ static int compress(struct quetschn_params *p, struct quetschn_stream *s,
 	return 0;
 }
 
-static int compress_1(struct quetschn_params *p, struct quetschn_stream *s,
+static int compress_1(struct bench_params *p, struct bench_stream *s,
 		      const void *src, unsigned int src_len, void *dst,
 		      unsigned int *dst_len)
 {
@@ -63,12 +63,12 @@ static int compress_1(struct quetschn_params *p, struct quetschn_stream *s,
  * without a scratch, pages with coded literals are invalid; s is the
  * compression context, which it does not touch
  */
-static int decompress_1(struct quetschn_params *p, struct quetschn_stream *s,
+static int decompress_1(struct bench_params *p, struct bench_stream *s,
 			const void *src, unsigned int src_len, void *dst,
 			unsigned int *dst_len)
 {
 	(void)s;
-	quetschn_prefetch_page(src, src_len, dst, SEQLZ_BLOCK_SIZE);
+	bench_prefetch_page(src, src_len, dst, SEQLZ_BLOCK_SIZE);
 	if (*dst_len < SEQLZ_BLOCK_SIZE ||
 	    seqlz_decode(src, src_len, dst, NULL))
 		return -1;
@@ -76,7 +76,7 @@ static int decompress_1(struct quetschn_params *p, struct quetschn_stream *s,
 	return 0;
 }
 
-const struct quetschn_codec quetschn_codec_seqlz_1 = {
+const struct bench_codec bench_codec_seqlz_1 = {
 	.name = "seqlz-1",
 	.setup_params = setup,
 	.release_params = release,
@@ -90,32 +90,32 @@ const struct quetschn_codec quetschn_codec_seqlz_1 = {
  * The decompression context from level 2 on: the scratch the decoder decodes
  * the literals into
  */
-static int create_dctx(struct quetschn_params *p, struct quetschn_stream *s)
+static int create_dctx(struct bench_params *p, struct bench_stream *s)
 {
 	(void)p;
-	s->context = quetschn_zalloc(SEQLZ_SCRATCH, &s->allocated);
+	s->context = bench_zalloc(SEQLZ_SCRATCH, &s->allocated);
 	return s->context ? 0 : -1;
 }
 
-static int compress_2(struct quetschn_params *p, struct quetschn_stream *s,
+static int compress_2(struct bench_params *p, struct bench_stream *s,
 		      const void *src, unsigned int src_len, void *dst,
 		      unsigned int *dst_len)
 {
 	return compress(p, s, src, src_len, dst, dst_len, 2);
 }
 
-static int compress_3(struct quetschn_params *p, struct quetschn_stream *s,
+static int compress_3(struct bench_params *p, struct bench_stream *s,
 		      const void *src, unsigned int src_len, void *dst,
 		      unsigned int *dst_len)
 {
 	return compress(p, s, src, src_len, dst, dst_len, 3);
 }
 
-static int decompress(struct quetschn_params *p, struct quetschn_stream *s,
+static int decompress(struct bench_params *p, struct bench_stream *s,
 		      const void *src, unsigned int src_len, void *dst,
 		      unsigned int *dst_len)
 {
-	quetschn_prefetch_page(src, src_len, dst, SEQLZ_BLOCK_SIZE);
+	bench_prefetch_page(src, src_len, dst, SEQLZ_BLOCK_SIZE);
 	if (*dst_len < SEQLZ_BLOCK_SIZE ||
 	    seqlz_decode(src, src_len, dst, s->context))
 		return -1;
@@ -123,7 +123,7 @@ static int decompress(struct quetschn_params *p, struct quetschn_stream *s,
 	return 0;
 }
 
-const struct quetschn_codec quetschn_codec_seqlz_2 = {
+const struct bench_codec bench_codec_seqlz_2 = {
 	.name = "seqlz-2",
 	.setup_params = setup,
 	.release_params = release,
@@ -135,7 +135,7 @@ const struct quetschn_codec quetschn_codec_seqlz_2 = {
 	.decompress = decompress,
 };
 
-const struct quetschn_codec quetschn_codec_seqlz_3 = {
+const struct bench_codec bench_codec_seqlz_3 = {
 	.name = "seqlz-3",
 	.setup_params = setup,
 	.release_params = release,

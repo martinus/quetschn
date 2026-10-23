@@ -1,4 +1,4 @@
-# quetschn: agent instructions
+# seqlz: agent instructions
 
 Read by agents only. Edits stay terse: the rule, plus one short reason where it is not obvious.
 
@@ -12,8 +12,10 @@ A new rule goes into the narrowest of these that still loads when it is needed.
 Compression codec for Linux zram pages. Codec `seqlz`: one format, three levels of the compressor,
 harness names `seqlz-1` (raw literals), `seqlz-2` (one of 8 fixed literal tables, zram's default) and
 `seqlz-3` (lazy matcher, a literal table of the page's own); levels by number, so that what a level
-does can change. Target: upstream Linux. Project name `quetschn` (binaries, `QUETSCHN_*` options);
-codec name stays `seqlz`, never propose a rename.
+does can change. Target: upstream Linux. One name for everything: `seqlz`, the codec, the repository
+(`martinus/seqlz`), binaries `seqlz-*`, options `SEQLZ_*`; the harness's own C names, which wrap `lz4`
+and `zstd` too, `bench_*`. It was `quetschn` until 23 Oct 2026; the book keeps the old names until its
+next update.
 
 ## Goal and design rules
 
@@ -24,7 +26,7 @@ much closer it gets, not by whether it arrives.
   `write + r * read + b * recompression`, r = 0.73 (a phone in daily use, the default; a desktop 0.34).
   Memory = zsmalloc bytes + work memory per CPU (what `kmalloc()`/`vmalloc()` hand out) × CPUs / pages
   in zram, for a named machine (default 8 and 32 CPUs, 64 MiB and 1 GiB). Lower left wins.
-  `quetschn-score` computes the hull.
+  `seqlz-score` computes the hull.
 - Kinds of limit (`docs/plan.md` §1, §1.1): hard limit = C6 only, decoder safe and bounded for any
   input. Cost in the score = C5 work memory per CPU (no limit since #203; 16 416 bytes is `lz4`'s, a
   cover-letter number), recompression (`b`). Guard + reported = C2/C3. Reported = C1, C4, global tables.
@@ -53,7 +55,7 @@ src/            codec, freestanding C11, kernel rules: seqlz_compress.c + seqlz_
                 get_unaligned_le64(), ... outside the kernel)
 bench/          C++20 harness, zsmalloc cost model, table training (seqlz_train*.cpp; counts in
                 seqlz_counts_*.txt); kernel_codecs/ = zram lz4/lzo/zstd glue built from a kernel tree
-test/           doctest, binary quetschn_test; seqlz_endian.c = CI same-bytes check
+test/           doctest, binary seqlz_test; seqlz_endian.c = CI same-bytes check
 fuzz/           libFuzzer/AFL++ targets, smoke.sh (CI), afl.sh (long runs); .clusterfuzzlite/ builds them
 tools/          see tools/README.md. seqlz-ref/ = reference decoders, kernel-port/ (port.py, KUnit,
                 check.sh), zram-vm/ = kernel VM, zram-phone/ = zram in Mi 9T kernel, android-emu/
@@ -71,16 +73,16 @@ cmake/          kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)
 - Build in a fresh dir (scratchpad); worktree `build*/` dirs may point at other paths/`_deps`.
 - Offline doctest: `-DFETCHCONTENT_SOURCE_DIR_DOCTEST=<some build>/_deps/doctest-src`.
 - No `CMAKE_BUILD_TYPE` = Release (`CMakeLists.txt`). Trainer and benchmarks need it: an unoptimized
-  trainer took 8x as long. `quetschn-bench-interleaved` (quick-bench, hot loop) only builds with
-  `QUETSCHN_KERNEL_TREE`.
+  trainer took 8x as long. `seqlz-bench-interleaved` (quick-bench, hot loop) only builds with
+  `SEQLZ_KERNEL_TREE`.
 
 ```sh
-cmake -S . -B $B -G Ninja -DQUETSCHN_WERROR=ON -DQUETSCHN_KERNEL_TREE=/home/martinus/gra/linux/finehill
-cmake --build $B && $B/quetschn_test && ctest --test-dir $B      # ctest 2/2 with kernel tree
-# 16 KiB pages: -DQUETSCHN_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only)
+cmake -S . -B $B -G Ninja -DSEQLZ_WERROR=ON -DSEQLZ_KERNEL_TREE=/home/martinus/gra/linux/finehill
+cmake --build $B && $B/seqlz_test && ctest --test-dir $B      # ctest 2/2 with kernel tree
+# 16 KiB pages: -DSEQLZ_PAGE_BITS=14, no kernel tree (zram glue 4 KiB only)
 clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.c')   # must be 21.1.8 (~/.local/bin)
 fuzz/smoke.sh 10 $S/build-fuzz -DFETCHCONTENT_SOURCE_DIR_DOCTEST=...  # clang, ASan+UBSan
-fuzz/smoke.sh 10 $S/build-msan -DQUETSCHN_SANITIZE=OFF -DQUETSCHN_MSAN=ON  # MSan, fuzz targets only
+fuzz/smoke.sh 10 $S/build-msan -DSEQLZ_SANITIZE=OFF -DSEQLZ_MSAN=ON  # MSan, fuzz targets only
 tools/gen-tables/gen-tables.sh $S/t.c   # the tables, which every build of src/ outside CMake needs too
 gcc -O2 -Isrc -o le test/seqlz_endian.c $S/t.c src/seqlz_{codes,compress,compress_literals,decompress,decompress_literals,default_tables,lit_sets}.c
 python3 tools/seqlz-ref/seqlz_ref.py <compressed page>...           # spec decoder, checks table hashes
@@ -89,7 +91,7 @@ K=/home/martinus/gra/linux/finehill   # src/ or tools/kernel-port/ changed:
 tools/kernel-port/check.sh $K && tools/kernel-port/check.sh $K ARCH=arm64 LLVM=1 && tools/kernel-port/kunit.sh $K
 ```
 
-- How much to run: while iterating, the build, `quetschn_test` and `seqlz_endian.c` (its hash stays as on
+- How much to run: while iterating, the build, `seqlz_test` and `seqlz_endian.c` (its hash stays as on
   main unless the format changes), `port.py` too if `src/` or `tools/kernel-port/` changed. Before a
   push, clang-format, and `check.sh` on x86-64 if the kernel copy changed. CI runs the rest on every
   push (arm64, arm, s390, KUnit, fuzzers): do not repeat it locally. Instruction counts or timing only
@@ -99,7 +101,7 @@ tools/kernel-port/check.sh $K && tools/kernel-port/check.sh $K ARCH=arm64 LLVM=1
 - Format: `src/` = `src/.clang-format` (kernel style), rest = root `.clang-format`; the check covers
   every tracked `.c`, also `docs/book/facts/` and `docs/book/anim/`. Python: no formatter in CI; never
   `ruff format` a whole existing file (it rewrites every line), keep its style.
-- Tool usage: `usage()` in source or `--help`. Exception: `quetschn-swap-bursts` ignores `--help` and
+- Tool usage: `usage()` in source or `--help`. Exception: `seqlz-swap-bursts` ignores `--help` and
   starts sampling `/proc/vmstat`; never run it for usage.
 - Long parallel jobs (Python `multiprocessing`): start with `setsid nohup ... &`, stop with
   `kill -- -<pgid>`. Killing only the parent leaves its workers running (14 Oct: 30 orphans took half
@@ -116,7 +118,7 @@ Commands: `docs/measuring.md`.
 - Corpus (`corpus/`, `*.pages`) holds keys/passwords: never commit, publish or paste contents; delete
   copies on phones after use.
 - Quick bench first: `tools/quick-bench.sh <build> <corpus> <out> lz4,<candidates>` (~90 s, exact
-  sizes, latency of 20 000 pages in 5 processes). Full `quetschn-bench-interleaved` or kernel VM only
+  sizes, latency of 20 000 pages in 5 processes). Full `seqlz-bench-interleaved` or kernel VM only
   to confirm a number for a doc.
 - Benchmark header must show min == max frequency and `boost: 0`. Else ask Martin; never change it.
 - Compare codecs within one run/boot. Cold-latency difference real only if quick-bench min/max range
@@ -126,9 +128,9 @@ Commands: `docs/measuring.md`.
   ALGOS=lz4,seqlz-1,seqlz-2,main-1,main-2,same-1,same-2 BOOTS=3 MODE=swap tools/zram-vm/run.sh`, then
   `tools/zram-vm/variants.py <log>`; `same` = control copy, a difference inside its spread is noise.
 - Levels against other codecs in the VM: `ALGOS=lz4,zstd,seqlz-1,seqlz-2,seqlz-3 BOOTS=3 MODE=swap
-  tools/zram-vm/run.sh /home/martinus/gra/linux/finehill <base>`, then `quetschn-score <log>` (hull,
+  tools/zram-vm/run.sh /home/martinus/gra/linux/finehill <base>`, then `seqlz-score <log>` (hull,
   bytes per µs). About 4 min per dump. At most 8 codecs per boot.
-- Samples, 20 000 pages each, `~/quetschn-corpus/<name>-sample20000.pages`: `phone-dump/p1` to `p5`
+- Samples, 20 000 pages each, `~/seqlz-corpus/<name>-sample20000.pages`: `phone-dump/p1` to `p5`
   (p1, p2, p4 are in `train-mix`), `zram0` (desktop, "23rd September"), `zram0-2026-09-24`,
   `zram0-2026-09-28`, `phone-mi9t-2026-10-03`, `phone-mi9t-2026-10-04`. Size counts: all ten, mean
   per row. VM set: p3, p5, `zram0`, `zram0-2026-09-24`.

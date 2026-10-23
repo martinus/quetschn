@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR GPL-2.0-only
 """The codecs on the cores of a phone: memory against the time to write a page and to read it cold, one
-panel per core and per direction, from the log of tools/phone-cores.sh.
+panel per core and per direction, a row per core with its write and read side by side, from the log of
+tools/phone-cores.sh.
 
     tools/phone-cores.sh <android build dir> <corpus base> "7 4 0" >cores.log
     ONCE=1 tools/phone-cores.sh <android build dir> <corpus base without same-filled pages> "7 4 0" >once.log
@@ -36,7 +37,8 @@ CODECS = ["lz4", "lzo-rle", "zstd", "seqlz-1", "seqlz-2", "seqlz-3"]
 LABEL = {"lz4": "lz4", "lzo-rle": "lzo-rle", "zstd": "zstd 3", "seqlz-1": "seqlz-1", "seqlz-2": "seqlz-2", "seqlz-3": "seqlz-3"}
 # a marker per codec, so that the legend alone tells them apart; the colours of plot-codecs.py
 MARK = {"lz4": "o", "lzo-rle": "s", "zstd": "D", "seqlz-1": "p", "seqlz-2": "v", "seqlz-3": "^"}
-ROWS = [("compress", "write", "write: compress, µs per page"), ("decompress cold", "read", "read: decompress cold, µs per page")]
+DIRECTIONS = [("compress", "write", "write: compress, µs per page"),
+              ("decompress cold", "read", "read: decompress cold, µs per page")]
 
 
 def parse(path):
@@ -72,7 +74,7 @@ def main():
     ap.add_argument("--title", required=True, help="the phone, for the chart's title")
     ap.add_argument("--pages", required=True, help="what the pages are, for the footer")
     ap.add_argument("--date", default="", help="when it was measured, for the footer")
-    ap.add_argument("--cpu", action="append", required=True, metavar="N=NAME", help="a column: the CPU and its name")
+    ap.add_argument("--cpu", action="append", required=True, metavar="N=NAME", help="a row: the CPU and its name")
     ap.add_argument("--sizes", help="a harness log of the same pages, for a log of ONCE=1: the sizes and the clocks")
     ap.add_argument("--out", action="append", required=True)
     ap.add_argument("log")
@@ -89,11 +91,14 @@ def main():
     plt.rcParams["font.family"] = ["Noto Sans", "DejaVu Sans"]
     plt.rcParams["xtick.labelsize"] = 13
     plt.rcParams["ytick.labelsize"] = 13
-    fig, axes = plt.subplots(2, len(cpus), figsize=(6 * len(cpus), 10.5), dpi=120, sharey=True)
-    for r, (key, short, xlabel) in enumerate(ROWS):
-        for col, (cpu, title) in enumerate(cpus):
+    # a row per core, write and read side by side; the height in inches, so that the title and the
+    # footer keep their room whatever the number of rows
+    height = 5.6 * len(cpus) + 2.2
+    fig, axes = plt.subplots(len(cpus), len(DIRECTIONS), figsize=(16, height), dpi=120, sharey=True, squeeze=False)
+    for col, (key, short, xlabel) in enumerate(DIRECTIONS):
+        for row, (cpu, title) in enumerate(cpus):
             mhz = max(x.get("mhz", 0) for c in CODECS for x in runs[(cpu, c)])
-            ax = axes[r][col]
+            ax = axes[row][col]
             pts = []
             for c in CODECS:
                 rr = runs[(cpu, c)]
@@ -112,9 +117,10 @@ def main():
             ax.set_xlabel(xlabel, fontsize=13)
             ax.grid(color="#eeeeee")
             for s in ("top", "right"): ax.spines[s].set_visible(False)
-        axes[r][0].set_ylabel("memory per page, % of 4 KiB", fontsize=14)
+    for row in range(len(cpus)):
+        axes[row][0].set_ylabel("memory per page, % of 4 KiB", fontsize=14)
     fig.suptitle(f"{a.title}: seqlz's levels against lz4, lzo-rle and zstd 3, writes and reads, lower left is better",
-                 fontsize=17, y=0.985)
+                 fontsize=17, y=1 - 0.3 / height)
     fig.text(0.5, 0.01, "Userspace harness, each codec alone in its own process pinned to one core"
              f"{', each page timed once per pass over all pages, the median of 3 passes' if once else ''}, the mean over the rounds.\n"
              f"{a.pages}{', ' + a.date if a.date else ''}. Cold: the compressed page flushed from the caches before the decode. "
@@ -122,7 +128,8 @@ def main():
              "Clocks not fixed (no root); each panel names the clock its runs ended at. "
              "Dashed: the codecs with the lowest memory + lambda × time for some lambda.",
              ha="center", va="bottom", fontsize=11, color="#444444", linespacing=1.35)
-    fig.subplots_adjust(left=0.045, right=0.99, bottom=0.125, top=0.91, wspace=0.07, hspace=0.38)
+    fig.subplots_adjust(left=0.06, right=0.99, bottom=1.45 / height, top=1 - 1.05 / height, wspace=0.08,
+                        hspace=0.42)
     for o in a.out:
         fig.savefig(o, facecolor="white", metadata={"Date": None} if o.endswith(".svg") else None)
 

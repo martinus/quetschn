@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 // What zsmalloc is built with. Defaults are a 64-bit kernel with 4 KiB pages and the default
 // CONFIG_ZSMALLOC_CHAIN_SIZE. Everything else in the model is derived from these four numbers, the
@@ -71,4 +71,4 @@ private:
     std::vector<std::size_t> m_class_of_index; // nominal class index => position in m_classes
 };
 
-} // namespace quetschn
+} // namespace bench

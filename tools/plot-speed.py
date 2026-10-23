@@ -7,7 +7,7 @@ kernel VM of tools/zram-vm/run.sh, one log per zram dump. The hot loop is a TSV 
 the name, compress cycles, decode cycles and decode instructions per page. Measured with the benchmark,
 the counts of a run with 30 loops minus one with 10, divided by 20 loops and the pages, e.g.
 
-    perf stat -x, -e cycles:u -- quetschn-bench-interleaved --codecs lz4 --corpus <sample> \\
+    perf stat -x, -e cycles:u -- seqlz-bench-interleaved --codecs lz4 --corpus <sample> \\
         --decode-loop 30 --cpu 2 [--compress]
 
     tools/plot-speed.py --hot hot.tsv --run "23rd Sep=first.log" --run "24th Sep=second.log" \\

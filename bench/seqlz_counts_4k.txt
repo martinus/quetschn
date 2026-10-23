@@ -1,5 +1,5 @@
-# The symbol counts seqlz's tables for 4 KiB pages are built from: quetschn-seqlz-train --from-counts <this file>
-# [--lit-sets] gives the code lengths. Made by quetschn-seqlz-train --corpus train-mix-1012 --counts,
+# The symbol counts seqlz's tables for 4 KiB pages are built from: seqlz-train --from-counts <this file>
+# [--lit-sets] gives the code lengths. Made by seqlz-train --corpus train-mix-1012 --counts,
 # 1091983 pages, 963723 of them with more than 64 literals, k-means seeds 1 to 32. token, ll and ml: how often
 # each symbol occurred, by number; lit: a literal table's pages, then how often each byte
 # occurred as a literal on them.

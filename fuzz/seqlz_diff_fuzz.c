@@ -37,7 +37,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         fast = malloc(SEQLZ_BLOCK_SIZE);
         slow = malloc(SEQLZ_BLOCK_SIZE);
         scratch = malloc(SEQLZ_SCRATCH);
-        if (!fast || !slow || !scratch || seqlz_ref_init(&ref, &t, QUETSCHN_PAGE_BITS))
+        if (!fast || !slow || !scratch || seqlz_ref_init(&ref, &t, SEQLZ_PAGE_BITS))
             abort();
     }
     src = malloc(size ? size : 1);

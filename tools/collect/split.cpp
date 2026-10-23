@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -54,7 +54,7 @@ struct row {
     std::string mapping;
 };
 
-// A corpus as quetschn-collect-resident writes it: all of the TSV, and the pages to read one by one.
+// A corpus as seqlz-collect-resident writes it: all of the TSV, and the pages to read one by one.
 struct corpus_reader {
     std::filesystem::path pages_path;
     std::size_t page_size = 0;
@@ -213,4 +213,4 @@ std::size_t sample_corpus(std::filesystem::path const& base,
     return out.pages_written();
 }
 
-} // namespace quetschn
+} // namespace bench

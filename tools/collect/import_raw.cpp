@@ -14,7 +14,7 @@
 #include <system_error>
 #include <vector>
 
-namespace quetschn {
+namespace bench {
 
 namespace {
 
@@ -96,4 +96,4 @@ import_result import_raw(std::filesystem::path const& dump,
     return result;
 }
 
-} // namespace quetschn
+} // namespace bench

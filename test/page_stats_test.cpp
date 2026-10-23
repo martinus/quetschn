@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <vector>
 
-using quetschn::analyze_page;
+using bench::analyze_page;
 
 namespace {
 

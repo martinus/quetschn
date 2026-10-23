@@ -3,7 +3,7 @@
 
 #include <stdexcept>
 
-namespace quetschn {
+namespace bench {
 
 // lz4 block format: token (4 bits literal length, 4 bits match length - 4), length bytes of 255 plus a
 // rest, the literals, 2 bytes offset, more match length bytes. The last sequence has no match.
@@ -77,4 +77,4 @@ std::vector<std::uint8_t> reconstruct(parsed_page const& p) {
     return out;
 }
 
-} // namespace quetschn
+} // namespace bench

@@ -22,7 +22,7 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-collect-resident --out <base> [--pid <pid>]... [--max-per-process <n>] [--seed <n>]\n"
+                 "usage: seqlz-collect-resident --out <base> [--pid <pid>]... [--max-per-process <n>] [--seed <n>]\n"
                  "\n"
                  "Writes <base>.pages and <base>.tsv, mode 0600. Existing files are never overwritten.\n"
                  "Without --pid, all processes this user may read are sampled, except this one.\n"
@@ -53,7 +53,7 @@ std::vector<pid_t> all_pids() {
 int main(int argc, char** argv) {
     auto out = std::string();
     auto pids = std::vector<pid_t>();
-    auto opts = quetschn::collect_options{};
+    auto opts = bench::collect_options{};
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
@@ -92,13 +92,13 @@ int main(int argc, char** argv) {
 
     try {
         auto const page_size = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
-        auto writer = quetschn::corpus_writer(out, page_size);
-        auto total = quetschn::collect_result{};
+        auto writer = bench::corpus_writer(out, page_size);
+        auto total = bench::collect_result{};
         std::size_t processes = 0;
         std::size_t skipped = 0;
         for (auto pid : pids) {
             try {
-                auto r = quetschn::collect_process(pid, opts, writer);
+                auto r = bench::collect_process(pid, opts, writer);
                 total.resident += r.resident;
                 total.swapped += r.swapped;
                 total.written += r.written;

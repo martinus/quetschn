@@ -20,20 +20,20 @@ build() { # variant, then the environment afl-clang-lto needs for it
     shift
     env AFL_QUIET=1 "$@" cmake -S "$REPO" -B "$b" -DCMAKE_C_COMPILER="$(bin afl-clang-lto)" \
         -DCMAKE_CXX_COMPILER="$(bin afl-clang-lto++)" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-        -DQUETSCHN_FUZZ=ON "${CMAKE_ARGS[@]}" > /dev/null
-    env AFL_QUIET=1 "$@" cmake --build "$b" --target $(printf "seqlz_%s_fuzz " "${targets[@]}") quetschn-fuzz-seeds \
+        -DSEQLZ_FUZZ=ON "${CMAKE_ARGS[@]}" > /dev/null
+    env AFL_QUIET=1 "$@" cmake --build "$b" --target $(printf "seqlz_%s_fuzz " "${targets[@]}") seqlz-fuzz-seeds \
         > /dev/null
 }
 build plain
 build asan AFL_USE_ASAN=1 AFL_USE_UBSAN=1
 build cmplog AFL_LLVM_CMPLOG=1
 mkdir -p "$OUT"/seeds-{decode,roundtrip}
-"$OUT/build-plain/quetschn-fuzz-seeds" "$OUT/seeds-decode" "$OUT/seeds-roundtrip"
+"$OUT/build-plain/seqlz-fuzz-seeds" "$OUT/seeds-decode" "$OUT/seeds-roundtrip"
 # diff takes compressed pages, as decode does
 ln -sfn seeds-decode "$OUT/seeds-diff"
 
 # the longest input each target takes, from the page size the build has
-page=$((1 << $(sed -n 's/^QUETSCHN_PAGE_BITS:STRING=//p' "$OUT/build-plain/CMakeCache.txt")))
+page=$((1 << $(sed -n 's/^SEQLZ_PAGE_BITS:STRING=//p' "$OUT/build-plain/CMakeCache.txt")))
 declare -A max_len=([decode]=$((2 * page)) [roundtrip]=$((page + 1)) [diff]=$((2 * page)))
 
 export AFL_SKIP_CPUFREQ=1 AFL_NO_UI=1 AFL_TRY_AFFINITY=1

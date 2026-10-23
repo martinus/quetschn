@@ -6,7 +6,7 @@
 // in bursts of each size: a burst of n pages waits for n decompressions, so its wait is n times the
 // mean, where a single swap-in waits for one page.
 //
-// usage: quetschn-swap-bursts [--interval-ms <n>] [--gap <n>] [--seconds <n>]
+// usage: seqlz-swap-bursts [--interval-ms <n>] [--gap <n>] [--seconds <n>]
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--seconds") == 0)
             seconds = atol(argv[i + 1]);
         else {
-            fprintf(stderr, "usage: quetschn-swap-bursts [--interval-ms <n>] [--gap <n>] [--seconds <n>]\n");
+            fprintf(stderr, "usage: seqlz-swap-bursts [--interval-ms <n>] [--gap <n>] [--seconds <n>]\n");
             return 2;
         }
     }

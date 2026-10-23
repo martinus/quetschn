@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// One binary per codec (QUETSCHN_CODEC is set by CMake), so that code layout and alignment of one
+// One binary per codec (SEQLZ_CODEC is set by CMake), so that code layout and alignment of one
 // codec cannot shift the numbers of another. See docs/plan.md §5.2 for the metrics.
 
 #include "compare.h"
@@ -29,35 +29,35 @@
 #include <string_view>
 #include <vector>
 
-#if !defined(QUETSCHN_CODEC) && !defined(QUETSCHN_INTERLEAVED)
-#    error "QUETSCHN_CODEC must name one of the quetschn_codec_* objects, or QUETSCHN_INTERLEAVED be set"
+#if !defined(SEQLZ_CODEC) && !defined(SEQLZ_INTERLEAVED)
+#    error "SEQLZ_CODEC must name one of the bench_codec_* objects, or SEQLZ_INTERLEAVED be set"
 #endif
 
 namespace {
 
-#ifdef QUETSCHN_INTERLEAVED
+#ifdef SEQLZ_INTERLEAVED
 // All codecs in one binary, for comparisons that must not suffer from drift between separate runs.
 // The price: the code layout of one codec can shift another's numbers, which one binary per codec
 // avoids. The order of --codecs changes the layout, so run it twice in two orders when it matters.
-auto const all_codecs = std::to_array<quetschn_codec const*>({
-    &quetschn_codec_lz4,
-    &quetschn_codec_lz4_prefetch,
-    &quetschn_codec_lz4hc,
-    &quetschn_codec_lzo,
-    &quetschn_codec_lzo_rle,
-    &quetschn_codec_zstd,
-    &quetschn_codec_seqlz_1,
-    &quetschn_codec_seqlz_2,
-    &quetschn_codec_seqlz_3,
+auto const all_codecs = std::to_array<bench_codec const*>({
+    &bench_codec_lz4,
+    &bench_codec_lz4_prefetch,
+    &bench_codec_lz4hc,
+    &bench_codec_lzo,
+    &bench_codec_lzo_rle,
+    &bench_codec_zstd,
+    &bench_codec_seqlz_1,
+    &bench_codec_seqlz_2,
+    &bench_codec_seqlz_3,
 });
-auto const* const program = "quetschn-bench-interleaved";
+auto const* const program = "seqlz-bench-interleaved";
 #else
-auto const* const program = QUETSCHN_CODEC.name;
+auto const* const program = SEQLZ_CODEC.name;
 #endif
 
 void usage() {
     std::fprintf(stderr,
-#ifdef QUETSCHN_INTERLEAVED
+#ifdef SEQLZ_INTERLEAVED
                  "usage: %s --codecs <a[:level],b,...> --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>]\n"
                  "          [--cpu <n>] [--out <dir>]\n"
                  "\n"
@@ -68,9 +68,9 @@ void usage() {
                  "usage: %s --corpus <base> [--level <n>] [--dict <file>] [--repetitions <n>] [--cpu <n>]\n"
                  "          [--out <file.tsv>]\n"
                  "\n"
-                 "--out writes one line per page, for quetschn-compare.\n"
+                 "--out writes one line per page, for seqlz-compare.\n"
 #endif
-                 "Reads <base>.pages and <base>.tsv as written by quetschn-collect-resident.\n"
+                 "Reads <base>.pages and <base>.tsv as written by seqlz-collect-resident.\n"
                  "--level is zram's algorithm_params level, default: zram's default for the codec.\n"
                  "--dict is zram's algorithm_params dict: a dictionary file, e.g. from zstd --train.\n"
                  "--cpu pins the process to one CPU; set a fixed frequency yourself.\n"
@@ -137,7 +137,7 @@ std::string cpu_model() {
     return "unknown";
 }
 
-void print_latency(char const* what, quetschn::latency_summary const& l) {
+void print_latency(char const* what, bench::latency_summary const& l) {
     std::printf("%-22s %9.0f %9.0f %9.0f %9.0f %9.0f %9.0f\n", what, l.p50, l.p90, l.p99, l.p999, l.max, l.mean);
 }
 
@@ -163,15 +163,15 @@ void flush_lines(void const* p, std::size_t n) {
 // for one page, but the median over the loops and the percentiles over the pages show where the tail
 // goes. With out_file, also writes the median time and the compressed length of each page, to see which
 // pages make the tail.
-int decode_loop(quetschn::corpus const& c,
-                quetschn_codec const& codec,
-                quetschn::run_options const& opts,
+int decode_loop(bench::corpus const& c,
+                bench_codec const& codec,
+                bench::run_options const& opts,
                 unsigned loops,
                 bool cold,
                 bool flush_only,
                 bool time_compress,
                 std::string const& out_file) {
-    auto params = quetschn_params{};
+    auto params = bench_params{};
     params.dict = opts.dict.empty() ? nullptr : opts.dict.data();
     params.dict_size = opts.dict.size();
     params.level = opts.levels.empty() ? opts.level : opts.levels.front();
@@ -180,7 +180,7 @@ int decode_loop(quetschn::corpus const& c,
         std::fprintf(stderr, "error: %s: setup failed\n", codec.name);
         return 1;
     }
-    auto contexts = std::make_unique<quetschn::codec_contexts>(codec, &params);
+    auto contexts = std::make_unique<bench::codec_contexts>(codec, &params);
     auto buf = std::vector<std::byte>(2 * c.page_size);
     auto compress = [&](std::size_t i, unsigned int& len) {
         len = static_cast<unsigned int>(buf.size());
@@ -251,7 +251,7 @@ int decode_loop(quetschn::corpus const& c,
         std::nth_element(per_page.begin(), per_page.begin() + loops / 2, per_page.end());
         medians[i] = per_page[loops / 2];
     }
-    auto const lat = quetschn::summarize_latency(medians);
+    auto const lat = bench::summarize_latency(medians);
     std::printf("%s: %s per page, median of %u loops: p50 %.0f p90 %.0f p99 %.0f p99.9 %.0f mean %.0f ns\n",
                 codec.name,
                 time_compress ? "compress"
@@ -285,21 +285,21 @@ int main(int argc, char** argv) {
     auto base = std::string();
     auto out_path = std::string();
     auto dict_path = std::string();
-    auto opts = quetschn::run_options{};
+    auto opts = bench::run_options{};
     int cpu = -1;
     unsigned decode_loops = 0;
     bool decode_cold = false;
     bool flush_only = false;
     bool loop_compress = false;
-    auto codecs = std::vector<quetschn_codec const*>();
+    auto codecs = std::vector<bench_codec const*>();
     auto codec_levels = std::vector<int>();
-#ifndef QUETSCHN_INTERLEAVED
-    codecs.push_back(&QUETSCHN_CODEC);
+#ifndef SEQLZ_INTERLEAVED
+    codecs.push_back(&SEQLZ_CODEC);
 #endif
     for (int i = 1; i < argc; ++i) {
         auto const arg = std::string_view(argv[i]);
         auto const has_value = i + 1 < argc;
-#ifdef QUETSCHN_INTERLEAVED
+#ifdef SEQLZ_INTERLEAVED
         if (arg == "--codecs" && has_value) {
             auto names = std::string_view(argv[++i]);
             while (!names.empty()) {
@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
                 names.remove_prefix(std::min(names.size(), spec.size() + 1));
                 // name or name:level
                 auto const name = spec.substr(0, spec.find(':'));
-                auto level = QUETSCHN_LEVEL_DEFAULT;
+                auto level = BENCH_LEVEL_DEFAULT;
                 if (name.size() < spec.size() && !parse(spec.substr(name.size() + 1), level)) {
                     usage();
                     return 2;
@@ -355,10 +355,10 @@ int main(int argc, char** argv) {
     }
     // a codec without :level gets --level
     if (std::any_of(codec_levels.begin(), codec_levels.end(), [](int l) {
-            return l != QUETSCHN_LEVEL_DEFAULT;
+            return l != BENCH_LEVEL_DEFAULT;
         })) {
         for (auto& l : codec_levels) {
-            l = l == QUETSCHN_LEVEL_DEFAULT ? opts.level : l;
+            l = l == BENCH_LEVEL_DEFAULT ? opts.level : l;
         }
         opts.levels = codec_levels;
     }
@@ -373,7 +373,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
         }
-        auto const c = quetschn::load_corpus(base);
+        auto const c = bench::load_corpus(base);
         if (!dict_path.empty()) {
             auto in = std::ifstream(dict_path, std::ios::binary);
             auto const raw = std::string(std::istreambuf_iterator<char>(in), {});
@@ -385,7 +385,7 @@ int main(int argc, char** argv) {
             opts.dict.resize(raw.size());
             std::memcpy(opts.dict.data(), raw.data(), raw.size());
         }
-        auto const model = quetschn::zsmalloc_model(quetschn::zsmalloc_config{.page_size = c.page_size});
+        auto const model = bench::zsmalloc_model(bench::zsmalloc_config{.page_size = c.page_size});
         if (decode_loops > 0 && decode_cold && loop_compress) {
             std::fprintf(stderr, "error: --cold is for decoding, --compress already reads every page from memory\n");
             return 2;
@@ -410,19 +410,19 @@ int main(int argc, char** argv) {
         print_state("start", governor_cpu);
         if (opts.measure_time) {
             std::printf("method     median of %u runs per page, percentiles across pages, ns\n", opts.repetitions);
-            std::printf("timer      step %.2f ns\n", quetschn::timer_step_ns());
+            std::printf("timer      step %.2f ns\n", bench::timer_step_ns());
         } else {
             std::printf("method     no timing, sizes only\n");
         }
 
-        auto const results = quetschn::run_interleaved(c, codecs, model, opts);
+        auto const results = bench::run_interleaved(c, codecs, model, opts);
         print_state("end", governor_cpu);
         for (std::size_t k = 0; k < codecs.size(); ++k) {
             auto const* codec = codecs[k];
             auto const& r = results[k];
-            auto const s = quetschn::summarize(r, c.page_size);
+            auto const s = bench::summarize(r, c.page_size);
             std::printf("\n");
-            if (r.level == QUETSCHN_LEVEL_DEFAULT) {
+            if (r.level == BENCH_LEVEL_DEFAULT) {
                 std::printf("codec      %s, no level (zram ignores it for this codec)\n", codec->name);
             } else {
                 std::printf("codec      %s, level %d\n", codec->name, r.level);
@@ -459,9 +459,9 @@ int main(int argc, char** argv) {
             }
 
             if (!out_path.empty()) {
-#ifdef QUETSCHN_INTERLEAVED
+#ifdef SEQLZ_INTERLEAVED
                 auto const path = out_path + "/" + codec->name +
-                                  (opts.levels.empty() || opts.levels[k] == QUETSCHN_LEVEL_DEFAULT
+                                  (opts.levels.empty() || opts.levels[k] == BENCH_LEVEL_DEFAULT
                                        ? std::string()
                                        : "-level" + std::to_string(opts.levels[k])) +
                                   ".tsv";
@@ -469,7 +469,7 @@ int main(int argc, char** argv) {
                 auto const& path = out_path;
 #endif
                 auto out = std::ofstream(path);
-                quetschn::write_page_results(out, r.pages);
+                bench::write_page_results(out, r.pages);
                 if (!out) {
                     std::fprintf(stderr, "error: cannot write %s\n", path.c_str());
                     return 1;

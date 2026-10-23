@@ -3,11 +3,11 @@
  * stress.c: /init of the VM of tools/kernel-port/stress.sh. The host's root is
  * mounted read-only at /host. Prints its results as lines that start with
  * RESULT, then powers the VM off. From the kernel command line:
- *   quetschn.corpus=<file>     a corpus' .pages, a path on the host
- *   quetschn.mmstat=1          also phase 1
- *   quetschn.level=1|2|3       seqlz's level for the swap
- *   quetschn.minutes=<n>       how long the swap is stressed, 0 for no phase 2
- *   quetschn.selftests=1       phase 3, the kernel's selftests of zram, which
+ *   seqlz.corpus=<file>     a corpus' .pages, a path on the host
+ *   seqlz.mmstat=1          also phase 1
+ *   seqlz.level=1|2|3       seqlz's level for the swap
+ *   seqlz.minutes=<n>       how long the swap is stressed, 0 for no phase 2
+ *   seqlz.selftests=1       phase 3, the kernel's selftests of zram, which
  *                              stress.sh puts into /selftests; they run in a
  *                              chroot of the host, for its shell and tools
  *
@@ -48,7 +48,7 @@
 
 static char cmdline[4096];
 
-/* the value of quetschn.<key>=, or def */
+/* the value of seqlz.<key>=, or def */
 static const char *arg(const char *key, const char *def)
 {
 	static char vals[8][1024];
@@ -57,7 +57,7 @@ static const char *arg(const char *key, const char *def)
 	const char *p;
 	char *v = vals[next++ % 8];
 
-	snprintf(pat, sizeof(pat), "quetschn.%s=", key);
+	snprintf(pat, sizeof(pat), "seqlz.%s=", key);
 	p = strstr(cmdline, pat);
 	if (!p)
 		return def;

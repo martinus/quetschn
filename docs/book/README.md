@@ -3,7 +3,7 @@
 A book that explains every line of `src/` to a developer who knows C and C++ but has never written
 kernel code or a compressor: the code in pieces, what it does, how at the level of the CPU, and why,
 with links to the measurements in [explored-designs.md](../explored-designs.md). CI builds it on every
-pull request (job `book`) and publishes it from `main`: <https://martin.ankerl.com/quetschn/>.
+pull request (job `book`) and publishes it from `main`: <https://martin.ankerl.com/seqlz/>.
 
 ```sh
 (cd docs/book && npm install)        # KaTeX, for the formulas

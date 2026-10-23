@@ -3,7 +3,7 @@
 #
 # The fast benchmark: zsmalloc cost on the whole corpus without timing, which is exact and takes
 # seconds, and latency on a fixed random sample of the corpus, interleaved. Everything is compared with
-# the first codec. Run the full benchmark (quetschn-bench-interleaved on the whole corpus) only to
+# the first codec. Run the full benchmark (seqlz-bench-interleaved on the whole corpus) only to
 # confirm a result. Nothing else should run on the machine while this one is timing.
 
 set -euo pipefail
@@ -41,15 +41,15 @@ sample=$corpus-sample$sample_pages
 mkdir -p "$out/sizes"
 chmod 700 "$out"
 if [[ ! -e $sample.pages ]]; then
-    "$build/quetschn-sample-corpus" --corpus "$corpus" --out "$sample" --pages "$sample_pages" >/dev/null
+    "$build/seqlz-sample-corpus" --corpus "$corpus" --out "$sample" --pages "$sample_pages" >/dev/null
 fi
 
 start=$SECONDS
-"$build/quetschn-bench-interleaved" --codecs "$codecs" --corpus "$corpus" --no-timing --out "$out/sizes" \
+"$build/seqlz-bench-interleaved" --codecs "$codecs" --corpus "$corpus" --no-timing --out "$out/sizes" \
     >"$out/sizes/summary.txt"
 for ((r = 1; r <= runs; r++)); do
     mkdir -p "$out/latency$r"
-    "$build/quetschn-bench-interleaved" --codecs "$codecs" --corpus "$sample" --cpu "$cpu" \
+    "$build/seqlz-bench-interleaved" --codecs "$codecs" --corpus "$sample" --cpu "$cpu" \
         --repetitions "$repetitions" --out "$out/latency$r" >"$out/latency$r/summary.txt"
 done
 
@@ -58,7 +58,7 @@ median() {
     sort -n | awk '{ v[NR] = $1 } END { if (NR) print v[int((NR + 1) / 2)] }'
 }
 
-# file name of a codec spec, as quetschn-bench-interleaved writes it: zstd:-1 -> zstd-level-1
+# file name of a codec spec, as seqlz-bench-interleaved writes it: zstd:-1 -> zstd-level-1
 file() {
     local name=${1%%:*}
     [[ $1 == *:* ]] && name="$name-level${1#*:}"
@@ -95,7 +95,7 @@ for spec in "${specs[@]}"; do
     delta=""
     if [[ $name != "$baseline" ]]; then
         deltas=$(for ((r = 1; r <= runs; r++)); do
-            "$build/quetschn-compare" --baseline "$out/latency$r/$baseline.tsv" --candidate "$out/latency$r/$name.tsv" |
+            "$build/seqlz-compare" --baseline "$out/latency$r/$baseline.tsv" --candidate "$out/latency$r/$name.tsv" |
                 awk '$1 == "decompress" && $2 == "cold" && $3 == "p99" { print $4 + 0 }'
         done)
         delta="$(median <<<"$deltas") [$(sort -n <<<"$deltas" | head -1), $(sort -n <<<"$deltas" | tail -1)]"

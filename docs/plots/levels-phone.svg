@@ -2963,7 +2963,7 @@ z
    </g>
   </g>
   <g id="text_48">
-   <!-- Means over the rounds of tools/zram-phone/run.sh with BUS=1; sizes from quetschn-bench-interleaved on the same pages. Grey line: the codecs with the lowest score for some exchange rate. -->
+   <!-- Means over the rounds of tools/zram-phone/run.sh with BUS=1; sizes from seqlz-bench-interleaved on the same pages. Grey line: the codecs with the lowest score for some exchange rate. -->
    <g style="fill: #555555" transform="translate(108.524375 401.184) scale(0.08 -0.08)">
     <defs>
      <path id="NotoSans-Regular-75" d="M 3411 3430 

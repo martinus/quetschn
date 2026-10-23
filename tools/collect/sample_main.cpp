@@ -14,7 +14,7 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-sample-corpus --corpus <base> --out <base> [--pages <n>] [--seed <n>]\n"
+                 "usage: seqlz-sample-corpus --corpus <base> --out <base> [--pages <n>] [--seed <n>]\n"
                  "\n"
                  "A uniform random sample of --pages pages (default 20000), in their original order. The same\n"
                  "seed gives the same sample. Output files are created with mode 0600.\n");
@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
-        std::printf("%zu pages\n", quetschn::sample_corpus(base, out, pages, seed));
+        std::printf("%zu pages\n", bench::sample_corpus(base, out, pages, seed));
     } catch (std::exception const& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;

@@ -32,11 +32,11 @@ struct zstd_params {
 };
 
 static void* zstd_custom_alloc(void* opaque, size_t size) {
-    return quetschn_zalloc(size, opaque);
+    return bench_zalloc(size, opaque);
 }
 
 static void zstd_custom_free(void* opaque, void* address) {
-    quetschn_free(address, opaque);
+    bench_free(address, opaque);
 }
 
 static zstd_custom_mem counting_mem(size_t* counter) {
@@ -44,7 +44,7 @@ static zstd_custom_mem counting_mem(size_t* counter) {
     return mem;
 }
 
-static void zstd_release_params(struct quetschn_params* p) {
+static void zstd_release_params(struct bench_params* p) {
     struct zstd_params* zp = p->drv_data;
 
     p->drv_data = NULL;
@@ -53,18 +53,18 @@ static void zstd_release_params(struct quetschn_params* p) {
     }
     zstd_free_cdict(zp->cdict);
     zstd_free_ddict(zp->ddict);
-    quetschn_free(zp, &p->allocated);
+    bench_free(zp, &p->allocated);
 }
 
-static int zstd_setup_params(struct quetschn_params* p) {
+static int zstd_setup_params(struct bench_params* p) {
     zstd_compression_parameters prm;
-    struct zstd_params* zp = quetschn_zalloc(sizeof(*zp), &p->allocated);
+    struct zstd_params* zp = bench_zalloc(sizeof(*zp), &p->allocated);
 
     if (!zp) {
         return -1;
     }
     p->drv_data = zp;
-    if (p->level == QUETSCHN_LEVEL_DEFAULT) {
+    if (p->level == BENCH_LEVEL_DEFAULT) {
         p->level = zstd_default_clevel();
     } else if (p->level < zstd_min_clevel() || p->level > zstd_max_clevel()) {
         goto error;
@@ -89,7 +89,7 @@ error:
     return -1;
 }
 
-static void zstd_destroy(struct quetschn_stream* s) {
+static void zstd_destroy(struct bench_stream* s) {
     struct zstd_ctx* zctx = s->context;
 
     if (!zctx) {
@@ -97,21 +97,21 @@ static void zstd_destroy(struct quetschn_stream* s) {
     }
     /* embedded into cctx_mem / dctx_mem without a dictionary, allocated by zstd with one */
     if (zctx->cctx_mem) {
-        quetschn_free(zctx->cctx_mem, &s->allocated);
+        bench_free(zctx->cctx_mem, &s->allocated);
     } else {
         zstd_free_cctx(zctx->cctx);
     }
     if (zctx->dctx_mem) {
-        quetschn_free(zctx->dctx_mem, &s->allocated);
+        bench_free(zctx->dctx_mem, &s->allocated);
     } else {
         zstd_free_dctx(zctx->dctx);
     }
-    quetschn_free(zctx, &s->allocated);
+    bench_free(zctx, &s->allocated);
     s->context = NULL;
 }
 
-static int zstd_create(struct quetschn_params* p, struct quetschn_stream* s) {
-    struct zstd_ctx* zctx = quetschn_zalloc(sizeof(*zctx), &s->allocated);
+static int zstd_create(struct bench_params* p, struct bench_stream* s) {
+    struct zstd_ctx* zctx = bench_zalloc(sizeof(*zctx), &s->allocated);
     zstd_parameters prm;
     size_t sz;
 
@@ -122,7 +122,7 @@ static int zstd_create(struct quetschn_params* p, struct quetschn_stream* s) {
     if (p->dict_size == 0) {
         prm = zstd_get_params(p->level, p->page_size);
         sz = zstd_cctx_workspace_bound(&prm.cParams);
-        zctx->cctx_mem = quetschn_vzalloc(sz, &s->allocated);
+        zctx->cctx_mem = bench_vzalloc(sz, &s->allocated);
         if (!zctx->cctx_mem) {
             goto error;
         }
@@ -131,7 +131,7 @@ static int zstd_create(struct quetschn_params* p, struct quetschn_stream* s) {
             goto error;
         }
         sz = zstd_dctx_workspace_bound();
-        zctx->dctx_mem = quetschn_vzalloc(sz, &s->allocated);
+        zctx->dctx_mem = bench_vzalloc(sz, &s->allocated);
         if (!zctx->dctx_mem) {
             goto error;
         }
@@ -156,12 +156,8 @@ error:
     return -1;
 }
 
-static int zstd_compress(struct quetschn_params* p,
-                         struct quetschn_stream* s,
-                         const void* src,
-                         unsigned int src_len,
-                         void* dst,
-                         unsigned int* dst_len) {
+static int zstd_compress(
+    struct bench_params* p, struct bench_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     struct zstd_params* zp = p->drv_data;
     struct zstd_ctx* zctx = s->context;
     size_t ret;
@@ -178,12 +174,8 @@ static int zstd_compress(struct quetschn_params* p,
     return 0;
 }
 
-static int zstd_decompress(struct quetschn_params* p,
-                           struct quetschn_stream* s,
-                           const void* src,
-                           unsigned int src_len,
-                           void* dst,
-                           unsigned int* dst_len) {
+static int zstd_decompress(
+    struct bench_params* p, struct bench_stream* s, const void* src, unsigned int src_len, void* dst, unsigned int* dst_len) {
     struct zstd_params* zp = p->drv_data;
     struct zstd_ctx* zctx = s->context;
     size_t ret;
@@ -200,7 +192,7 @@ static int zstd_decompress(struct quetschn_params* p,
     return 0;
 }
 
-const struct quetschn_codec quetschn_codec_zstd = {
+const struct bench_codec bench_codec_zstd = {
     .name = "zstd",
     .setup_params = zstd_setup_params,
     .release_params = zstd_release_params,

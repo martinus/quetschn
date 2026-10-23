@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR GPL-2.0-only
 //
-// Memory against time per page, from runs of tools/zram-vm/run.sh or quetschn-bench-*, see docs/plan.md
+// Memory against time per page, from runs of tools/zram-vm/run.sh or seqlz-bench-*, see docs/plan.md
 // §1.1.
 
 #include "score.h"
@@ -20,12 +20,12 @@ namespace {
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: quetschn-score [--reads-per-write <r>] [--recompress-weight <b>] [--lambda <bytes per us>]\n"
+                 "usage: seqlz-score [--reads-per-write <r>] [--recompress-weight <b>] [--lambda <bytes per us>]\n"
                  "                      [--what-if <codec>:<factor>] ... [--per-cpu <codec>:<bytes>] ...\n"
                  "                      [--device <cpus>:<MiB>] ... <run.log>[:<prefix>] ...\n"
                  "\n"
                  "Each log is the output of tools/zram-vm/run.sh, with BOOTS=n the mean over the boots, or of\n"
-                 "quetschn-bench-* with timing, all from the same corpus; <prefix> goes in front of its codec\n"
+                 "seqlz-bench-* with timing, all from the same corpus; <prefix> goes in front of its codec\n"
                  "names, to tell runs apart. Time per page written =\n"
                  "write + r * cold read + b * recompression, the means over the pages; in a bench log write is\n"
                  "compress and read is decompress cold, in a log of MODE=swap the swap-out with one call per page\n"
@@ -43,19 +43,18 @@ void usage() {
 }
 
 // the codecs that win for some lambda, with the exchange rates between neighbours
-void print_hull(std::vector<quetschn::codec_cost> const& codecs, quetschn::score_weights const& w) {
-    auto const hull = quetschn::best_for_some_lambda(codecs, w);
+void print_hull(std::vector<bench::codec_cost> const& codecs, bench::score_weights const& w) {
+    auto const hull = bench::best_for_some_lambda(codecs, w);
     for (std::size_t k = 0; k < hull.size(); ++k) {
         auto const& c = codecs[hull[k]];
         std::printf("%-32s %10.1f", c.name.c_str(), c.bytes_per_page);
         if (k + 1 < hull.size()) {
             auto const& n = codecs[hull[k + 1]];
-            auto const rate =
-                (c.bytes_per_page - n.bytes_per_page) / (quetschn::us_per_page(n, w) - quetschn::us_per_page(c, w));
+            auto const rate = (c.bytes_per_page - n.bytes_per_page) / (bench::us_per_page(n, w) - bench::us_per_page(c, w));
             std::printf("  -> %s: %.1f bytes for %.2f us more, %.1f bytes per us",
                         n.name.c_str(),
                         c.bytes_per_page - n.bytes_per_page,
-                        quetschn::us_per_page(n, w) - quetschn::us_per_page(c, w),
+                        bench::us_per_page(n, w) - bench::us_per_page(c, w),
                         rate);
         }
         std::printf("\n");
@@ -70,12 +69,12 @@ bool parse(std::string_view s, double& out) {
 } // namespace
 
 int main(int argc, char** argv) {
-    auto w = quetschn::score_weights{};
+    auto w = bench::score_weights{};
     auto lambda = -1.0;
-    auto codecs = std::vector<quetschn::codec_cost>();
+    auto codecs = std::vector<bench::codec_cost>();
     auto what_ifs = std::vector<std::pair<std::string, double>>();
     auto per_cpu = std::vector<std::pair<std::string, double>>();
-    auto devices = std::vector<quetschn::zram_device>();
+    auto devices = std::vector<bench::zram_device>();
     // "<name>:<number>", the number >= 0
     auto const named = [](std::string_view spec, char const* option) {
         auto const colon = spec.rfind(':');
@@ -129,7 +128,7 @@ int main(int argc, char** argv) {
                 text << file.rdbuf();
                 auto in = std::istringstream(text.str());
                 auto const vm = text.str().find("RESULT ") != std::string::npos;
-                for (auto& c : vm ? quetschn::read_vm_boots(in, prefix) : quetschn::read_bench_results(in, prefix)) {
+                for (auto& c : vm ? bench::read_vm_boots(in, prefix) : bench::read_bench_results(in, prefix)) {
                     codecs.push_back(std::move(c));
                 }
             }
@@ -159,7 +158,7 @@ int main(int argc, char** argv) {
         auto const n = codecs.size();
         for (std::size_t k = 0; k < n; ++k) {
             if (codecs[k].name == name) {
-                codecs.push_back(quetschn::what_if(codecs[k], factor));
+                codecs.push_back(bench::what_if(codecs[k], factor));
             }
         }
         if (codecs.size() == n) {
@@ -183,14 +182,14 @@ int main(int argc, char** argv) {
                     c.write_ns / 1000.0,
                     c.read_ns / 1000.0,
                     c.recompress_ns / 1000.0,
-                    quetschn::us_per_page(c, w));
+                    bench::us_per_page(c, w));
         if (c.per_cpu_bytes >= 0.0) {
             std::printf(" %9.0f", c.per_cpu_bytes);
         } else {
             std::printf(" %9s", "-");
         }
         if (lambda >= 0.0) {
-            std::printf(" %13.1f", c.bytes_per_page + lambda * quetschn::us_per_page(c, w));
+            std::printf(" %13.1f", c.bytes_per_page + lambda * bench::us_per_page(c, w));
         }
         std::printf("\n");
     }
@@ -216,7 +215,7 @@ int main(int argc, char** argv) {
         std::printf("\nbest for some lambda, %.0f CPUs and %.0f MiB of pages in zram, bytes per page with memory per CPU\n",
                     d.cpus,
                     d.stored_mib);
-        print_hull(quetschn::on_device(codecs, d), w);
+        print_hull(bench::on_device(codecs, d), w);
     }
     return 0;
 }
