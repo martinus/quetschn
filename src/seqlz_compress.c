@@ -53,19 +53,25 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  *
  * So dst can have any size, and a block that does not fit is an error, as for
  * the other compressors. Before each sequence the encoder checks that its
- * literals and ENC_ROOM bytes more are free between the two: a sequence's
- * copies write up to 16 bytes past its literals, and its flushes write at most
- * 15 bytes below where the bitstream was before it. A sequence has at most two
- * flushes: the first moves the bitstream down by at most 7 bytes, as it has at
- * most 60 bits (see below), and the second writes 8 bytes below that. 16 + 15
- * bytes fit into ENC_ROOM. A block that does not fit stops the writes there,
- * and seqlz_compress() returns 0. It can happen up to ENC_ROOM bytes before dst
- * is full. With the two pages zram gives, it never happens: a sequence with a
- * match covers at least 4 bytes of the block, and its token and offset take at
- * most 31 bits, also with an escaped token, see SEQLZ_MAX_ESCAPE_LEN; the last
- * sequence has no bits. So the bitstream has at most SEQLZ_BLOCK_SIZE / 4 * 31
- * bits, 3968 bytes for blocks of 4 KiB, and with a block of literals that
- * leaves more than ENC_ROOM bytes free; for blocks of 16 KiB 15 872 bytes.
+ * literals, its record (see LIT_REC) and ENC_ROOM bytes more are free between
+ * the two: a sequence's copies write up to 16 bytes past its literals, and its
+ * flushes write at most 15 bytes below where the bitstream was before it. A
+ * sequence has at most two flushes: the first moves the bitstream down by at
+ * most 7 bytes, as it has at most 60 bits (see below), and the second writes 8
+ * bytes below that. 16 + 15 bytes fit into ENC_ROOM. A block that does not fit
+ * stops the writes there, and seqlz_compress() returns 0. It can happen up to
+ * ENC_ROOM bytes before dst is full.
+ *
+ * With the two pages zram gives, it never happens without records: a sequence
+ * with a match covers at least 4 bytes of the block, and its token and offset
+ * take at most SEQLZ_SEQ_BITS, 31 bits, also with an escaped token. One with
+ * length values covers 19 bytes or more, for ll >= 15 or ml >= 35, and 4 * 31
+ * bits are more than its token, offset and two length values take. The last
+ * sequence has no bits. So the bitstream has at most ENC_BITSTREAM_MAX bytes,
+ * 3968 for blocks of 4 KiB, and with a block of literals that leaves more than
+ * ENC_ROOM bytes free; for blocks of 16 KiB 15 872 bytes. The records take 6
+ * bytes more per sequence, and compress_own() writes a block without them
+ * where they do not fit.
  *
  * Bits are collected in a 64-bit accumulator and written 8 bytes at a time;
  * then the write position moves down by the whole bytes, and the at most 7 bits
@@ -75,6 +81,18 @@ unsigned int seqlz_find(struct seqlz_state *st, const void *src,
  * literal length value, 20 or 22 bits more, needs a write of its own.
  */
 #define ENC_ROOM 32U
+/* the most bits of a length value: its code and the bits below its top bit */
+#define ENC_VALUE_BITS (SEQLZ_MAX_BITS + SEQLZ_BLOCK_BITS)
+static_assert(7U + SEQLZ_SEQ_BITS + ENC_VALUE_BITS < 64U,
+	      "a token, its offset and a length value fit the accumulator");
+static_assert(16U + (7U + SEQLZ_SEQ_BITS + ENC_VALUE_BITS) / 8U + 8U <=
+		      ENC_ROOM,
+	      "a sequence's copies and flushes fit into ENC_ROOM");
+/* the largest bitstream: SEQLZ_SEQ_BITS for every 4 bytes of the block */
+#define ENC_BITSTREAM_MAX ((SEQLZ_BLOCK_SIZE / 4U * SEQLZ_SEQ_BITS + 7U) / 8U)
+static_assert(SEQLZ_HEADER + SEQLZ_BLOCK_SIZE + ENC_BITSTREAM_MAX + ENC_ROOM <=
+		      2U * SEQLZ_BLOCK_SIZE,
+	      "two blocks are always room enough");
 
 struct seqlz_encoder {
 	u64 acc; /* the bits not yet written, the newest in the low bits */
@@ -90,7 +108,7 @@ struct seqlz_encoder {
 	unsigned int pos; /* with rec: where the next sequence starts */
 };
 
-/* appends the n bits of v; n < 64 - cnt */
+/* appends the n bits of v, which has no higher bits set; n < 64 - cnt */
 static __always_inline void enc_put(struct seqlz_encoder *e, u64 v,
 				    unsigned int n)
 {
@@ -134,10 +152,10 @@ static __always_inline void put_len_value(struct seqlz_encoder *e,
 					  const struct value_table *t,
 					  unsigned int v)
 {
-	unsigned int extra,
-		s = seqlz_len_symbol(v, &extra) & (ENC_LEN_SYMBOLS - 1U);
+	unsigned int n_extra,
+		s = seqlz_len_symbol(v, &n_extra) & (ENC_LEN_SYMBOLS - 1U);
 
-	enc_put_code(e, t->enc[s], v, extra);
+	enc_put_code(e, t->enc[s], v, n_extra);
 }
 
 /*
@@ -213,8 +231,9 @@ static __always_inline void encode_seq(struct seqlz_encoder *e, const u8 *in,
 	cls = seqlz_off_class(off, e->last, &raw_bits);
 	code = token_code(seqlz_token(ll, ml, cls), &tlen);
 	/*
-	 * The offset's bits right after the token's code. Classes 1 to 5 send
-	 * all bits off has. Class 0 sends none, so there off is masked to 0.
+	 * The offset's bits right after the token's code: classes 1 to 5 send
+	 * off >> SEQLZ_OFF_SHIFT(cls) in raw_bits bits. Class 0 sends none, so
+	 * there off is masked to 0.
 	 */
 	enc_put(e,
 		(u64)code << raw_bits |
@@ -389,6 +408,12 @@ static unsigned int compress_block(struct seqlz_state *st, const u8 *src,
 {
 	struct seqlz_encoder e;
 
+	/*
+	 * No block fits into less, and below SEQLZ_HEADER bytes p - lit in
+	 * encode_seq() would start below 0. Checked here and in
+	 * compress_own(), not once in seqlz_compress(): there it made the
+	 * matcher's code slower.
+	 */
 	if (dst_cap < SEQLZ_HEADER + ENC_ROOM)
 		return 0;
 	encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
@@ -413,18 +438,22 @@ static noinline unsigned int compress_own(struct seqlz_state *st, const u8 *src,
 		return 0;
 	encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	e.rec = true;
+	/*
+	 * Once with the records; a block that does not fit with them once more
+	 * without, as encoder_init() clears e.rec. A loop and not two calls,
+	 * so that the inlined matcher is there once.
+	 */
 	for (;;) {
 		seqlz_match_block(st->table, src, true, encode_emit_rec, &e);
-		/*
-		 * encoder_init() clears rec: the pass without records is the
-		 * last
-		 */
 		if (e.p != e.lit || !e.rec)
 			break;
 		encoder_init(&e, dst, dst_cap, src + SEQLZ_BLOCK_SIZE);
 	}
 	if (e.rec) {
-		/* not &e.lit: e would leave the function and its registers */
+		/*
+		 * a copy of e.lit: with its address taken, e could not be kept
+		 * in registers
+		 */
 		u8 *lit = e.lit;
 
 		*delta = seqlz_delta_literals(dst, &lit, src, st->literals);

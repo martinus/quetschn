@@ -107,12 +107,14 @@
 /* the fewest bits that hold every token, 3072 < 4096 */
 #define SEQLZ_ESCAPE_BITS 12U
 /*
- * The longest code the escape may have. The encoder counts on 31 bits for a
- * token and its offset, the escape included, to know that zram's two pages are
- * always room enough for a compressed block; see the encoder in
- * seqlz_compress.c.
+ * The most bits a token and its offset take, the escape included. The encoder
+ * counts on it to know that zram's two pages are always room enough for a
+ * compressed block, see ENC_ROOM in seqlz_compress.c. It limits the escape's
+ * code: the longest offset follows an escaped token, in SEQLZ_BLOCK_BITS bits.
  */
-#define SEQLZ_MAX_ESCAPE_LEN (31U - SEQLZ_BLOCK_BITS - SEQLZ_ESCAPE_BITS)
+#define SEQLZ_SEQ_BITS 31U
+#define SEQLZ_MAX_ESCAPE_LEN \
+	(SEQLZ_SEQ_BITS - SEQLZ_BLOCK_BITS - SEQLZ_ESCAPE_BITS)
 /* the shortest match; a token holds ml - SEQLZ_MIN_MATCH */
 #define SEQLZ_MIN_MATCH 4U
 /* the largest ll and ml - SEQLZ_MIN_MATCH a token holds: 15 and 31 */

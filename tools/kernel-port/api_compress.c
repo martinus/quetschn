@@ -1,6 +1,10 @@
-/* the interface's work memory is the matcher's state, its levels from 1 on */
+/* the interface's work memory is the matcher's state */
 static_assert(sizeof(struct seqlz_state) == SEQLZ_MEM_COMPRESS);
-static_assert(SEQLZ_LEVEL_MIN == 1);
+/* its levels are those of seqlz_compress_block() */
+static_assert(SEQLZ_LEVEL_MIN == 1 && SEQLZ_LEVEL_CODED == 2 &&
+	      SEQLZ_LEVEL_OWN == SEQLZ_LEVEL_MAX);
+/* the bound the encoder holds to, see ENC_ROOM, and the room its doc names */
+static_assert(SEQLZ_COMPRESS_BOUND == 2 * SEQLZ_BLOCK_SIZE && ENC_ROOM == 32);
 
 int seqlz_compress(const void *src, void *dst, unsigned int dst_len,
 		   void *wrkmem, int level)
