@@ -207,26 +207,26 @@ differs only a little from the byte the match would have copied. On the ten 20 0
 stores 5.0% less with it, 869.7 instead of 915.6 bytes per page; on the Mi 9T's big core a write takes
 about 3.5 µs more and a read 0.6 µs more, in userspace. A XOR with the same bytes, the first form, stored
 881.0 ([explored-designs.md](explored-designs.md#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept),
-[format.md](format.md#literals-as-deltas)). The numbers below are from 15th October, before it.
+[format.md](format.md#literals-as-deltas)).
 
 On the Mi 9T, zram in the phone's own kernel, the 19 775 pages of a phone session that the tables were
-not trained on, 15th October 2026, time per page written as above:
+not trained on, 23rd October 2026, time per page written as above:
 
 ![seqlz's levels against lz4 and zstd 3 on the Mi 9T, memory against time](plots/levels-phone.svg)
 
 | codec | bytes per page | big core, A76 | little core, A55 |
 | --- | ---: | ---: | ---: |
-| `lz4` | 1364 | 14.6 µs | 42.8 µs |
-| `seqlz-1` | 1071 | 15.8 µs | 50.3 µs |
-| `seqlz-2` | 997 | 17.6 µs | 55.9 µs |
-| `seqlz-3` | 952 | 22.2 µs | 67.6 µs |
-| `zstd` 3 | 951 | 52.0 µs | 164.6 µs |
+| `lz4` | 1364 | 14.6 µs | 43.6 µs |
+| `seqlz-1` | 1071 | 15.6 µs | 49.5 µs |
+| `seqlz-2` | 997 | 17.4 µs | 56.3 µs |
+| `seqlz-3` | 875 | 26.4 µs | 79.3 µs |
+| `zstd` 3 | 951 | 51.4 µs | 165.7 µs |
 
-So `seqlz-3` stores a page in as much memory as `zstd` 3, 0.6 bytes more, in 43% of its time on the big
-core and 41% on the little one, and in 4.5% less memory than `seqlz-2` for 26% and 21% more time. On ten
-dumps of desktops and phones it stores 0.30% more than `zstd` 3 on average, between 1.6% less and 3.5%
-more. Its reads are 0.4 and 1.1 µs slower than `seqlz-2`'s warm, 0.5 and 2.9 µs cold, and its work memory
-is the same, 16 KiB per CPU
+So `seqlz-3` stores a page in 8.0% less memory than `zstd` 3, in 51% of its time on the big core and
+48% on the little one, and in 12.2% less memory than `seqlz-2` for 52% and 41% more time. On 15th
+October, before the deltas, it stored 952 bytes per page in 22.2 and 67.6 µs
+([explored-designs.md](explored-designs.md#level-3-with-its-deltas-in-the-mi-9ts-kernel-81-less-memory-than-on-15th-october-41-and-117-µs-more-per-page-written)).
+Its work memory is the same as `seqlz-2`'s, 16 KiB per CPU
 ([explored-designs.md](explored-designs.md#level-3-a-lazy-matcher-and-a-literal-table-of-the-pages-own-zstd-3s-memory-in-less-than-half-its-time-on-the-phone-kept)).
 In the kernel VM on 22nd October, the mean over four zram dumps, level 3 stores 24.4% of a page in 14.42
 µs per page written with its deltas, `zstd` 3 25.3% in 20.02 µs ([README](../README.md)); without them,

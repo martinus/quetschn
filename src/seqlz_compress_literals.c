@@ -818,3 +818,12 @@ unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare)
 {
 	return code_literals(d, len, NULL, spare, NULL, 0);
 }
+
+/*
+ * The same for seqlz_encode(), whose caller has the raw literals at raw, so it
+ * needs no spare: its state may be NULL
+ */
+unsigned int seqlz_code_raw_literals(u8 *d, unsigned int len, const u8 *raw)
+{
+	return code_literals(d, len, raw, NULL, NULL, 0);
+}

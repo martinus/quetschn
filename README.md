@@ -51,25 +51,24 @@ How they work, and why, is in [seqlz in short](docs/seqlz.md) and in the book be
 ## On a phone
 
 A Xiaomi Mi 9T, zram in the phone's own kernel (Linux 4.14, so no `lzo-rle`), 19 775 pages from a
-session on the phone, the time per page written as above, write + 0.73 × cold read, on 15th October
+session on the phone, the time per page written as above, write + 0.73 × cold read, on 23rd October
 2026:
 
 | codec | memory per page | big core, A76 | little core, A55 |
 | --- | ---: | ---: | ---: |
-| `lz4` | 33.3% | 14.6 µs | 42.8 µs |
-| `zstd` 3 | 23.2% | 52.0 µs | 164.6 µs |
-| **`seqlz-1`** | **26.1%** | **15.8 µs** | **50.3 µs** |
-| **`seqlz-2`** | **24.3%** | **17.6 µs** | **55.9 µs** |
-| **`seqlz-3`** | **23.2%** | **22.2 µs** | **67.6 µs** |
+| `lz4` | 33.3% | 14.6 µs | 43.6 µs |
+| `zstd` 3 | 23.2% | 51.4 µs | 165.7 µs |
+| **`seqlz-1`** | **26.1%** | **15.6 µs** | **49.5 µs** |
+| **`seqlz-2`** | **24.3%** | **17.4 µs** | **56.3 µs** |
+| **`seqlz-3`** | **21.4%** | **26.4 µs** | **79.3 µs** |
 
-On the phone `seqlz-3` takes less than half of `zstd` 3's time for the same memory. The gap to `lz4` is
-larger than on the PC, most of all on the little core, and cold reads there cost `seqlz-2` 34% more
-than `lz4`. Chart and details:
-[seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time). This table's `seqlz-3` is
-the level of 15th October. Since 21st October it stores its literals as deltas: on the same pages, in
-userspace on the Mi 9T, it stores 850.9 instead of 926.6 bytes per page, and a write takes about 3.5 µs
-more on the A76 and 7.6 µs more on the A55
-([explored-designs.md](docs/explored-designs.md#one-rule-for-which-literals-are-deltas-045-fewer-bytes-a-simpler-spec-kept)).
+On the phone `seqlz-3` stores 8.0% less than `zstd` 3 in about half its time, 51% on the big core and
+48% on the little one. The gap to `lz4` is larger than on the PC, most of all on the little core, and
+cold reads there cost `seqlz-2` 34% more than `lz4`. Chart and details:
+[seqlz.md](docs/seqlz.md#level-3-zstd-3s-memory-in-less-than-half-its-time). Since its literals are
+deltas, 21st October, `seqlz-3` stores 8.1% less than on 15th October and takes 4.1 µs more on the A76
+and 11.7 µs more on the A55
+([explored-designs.md](docs/explored-designs.md#level-3-with-its-deltas-in-the-mi-9ts-kernel-81-less-memory-than-on-15th-october-41-and-117-µs-more-per-page-written)).
 
 On a current phone, a Pixel 9a with Google's Tensor G4, the codecs in userspace on each of its three
 kinds of core, the same pages, each page timed once per pass over all of them, as a swap-in sees it:

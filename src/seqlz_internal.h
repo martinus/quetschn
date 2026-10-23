@@ -149,6 +149,7 @@ static_assert(sizeof_field(struct lit_table, decode) % PREFETCH_STEP == 0,
 unsigned int seqlz_delta_literals(u8 *d, u8 **lit_end, const u8 *block,
 				  u8 *deltas);
 unsigned int seqlz_code_literals(u8 *d, unsigned int len, u8 *spare);
+unsigned int seqlz_code_raw_literals(u8 *d, unsigned int len, const u8 *raw);
 unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 			    unsigned int delta);
 

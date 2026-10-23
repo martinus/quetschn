@@ -379,12 +379,8 @@ unsigned int seqlz_encode(struct seqlz_state *st,
 			 st ? st->literals : NULL, &delta, dst, dst_cap);
 	if (len == 0 || level < SEQLZ_LEVEL_CODED)
 		return len;
-	if (level < SEQLZ_LEVEL_OWN) {
-		/* the copy the coder reads the literals from, st may be NULL */
-		u8 spare[SEQLZ_BLOCK_SIZE];
-
-		return seqlz_code_literals(dst, len, spare);
-	}
+	if (level < SEQLZ_LEVEL_OWN)
+		return seqlz_code_raw_literals(dst, len, literals);
 	return seqlz_code_own(dst, len, st, delta);
 }
 
