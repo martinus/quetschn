@@ -145,7 +145,8 @@ static int build_lit_sets(struct seqlz_tables *t)
  * at the start of each 8 bits are decoded one after the other, as long as
  * their codes and extra bits end within the 8 bits: at most one run, then a
  * length, twice. A run longer than OWN_QUAD_RUN_MAX ends it, and so does a
- * second run in a row, which a valid table does not have.
+ * second run in a row: the encoder never writes one, and the decoder takes
+ * such runs one at a time, through decode[].
  */
 static int build_own(struct own_table *t)
 {

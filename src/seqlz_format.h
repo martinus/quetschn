@@ -16,7 +16,7 @@
  * A sequence has three numbers:
  *   ll:     the number of literals before the match
  *   ml:     the length of the match, at least 4 bytes; 0 for the last sequence
- *   offset: how far back the match starts, 1 to the block size
+ *   offset: how far back the match starts, 1 to the bytes before it
  *
  * Most of them are small, and many offsets are the same as the one before. So
  * ll, ml and a class of the offset share one Huffman symbol, the token, and one
@@ -27,7 +27,9 @@
  *
  * The offset classes, and the bits of the offset that follow the token:
  *   0:    the offset of the sequence before, 1 at the start of a block; none
- *   1:    2; the offset divided by 2, 1 bit
+ *   1:    2; the offset divided by 2, 1 bit, which is always 1: 0 is
+ *         offset 0, invalid. With the bit the decoder takes every class's
+ *         offset with the same shift and mask.
  *   2:    below 256; 8 bits
  *   3:    below the block size; 12 bits for blocks of 4 KiB
  *   4, 5: a multiple of 8, below 256 or below 2048; the offset divided by 8,
@@ -83,9 +85,8 @@
  * How many bits of ll and ml - 4 the token holds; larger ones need a length
  * value after the token, which costs a second table lookup. With 5 bits for the
  * match length half as many matches need one as with 4, at the same memory.
- * At most 4 and 5:
- * the decoder's token entry has 4 bits for ll and 6 for ml, see token_entry()
- * in seqlz_tables.h.
+ * At most 4 and 5: the decoder's token entry has 4 bits for ll and 6 for ml,
+ * see token_entry() in seqlz_tables.h.
  */
 #define SEQLZ_LL_BITS 4U
 #define SEQLZ_ML_BITS 5U
