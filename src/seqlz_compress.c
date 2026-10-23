@@ -512,6 +512,252 @@ static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
 }
 
 /*
+ * A page's own literal table, see SEQLZ_LIT_OWN_AT: what the encoder needs
+ * for it, in the matcher's state behind the copy of the literals.
+ */
+struct own_work {
+	u16 freq[256]; /* how often each byte is a literal */
+	u16 freq2[256]; /* a second histogram, see own_code() */
+	u8 tmp[256]; /* the bytes with a code, by value */
+	u8 by[256]; /* the same, by how much a shorter code saves */
+	u8 r[256]; /* that, of each byte in tmp, 0 to 15 */
+	u8 len[256]; /* the code lengths */
+	u8 order[256]; /* the bytes by code length, then by value */
+	u32 enc[256]; /* code length | code << 8, as in struct lit_table */
+	u32 bits; /* the literals' bits with the code */
+	/*
+	 * the table as the page sends it: at most 256 bytes of up to 14 bits
+	 * and 9 steps of 4, 452 bytes, and 8 bytes of room for own_put()
+	 */
+	u8 hdr[512 + 8];
+};
+
+static_assert(sizeof(struct own_work) <= SEQLZ_OWN_WORK,
+	      "the matcher's state holds the work of a page's own table");
+
+/*
+ * The code lengths of the n >= 2 bytes in w->tmp, of n_literals literals, into
+ * w->len: almost those of a Huffman code, without sorting the bytes by
+ * frequency. Each byte gets the shortest length l with freq * 2^l >= n_literals,
+ * at most SEQLZ_LIT_BITS, which leaves the code incomplete or, with lengths cut
+ * to SEQLZ_LIT_BITS, overfull. r = freq * 2^l / n_literals, from 1 to 2, says
+ * how much a byte would save with a code one bit shorter for the room that
+ * takes: the bytes go into 16 buckets by r, and in the order of r the code is
+ * made complete, overfull ones lengthen the bytes of the smallest r, then those
+ * of the largest r get shorter while there is room.
+ */
+static void own_lengths(struct own_work *w, unsigned int n,
+			unsigned int n_literals)
+{
+	const u64 inv = (1ULL << 40) / n_literals;
+	const unsigned int full = 1U << SEQLZ_LIT_BITS;
+	unsigned int k, space = 0, at[17] = { 0 };
+	u8 *const r = w->r;
+
+	for (k = 0; k < n; k++) {
+		unsigned int b = w->tmp[k & 255U], f = w->freq[b],
+			     l = (unsigned int)(__builtin_clz(f) -
+						__builtin_clz(n_literals));
+		u64 q;
+
+		l += (f << l) < n_literals;
+		l += !l;
+		q = ((u64)f << l) * inv >> 36;
+		q = l > SEQLZ_LIT_BITS || q < 16U ? 16U : q > 31U ? 31U : q;
+		l = min(l, SEQLZ_LIT_BITS);
+		w->len[b] = (u8)l;
+		r[k & 255U] = (u8)(q - 16U);
+		at[q - 15U]++;
+		space += full >> l;
+	}
+	for (k = 1; k < 17; k++)
+		at[k] += at[k - 1];
+	for (k = 0; k < n; k++)
+		w->by[at[r[k & 255U]]++ & 255U] = w->tmp[k & 255U];
+	while (space > full)
+		for (k = 0; space > full && k < n; k++) {
+			unsigned int b = w->by[k & 255U], l = w->len[b];
+
+			if (l < SEQLZ_LIT_BITS) {
+				space -= full >> (l + 1U);
+				w->len[b] = (u8)(l + 1U);
+			}
+		}
+	/*
+	 * One round may leave room: a byte that just got shorter may now be the
+	 * longest. The room is a multiple of the longest code's, so another
+	 * round fills it.
+	 */
+	while (space < full)
+		for (k = n; k-- > 0;) {
+			unsigned int b = w->by[k & 255U], l = w->len[b];
+
+			if (l > 1U && space + (full >> l) <= full) {
+				space += full >> l;
+				w->len[b] = (u8)(l - 1U);
+			}
+		}
+}
+
+/* log2(1 + (i + 0.5) / 32) in 1/256 bits */
+static const u8 log2_frac[32] = { 6,   17,  28,	 38,  49,  59,	68,  78,
+				  87,  96,  105, 113, 122, 130, 138, 146,
+				  154, 161, 169, 176, 183, 190, 197, 203,
+				  210, 216, 223, 229, 235, 241, 247, 253 };
+
+/* log2(f) in 1/256 bits, to about 1/50 bit, f > 0 */
+static __always_inline unsigned int log2_256(unsigned int f)
+{
+	unsigned int e = 31U - (unsigned int)__builtin_clz(f);
+
+	return e << 8 | log2_frac[(f << (31U - e)) >> 26 & 31U];
+}
+
+/* appends the n bits of v to the description in w->hdr */
+static __always_inline void own_put(struct own_work *w, u64 *acc,
+				    unsigned int *cnt, unsigned int *out,
+				    unsigned int v, unsigned int n)
+{
+	*acc = *acc << n | v;
+	*cnt += n;
+	if (*cnt >= 32U) {
+		/* 8 bytes, the 4 after the first are written again later */
+		put_unaligned_be64(*acc << ((64U - *cnt) & 63U),
+				   w->hdr + (*out & 511U));
+		*cnt -= 32U;
+		*out += 4;
+	}
+}
+
+/*
+ * The page's own code for its literals: lengths, the encoder's codes, the
+ * table's description in w->hdr. Returns the bytes of that description, or 0
+ * if it does not pay: fewer than 2 different bytes, or the literals' entropy
+ * says it cannot save SEQLZ_LIT_OWN_MIN bytes against limit, the bytes of the
+ * best fixed table with its header.
+ */
+static unsigned int own_code(struct own_work *w, const u8 *literals,
+			     unsigned int n_literals, unsigned int limit)
+{
+	unsigned int k, n = 0, count[16] = { 0 }, next[16], at[16], l, top = 0,
+			cnt = 0, prev, out = 0;
+	u64 acc = 0;
+	u16 *const h2 = w->freq2;
+
+	/* two histograms, so that a run of one byte does not wait for itself */
+	memset(w->freq, 0, sizeof(w->freq));
+	memset(h2, 0, sizeof(w->freq2));
+	for (k = 0; k + 2 <= n_literals; k += 2) {
+		w->freq[literals[k]]++;
+		h2[literals[k + 1]]++;
+	}
+	if (k < n_literals)
+		w->freq[literals[k]]++;
+	/*
+	 * The two histograms added 4 counts at a time, 16 bits each, which
+	 * the sums fit. Each count that is not 0 sets a bit in present, bit
+	 * k for byte k: the top bit of a lane of c | (c & 0x7fff) + 0x7fff is
+	 * set where the lane is not 0, and the multiply moves the 4 top bits,
+	 * at 15, 31, 47 and 63, after the shift by 15 at 0, 16, 32 and 48, to
+	 * bits 48 to 51 without carries.
+	 */
+	{
+		const u64 low = 0x7fff7fff7fff7fffULL;
+		u64 present[4] = { 0 };
+
+		for (k = 0; k < 256; k += 4) {
+			u64 a, b, c;
+
+			__builtin_memcpy(&a, &w->freq[k], 8);
+			__builtin_memcpy(&b, &h2[k], 8);
+			c = a + b;
+			__builtin_memcpy(&w->freq[k], &c, 8);
+			c = ((c | ((c & low) + low)) & ~low) >> 15;
+			present[k / 64] |=
+				(c * 0x0001000200040008ULL >> 48 & 15U)
+				<< (k % 64);
+		}
+		/*
+		 * The bytes that occur, in order, and the literals' entropy.
+		 * Only where it and a description of about 0.45 bytes per byte
+		 * with a code leave the code at least SEQLZ_LIT_OWN_MIN bytes
+		 * smaller than limit, and small enough not to stay raw, see
+		 * code_literals(), is the code built. On about half of the
+		 * pages it is not.
+		 */
+		{
+			unsigned int h = 0, est, j;
+
+			for (j = 0; j < 4; j++) {
+				u64 m = present[j];
+
+				while (m) {
+					unsigned int b = 64U * j +
+							 (unsigned int)
+								 __builtin_ctzll(
+									 m),
+						     f = w->freq[b];
+
+					w->tmp[n & 255U] = (u8)b;
+					n++;
+					h += f * log2_256(f);
+					m &= m - 1;
+				}
+			}
+			if (n < 2)
+				return 0;
+			h = n_literals * log2_256(n_literals) - h;
+			est = h / 2048U + n * 115U / 256U;
+			if (est + SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) +
+					    SEQLZ_LIT_OWN_MIN >
+				    limit ||
+			    est + SEQLZ_LIT_CODED_MIN >=
+				    n_literals - n_literals / 16U)
+				return 0;
+		}
+	}
+	own_lengths(w, n, n_literals);
+
+	/* canonical codes, by length and then by byte, as build_lit() */
+	for (k = 0; k < n; k++)
+		count[w->len[w->tmp[k & 255U]] & 15U]++;
+	for (l = 1, next[0] = 0, at[0] = 0; l < 16; l++) {
+		next[l] = (next[l - 1] + count[l - 1]) << 1;
+		at[l] = at[l - 1] + count[l - 1];
+		top = count[l] ? l : top;
+	}
+	w->bits = 0;
+	for (k = 0; k < n; k++) {
+		unsigned int b = w->tmp[k & 255U];
+
+		l = w->len[b] & 15U;
+		w->bits += w->freq[b] * l;
+		w->enc[b] = l | next[l]++ << 8;
+		w->order[at[l]++ & 255U] = (u8)b;
+	}
+
+	/* the description: the bytes by length, each as its distance */
+	for (l = 1, k = 0; l <= top; l++) {
+		prev = ~0U;
+		for (; k < n && w->len[w->order[k & 255U]] == l; k++) {
+			unsigned int v = w->order[k & 255U] - prev + 2U,
+				     nb = 32U - (unsigned int)__builtin_clz(v);
+
+			own_put(w, &acc, &cnt, &out, v, 2U * nb - 2U);
+			prev = w->order[k & 255U];
+		}
+		if (l < top) {
+			own_put(w, &acc, &cnt, &out, 2U, 2U);
+		}
+	}
+	for (; cnt >= 8; cnt -= 8)
+		w->hdr[out++ & 511U] = (u8)(acc >> (cnt - 8));
+	if (cnt)
+		w->hdr[out++ & 511U] = (u8)(acc << (8 - cnt));
+	return out;
+}
+
+/*
  * Turns the page of len bytes in d, with raw literals as the encoder wrote it,
  * into one with Huffman coded literals, where that saves more than 1/16 of them
  * plus SEQLZ_LIT_CODED_MIN bytes. Decoding coded literals costs time for every
@@ -524,14 +770,22 @@ static __always_inline void lit_sizes(u8 *p, const unsigned int *sizes,
  * the raw literals until it moves down behind the coded ones at the end. So d
  * needs no room beyond len, and the page is coded in any dst it fits into raw.
  */
+#ifdef SEQLZ_NO_OWN
+#define SEQLZ_OWN_ENABLED 0
+#else
+#define SEQLZ_OWN_ENABLED 1
+#endif
+
 static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
-				  unsigned int len, const u8 *raw, u8 *spare)
+				  unsigned int len, const u8 *raw, u8 *spare,
+				  struct own_work *own)
 {
 	const unsigned int n_literals = get_unaligned_le16(d),
 			   bitstream = len - SEQLZ_HEADER - n_literals;
 	const u8 *literals = d + SEQLZ_HEADER;
 	unsigned int bits = ~0U, k, j, coded, set = 0, sizes[SEQLZ_LIT_STREAMS],
-		     all, width, header;
+		     all, width, header, own_bytes = 0;
+	const u32 *enc;
 	/* the bits of each stream in each table, see lit_cost() */
 	u64 even[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = { 0 },
 	    odd[SEQLZ_LIT_STREAMS][LIT_COST_WORDS] = { 0 };
@@ -562,7 +816,75 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	all |= 1U << (SEQLZ_SIZE_BITS_MIN - 1U);
 	width = 32U - (unsigned int)__builtin_clz(all);
 	header = SEQLZ_LIT_HEADER(width);
-	if (coded + SEQLZ_LIT_CODED_MIN >= n_literals - n_literals / 16U)
+	enc = t->lit[set].enc;
+	/*
+	 * A table of the page's own where it and its description take at least
+	 * SEQLZ_LIT_OWN_MIN bytes less than the best fixed table.
+	 */
+	if (SEQLZ_OWN_ENABLED && own && n_literals >= SEQLZ_LIT_OWN_FROM) {
+		unsigned int hdr = own_code(own, literals, n_literals,
+					    header + coded),
+			     ob[SEQLZ_LIT_STREAMS] = { 0 }, osum = 0, oall = 0,
+			     owidth;
+
+		/*
+		 * The streams' sizes only where the literals' bits alone, with
+		 * the smallest header, would leave the fixed table behind.
+		 */
+		if (hdr && SEQLZ_LIT_HEADER(SEQLZ_SIZE_BITS_MIN) + hdr +
+					   own->bits / 8U + SEQLZ_LIT_OWN_MIN >
+				   header + coded)
+			hdr = 0;
+		if (hdr) {
+			/* 8 literals a step, one sum per stream in a register */
+			const u8 *const ln = own->len;
+			unsigned int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0,
+				     b5 = 0, b6 = 0, b7 = 0;
+
+			for (k = 0; k + 8U <= n_literals; k += 8) {
+				b0 += ln[literals[k]];
+				b1 += ln[literals[k + 1]];
+				b2 += ln[literals[k + 2]];
+				b3 += ln[literals[k + 3]];
+				b4 += ln[literals[k + 4]];
+				b5 += ln[literals[k + 5]];
+				b6 += ln[literals[k + 6]];
+				b7 += ln[literals[k + 7]];
+			}
+			ob[0] = b0;
+			ob[1] = b1;
+			ob[2] = b2;
+			ob[3] = b3;
+			ob[4] = b4;
+			ob[5] = b5;
+			ob[6] = b6;
+			ob[7] = b7;
+			for (; k < n_literals; k++)
+				ob[k % SEQLZ_LIT_STREAMS] += ln[literals[k]];
+			for (j = 0; j < SEQLZ_LIT_STREAMS; j++) {
+				ob[j] = (ob[j] + 7U) / 8U;
+				osum += ob[j];
+				oall |= ob[j];
+			}
+			owidth =
+				32U - (unsigned int)__builtin_clz(
+					      oall |
+					      1U << (SEQLZ_SIZE_BITS_MIN - 1U));
+			if (SEQLZ_LIT_HEADER(owidth) + hdr + osum +
+				    SEQLZ_LIT_OWN_MIN <=
+			    header + coded) {
+				own_bytes = hdr;
+				width = owidth;
+				header = SEQLZ_LIT_HEADER(width) + hdr;
+				coded = osum;
+				for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
+					sizes[j] = ob[j];
+				enc = own->enc;
+			}
+		}
+	}
+	if (header - SEQLZ_LIT_HEADER(width) + coded + SEQLZ_LIT_CODED_MIN >=
+	    n_literals - n_literals / 16U)
 		return len;
 	/*
 	 * The streams end at d + header + coded, which is before the
@@ -574,14 +896,17 @@ static unsigned int code_literals(const struct seqlz_tables *t, u8 *d,
 	q[0] = d + header;
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		q[j + 1] = q[j] + sizes[j];
-	lit_streams(t->lit[set].enc, literals, n_literals, q);
+	lit_streams(enc, literals, n_literals, q);
 	put_unaligned_le16((u16)(SEQLZ_LIT_CODED | n_literals), d);
 	/*
 	 * byte 2: the table in bits 0 to 2, width - SEQLZ_SIZE_BITS_MIN in bits
 	 * 3 to 5
 	 */
-	d[2] = (u8)(set | (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT);
+	d[2] = (u8)((own_bytes ? 1U << SEQLZ_LIT_OWN_AT : set) |
+		    (width - SEQLZ_SIZE_BITS_MIN) << SEQLZ_LIT_WIDTH_AT);
 	lit_sizes(d + SEQLZ_LIT_HEADER(0), sizes, width);
+	if (own_bytes)
+		memcpy(d + SEQLZ_LIT_HEADER(width), own->hdr, own_bytes);
 	/* the bitstream, down to right after the coded literals */
 	coded += header;
 	memmove(d + coded, d + SEQLZ_HEADER + n_literals, bitstream);
@@ -602,8 +927,9 @@ unsigned int seqlz_encode(const struct seqlz_tables *t,
 	unsigned int len =
 		encode_raw(t, seq, n, literals, n_literals, dst, dst_cap);
 
-	return len == 0 || !coded ? len :
-				    code_literals(t, dst, len, literals, NULL);
+	return len == 0 || !coded ?
+		       len :
+		       code_literals(t, dst, len, literals, NULL, NULL);
 }
 
 static unsigned int compress_page(const struct seqlz_tables *t,
@@ -627,5 +953,9 @@ unsigned int seqlz_compress(const struct seqlz_tables *t,
 
 	return len == 0 || !coded ?
 		       len :
-		       code_literals(t, dst, len, NULL, st->literals);
+		       code_literals(t, dst, len, NULL, st->literals,
+				     SEQLZ_OWN_ENABLED ?
+					     (struct own_work *)(st->literals +
+								 SEQLZ_PAGE) :
+					     NULL);
 }

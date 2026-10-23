@@ -72,8 +72,9 @@ struct lit_table {
 static_assert(SEQLZ_LIT_SETS == 8U, "byte 2 has 3 bits for the table");
 static_assert(SEQLZ_SIZE_BITS_MAX - SEQLZ_SIZE_BITS_MIN == 7U,
 	      "byte 2 has 3 bits for the width");
-static_assert(SEQLZ_LIT_ZERO_AT - SEQLZ_LIT_WIDTH_AT == 3,
-	      "the width is 3 bits");
+static_assert(SEQLZ_LIT_OWN_AT - SEQLZ_LIT_WIDTH_AT == 3 &&
+		      SEQLZ_LIT_ZERO_AT == SEQLZ_LIT_OWN_AT + 1,
+	      "the width is 3 bits, the flag of a page's own table 1");
 /* the largest stream: every 8th literal of a page, all with the longest code */
 #define LIT_STREAM_MAX \
 	((SEQLZ_PAGE / SEQLZ_LIT_STREAMS * SEQLZ_LIT_BITS + 7U) / 8U)

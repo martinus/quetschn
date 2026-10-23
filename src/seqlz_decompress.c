@@ -347,6 +347,92 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
 }
 
 /*
+ * Reads a page's own literal table from p, see SEQLZ_LIT_OWN_AT, and writes its
+ * 1 << SEQLZ_LIT_BITS decode entries to lt, in the order of the table: code
+ * lengths from short to long, within a length by byte. Each byte fills the next
+ * 1 << (SEQLZ_LIT_BITS - l) entries. Returns the byte after the table, or NULL
+ * if it is not valid: a byte above 255 or twice, a length above SEQLZ_LIT_BITS,
+ * a number of more than 16 bits, bits that are not zero after the last one, or
+ * fewer bytes than the table needs. More codes than fit can't be: the table
+ * ends where it is full. Each byte moves on in the table and each step to the
+ * next length is checked, so the loop ends for any input.
+ *
+ * The numbers are read with a count of leading zeros, without a table: a
+ * lookup made each number wait for a load. The invalid cases are collected in
+ * bad and checked once at the end, the table is not used before.
+ *
+ * lt needs 8 bytes of room after the table: each byte's entries start with a
+ * store of 8 bytes, 4 entries, also for codes of 9 and 10 bits, whose entries
+ * the next bytes then overwrite.
+ */
+static const u8 *own_table(const u8 *p, const u8 *end, u16 *lt)
+{
+	const u8 *ip = p;
+	u16 *o = lt, *const lt_end = lt + (1U << SEQLZ_LIT_BITS);
+	u64 bits = 0, v;
+	unsigned int avail = 0, len = 1, run = (1U << SEQLZ_LIT_BITS) / 2U,
+		     prev = ~0U, used, bad = 0;
+	/* which bytes have a code */
+	u8 seen[256];
+
+	memset(seen, 0, sizeof(seen));
+	while (o < lt_end) {
+		unsigned int z, n, d, b;
+		u16 *q;
+
+		if (avail < SEQLZ_LIT_OWN_MAX) {
+			/* whole bytes, as many as fit below 64 bits */
+			unsigned int k = (63U - avail) >> 3;
+			u64 w = end - ip >= 8 ? get_unaligned_be64(ip) :
+						lit_load_tail(ip, end);
+
+			bits = (bits | w >> avail) &
+			       ~(~0ULL >> (avail + 8U * k));
+			ip += k;
+			avail += 8U * k;
+		}
+		/*
+		 * z zeros, then the z + 2 bits of d + 2. The bit set at 56
+		 * keeps z at most 7 and the number at 16 bits; more zeros are
+		 * invalid.
+		 */
+		z = (unsigned int)__builtin_clzll(bits | 1ULL << 56);
+		n = 2U * z + 2U;
+		bad |= (unsigned int)(bits >> 56 == 0);
+		d = (unsigned int)(bits >> (64U - n)) - 2U;
+		bits <<= n;
+		avail -= n;
+		if (d == 0) {
+			if (++len > SEQLZ_LIT_BITS)
+				return NULL;
+			run >>= 1;
+			prev = ~0U;
+			continue;
+		}
+		b = prev + d;
+		bad |= (b > 255U) | seen[b & 255U];
+		seen[b & 255U] = 1;
+		prev = b;
+		/*
+		 * The entries fit: the runs are powers of 2 that never grow,
+		 * so every run before this one is a multiple of it, and so is
+		 * what is left of the table.
+		 */
+		v = (u64)(len | b << 8) * 0x0001000100010001ULL;
+		__builtin_memcpy(o, &v, 8);
+		for (q = o + 4; q < o + run; q += 4)
+			__builtin_memcpy(q, &v, 8);
+		o += run;
+	}
+	/* the table's bytes are in the page, the bits after it are zero */
+	used = 8U * (unsigned int)(ip - p) - avail;
+	if (bad || (used + 7U) / 8U > (unsigned long)(end - p) ||
+	    ((used & 7U) && bits >> (64U - (8U - (used & 7U)))))
+		return NULL;
+	return p + (used + 7U) / 8U;
+}
+
+/*
  * Decodes the coded literals of a page into out, the scratch, see
  * SEQLZ_LIT_HEADER for the layout. Returns where the sequences' bitstream
  * starts, or NULL if the page is not valid. Not inlined: inside the loop over
@@ -354,12 +440,12 @@ static __always_inline bool lit_stream_ends(const u8 *start, unsigned int sz,
  */
 static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 					  const u8 *s, unsigned int src_len,
-					  unsigned int n_lit, u8 *out)
+					  unsigned int n_lit, u8 *out, u8 *page)
 {
 	const u8 *const end = s + src_len;
 	/*
 	 * byte 2: the table in bits 0 to 2, width - SEQLZ_SIZE_BITS_MIN in bits
-	 * 3 to 5, bits 6 and 7 zero
+	 * 3 to 5, bit 6 a table of the page's own, bit 7 zero
 	 */
 	const unsigned int width =
 		SEQLZ_SIZE_BITS_MIN +
@@ -379,14 +465,24 @@ static noinline const u8 *decode_literals(const struct seqlz_tables *t,
 	if (src_len < SEQLZ_LIT_HEADER(width) || s[2] >> SEQLZ_LIT_ZERO_AT ||
 	    n_lit > SEQLZ_PAGE)
 		return NULL;
-	lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
-	prefetch_lines(lt, sizeof(t->lit[0].decode));
+	if (s[2] >> SEQLZ_LIT_OWN_AT & 1U) {
+		/* the page's own table, built in the page itself */
+		if (s[2] & (SEQLZ_LIT_SETS - 1U))
+			return NULL;
+		q = own_table(q, end, (u16 *)page);
+		if (!q)
+			return NULL;
+		lt = (const u16 *)page;
+	} else {
+		lt = t->lit[s[2] & (SEQLZ_LIT_SETS - 1U)].decode;
+		prefetch_lines(lt, sizeof(t->lit[0].decode));
+	}
 	total = lit_stream_sizes(s, width, q, sz, start);
 	for (i = 0; i < SEQLZ_LIT_STREAMS; i++) {
 		ip[i] = start[i];
 		b[i] = 1;
 	}
-	if (SEQLZ_LIT_HEADER(width) + total > src_len)
+	if ((u64)(q - s) + total > src_len)
 		return NULL;
 	/*
 	 * Full rounds of SEQLZ_LIT_ROUNDS literals per stream, all 8 streams
@@ -558,7 +654,7 @@ int seqlz_decode(const struct seqlz_tables *t, const void *src,
 		n_lit &= SEQLZ_LIT_CODED - 1U;
 		if (!scratch)
 			return -EINVAL;
-		q = decode_literals(t, s, src_len, n_lit, scratch);
+		q = decode_literals(t, s, src_len, n_lit, scratch, d);
 		if (!q)
 			return -EINVAL;
 		br = (struct seqlz_bit_reader){ .p = q, .end = s_end };

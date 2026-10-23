@@ -295,10 +295,38 @@ extern const u8 seqlz_lit_sets[SEQLZ_LIT_SETS][256];
 #define SEQLZ_SIZE_BITS_MAX 12U
 /*
  * Where the fields of byte 2 start: the table at bit 0, w - SEQLZ_SIZE_BITS_MIN
- * at bit 3, the two bits that must be zero at bit 6.
+ * at bit 3, the flag of a table of the page's own at bit 6, the bit that must
+ * be zero at bit 7.
  */
 #define SEQLZ_LIT_WIDTH_AT 3
-#define SEQLZ_LIT_ZERO_AT 6
+#define SEQLZ_LIT_OWN_AT 6
+#define SEQLZ_LIT_ZERO_AT 7
+/*
+ * A page can code its literals with a table of its own instead of one of the
+ * 8 fixed ones: then bit 6 of byte 2 is set, bits 0 to 2 are zero, and the
+ * table's code lengths follow the stream sizes, before the streams. They are
+ * the bytes that have a code, by code length from 1 to SEQLZ_LIT_BITS and
+ * within a length by value, which is the order of the canonical codes. Each is
+ * sent as its distance d to the byte before it of the same length, or to -1
+ * for the first; d = 0 moves on to the next length. d + 2 is sent in an
+ * Exp-Golomb code: as many zeros as it has bits after the top 2, then its
+ * bits, most significant first. The table ends where its codes fill the code
+ * space; the bits after it up to the next byte are zero.
+ *
+ * The decoder builds the table in the page it decodes into: the literals are
+ * decoded before the first byte of the page is written, so the table needs no
+ * memory of its own.
+ */
+/* the bits of the longest number of the description: d + 2 <= 258, 9 bits */
+#define SEQLZ_LIT_OWN_MAX 16U
+/* a page's own table only where it saves this many bytes */
+#ifndef SEQLZ_LIT_OWN_MIN
+#define SEQLZ_LIT_OWN_MIN 16U
+#endif
+/* and only for pages with this many literals, see code_literals() */
+#ifndef SEQLZ_LIT_OWN_FROM
+#define SEQLZ_LIT_OWN_FROM 512U
+#endif
 /*
  * The encoder codes a page's literals only where that saves more than 1/16 of
  * them plus this many bytes. Decoding coded literals has a cost that does not
@@ -389,10 +417,13 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
  * matcher is done it holds the raw literals while they are coded, see
  * code_literals() in seqlz_compress.c.
  */
+/* the encoder's work for a page's own literal table, see seqlz_compress.c */
+#define SEQLZ_OWN_WORK 4096U
 struct seqlz_state {
 	union {
 		u16 table[1U << SEQLZ_HASH_BITS];
-		u8 literals[SEQLZ_PAGE];
+		/* a copy of the literals, then the work of a page's own table */
+		u8 literals[SEQLZ_PAGE + SEQLZ_OWN_WORK];
 	};
 };
 

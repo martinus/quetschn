@@ -26,6 +26,8 @@ mkdir -p "$out"
 ndk=${NDK_R21E:-$HOME/opt/android-ndk-r21e}
 "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang" -O2 -static \
     -o "$out/zramphone" "$here/zramphone.c"
+# phone.sh splits CODECS at spaces: with commas every run failed with "cannot write comp_algorithm"
+[[ ${CODECS:-} != *,* ]] || { echo "CODECS takes spaces between the codecs, not commas" >&2; exit 2; }
 names="" codecs=lz4
 for ko in "$@"; do
     n=$(basename "$ko" .ko); n=${n#quetschn_}

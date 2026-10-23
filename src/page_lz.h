@@ -150,6 +150,53 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 			continue;
 		}
 		m = rep_hit ? pos - last : cand;
+#ifdef SEQLZ_LAZY
+		/*
+		 * Lazy by one position: a longer match at pos + 1, at the
+		 * repeated offset or at the table's entry, wins, and the byte at
+		 * pos becomes a literal.
+		 */
+		{
+			const u8 *end = src + SEQLZ_PAGE;
+			u32 next4 = (u32)v_next;
+			unsigned int best = seqlz_match_len(src + pos + 4,
+							    src + m + 4, end);
+			unsigned int c2 = table[h_next], l2, m2 = m, moved = 0;
+
+			if (best >= SEQLZ_LAZY)
+				goto decided;
+			if (get_unaligned_le32(src + pos + 1 + back) == next4) {
+				l2 = seqlz_match_len(src + pos + 5,
+						     src + pos + 5 + back, end);
+				if (l2 > best) {
+					best = l2;
+					m2 = pos + 1 - last;
+					moved = 1;
+				}
+			}
+			if (get_unaligned_le32(src + c2) == next4) {
+				l2 = seqlz_match_len(src + pos + 5,
+						     src + c2 + 4, end);
+				if (l2 > best) {
+					best = l2;
+					m2 = c2;
+					moved = 1;
+				}
+			}
+			if (moved) {
+				table[h_next] = (u16)(pos + 1);
+				pos++;
+				m = m2;
+			}
+decided:
+			len = 4U + best;
+		}
+		while (pos > anchor && m > 0 && src[pos - 1] == src[m - 1]) {
+			pos--;
+			m--;
+			len++;
+		}
+#else
 		/*
 		 * The match may have started before pos: extend it backwards
 		 * into the literals, then count how far it goes forwards.
@@ -160,6 +207,7 @@ static __always_inline void seqlz_match_page(u16 *table, const u8 *src,
 		}
 		len = 4U + seqlz_match_len(src + pos + 4, src + m + 4,
 					   src + SEQLZ_PAGE);
+#endif
 		last = pos - m;
 		back = -(long)last;
 		emit(ctx, src + anchor, pos - anchor, len, last);
