@@ -148,15 +148,18 @@ Commands: `docs/measuring.md`.
 ## Writing and git
 
 - Public text (commits, PR title/body, GitHub comments, code comments, docs): Martin's voice, read
-  `~/gra/martin-voice.md` fresh each time. No em dashes, `e.g.`, numbers with axis and hardware, state
-  the loss, caveat last.
+  `~/gra/martin-voice.md` fresh each time, without being asked. Register from its section 3 (a PR body
+  is closest to the work update: numbers and links first, known flaw last), then its section 12
+  self-check. No em dashes, `e.g.`, numbers with axis and hardware, state the loss, caveat last. Chat
+  replies to Martin stay in the normal register.
 - Never add Claude attribution, footer, `Co-Authored-By` or session link in the repo or on GitHub.
 - Commits: `area: what changed` (`seqlz:`, `docs:`, `tools:`, `test:`); body why/how/measured;
   always `git commit -s`.
 - `gh` works on this machine. Martin merges PRs while you work: `gh pr view <n> --json state` right
   before pushing to or editing a PR; if merged, new branch from `origin/main`.
 - Repo and worktrees via `gra` (global instructions). `gra -y done <name>` allowed for finished,
-  merged, clean worktrees, never the session's own.
+  merged, clean worktrees, never the session's own: first `git status` clean and the branch an ancestor
+  of `origin/main`. A build whose `FETCHCONTENT_SOURCE_DIR_*` pointed into it needs `cmake --fresh`.
 - Merge only when Martin says so; "merge when green" = `gh pr checks <n> --watch` in the background,
   then `gh pr merge <n> --merge` once every check of the head passes (`pages` skips on PRs).
 - Subagents editing one worktree: one at a time (shared git index). Big doc rewrites: one commit and
@@ -164,7 +167,9 @@ Commands: `docs/measuring.md`.
 
 ## Hardware
 
-- Xiaomi Mi 9T (rooted, A76 + A55, kernel 4.14) = test phone.
+- Xiaomi Mi 9T (A76 + A55, kernel 4.14, MIUI 12.1.1 EEA) = test phone. Bootloader unlocked and rooted with
+  Magisk on 3 Oct 2026; stock and patched `boot.img` in `~/Downloads/mi9t/`. `su` works in `adb shell`;
+  MIUI refuses `adb install` (push the APK, install it with the file manager).
 - Pixel 9a: static binary over `adb` in `/data/local/tmp` only, never root/flash/unlock, clean up
   after; its cycle counter does not run, the harness uses `steady_clock`; `tools/phone-cores.sh` runs
   the codecs per core.
