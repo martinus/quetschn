@@ -17,9 +17,9 @@ written is a swap-out plus 0.73 swap-ins, the reads per write of a phone in dail
 | --- | ---: | ---: | ---: | ---: |
 | `lz4` | 36.5% | 6.69 µs | 3.50 µs | 9.25 µs |
 | `lzo-rle` | 34.9% | 6.50 µs | 3.95 µs | 9.38 µs |
-| `zstd` 3 | 25.3% | 15.01 µs | 6.86 µs | 20.02 µs |
 | **`seqlz-1`** | **29.1%** | **6.92 µs** | **3.78 µs** | **9.68 µs** |
 | **`seqlz-2`** | **26.5%** | **7.53 µs** | **4.10 µs** | **10.52 µs** |
+| `zstd` 3 | 25.3% | 15.01 µs | 6.86 µs | 20.02 µs |
 | **`seqlz-3`** | **24.4%** | **11.22 µs** | **4.39 µs** | **14.42 µs** |
 
 - `seqlz-1` stores 20% less than `lz4` for 5% more time per page written.
@@ -57,9 +57,9 @@ session on the phone, the time per page written as above, write + 0.73 × cold r
 | codec | memory per page | big core, A76 | little core, A55 |
 | --- | ---: | ---: | ---: |
 | `lz4` | 33.3% | 14.6 µs | 43.6 µs |
-| `zstd` 3 | 23.2% | 51.4 µs | 165.7 µs |
 | **`seqlz-1`** | **26.1%** | **15.6 µs** | **49.5 µs** |
 | **`seqlz-2`** | **24.3%** | **17.4 µs** | **56.3 µs** |
+| `zstd` 3 | 23.2% | 51.4 µs | 165.7 µs |
 | **`seqlz-3`** | **21.4%** | **26.4 µs** | **79.3 µs** |
 
 On the phone `seqlz-3` stores 8.0% less than `zstd` 3 in about half its time, 51% on the big core and
@@ -75,13 +75,13 @@ kinds of core, the same pages, each page timed once per pass over all of them, a
 
 <img src="docs/plots/pixel-cores.svg" alt="Memory against the time to write and to read a page on the Cortex-X4, A720 and A520 of a Pixel 9a, for lz4, lzo-rle, zstd 3 and seqlz levels 1 to 3.">
 
-On the big cores `seqlz-1` writes and reads about as fast as `lz4`, 5.49 against 5.56 µs per page
-written on the X4, and `seqlz-2` takes 12% and 19% more time than `lz4` on the X4 and the A720. The
+On the big cores `seqlz-1` writes and reads about as fast as `lz4`, 5.53 against 5.52 µs per page
+written on the X4, and `seqlz-2` takes 14% and 25% more time than `lz4` on the X4 and the A720. The
 little A520 is where seqlz costs: `seqlz-2` takes 1.7 times `lz4`'s time per page written there, and a
-cold read 5.86 instead of 3.70 µs. `seqlz-3`, the level before its deltas of 21st October, stores as
-little as `zstd` 3 in about half its time on every core. These are the codec's times in a harness, not zram in the phone's kernel, with clocks that could
-not be fixed without root; they stayed at their maximum in every run
-([explored-designs.md](docs/explored-designs.md#a-current-phone-the-pixel-9a-seqlz-1-as-fast-as-lz4-on-the-big-cores-seqlz-1-and-seqlz-2-14-and-17-times-lz4s-time-on-the-little-one)).
+cold read 6.18 instead of 3.88 µs. `seqlz-3` stores 8% less than `zstd` 3 in 63% to 68% of its time on
+every core. These are the codec's times in a harness, not zram in the phone's kernel, with clocks that
+could not be fixed without root; every run ended at its core's highest clock, on 23rd October 2026
+([explored-designs.md](docs/explored-designs.md#the-pixel-9a-again-with-level-3s-deltas-seqlz-3-8-below-zstd-3-in-63-to-68-of-its-time)).
 
 ## Where it stands
 

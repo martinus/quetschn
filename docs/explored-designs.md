@@ -346,6 +346,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 **Phones: Mi 9T, Pixel 9a**
 
 - 2026-10-19 **measurement** [Write time on the Mi 9T by part, where zram runs](#write-time-on-the-mi-9t-by-part-and-where-zram-runs-there-level-1s-gap-to-lz4-is-the-encoders-arithmetic-96-of-the-writes-on-the-a76): harness, p3, write µs A55 / A76: lz4 16.9 / 7.63, seqlz-1 23.4 / 8.21, seqlz-2 27.2 / 8.48, seqlz-3 38.6 / 13.72. Level 1's matcher takes lz4's whole compress; the encoder about 65 to 74 instructions per sequence (5.8 / 1.3 µs), no cheaper as a second pass, a byte format or with fewer offset classes. zramlog of 17 Oct: 96% of the writes on the A76 (kswapd), 65% to 69% of the reads; weighted, write + 0.73 read seqlz-1 +11%, seqlz-2 +21%, seqlz-3 +76% over lz4. Killed: offset classes 1, 4, 5 removed, XOR literals against the last offset, 32-bit hash, sampled table choice. Code: offline, ~/quetschn-corpus/research/2026-10-17-tools/night/. Now: current. Untried: the Pixel 9a's core mix; 4 sub-histograms and level 3 without lit_cost().
+- 2026-10-23 **measurement** [Pixel 9a again with level 3's deltas](#the-pixel-9a-again-with-level-3s-deltas-seqlz-3-8-below-zstd-3-in-63-to-68-of-its-time): NDK r30 harness, X4 / A720 / A520, p3, `write + 0.73 * cold read`: level 3 10.57 / 12.94 / 40.79 µs at 874.9 bytes per page, `zstd` 3 16.75 / 19.13 / 65.16 at 951.4, `lz4` 5.52 / 6.26 / 14.92, `seqlz-1` 5.53 / 6.77 / 21.66, `seqlz-2` 6.27 / 7.81 / 25.29. Code: main 2d99419, tools/plot-cores.py a row per core. Now: current; the README's chart. Untried: zram in the Pixel's kernel.
 - 2026-10-16 **measurement** [Pixel 9a, Tensor G4, userspace](#a-current-phone-the-pixel-9a-seqlz-1-as-fast-as-lz4-on-the-big-cores-seqlz-1-and-seqlz-2-14-and-17-times-lz4s-time-on-the-little-one): codecs on the X4, A720 and A520 without root, the Mi 9T's p3 pages; time per page written seqlz-1 4.82 / 5.62 / 21.55 µs against lz4 5.06 / 5.24 / 14.99, seqlz-2 5.54 / 6.56 / 25.23; seqlz-3 at zstd 3's memory in 49% to 54% of its time; hull lzo-rle, seqlz-1, seqlz-2, seqlz-3, zstd 3 on every core. The cycle counter does not run there, the harness uses steady_clock. Code: tools/phone-cores.sh, tools/plot-cores.py, bench/harness.cpp. Now: current. Untried: zram in its kernel, its own pages.
 - 2026-10-06 **not kept** [A55 write profile and decoder code prefetch](#the-a55-again-the-write-as-on-4-october-the-decoders-code-prefetched-for-cold-reads-not-kept): A55 compress cycles per page: lz4 30 032, seqlz-1 42 298, seqlz-2 47 776; pointer index in code_literals() same cycles. Prefetching the decoder's code: A55 cold -1.66 µs [-4.09, +0.51], warm reads +0.09 to +0.37 µs, A76 only slower. Not kept. Code: code_literals(); prefetch of seqlz_decode/decode_literals code (variants, not merged). Now: "The matcher without its step back" (15 Oct) removed the backward step at levels 1 and 2, part of the 9.6% the profile counted after a hit. Untried: Section says nothing new to try in C for the write; most of the 10.6 µs cold-read gap to lz4 stays unexplained.
 - 2026-10-06 **measurement** [Numbers with bit order and per-core token prefetch](#the-numbers-again-with-the-bit-order-and-the-token-tables-prefetch-cold-reads-on-the-a76-3-µs-faster): Mi 9T, three modules: MSB-first plus token prefetch on in-order cores reads cold 3.0 µs faster on the A76 (13.49 to 10.43), 6.2 µs at p99; compressed-data prefetch makes A55 warm reads 2.2 µs faster. VM: seqlz-2 1055.3 bytes per page. Code: tools/plot-devices.py, docs/plots/devices.svg. Now: VM numbers replaced by "The numbers again on 14th October". Per-core prefetch replaced (#152). Phone runs since 8 Oct use one codec per process and BUS=1 ("Less noise on the phone").
@@ -2867,9 +2868,42 @@ bytes per page from the compressed lengths of p3 (`main` 843.5):
 NDK r30's clang 21 instead of clang 9 writes 2.2% faster and reads 5% faster by itself; the gain of no
 step back is the same with both.
 
+## The Pixel 9a again with level 3's deltas: seqlz-3 8% below zstd 3 in 63% to 68% of its time
+
+Status: measurement, 2026-10-23. Now: current.
+
+*The Pixel 9a's numbers of 16th October were from before level 3 stored its literals as deltas. The
+same setup again with the code of 23rd October: level 3 stores 874.9 bytes per page, 21.4%, against
+`zstd` 3's 951.4, 8% less, in 63%, 68% and 63% of its time per page written on the X4, the A720 and the
+A520. Levels 1 and 2 and the other codecs are where they were: `seqlz-1` as fast as `lz4` on the X4,
+5.53 against 5.52 µs per page written, `seqlz-2` 14% and 25% above `lz4` on the X4 and the A720 and 1.7
+times its time on the A520.*
+
+Code: `main` at `2d99419`; the chart `docs/plots/pixel-cores.svg`, now a row per core with its write and
+read side by side (`tools/plot-cores.py`), the one of 16th October `docs/plots/pixel-cores-2026-10-16.svg`.
+
+**Setup.** As on 16th October
+([the Pixel 9a](#a-current-phone-the-pixel-9a-seqlz-1-as-fast-as-lz4-on-the-big-cores-seqlz-1-and-seqlz-2-14-and-17-times-lz4s-time-on-the-little-one)):
+an NDK r30 build of `quetschn-bench-interleaved`, `tools/phone-cores.sh` on cpu7 (X4), cpu4 (A720) and
+cpu0 (A520), 3 rounds, the 19 775 pages of p3, sizes from the run without `ONCE=1`, times from the run
+with it, each page timed once per pass. Clocks not fixed, no root: every run of the first ended at its
+core's highest clock, 3105, 2600 and 1849 MHz; the battery was at 28.2 to 30.9 C. Means of the 3 rounds,
+µs per page, and `write + 0.73 * cold read`:
+
+| codec | bytes per page | X4 write / cold read / score | A720 write / cold read / score | A520 write / cold read / score |
+| --- | ---: | ---: | ---: | ---: |
+| `lz4` | 1364.0 | 4.42 / 1.51 / 5.52 | 4.95 / 1.80 / 6.26 | 12.09 / 3.88 / 14.92 |
+| `lzo-rle` | 1312.7 | 4.11 / 1.72 / 5.37 | 4.52 / 2.10 / 6.05 | 11.27 / 4.73 / 14.72 |
+| level 1 | 1071.1 | 4.43 / 1.51 / 5.53 | 5.30 / 2.02 / 6.77 | 17.94 / 5.09 / 21.66 |
+| level 2 | 997.0 | 5.04 / 1.69 / 6.27 | 6.07 / 2.38 / 7.81 | 20.78 / 6.18 / 25.29 |
+| `zstd` 3 | 951.4 | 13.09 / 5.01 / 16.75 | 14.86 / 5.85 / 19.13 | 52.77 / 16.97 / 65.16 |
+| level 3 | 874.9 | 8.87 / 2.33 / 10.57 | 10.66 / 3.13 / 12.94 | 34.91 / 8.06 / 40.79 |
+
+Not measured: zram in the Pixel's kernel, its own pages, the cycles, which its kernel does not count.
+
 ## A current phone, the Pixel 9a: seqlz-1 as fast as lz4 on the big cores, seqlz-1 and seqlz-2 1.4 and 1.7 times lz4's time on the little one
 
-Status: measurement, 2026-10-16. Now: current.
+Status: measurement, 2026-10-16. Now: measured again with level 3's deltas 23 Oct, level 3 8% below `zstd` 3 in 63% to 68% of its time ([the Pixel 9a again](#the-pixel-9a-again-with-level-3s-deltas-seqlz-3-8-below-zstd-3-in-63-to-68-of-its-time)).
 
 *The phones measured so far were a Mi 9T of 2019. The Pixel 9a, Tensor G4, has a Cortex-X4, three
 A720 and four A520, and can only be measured in userspace, without root. On the same pages as the Mi 9T's
@@ -2878,7 +2912,7 @@ numbers, time per page written, write + 0.73 × cold read: `seqlz-1` 4.82 µs on
 stores what `zstd` 3 stores in 49%, 50% and 54% of its time. The hull is the same on all three cores,
 `lzo-rle`, `seqlz-1`, `seqlz-2`, `seqlz-3`, `zstd` 3; `seqlz-2` has the lowest score from 24 to 104 bytes
 per µs on the X4, 17 to 79 on the A720, 4.9 to 20 on the A520.* Code: `tools/phone-cores.sh`,
-`tools/plot-cores.py`, `docs/plots/pixel-cores.svg`; the harness's clock without the cycle counter in
+`tools/plot-cores.py`, `docs/plots/pixel-cores-2026-10-16.svg`; the harness's clock without the cycle counter in
 `bench/harness.cpp`.
 
 **The setup.** `tools/phone-cores.sh` pushes an NDK r30 build of `quetschn-bench-interleaved` and the
@@ -2946,7 +2980,7 @@ above:
   25% and 68%.
 * `--cold`, 2 MiB of other data read before each decode, spread by up to 63% between rounds on the X4
   and the A520, too much to use.
-* The README's chart, `docs/plots/pixel-cores.svg`, shows these numbers, pages seen once, with the sizes
+* The README's chart of 16th October, `docs/plots/pixel-cores-2026-10-16.svg`, shows these numbers, pages seen once, with the sizes
   of the harness (`tools/plot-cores.py --sizes`).
 
 Not measured: zram in the Pixel's kernel, its own pages, which core kswapd and the swap-ins run on.
