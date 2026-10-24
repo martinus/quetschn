@@ -1,0 +1,3 @@
+zram: add seqlz compression backend support
+
+CHANGELOG: Martin writes it. Problem, change, measured result; short.

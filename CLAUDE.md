@@ -71,6 +71,8 @@ cmake/          kernel_codecs.cmake (kernel flags), check_prefetch.cmake (ctest)
 
 - Kernel tree: `/home/martinus/gra/linux/finehill`.
 - Build in a fresh dir (scratchpad); worktree `build*/` dirs may point at other paths/`_deps`.
+- `/tmp` has a per-user quota (24 GB of all sessions' scratchpads hit it on 24 Oct): tools that unpack a
+  kernel tree into `mktemp -d` (`check.sh`, `kunit.sh`, `series.sh`, `samecode.sh`) get `TMPDIR=~/.cache/seqlz-tmp`.
 - Offline doctest: `-DFETCHCONTENT_SOURCE_DIR_DOCTEST=<some build>/_deps/doctest-src`.
 - No `CMAKE_BUILD_TYPE` = Release (`CMakeLists.txt`). Trainer and benchmarks need it: an unoptimized
   trainer took 8x as long. `seqlz-bench-interleaved` (quick-bench, hot loop) only builds with

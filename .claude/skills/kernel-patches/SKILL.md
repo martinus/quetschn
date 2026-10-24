@@ -30,8 +30,9 @@ Copy and check off:
 - [ ] KUnit error-path tests updated for changed code (seqlz_test_damaged)
 - [ ] tools/kernel-port/kunit.sh passes on the exact base
 - [ ] builds with the newest gcc and the newest clang
-- [ ] git format-patch --base=<commit> on the tree MAINTAINERS names for zram at send time; that tree
-      named in the cover letter
+- [ ] `TMPDIR=<dir under home> tools/kernel-port/series.sh <tree> <out>` on the tree MAINTAINERS names
+      for zram at send time (akpm's mm, mm-unstable): each patch builds and passes checkpatch alone,
+      `--base` is that tree's commit, named in the cover letter; changelogs in `tools/kernel-port/series/`
 ```
 
 ## After sending
