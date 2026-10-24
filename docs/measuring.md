@@ -51,13 +51,13 @@ test part, and `seqlz-sample-corpus --pages 20000` draws a fixed random sample, 
 ## Fix the clock first
 
 The times depend on the clock of the CPU, cold reads most of all: with boost on, two identical runs
-differed by up to 520 ns. On an AMD CPU with `amd-pstate`, for CPU 2 at 4.5 GHz:
+differed by up to 520 ns. `tools/pc-bench.sh` sets it, for CPU 2 at 4.5 GHz by default: boost off, the
+governor `performance`, the minimum and the maximum frequency the same.
 
 ```sh
-echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
-sudo cpupower -c 2 frequency-set -g performance
-echo 4500000 | sudo tee /sys/devices/system/cpu/cpu2/cpufreq/scaling_max_freq
-echo 4500000 | sudo tee /sys/devices/system/cpu/cpu2/cpufreq/scaling_min_freq
+sudo tools/pc-bench.sh set                # CPU 2, 4.5 GHz; set 3800000 2 3 for other clocks and CPUs
+tools/pc-bench.sh show                    # what it is now
+sudo tools/pc-bench.sh restore            # boost on, powersave, the hardware's range, on every CPU
 ```
 
 Every benchmark prints the frequency range and the boost state in its header. A number that goes into
