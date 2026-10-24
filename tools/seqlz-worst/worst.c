@@ -3,7 +3,8 @@
  * Pages made to be slow for seqlz, for its worst-case time (docs/plan.md, Phase 4).
  *
  * Counts instructions and branch misses in user space with perf_event_open: they do not change with the
- * load on the machine, as time does.
+ * load on the machine, as time does. --level <n> before the command is the level of seqlz_compress() and
+ * seqlz_encode(), 1 to 3, default 2, zram's.
  *
  *   seqlz-worst pages <base>
  *       writes made-up pages of the kinds below as a corpus, <base>.pages and <base>.tsv, with the kind of
@@ -33,6 +34,9 @@
 #include "seqlz.h"
 
 static uint64_t rng_state = 0x9e3779b97f4a7c15ULL;
+
+/* --level */
+static unsigned int level = 2;
 
 static uint64_t next(void) {
     rng_state ^= rng_state << 13;
@@ -328,6 +332,13 @@ static const char* build(unsigned int kind, struct built* b) {
     }
 }
 
+/* the page of b as seqlz_encode() writes it at --level; level 3 needs a state and the page for its deltas */
+static unsigned int encode_built(struct built* b, unsigned char* c, unsigned int cap) {
+    static struct seqlz_state st;
+
+    return seqlz_encode(&st, b->seq, b->n_seq, b->lits, b->n_lit, b->page, c, cap, level);
+}
+
 /* Instructions, branch misses and cycles in user space, of this thread. Instructions are the same on
  * a busy machine, unlike time; they are the fewest of a few runs, which takes out what an interrupt
  * adds. Branch misses and cycles are those of the first run, after another page, as the branches of the
@@ -404,7 +415,7 @@ struct job {
 static int do_compress(void* arg) {
     struct job* j = arg;
 
-    j->len = seqlz_compress(j->st, j->page, j->c, 2 * SEQLZ_BLOCK_SIZE, 2);
+    j->len = seqlz_compress(j->st, j->page, j->c, 2 * SEQLZ_BLOCK_SIZE, level);
     return j->len ? 0 : -1;
 }
 
@@ -440,7 +451,7 @@ static int count_decode(void) {
     empty = measure(&ctr, do_nothing, 0);
     /* one decode first, so that the first page measured does not pay for the code and tables alone */
     build(0, &b);
-    j.len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+    j.len = encode_built(&b, c, sizeof c);
     if (!j.len || do_decode(&j))
         return 1;
     printf(
@@ -457,7 +468,7 @@ static int count_decode(void) {
 
             if (k)
                 build(kind, &b);
-            j.len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+            j.len = encode_built(&b, c, sizeof c);
             if (!j.len || do_decode(&j) || memcmp(out, b.page, SEQLZ_BLOCK_SIZE)) {
                 fprintf(stderr, "%s: page %u does not come back\n", name, k);
                 return 1;
@@ -528,7 +539,7 @@ static int write_streams(const char* dir) {
             FILE* f;
 
             build(kind, &b);
-            len = seqlz_encode(NULL, b.seq, b.n_seq, b.lits, b.n_lit, NULL, c, sizeof c, 2);
+            len = encode_built(&b, c, sizeof c);
             snprintf(path, sizeof path, "%s/stream-%u-%u", dir, kind, k);
             if (!len || !(f = fopen(path, "wb")) || fwrite(c, 1, len, f) != len || fclose(f))
                 return 1;
@@ -568,6 +579,15 @@ static int count_streams(int n, char** paths) {
 }
 
 int main(int argc, char** argv) {
+    if (argc >= 3 && !strcmp(argv[1], "--level")) {
+        level = (unsigned int)atoi(argv[2]);
+        if (level < 1 || level > SEQLZ_LEVELS) {
+            fprintf(stderr, "--level: 1 to %u\n", SEQLZ_LEVELS);
+            return 1;
+        }
+        argc -= 2;
+        argv += 2;
+    }
     if (argc == 3 && !strcmp(argv[1], "pages"))
         return write_pages(argv[2]);
     if (argc == 2 && !strcmp(argv[1], "decode"))
@@ -579,7 +599,7 @@ int main(int argc, char** argv) {
     if (argc >= 3 && !strcmp(argv[1], "count-streams"))
         return count_streams(argc - 2, argv + 2);
     fprintf(stderr,
-            "usage: seqlz-worst pages <base> | count <pages file> | decode | streams <dir> | "
+            "usage: seqlz-worst [--level <n>] pages <base> | count <pages file> | decode | streams <dir> | "
             "count-streams <file>...\n");
     return 1;
 }
