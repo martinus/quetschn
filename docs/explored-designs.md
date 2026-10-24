@@ -209,6 +209,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **Level 3 and a literal table of the page's own**
 
+- 2026-10-24 **kept** [Level 3 without its second try of the plain literals](#level-3-without-its-second-try-of-the-plain-literals-071-bytes-per-page-more-writes-18-and-20-faster-on-the-mi-9t-kept): where the deltas stayed raw, the plain literals were priced again; that ran on 13% to 34% of the pages and coded 0.8% to 3.4% of them. Without it: zsmalloc +0.71 bytes per page (+0.079%, ten samples), level 3 compress -1.6% instructions; Mi 9T p3 writes -0.93 µs A55, -0.39 µs A76, about 2 bytes per µs on the A76. Code: `seqlz_code_own()`; branch kernel-cleanup-2. Now: current. Untried: the kernel VM.
 - 2026-10-21 **not kept** [More transforms, a parse that knows them, Huffman's floor, near matches](#more-transforms-for-level-3s-literals-a-parse-that-knows-them-huffmans-floor-near-matches-at-most-06-on-phone-pages-not-kept): ten samples, level 3 with the XOR 881.05 bytes per page; the same three bytes subtracted 873.62 (kept as deltas); other distances, XOR or subtraction at 1 to 64: at most 1.6 more; words with carries worse than bytes; Paeth or the gradient as a fourth choice -3.5 (phone -4.9, 0.6%); XOR or subtraction per page 0.7 even with the best known; a parse that knows the XOR -2.1 on phone samples; Huffman's floor 0.5 to 1.2; near matches at most 3.2 to 7.4. Code: not committed, `r15/` in the research tools. Now: current. Untried: timing Paeth or the gradient.
 - 2026-10-21 **kept** [Level 3 stores its literals as deltas](#level-3-stores-its-literals-as-deltas-not-xors-084-fewer-bytes-than-the-xor-kept): the XOR's three choices as subtractions, modulo 256. Ten samples: level 3 873.6 bytes per page instead of 881.0 (-0.84%; phone -1.15%, desktop -0.30%). Mi 9T: reads +0.13 to +0.24 µs A76, +0.34 to +0.46 A55, writes +0.12 to +0.27 A76; about 22 bytes per µs with the phone's mix. Fast path in registers: inside the noise, not kept. Code: `sub_bytes()`, `delta_literals()`, `add4()`, `add8()`, `undelta_literals()`, `undelta_fast()`, PR #229. Now: current; [tables trained for deltas](#literal-tables-trained-for-deltas-at-most-30-bytes-per-page-at-level-3-with-12-tables-not-kept) 22 Oct, at most 0.35%. Untried: zram in the phone's kernel.
 - 2026-10-23 **measurement** [Level 3 with its deltas in the Mi 9T's kernel](#level-3-with-its-deltas-in-the-mi-9ts-kernel-81-less-memory-than-on-15th-october-41-and-117-µs-more-per-page-written): Mi 9T, zram in its own kernel, p3, `BUS=1`, 3 rounds: level 3 874.9 bytes per page (952.0 on 15 Oct), `zstd` 3 951.4; `write + 0.73 * cold read` A76 / A55: `lz4` 14.61 / 43.58, levels 1 to 3 15.63 / 49.52, 17.42 / 56.31, 26.38 / 79.33, `zstd` 3 51.35 / 165.73. Code: main 00073f1. Now: current; the README's phone table. Untried: COUNTS=1; another phone.
@@ -331,6 +332,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **Kernel copy, zram glue, compilers**
 
+- 2026-10-24 **kept** [Compressor uses no more of dst than SEQLZ_COMPRESS_BOUND](#the-compressor-uses-no-more-of-dst-than-seqlz_compress_bound-the-same-bytes-in-zram-kept-the-internal-names-keep-no-prefix): the bitstream no longer lands at the end of a large dst; the ten samples give the same bytes in 8 KiB and 64 KiB at level 3, the same instructions. Not done: a prefix on the 41 macros of the kernel copy's headers, none clashes and lib/lz4 has unprefixed ones too. Code: `seqlz_compress()`, `seqlz_encode()`; branch kernel-cleanup-2. Now: current.
 - 2026-10-23 **kept** [Kernel copy reviewed again](#the-kernel-copy-reviewed-again-code_literals-once-per-level-20-fewer-instructions-at-level-2-kept-two-simplifications-that-cost-1-and-7-not-kept): `code_literals()` inlined into each entry point, as its comment said: `seqlz-2` compress 2.0% fewer instructions (156.6M to 153.5M per 2000 pages), cycles -1.4%; not kept, as they cost on hot loops: the `n_lit` check only in `decode_block()` with the literal header parsed after a length check (+7.0% to decode `seqlz-2`), the `dst_cap` check once in `seqlz_compress()` (+1.0% at level 1). Userspace, gcc 16.2.1, x86-64. Mi 9T, zram in its kernel, p3: `seqlz-2` writes 0.25 to 0.35 µs faster on the A55 (about 1%), the rest within `main` built twice. Code: `code_literals()`, `seqlz_code_own()`, `seqlz_decode_literals()`, `compress_block()`; branch kernel-cleanup. Now: current. Untried: the kernel VM.
 - 2026-10-10 **measurement** [Numbers formerly in source comments](#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026): Eight choices whose numbers left src/ comments (#156), e.g. copy_match() 8 bytes at a time (byte loop: slowest pages 10 times lz4), 2-byte stream sizes (5.2 and 5.5 bytes larger), token_entry() (unpacking took 18 instructions per sequence). Not re-measured. Code: commits cf5dedb, 34080eb, 21b71c9, 0cc300e, 61299db, 5c769f5; #156. Now: Numbers hold only for the commits named; none re-measured (line 6141).
 - 2026-10-10 **kept** [Kernel copy choices: -O3, one decode loop, prefetch()](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16): -O3 vs -O2: writes 0.1 to 0.19 µs faster in x86-64 VM, 0.93 µs on A55: kept. Taken for simpler code: one out-of-order decode loop for all cores (A55 warm reads up to 0.3 µs slower), prefetch() (A55 up to 0.2 µs), no __aligned(64), get_unaligned_le16(). Code: tools/zram-vm/run.sh VARIANTS, tools/zram-phone/build.sh OPT/ALIGN; main = 9ae946f; #151, #152, #157. Now: Leftovers of #157 done in "seqlz.c split in three". Verdict current.
@@ -7042,6 +7044,83 @@ within the 2 µs its rounds move. A first run without `mc` gave 14.55 against 14
 So the functions cost nothing that these runs can show. The order of the modules was not swapped; a run
 with the functions loaded first would show the place directly. With the functions, checkpatch has no
 `MACRO_ARG_REUSE` left in `tools/kernel-port/`.
+
+## Level 3 without its second try of the plain literals: 0.71 bytes per page more, writes 1.8% and 2.0% faster on the Mi 9T, kept
+
+Status: kept, 2026-10-24. Now: current.
+
+*Where the delta `seqlz_delta_literals()` picks from every 5th literal does not code, `seqlz_code_own()`
+priced the plain literals once more, with the fixed tables and a table of the page's own. How often did
+that pay? On the ten samples the second try ran on 13% to 34% of the pages and coded 0.8% to 3.4% of
+them, 39 to 179 of each 20 000. Without it level 3 stores 0.71 bytes per page more, +0.079% of zsmalloc
+memory, and writes 0.93 µs faster on the A55 and 0.39 µs on the A76: about 2 bytes per µs on the A76 and
+0.8 on the A55, where the deltas themselves gave about 22. Kept without it.* Code: `seqlz_code_own()` in
+`src/seqlz_compress_literals.c`; branch `kernel-cleanup-2`.
+
+**How often it coded.** A copy of `src/` with counters in `seqlz_code_own()`, level 3, each 20 000-page
+sample once, gcc 16.2.1, x86-64. "tried" are the pages whose deltas stayed raw, "coded" those of them the
+second try coded, "saved" its compressed bytes:
+
+| sample | deltas coded | tried | coded | saved bytes |
+| --- | --- | --- | --- | --- |
+| p1 | 5071 | 5864 | 45 | 8841 |
+| p2 | 5354 | 5307 | 179 | 32 870 |
+| p3 | 6236 | 4986 | 88 | 14 178 |
+| p4 | 6214 | 5142 | 47 | 9080 |
+| p5 | 5497 | 5665 | 97 | 16 909 |
+| zram0 | 1342 | 5478 | 63 | 10 889 |
+| zram0-2026-09-24 | 1606 | 4869 | 59 | 14 350 |
+| zram0-2026-09-28 | 654 | 2575 | 39 | 9216 |
+| phone-mi9t-2026-10-03 | 4649 | 6816 | 46 | 8907 |
+| phone-mi9t-2026-10-04 | 4975 | 5475 | 66 | 11 648 |
+
+**Memory.** `seqlz-bench-interleaved --no-timing`, column `cost` of the sizes, mean per page, with / without
+the second try: p1 754.28 / 754.73, p2 880.25 / 881.94, p3 874.93 / 875.72, p4 868.53 / 869.01, p5
+847.36 / 848.18, phone-mi9t-2026-10-03 642.91 / 643.40, phone-mi9t-2026-10-04 817.51 / 818.10, zram0
+943.20 / 943.77, zram0-2026-09-24 1158.08 / 1158.83, zram0-2026-09-28 1147.54 / 1148.01; mean of the ten
+893.46 / 894.17 (+0.71, +0.079%).
+
+**Instructions**, 2000 pages of `zram0-2026-09-24-sample2000`, `--decode-loop 6` minus `1`, divided by 5:
+`seqlz-3` compress 250 174 766 with, 246 182 743 without (-1.6%).
+
+**Mi 9T**, zram in its own kernel, `BUS=1 tools/zram-phone/run.sh`, 19 775 pages of p3, 3 rounds, NDK r21e's
+clang 9, only `lz4` and level 3. `a` and `a2` are the branch with the second try built twice, `b` without
+it. µs per page, mean of the rounds (range):
+
+| codec | A55 write | A55 warm read | A55 cold read | A76 write | A76 warm read | A76 cold read |
+| --- | --- | --- | --- | --- | --- | --- |
+| `seqlz-a-3` | 51.33 (51.32 to 51.35) | 15.72 | 37.40 | 19.41 (19.35 to 19.48) | 5.65 | 10.11 |
+| `seqlz-a2-3` | 51.25 (51.24 to 51.27) | 15.70 | 37.67 | 19.33 (19.30 to 19.35) | 5.68 | 9.93 |
+| `seqlz-b-3` | 50.36 (50.35 to 50.37) | 15.64 | 37.51 | 18.98 (18.93 to 19.05) | 5.79 | 9.85 |
+
+The writes are outside the spread of `a` against `a2`, 0.08 µs. The A76's warm reads are 0.11 to 0.14 µs
+slower without the second try, where its decoder changes only for the 0.4% of pages whose literals now
+stay raw, which read faster: where the code lands. The cold reads are within their noise.
+
+**The test page.** No random page of the test file gives the case. A near tie does: a page of records for
+`SEQLZ_DELTA_LAST`, from a split on literals as table 1 codes them, 2 of 640 such pages with the 4 KiB
+tables of 13th October, none for 16 KiB. With the second try back, the test fails.
+
+Not measured: the kernel VM.
+
+## The compressor uses no more of dst than SEQLZ_COMPRESS_BOUND: the same bytes in zram, kept; the internal names keep no prefix
+
+Status: kept, 2026-10-24. Now: current.
+
+*The bitstream is written from the end of dst down: with a dst of 64 KiB it landed 56 KiB past the page.
+`seqlz_compress()` and `seqlz_encode()` now take at most `SEQLZ_COMPRESS_BOUND`, two pages, of dst. zram
+passes exactly that. Does level 3, whose records can need more than two pages, give other bytes in more
+room? On the ten samples, 8 KiB and 64 KiB give the same bytes on every page: the records always fit. The
+same instructions. Also asked by the review of 23 October, and not done: a `SEQLZ_`/`seqlz_` prefix on the
+41 macros of the kernel copy's own headers (`TOK_*`, `OWN_QUAD_*`, `CODE_LENGTHS`, `PREFETCH_STEP` ...).
+None of them is defined in `include/`, `arch/*/include`, `lib/lz4` or `lib/zstd` of the kernel tree, and
+`lib/lz4/lz4defs.h` has `ML_BITS`, `RUN_MASK`, `MINMATCH` and `KB` unprefixed in the same place.* Code:
+`seqlz_compress()`, `seqlz_encode()` in `src/seqlz_compress.c`, `SEQLZ_COMPRESS_BOUND` in `src/seqlz.h`;
+branch `kernel-cleanup-2`.
+
+Instructions per pass over 2000 pages of `zram0-2026-09-24-sample2000`, gcc 16.2.1, x86-64, before /
+after: `seqlz-1` 126 429 227 / 126 425 638, `seqlz-2` 153 506 720 / 153 503 404, `seqlz-3`
+250 176 528 / 250 180 308.
 
 ## The kernel copy reviewed again: code_literals() once per level, 2.0% fewer instructions at level 2, kept; two simplifications that cost 1% and 7%, not kept
 
