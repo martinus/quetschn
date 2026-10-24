@@ -357,11 +357,13 @@ static void seqlz_test_small_dst(struct kunit *test)
 	int level, len, in_place = 0, retried = 0;
 	struct rnd_state rng;
 	struct bufs b;
-	u8 *full;
+	u8 *full, *big;
 
 	get_bufs(test, &b);
 	full = kunit_kmalloc(test, SEQLZ_COMPRESS_BOUND, GFP_KERNEL);
+	big = kunit_kmalloc(test, 2 * SEQLZ_COMPRESS_BOUND, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, full);
+	KUNIT_ASSERT_NOT_NULL(test, big);
 	prandom_seed_state(&rng, 47);
 	for (kind = 0; kind < 10; kind++) {
 		make_block(&rng, kind, b.block);
@@ -377,6 +379,20 @@ static void seqlz_test_small_dst(struct kunit *test)
 					    level);
 			full_len = len;
 			memcpy(full, b.c, full_len);
+			/*
+			 * more room gives the same block, and the bytes behind
+			 * SEQLZ_COMPRESS_BOUND stay as they were
+			 */
+			memset(big, 0x5a, 2 * SEQLZ_COMPRESS_BOUND);
+			KUNIT_ASSERT_EQ(test,
+					seqlz_compress(b.block, big,
+						       2 * SEQLZ_COMPRESS_BOUND,
+						       b.cmem, level),
+					len);
+			KUNIT_ASSERT_MEMEQ(test, big, full, full_len);
+			KUNIT_ASSERT_NULL(test,
+					  memchr_inv(big + SEQLZ_COMPRESS_BOUND,
+						     0x5a, SEQLZ_COMPRESS_BOUND));
 			/* lo does not fit, hi does */
 			lo = too_small[ARRAY_SIZE(too_small) - 1];
 			hi = SEQLZ_COMPRESS_BOUND;

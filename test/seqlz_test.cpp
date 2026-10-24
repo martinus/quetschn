@@ -713,6 +713,45 @@ TEST_CASE("seqlz: compress into a dst of any size, an error where the page does 
     }
 }
 
+TEST_CASE("seqlz: compress and encode use no more of dst than SEQLZ_COMPRESS_BOUND") {
+    // The bitstream is written from the end of dst down: with a dst of 64 KiB it would land 56 KiB past
+    // the page. The bytes behind SEQLZ_COMPRESS_BOUND stay as they were, and the page is the same as in
+    // SEQLZ_COMPRESS_BOUND bytes.
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(239);
+    constexpr unsigned big = 65536;
+    constexpr unsigned char canary = 0x5a;
+    for (int round = 0; round < 40; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        for (unsigned level = 1; level <= SEQLZ_LEVELS; ++level) {
+            CAPTURE(level);
+            auto bound = std::vector<unsigned char>(SEQLZ_COMPRESS_BOUND);
+            auto const len = seqlz_compress(st.get(), p.bytes.data(), bound.data(), SEQLZ_COMPRESS_BOUND, level);
+            REQUIRE(len > 0);
+            auto d = std::vector<unsigned char>(big, canary);
+            CHECK(seqlz_compress(st.get(), p.bytes.data(), d.data(), big, level) == len);
+            CHECK(std::equal(bound.begin(), bound.begin() + len, d.begin()));
+            CHECK(std::all_of(d.begin() + SEQLZ_COMPRESS_BOUND, d.end(), [](unsigned char b) {
+                return b == canary;
+            }));
+            auto e = std::vector<unsigned char>(big, canary);
+            CHECK(seqlz_encode(st.get(),
+                               p.sequences.data(),
+                               static_cast<unsigned>(p.sequences.size()),
+                               p.literals.data(),
+                               static_cast<unsigned>(p.literals.size()),
+                               p.bytes.data(),
+                               e.data(),
+                               big,
+                               level) > 0);
+            CHECK(std::all_of(e.begin() + SEQLZ_COMPRESS_BOUND, e.end(), [](unsigned char b) {
+                return b == canary;
+            }));
+        }
+    }
+}
+
 TEST_CASE("seqlz: seqlz_encode() rejects sequences that do not make a page, before writing") {
     auto c = std::vector<unsigned char>(2 * page_size);
     auto const literals = std::vector<unsigned char>(page_size, 7);
@@ -1667,6 +1706,53 @@ TEST_CASE("seqlz: level 3 without room for the delta's records writes the page w
                            3) == len);
         CHECK(std::equal(d.begin(), d.end(), e.begin()));
     }
+}
+
+TEST_CASE("seqlz: level 3 keeps the plain literals raw where the deltas it picked stay raw" * doctest::skip(page_bits != 12)) {
+    // A delta is picked by pricing every 5th literal. Where its deltas then do not code, level 3 does not
+    // try the plain literals again: that coded 0.4% of the pages and saved 0.71 bytes per page, for a
+    // second pricing of a quarter of them. Such a page is a near tie between the delta and the plain
+    // literals: a page of records for SEQLZ_DELTA_LAST, from split on literals as table 1 codes them. On
+    // some of them level 3 keeps raw literals that level 2, with the same sequences, codes. Found by a
+    // search with the 4 KiB tables of 13th October: 2 of these 640 pages, none for 16 KiB pages in the
+    // same family. Tables trained again may need another search.
+    auto st = std::make_unique<seqlz_state>();
+    auto c3 = std::vector<unsigned char>(2 * page_size);
+    auto c2 = std::vector<unsigned char>(2 * page_size);
+    auto out = std::vector<unsigned char>(page_size);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    int raw_at_3 = 0;
+    for (unsigned seed = 1; seed <= 40; ++seed) {
+        auto rng = std::mt19937_64(seed);
+        auto const records = delta_page(rng, SEQLZ_DELTA_LAST);
+        auto const text = bytes_as_coded_by(rng, 1);
+        for (unsigned split = page_size / 2; split < page_size; split += page_size / 32) {
+            CAPTURE(seed);
+            CAPTURE(split);
+            auto page = records;
+            std::copy(text.begin() + split, text.end(), page.begin() + split);
+            auto const len3 = seqlz_compress(st.get(), page.data(), c3.data(), 2 * page_size, 3);
+            REQUIRE(len3 > 0);
+            REQUIRE(seqlz_decode(c3.data(), len3, out.data(), scratch.data()) == 0);
+            CHECK(out == page);
+            // level 3's sequences, their plain literals with the fixed tables
+            auto const n = seqlz_find(st.get(), page.data(), seq.data(), 3);
+            auto const lits = literals_of(page, seq.data(), n);
+            auto const len2 = seqlz_encode(st.get(),
+                                           seq.data(),
+                                           n,
+                                           lits.data(),
+                                           static_cast<unsigned>(lits.size()),
+                                           page.data(),
+                                           c2.data(),
+                                           2 * page_size,
+                                           2);
+            REQUIRE(len2 > 0);
+            raw_at_3 += !lits_coded(c3) && lits_coded(c2);
+        }
+    }
+    CHECK(raw_at_3 > 0);
 }
 
 TEST_CASE("seqlz: a delta byte other than 1 to 3, or none, is invalid") {
