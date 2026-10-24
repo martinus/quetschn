@@ -1755,6 +1755,51 @@ TEST_CASE("seqlz: level 3 keeps the plain literals raw where the deltas it picke
     CHECK(raw_at_3 > 0);
 }
 
+TEST_CASE("seqlz: deltas to the byte of the last offset come back for every distance, on the fast path too") {
+    // Records of period p: a run of n literals every gap bytes, each the byte p before plus 1 to 3, the
+    // others the byte p before. So the sequences are n literals and a match at offset p, the literals' delta
+    // to the byte p before is small, and level 3 codes them as deltas to the byte of the last offset, at the
+    // distance seqlz_delta_last(p), or to the byte 4 or 8 before where that is the same. The decoder's fast
+    // path adds back the 16 bytes of each sequence with the bytes that distance before, from memory or from
+    // those 16, in three ways: below 8, below 16, and more. Up to 14 literals, as many as the fast path
+    // takes, so that the second 8 of the 16 bytes count too.
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(240);
+    auto c = std::vector<unsigned char>(2 * page_size);
+    auto out = std::vector<unsigned char>(page_size);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto dists = std::set<unsigned>();
+    for (unsigned p = 1; p <= 24; ++p) {
+        for (auto const& [gap, n] : {std::pair{5U, 1U}, std::pair{13U, 8U}, std::pair{20U, 14U}}) {
+            CAPTURE(p);
+            CAPTURE(gap);
+            CAPTURE(n);
+            auto page = std::vector<unsigned char>(page_size);
+            for (unsigned k = 0; k < page_size; ++k) {
+                if (k < p) {
+                    page[k] = static_cast<unsigned char>(rng());
+                } else {
+                    auto const noise = k % gap < n ? 1 + static_cast<unsigned>(rng() % 3) : 0U;
+                    page[k] = static_cast<unsigned char>(page[k - p] + noise);
+                }
+            }
+            auto const len = seqlz_compress(st.get(), page.data(), c.data(), 2 * page_size, 3);
+            REQUIRE(len > 0);
+            REQUIRE(seqlz_decode(c.data(), len, out.data(), scratch.data()) == 0);
+            CHECK(out == page);
+            // the distance of the delta the page got: 4 and 8 also come as SEQLZ_DELTA_4 and _8
+            auto const delta = lit_delta(c);
+            if (delta != 0) {
+                dists.insert(delta == SEQLZ_DELTA_4 ? 4U : delta == SEQLZ_DELTA_8 ? 8U : seqlz_delta_last(p));
+            }
+        }
+    }
+    for (unsigned d = 4; d <= 24; ++d) {
+        CAPTURE(d);
+        CHECK(dists.count(d) == 1);
+    }
+}
+
 TEST_CASE("seqlz: a delta byte other than 1 to 3, or none, is invalid") {
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(79);
