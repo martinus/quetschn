@@ -1,4 +1,4 @@
-From fef71fe6911184a7c4ae26fd161e9a1b72d01c8b Mon Sep 17 00:00:00 2001
+From 9477e7a3843a17cb047b03facebb332a3e3405d2 Mon Sep 17 00:00:00 2001
 From: Martin Leitner-Ankerl <martin.ankerl@gmail.com>
 Date: Wed, 7 Oct 2026 17:11:13 +0200
 Subject: [PATCH] x86/cpu: Use prefetcht0 for prefetch() on 64-bit
@@ -51,7 +51,7 @@ Signed-off-by: Martin Leitner-Ankerl <martin.ankerl@gmail.com>
  1 file changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/arch/x86/include/asm/processor.h b/arch/x86/include/asm/processor.h
-index 77488ff5eb8c..0df33ccafc7d 100644
+index 77488ff5eb8c..64748b8705e3 100644
 --- a/arch/x86/include/asm/processor.h
 +++ b/arch/x86/include/asm/processor.h
 @@ -624,15 +624,25 @@ extern int			bootloader_version;
@@ -85,7 +85,7 @@ index 77488ff5eb8c..0df33ccafc7d 100644
  			  X86_FEATURE_XMM,
  			  "m" (*(const char *)x));
  }
-+#endif
++#endif /* CONFIG_X86_64 */
  
  /*
   * 3dnow prefetch to get an exclusive cache line.
