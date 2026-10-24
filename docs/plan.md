@@ -945,10 +945,11 @@ phase does not start from zero.
 - Then an RFC series, with a cover letter modelled on `5ee4014af99f`: where the pages come from, their
   distribution, both architectures, paired regression analysis per page, the state of the fuzzing,
   and the workspace against the other codecs.
-- The series: (1) `lib/seqlz/` on blocks of 4 KiB (§3.5), with its KUnit tests, the spec as
-  `Documentation/staging/seqlz.rst` next to `lzo.rst` and `xz.rst`, and `MAINTAINERS`; (2) the zram
-  backend with Kconfig, Makefile and `zram.rst`, for 4 KiB pages. 16 KiB pages come in a second
-  series, in one of the two ways of §3.5.
+- The series, as `tools/kernel-port/series.sh` writes it: (1) `x86-prefetcht0.patch`, so that clang
+  builds keep `prefetch()` on x86-64; (2) `lib/seqlz/` on blocks of 4 KiB (§3.5), the spec as
+  `Documentation/staging/seqlz.rst` next to `lzo.rst` and `xz.rst`, and `MAINTAINERS`; (3) its KUnit
+  tests; (4) the zram backend with Kconfig, Makefile and `zram.rst`, for 4 KiB pages. Each patch builds
+  and passes checkpatch by itself. 16 KiB pages come in a second series, in one of the two ways of §3.5.
 - Who decides: Andrew Morton, who takes `lib/` and zram through the mm tree, and the reviewers of a new
   library. Sergey Senozhatsky takes the backend once the library is in `lib/` (§3.4). The series goes
   to Andrew Morton, Cc Sergey Senozhatsky and Minchan Kim (zram and zsmalloc, per `MAINTAINERS`), Eric

@@ -1,0 +1,3 @@
+lib: add the seqlz compression library
+
+CHANGELOG: Martin writes it. Problem, change, measured result; short.
