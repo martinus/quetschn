@@ -201,7 +201,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: tools to build a kernel
         run: >-
-          sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev ${{ matrix.make && 'clang lld llvm' || '' }}
+          sudo apt-get update -q && sudo apt-get install -y -q flex bison bc libelf-dev libssl-dev ${{ matrix.make && 'clang lld llvm' || '' }}
           ${{ matrix.name == 'arm64' && 'qemu-system-arm' || '' }}
       # from the cache, else fetched, see .github/fetch-kernel.sh
       - name: the kernel tree from the cache
