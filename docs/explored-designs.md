@@ -322,7 +322,8 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 - 2026-10-07 **not kept** [Fast path's condition: length-value misses, four workarounds](#the-fast-paths-condition-its-22-misses-per-page-are-the-length-values-four-ways-around-them-slower-not-kept): x86-64 userspace, Ryzen 9 7950X, first desktop dump, pages seen once: the condition's 22.7 misses per page are sequences with length values (data). Variants A to D removed up to 17 misses but none was faster: 6656 to 7220 ticks against 6696 to 6892. Code: tools/seqlz-branches/run.sh; variants not in repo; decoder then src/seqlz.c, now src/seqlz_decompress.c. Now: Wider token partly tried 13 Oct in "Offset classes without bits" (ml in 6 bits, 7 classes): not kept. src/seqlz.c split 10 Oct ("seqlz.c split in three"). Untried: A fifth token bit for literal length (format change); any variant on the phone or in the kernel VM.
 - 2026-10-07 **kept** [Refill without its branch every second fast sequence](#the-refill-without-its-branch-every-second-fast-sequence-63-ns-less-per-swap-in-on-x86-64-and-the-a76-kept): Variant B, kernel VM gcc: seqlz-2's zcomp_decompress() 2010 to 1935-1941 ns, swap-in 63 ns less; A76 75 ns faster per page seen once; A55 slower, kept its old loop. Variant A (every fast sequence): 500 cycles more on known pages. Code: seqlz_decode() and decode_page() in src/seqlz.c then; now next_token_fast() in src/seqlz_decompress.c. Now: The per-core loops (in_order_core()) were replaced by one out-of-order loop on every core (#152) in 'The kernel copy's choices measured in one boot'; the refill of B stays. Untried: The phone's own kernel, where a big and a little core run the same kernel.
 - 2026-10-07 **measurement** [Which decoder branches mispredict on a page seen once](#which-branches-three-in-the-sequence-loop-are-58-of-the-130-misses-of-a-page-seen-once): Userspace x86-64, AMD LBR: 130.0 branch misses per page decoded once, 11.6 right after the same page, 2059 cycles (0.46 µs) apart. Refill check in NEXT_TOKEN() 24% to 25%, fast path's condition 18% to 19%, offset at least 8 15% to 17%. Code: tools/seqlz-branches/ (decode_once.c, run.sh); line numbers of src/seqlz.c at commit 99bac5e. Now: Line numbers stale: seqlz.c split in three ('seqlz.c split in three'). Follow-ups: 'The refill without its branch', 'The fast path's condition', 'The offset below 8', 'A branch or more work'. Untried: The loops of long copies, copy_match() and copy_literals(): no idea yet.
-- 2026-10-06 **measurement** [Worst-case pages for compressor and decoder](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4): A55: slowest compression found 72 µs, 1.05 times real p99; slowest decode 24 µs, 1.3 times. Damaged-zram pages: 107 000 instructions on arm64, 40 µs. Against own p99, seqlz-2's worst is 1.14 (compress) and 1.59 (decode); lz4's decode 2.58. Code: tools/seqlz-worst/worst.c, cost_fuzz.c, pages/ (instructions.tsv); seqlz-worst; fuzz/afl.sh. Now: Measured for seqlz-2 only. seqlz-3 ("Level 3, a lazy matcher", 15 Oct) has no such search; offset classes and tables changed 14 Oct. Untried: Slowest page's full zram cold read on the A55 (about 78 µs) is an estimate, not measured.
+- 2026-10-24 **measurement** [The worst case at every level](#the-worst-case-at-every-level-real-pages-cost-most-at-level-3-115-times-p99-to-compress-and-162-to-decode-a-decode-in-registers-not-kept): instructions per page, ten samples, gcc: level 3 compress p99 276 209, max 316 541 (1.15), decode p99 78 674, max 127 140 (1.62); level 2 172 491 / 184 510 and 52 291 / 63 096. Searches from made-up pages stay below the real level-3 pages, tables of records with one literal and a match below 8 per sequence. Their decode loads in `undelta_fast()` cannot be forwarded at distances 5 to 7: x86-64 2.94 times level 2's cycles for 2.05 times its instructions. The 16 bytes in registers: -36% cycles there; Mi 9T A76 -3.4% on the worst pages, A55 +1% to +2%, not kept. Code: tools/seqlz-worst/ (`--level`, `COST_LEVEL`), test of every delta distance; branch seqlz-worst-levels. Now: current. Untried: the kernel VM; the compressor's record walks in one.
+- 2026-10-06 **measurement** [Worst-case pages for compressor and decoder](#the-worst-case-the-slowest-pages-found-cost-13-times-the-p99-of-real-ones-as-for-lz4): A55: slowest compression found 72 µs, 1.05 times real p99; slowest decode 24 µs, 1.3 times. Damaged-zram pages: 107 000 instructions on arm64, 40 µs. Against own p99, seqlz-2's worst is 1.14 (compress) and 1.59 (decode); lz4's decode 2.58. Code: tools/seqlz-worst/worst.c, cost_fuzz.c, pages/ (instructions.tsv); seqlz-worst; fuzz/afl.sh. Now: all three levels on 24 Oct ([the worst case at every level](#the-worst-case-at-every-level-real-pages-cost-most-at-level-3-115-times-p99-to-compress-and-162-to-decode-a-decode-in-registers-not-kept)). Untried: Slowest page's full zram cold read on the A55 (about 78 µs) is an estimate, not measured.
 - 2026-10-05 **kept** [Fast path's fixed copies without branches](#6-the-fast-paths-copies-as-they-are): Branch-free copies (32 or 40, always 40) slower: warm reads 0.1 µs (A76) and 0.5 to 0.8 µs (A55), cold reads 1.1 and 1.2 µs (A76), PC hot loop 2% and 4% more cycles. Kept as they are. Code: copy_match_fast() in src/seqlz_decompress.c. Now: "A branch or more work, again in a swap-in" (7 Oct): copies without their branches 30 ns slower per decode in a VM swap-in; choice holds.
 - 2026-10-05 **partly kept** [Table prefetches per core: A55 needs, A76 not](#4-prefetching-the-tables-the-a55-needs-it-the-a76-is-faster-without): Without table prefetches the A55 reads cold 14.5 µs slower (30 µs at p99); the A76 1.2 µs faster. Token prefetch only on in-order cores (read_cpuid_id()) with codes in one range: A76 1.2 to 2.5 µs faster, A55 unchanged. Reversed index costs x86-64 19%. Code: seqlz_decode() and decode_literals() prefetches; read_cpuid_id(); __builtin_bitreverse32() variant. Now: Per-core choice decided in "The sequences' bitstream most significant bit first", then replaced: token table prefetched on every core since #152 ("The kernel copy's choices measured in one boot").
 - 2026-10-03 **kept** [Next token looked up before the match copies](#the-next-token-before-the-copies-reads-faster-on-both-phone-cores-kept): Mi 9T, phone pages, Δ vs lz4: A55 cold p99 7364 to 7178 ns, A76 3204 to 3011 ns; x86-64 decode loop 5800 vs 5967 cycles per page. copy_match() with 16 bytes per round: 3.4% fewer A55 cycles, cold p99 worse, not kept. Code: seqlz_decode() fast path; PR #62 (commit cf334ce). Now: Re-measured with 64-byte function alignment in "seqlz-fast on the phone": holds; it also made the two-stream decoder useless there.
@@ -5051,9 +5052,100 @@ clear, while every warm read pays 0.2 to 0.5 µs for the prefetches. On the A76 
 kept. The warm reads are 2.2 µs apart, so most of the 10.6 µs are misses that only a cold page has;
 the token table of 4 KiB in "In the phone's own kernel" did not show a clear difference either.
 
+## The worst case at every level: real pages cost most at level 3, 1.15 times p99 to compress and 1.62 to decode; a decode in registers, not kept
+
+Status: measurement, 2026-10-24. Now: current.
+
+*How slow can a page be at each level, now that level 3 has its lazy matcher, a table of the page's own
+and the deltas? `seqlz-worst --level` and `COST_LEVEL` made the search of 6 October work at every level.
+Real pages stay the costliest at level 3: 316 541 instructions to compress (1.15 times p99, 3.4 times
+p50) and 127 140 to decode (1.62 times p99); half an hour of fuzzing from made-up pages found less. They
+are tables of records: hundreds of sequences of one or two literals and a match below 8 bytes. To
+compress, level 3 does fixed work per sequence (about 190 instructions more than level 2). To decode,
+the deltas at a distance of 5 to 7 make each `add4()` of `undelta_fast()` load what the one before just
+stored, in part, which the core cannot forward: 2.94 times level 2's cycles for 2.05 times its
+instructions on x86-64. The 16 bytes in registers instead: 36% fewer cycles on that page on x86-64; on
+the Mi 9T 3.4% faster on the A76 for the worst pages, 1% to 2% slower on the A55, about zero with the
+phone's mix. Not kept until the kernel VM shows the x86-64 side.* Code: `tools/seqlz-worst/`
+(`--level`, `COST_LEVEL`, `seqlz_1_cost_fuzz` and `seqlz_3_cost_fuzz`), the test of every delta
+distance (`test/seqlz_test.cpp`, `seqlz_test_delta_distances`); the register version not committed;
+branch `seqlz-worst-levels`.
+
+**Instructions per page**, `seqlz-worst --level <n> count`, x86-64, gcc 16.2.1, the ten samples together,
+decode only of pages below 3625 bytes, which zram keeps compressed:
+
+| level | compress p50 | p99 | max | decode p50 | p99 | max |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 53 077 | 114 410 | 160 666 | 18 656 | 37 607 | 61 673 |
+| 2 | 58 176 | 172 491 | 184 510 | 20 938 | 52 291 | 63 096 |
+| 3 | 93 289 | 276 209 | 316 541 | 22 830 | 78 674 | 127 140 |
+
+**The searches**, `cost_fuzz.c` as on 6 October: seeded with the 512 made-up pages of `seqlz-worst pages`
+(the decoder's target with them compressed at level 3, `make_seeds`' level-3 pages and `seqlz-worst
+--level 2|3 streams`), 3 rounds of 10 minutes with the fine buckets from 1% below the best so far, 4
+libFuzzer workers per target (2 for `lz4`), all six side by side next to three other jobs. The
+sequence target crashed in libFuzzer's `-fork` mode (in `GlobalEnv::secondsSinceProcessStartUp`, not in
+seqlz) and ran with `-jobs` instead. Best found, instructions, the clang build of each target; then the
+found pages counted as the real ones, gcc:
+
+| target | from the seeds | found, clang | real max, clang | found, gcc | real max, gcc |
+| --- | --- | --- | --- | --- | --- |
+| level 1 compress / its decode | 125 634 / 59 792 | 133 657 / 62 703 | 152 596 / 66 038 | 140 178 / 55 568 | 160 666 / 61 673 |
+| level 2 compress / its decode | 163 735 / 61 987 | 167 660 / 65 605 | 163 975 / 66 039 | 189 594 / 67 435 | 184 510 / 63 096 |
+| level 3 compress / its decode | 264 390 / 101 773 | 308 616 / 115 725 | 350 804 / 128 316 | 300 258 / 105 478 | 316 541 / 127 140 |
+| `lz4` compress / its decode | 83 635 / 37 139 | 83 923 / 41 917 | | | |
+| decoder on any valid page | 125 887 | 129 454 | | | |
+| level 3 from sequences, decode | 38 733 | 114 993 | | 119 915 | |
+
+Level 2 found a little more than real pages, 1.10 and 1.29 times p99 (6 October: 1.14 and 1.59 with
+clang). Level 3 kept climbing, but from made-up pages it did not reach the real record tables: they need
+a match at just the right offset after nearly every literal, deltas that pay and an own table that pays.
+
+**Why level 3 compresses those pages slowly.** The costliest page (zram0-2026-09-24), 799 sequences, 779
+with one literal: 319 600 instructions at level 3 against 166 700 at level 2, per `perf`:
+`compress_own()` 197 000 against `compress_block()`'s 160 000 (the records, a lazy look for each match
+below 20 bytes, the step back: 46 per sequence), `seqlz_delta_literals()` 87 000 (two walks over the
+records, pricing, then moving and subtracting: 109 per sequence), `seqlz_code_own()` 32 000. In cycles
+2.13 times level 2 for 1.92 times the instructions: no stall. On all of p3, per page, level 3 is 102 000
+instructions against 62 000: `compress_own()` 65 300 (level 2's matcher and encoder 53 400),
+`seqlz_code_own()` 19 500 (7 900), `seqlz_delta_literals()` 16 300, of it at least 40% the pricing
+of every 5th literal, about 25 instructions each for 151 of them per page and 30 per record for 121.
+69% of p3's pages end without a delta and 56% with raw literals, and pay for the pricing all the same.
+
+**Why level 3 decodes those pages slowly.** The costliest page (zram0-2026-09-28), 679 sequences, the
+delta of the last offset, offsets below 8. Per decode, x86-64, `perf stat` with `ls_bad_status2.stli_other`
+(a load that cannot be forwarded from an older store): level 2 63 734 instructions, 23 736 cycles,
+1186 such loads; level 3 130 636, 69 685, 5368. `undelta_fast()` adds back 16 bytes per sequence, at a
+distance of 5 to 7 with four `add4()`, and each loads 4 bytes of which the `add4()` before stored some.
+At 4, at 8 and from 16 on, the loads find whole stores or bytes before d, and forward.
+
+**The 16 bytes in registers**, `undelta_fast()` from the deltas at lit straight into d: below 8 the dist
+bytes before d from one load, the rest with shifts of the result; 8 to 15 the first word from memory, the
+second from the bytes before d and the first word; from 16 on two loads before d. On that page 132 545
+instructions, 43 696 cycles, 1858 such loads (-36% cycles, +1.5% instructions). Mi 9T, zram in its own
+kernel, `BUS=1`, 3 rounds, level 3, µs per page, `a` and `a2` `main` built twice, `b` registers, `c`
+registers only at 5 to 7 and 9 to 15:
+
+| pages | codec | A55 warm | A55 cold | A76 warm | A76 cold |
+| --- | --- | --- | --- | --- | --- |
+| the 400 costliest to decode of the ten samples | `a` / `a2` | 39.46 / 39.23 | 66.10 / 64.65 | 14.72 / 14.70 | 18.48 / 18.99 |
+| | `b` | 40.18 | 66.79 | 14.22 | 18.63 |
+| | `c` | 40.72 | 67.40 | 14.54 | 18.35 |
+| p3, 19 775 pages | `a` / `a2` | 15.68 / 15.61 | 38.71 / 37.98 | 5.71 / 5.72 | 9.82 / 10.12 |
+| | `b` | 15.79 | 38.20 | 5.69 | 9.99 |
+| | `c` | 15.83 | 38.65 | 5.78 | 10.08 |
+
+A first run of `a`, `a2` and `b` gave the same: A76 worst pages 14.17 against 14.73 / 14.72, A55 39.80
+against 39.13 / 39.45. With two thirds of the reads on the A76, `b` is about zero per page on the phone;
+the A55 is in-order and pays for the longer chain of shifts. Not kept: the kernel VM, where the x86-64
+gain would show, was not free.
+
+Not measured: the kernel VM; the compressor's two walks over the records in one, or pricing in
+`encode_seq()`.
+
 ## The worst case: the slowest pages found cost 1.3 times the p99 of real ones, as for `lz4`
 
-Status: measurement, 2026-10-06. Now: Measured for seqlz-2 only. seqlz-3 ("Level 3, a lazy matcher", 15 Oct) has no such search; offset classes and tables changed 14 Oct.
+Status: measurement, 2026-10-06. Now: all three levels searched on 24 Oct ([the worst case at every level](#the-worst-case-at-every-level-real-pages-cost-most-at-level-3-115-times-p99-to-compress-and-162-to-decode-a-decode-in-registers-not-kept)); offset classes and tables changed 14 Oct.
 
 *How slow can a page be? plan.md's Phase 4 wants the bound stated and measured.* The work is bounded by
 construction: the matcher moves forward at every position, with or without a match, and extends a
