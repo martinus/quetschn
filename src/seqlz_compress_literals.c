@@ -814,23 +814,16 @@ static struct own_work *own_work(struct seqlz_state *st)
 
 /*
  * The literals at SEQLZ_LEVEL_OWN: the literals' deltas, as
- * seqlz_delta_literals() left them in the matcher's state, unless that is none
- * or they would stay raw; else as they are. A loop, not two calls, so that
- * code_literals() is inlined here once.
+ * seqlz_delta_literals() left them in the matcher's state, or with delta 0 the
+ * literals as they are. Where the deltas stay raw, the plain literals are not
+ * tried: they would be coded on few blocks and save little, for a second
+ * pricing of every such block.
  */
 unsigned int seqlz_code_own(u8 *d, unsigned int len, struct seqlz_state *st,
 			    unsigned int delta)
 {
-	unsigned int n;
-
-	for (;;) {
-		n = code_literals(d, len, delta ? st->literals : NULL,
-				  delta ? NULL : st->literals, own_work(st),
-				  delta);
-		if (n != len || !delta)
-			return n;
-		delta = 0;
-	}
+	return code_literals(d, len, delta ? st->literals : NULL,
+			     delta ? NULL : st->literals, own_work(st), delta);
 }
 
 /*

@@ -1708,6 +1708,53 @@ TEST_CASE("seqlz: level 3 without room for the delta's records writes the page w
     }
 }
 
+TEST_CASE("seqlz: level 3 keeps the plain literals raw where the deltas it picked stay raw" * doctest::skip(page_bits != 12)) {
+    // A delta is picked by pricing every 5th literal. Where its deltas then do not code, level 3 does not
+    // try the plain literals again: that coded 0.4% of the pages and saved 0.71 bytes per page, for a
+    // second pricing of a quarter of them. Such a page is a near tie between the delta and the plain
+    // literals: a page of records for SEQLZ_DELTA_LAST, from split on literals as table 1 codes them. On
+    // some of them level 3 keeps raw literals that level 2, with the same sequences, codes. Found by a
+    // search with the 4 KiB tables of 13th October: 2 of these 640 pages, none for 16 KiB pages in the
+    // same family. Tables trained again may need another search.
+    auto st = std::make_unique<seqlz_state>();
+    auto c3 = std::vector<unsigned char>(2 * page_size);
+    auto c2 = std::vector<unsigned char>(2 * page_size);
+    auto out = std::vector<unsigned char>(page_size);
+    auto scratch = std::vector<unsigned char>(SEQLZ_SCRATCH);
+    auto seq = std::vector<seqlz_sequence>(SEQLZ_MAX_SEQUENCES);
+    int raw_at_3 = 0;
+    for (unsigned seed = 1; seed <= 40; ++seed) {
+        auto rng = std::mt19937_64(seed);
+        auto const records = delta_page(rng, SEQLZ_DELTA_LAST);
+        auto const text = bytes_as_coded_by(rng, 1);
+        for (unsigned split = page_size / 2; split < page_size; split += page_size / 32) {
+            CAPTURE(seed);
+            CAPTURE(split);
+            auto page = records;
+            std::copy(text.begin() + split, text.end(), page.begin() + split);
+            auto const len3 = seqlz_compress(st.get(), page.data(), c3.data(), 2 * page_size, 3);
+            REQUIRE(len3 > 0);
+            REQUIRE(seqlz_decode(c3.data(), len3, out.data(), scratch.data()) == 0);
+            CHECK(out == page);
+            // level 3's sequences, their plain literals with the fixed tables
+            auto const n = seqlz_find(st.get(), page.data(), seq.data(), 3);
+            auto const lits = literals_of(page, seq.data(), n);
+            auto const len2 = seqlz_encode(st.get(),
+                                           seq.data(),
+                                           n,
+                                           lits.data(),
+                                           static_cast<unsigned>(lits.size()),
+                                           page.data(),
+                                           c2.data(),
+                                           2 * page_size,
+                                           2);
+            REQUIRE(len2 > 0);
+            raw_at_3 += !lits_coded(c3) && lits_coded(c2);
+        }
+    }
+    CHECK(raw_at_3 > 0);
+}
+
 TEST_CASE("seqlz: a delta byte other than 1 to 3, or none, is invalid") {
     auto st = std::make_unique<seqlz_state>();
     auto rng = std::mt19937_64(79);
