@@ -1,4 +1,4 @@
-From 9477e7a3843a17cb047b03facebb332a3e3405d2 Mon Sep 17 00:00:00 2001
+From 5caa2ed73a93f15d6698b3c869cf640cfe8f4e94 Mon Sep 17 00:00:00 2001
 From: Martin Leitner-Ankerl <martin.ankerl@gmail.com>
 Date: Wed, 7 Oct 2026 17:11:13 +0200
 Subject: [PATCH] x86/cpu: Use prefetcht0 for prefetch() on 64-bit
@@ -15,25 +15,25 @@ x86-64 CPU has that instruction, so nothing is patched at boot. The
 32-bit prefetch() does not fit: it is an alternative that starts as no
 instruction and becomes prefetchnta on CPUs with SSE. prefetchnta is a
 non-temporal prefetch, for data that is read once, so gcc builds, which
-emit prefetcht0 today, would change. With this patch they keep their
+emit prefetcht0 today, would change. Instead gcc builds keep their
 prefetcht0, and clang builds get the same. ARCH_HAS_PREFETCH, which
 tells <linux/prefetch.h> that the architecture has its own prefetch(),
 is now defined for 32-bit and 64-bit, like ARCH_HAS_PREFETCHW already
 is.
 
-With this, clang's vmlinux has 57 prefetcht0 and gcc's still 62. The 49
+Afterwards clang's vmlinux has 57 prefetcht0 and gcc's still 62. The 49
 new ones are in 34 functions, e.g. __blk_mq_alloc_requests(),
 blk_mq_end_request_batch(), prepend_path(), task_sched_runtime(),
 __alloc_skb(), net_rx_action(), tcp_ack() and the receive paths of
 e1000, tg3, sky2, r8169 and forcedeth.
 
-This makes polled io_uring reads from null_blk about 2% faster, and
-getcwd() 40 directories deep about 1%. Measured in a KVM guest with one
-CPU, pinned to one core of a Ryzen 9 7950X at a fixed 4.5 GHz, clang
-22.1.8, 6 boots of each kernel in turns. ns per call, median over the
-boots and the range:
+Polled io_uring reads from null_blk get about 2% faster, and getcwd() 40
+directories deep about 1%. Measured in a KVM guest with one CPU, pinned
+to one core of a Ryzen 9 7950X at a fixed 4.5 GHz, clang 22.1.8, 6 boots
+of each kernel in turns. ns per call, median over the boots and the
+range:
 
-                    without this patch     with this patch
+                    before                 after
   io_uring IOPOLL   680.1 (679.6..684.6)   664.9 (663.1..668.4)   -2.3%
   getcwd()          912.9 (912.0..1019.4)  901.4 (900.1..907.3)   -1.3%
 
