@@ -9,6 +9,12 @@
 
 #include "seqlz_internal.h"
 
+/*
+ * Room at dst with which seqlz_compress() never fails, as the kernel's
+ * interface has it; it uses no more
+ */
+#define SEQLZ_COMPRESS_BOUND (2 * SEQLZ_BLOCK_SIZE)
+
 /* a sequence as the matcher finds it, see seqlz_find() */
 struct seqlz_sequence {
 	u16 literals;
@@ -113,10 +119,10 @@ unsigned int seqlz_encode(struct seqlz_state *st,
  * @dst_cap: the bytes at @dst
  * @level: from 1 to SEQLZ_LEVELS, see there
  *
- * Two pages, as zram's buffer has, are always enough, even for random data,
- * see the encoder in seqlz_compress.c. A smaller @dst works too: a block that
- * does not fit is an error, which can happen up to 32 bytes before @dst_cap is
- * full.
+ * SEQLZ_COMPRESS_BOUND, two pages as zram's buffer has, is always enough, even
+ * for random data, see the encoder in seqlz_compress.c; more than that is not
+ * used. A smaller @dst works too: a block that does not fit is an error, which
+ * can happen up to 32 bytes before @dst_cap is full.
  * The block is written with raw literals first, so it has to fit that way; the
  * coded literals then go over the raw ones, which @st holds meanwhile. At
  * SEQLZ_LEVEL_OWN the encoder needs 6 bytes more per sequence with literals for

@@ -713,6 +713,45 @@ TEST_CASE("seqlz: compress into a dst of any size, an error where the page does 
     }
 }
 
+TEST_CASE("seqlz: compress and encode use no more of dst than SEQLZ_COMPRESS_BOUND") {
+    // The bitstream is written from the end of dst down: with a dst of 64 KiB it would land 56 KiB past
+    // the page. The bytes behind SEQLZ_COMPRESS_BOUND stay as they were, and the page is the same as in
+    // SEQLZ_COMPRESS_BOUND bytes.
+    auto st = std::make_unique<seqlz_state>();
+    auto rng = std::mt19937_64(239);
+    constexpr unsigned big = 65536;
+    constexpr unsigned char canary = 0x5a;
+    for (int round = 0; round < 40; ++round) {
+        CAPTURE(round);
+        auto const p = random_seqlz_page(rng, round % 4);
+        for (unsigned level = 1; level <= SEQLZ_LEVELS; ++level) {
+            CAPTURE(level);
+            auto bound = std::vector<unsigned char>(SEQLZ_COMPRESS_BOUND);
+            auto const len = seqlz_compress(st.get(), p.bytes.data(), bound.data(), SEQLZ_COMPRESS_BOUND, level);
+            REQUIRE(len > 0);
+            auto d = std::vector<unsigned char>(big, canary);
+            CHECK(seqlz_compress(st.get(), p.bytes.data(), d.data(), big, level) == len);
+            CHECK(std::equal(bound.begin(), bound.begin() + len, d.begin()));
+            CHECK(std::all_of(d.begin() + SEQLZ_COMPRESS_BOUND, d.end(), [](unsigned char b) {
+                return b == canary;
+            }));
+            auto e = std::vector<unsigned char>(big, canary);
+            CHECK(seqlz_encode(st.get(),
+                               p.sequences.data(),
+                               static_cast<unsigned>(p.sequences.size()),
+                               p.literals.data(),
+                               static_cast<unsigned>(p.literals.size()),
+                               p.bytes.data(),
+                               e.data(),
+                               big,
+                               level) > 0);
+            CHECK(std::all_of(e.begin() + SEQLZ_COMPRESS_BOUND, e.end(), [](unsigned char b) {
+                return b == canary;
+            }));
+        }
+    }
+}
+
 TEST_CASE("seqlz: seqlz_encode() rejects sequences that do not make a page, before writing") {
     auto c = std::vector<unsigned char>(2 * page_size);
     auto const literals = std::vector<unsigned char>(page_size, 7);

@@ -91,7 +91,7 @@ static_assert(16U + (7U + SEQLZ_SEQ_BITS + ENC_VALUE_BITS) / 8U + 8U <=
 /* the largest bitstream: SEQLZ_SEQ_BITS for every 4 bytes of the block */
 #define ENC_BITSTREAM_MAX ((SEQLZ_BLOCK_SIZE / 4U * SEQLZ_SEQ_BITS + 7U) / 8U)
 static_assert(SEQLZ_HEADER + SEQLZ_BLOCK_SIZE + ENC_BITSTREAM_MAX + ENC_ROOM <=
-		      2U * SEQLZ_BLOCK_SIZE,
+		      SEQLZ_COMPRESS_BOUND,
 	      "two blocks are always room enough");
 
 struct seqlz_encoder {
@@ -393,6 +393,8 @@ unsigned int seqlz_encode(struct seqlz_state *st,
 	if (level < 1 || level > SEQLZ_LEVELS ||
 	    (level >= SEQLZ_LEVEL_OWN && !st))
 		return 0;
+	/* as seqlz_compress() */
+	dst_cap = min(dst_cap, SEQLZ_COMPRESS_BOUND);
 	len = encode_raw(seq, n, literals, n_literals,
 			 level >= SEQLZ_LEVEL_OWN ? block : NULL,
 			 st ? st->literals : NULL, &delta, dst, dst_cap);
@@ -469,6 +471,12 @@ unsigned int seqlz_compress(struct seqlz_state *st, const void *src, void *dst,
 
 	if (level < 1 || level > SEQLZ_LEVELS)
 		return 0;
+	/*
+	 * Not more room than every block fits into: the bitstream is written
+	 * from the end of dst down, and with a larger dst it would land far
+	 * from the block, in memory nothing else of it touches
+	 */
+	dst_cap = min(dst_cap, SEQLZ_COMPRESS_BOUND);
 	if (level >= SEQLZ_LEVEL_OWN) {
 		len = compress_own(st, src, dst, dst_cap, &delta);
 		return len ? seqlz_code_own(dst, len, st, delta) : 0;

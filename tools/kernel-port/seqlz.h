@@ -39,7 +39,8 @@
  * seqlz_compress() - Compress one block
  * @src: the block, SEQLZ_BLOCK_SIZE bytes
  * @dst: where the compressed block goes
- * @dst_len: the bytes at @dst; SEQLZ_COMPRESS_BOUND are always enough
+ * @dst_len: the bytes at @dst; SEQLZ_COMPRESS_BOUND are always enough, and
+ *           more are not used
  * @wrkmem: SEQLZ_MEM_COMPRESS bytes, aligned to 8 bytes as from kmalloc()
  * @level: from SEQLZ_LEVEL_MIN to SEQLZ_LEVEL_MAX
  *
