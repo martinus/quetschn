@@ -342,7 +342,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 - 2026-10-08 **kept** [Compressor into a buffer of any size](#the-compressor-into-a-buffer-of-any-size-the-bitstream-from-the-back-the-same-bytes-in-zram-writes-2-faster-in-the-vm-kept): Literals at buffer front, bitstream backwards from its back, so seqlz_compress() takes any buffer (#122); same bytes on 60 000 pages. x86-64 VM writes 0.16 to 0.24 µs faster; Mi 9T same within 0.22 µs. One-page buffer (zswap): seqlz-2 stores 1.67% to 2.88% more. Code: src/seqlz.c enc_flush(), encode_emit(), encoder_finish() (now src/seqlz_compress.c); #122. Now: One-page cost cut to 0.08% to 0.50% by "Coded literals from the matcher's table"; code in src/seqlz_compress.c since "seqlz.c split in three". Untried: Raw page written first: 16, 58, 92 pages fail in one page although their coded form fits.
 - 2026-10-08 **kept** [zram's split compression/decompression contexts](#zrams-contexts-split-into-compression-and-decompression-the-same-time-in-the-vm-the-same-memory-for-seqlz): Senozhatsky's series 1179613 on mm-unstable fb0fbeb37, kernel VM MODE=swap, first desktop dump: every codec's mean within 0.04 µs per page, ranges overlap. seqlz-2 keeps 8192 bytes for compression and 4112 for decompression, 12 304 as before; seqlz-1 has no decompression context. Code: tools/kernel-port/zcomp-split.sh, tools/kernel-port/backend_seqlz.c, zram-prefetch-sg.patch; #102, #103. Now: current. Untried: A reader and a writer on the same CPU (the series' case); lz4/lzo/zstd glue still one context until #103.
 - 2026-10-07 **kept** [seqlz.c macros as __always_inline functions](#the-macros-of-seqlzc-as-inline-functions-the-same-time-in-the-vm-on-the-phone-no-more-than-where-a-module-lands-kept): #108: ENC_LIT, ENC_FLUSH, LIT_* and NEXT_TOKEN as functions; same bytes, other machine code. x86-64 VM same with gcc and clang. Mi 9T A76 seqlz-2 writes 0.5 to 0.9 µs slower, but equally with a module changing only next_token(): module placement, not code. Code: src/seqlz.c (now src/seqlz_compress.c, src/seqlz_decompress.c); #108. Now: Literal streams later arrays ("Five simplifications"); file split ("seqlz.c split in three"). Verdict current. Untried: Module load order not swapped; loading the functions' module first would show the placement effect directly.
-- 2026-10-07 **kept** [x86-64 prefetch() kernel patch for clang builds](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back): Patch defines ARCH_HAS_PREFETCH and a prefetcht0 prefetch() on x86-64: clang vmlinux 10 to 89 prefetcht0, gcc unchanged. Clang VM: codec on prefetch() without patch 120 to 180 ns slower per swap-in, 740 to 810 ns at p99; with patch as fast as own prefetcht0. Code: Linux commit d746b5e94690, branch x86-prefetcht0 (not sent); tools/kernel-port/x86-prefetcht0.patch applied by port.py (#151); check.sh. Now: Line 5404 ("inline assembly stays") stale: "The kernel copy's choices" moved the codec to prefetch() with the patch in the series (#151). Untried: zstd with prefetches in a clang build; other kernel prefetch() users the patch restores.
+- 2026-10-07 **kept** [x86-64 prefetch() kernel patch for clang builds](#the-kernels-prefetch-on-x86-64-fixed-in-the-kernel-a-patch-gives-clang-its-prefetches-back): Patch defines ARCH_HAS_PREFETCH and a prefetcht0 prefetch() on x86-64: clang vmlinux 10 to 89 prefetcht0, gcc unchanged. Clang VM: codec on prefetch() without patch 120 to 180 ns slower per swap-in, 740 to 810 ns at p99; with patch as fast as own prefetcht0. Code: Linux commit d746b5e94690, branch x86-prefetcht0 (not sent); tools/kernel-port/x86-prefetcht0.patch applied by port.py (#151); check.sh. Now: Line 5404 ("inline assembly stays") stale: "The kernel copy's choices" moved the codec to prefetch() with the patch in the series (#151). Untried: zstd with prefetches in a clang build. Other users, 24 Oct: polled io_uring on null_blk -2.25%, getcwd() -1.26%, the rest within noise.
 - 2026-09-30 **kept** [seqlz code simplified, lz4-match codecs dropped](#seqlz-simplified-the-same-bytes-800-lines-less-compressing-4-faster): 1066 lines removed, 259 added; same bytes and tables on three dumps and the 16 KiB corpus. Compress cycles 4% fewer (seqlz-2 23 779 to 22 759, first dump) at the same instructions: code placement. Kernel VM cold reads 0.03 to 0.06 us slower. Code: seqlz_encode(), seqlz_compress(), seqlz_decode() in src/seqlz.c (since split into src/seqlz_compress.c, src/seqlz_decompress.c). Now: Split later in "seqlz.c split in three, as lib/lz4 is". Tables trained again in "The tables trained again: 4% less on one desktop dump". Untried: Retraining token and length tables for the matcher without its step.
 - 2026-09-26 **fixed** [Clang kernel dropped decoder prefetches on x86-64](#a-kernel-built-with-clang-dropped-the-decoders-prefetches-fixed-p99-back-at-gccs): x86-64 kernel builds with -mno-sse; clang then drops __builtin_prefetch: 0 prefetcht0 in seqlz.o vs 36 with gcc, seqlz-2 cold p99 22% and 26% above gcc's. Inline-asm prefetcht0 put clang's p99 within 40 to 91 ns of gcc's. arm64 unaffected. Code: PAGE_LZ_PREFETCH in src/page_lz.h; test kernel_seqlz_prefetch. Now: Inline asm replaced by the kernel's prefetch() plus tools/kernel-port/x86-prefetcht0.patch ("The kernel's prefetch() on x86-64", "The kernel copy's choices", #151); PAGE_LZ_PREFETCH no longer in src/.
 - 2026-09-23 **kept** [Prefetch compressed data before decompression, kernel VM](#zram-prefetch-the-compressed-data-before-decompression): Kernel VM x86-64, cold compressed data: prefetching all its lines took lz4 read p99 from 5600 to 3891 ns; destination prefetch no help. In seqlz-1's backend: p99 5400 to 4440 ns. Also kept: decoder fast path, 5-byte hash, refill below 23 bits. Code: tools/zram-vm/ (run.sh, zram-prefetch.patch, backend_seqlz.c, init.c); now src/zram_seqlz.c, prefetch_lines() in src/seqlz_decompress.c, bench_prefetch_page() in bench/kernel_codecs/zram_codec.h; bench/harness.cpp. Now: clang kernels dropped the prefetches: "A kernel built with clang dropped the decoder's prefetches", "The kernel's prefetch() on x86-64". Literal codes now 10 bits, 5 per refill (SEQLZ_LIT_ROUNDS), 8 streams. Lazy step is level 3. Untried: How often compressed data is cold at a real fault; arm64 little cores; lz4's backend prefetch (4 line change); offsets as a byte stream.
@@ -7028,7 +7028,7 @@ samples were its largest extra cost; with a count known at compile time it unrol
 
 ## The kernel's prefetch() on x86-64, fixed in the kernel: a patch gives clang its prefetches back
 
-Status: kept, 2026-10-07. Now: Line 5404 ("inline assembly stays") stale: "The kernel copy's choices" moved the codec to prefetch() with the patch in the series (#151).
+Status: kept, 2026-10-07. Now: Line 5404 ("inline assembly stays") stale: "The kernel copy's choices" moved the codec to prefetch() with the patch in the series (#151). Other users of prefetch(), 24 Oct: polled io_uring on null_blk 2.25% and getcwd() 1.26% faster with the patch in a clang build, the rest within noise.
 
 *"A kernel built with clang dropped the decoder's prefetches" put `prefetcht0` into the codec as inline
 assembly, because the kernel's `prefetch()` is nothing in a clang-built x86-64 kernel. A patch for
@@ -7072,8 +7072,39 @@ The swap-outs are the same in all three, 7523 to 7557 ns for `seqlz-fast-lit`, 6
 shows none of the kernel's `prefetch()` calls is on the path of a swap-in.
 
 So the codec's inline assembly stays until the patch is in the kernel; with it, `PAGE_LZ_PREFETCH` can be
-`prefetch()` in kernel builds. Not measured: `zstd` with prefetches in a clang build, and anything else
-in the kernel that the patch gives its prefetches back.
+`prefetch()` in kernel builds. Not measured: `zstd` with prefetches in a clang build.
+
+**The kernel's other users of `prefetch()`, 24 Oct.** On tip/master `ca46e0d235bc`, x86-64 defconfig with
+zram, without the codec, `vmlinux` has 8 `prefetcht0` with clang 22.1.8 and 57 with the patch; gcc 16.2.1
+has 62 with it or without. The 49 new ones are in 34 functions: `__blk_mq_alloc_requests()`,
+`blk_mq_end_request_batch()`, `prepend_path()`, `__dentry_path()`, `task_sched_runtime()`,
+`__alloc_skb()`, `net_rx_action()`, `tcp_ack()`, the UDP receive paths, and 22 in the drivers e1000, tg3,
+sky2, r8169 and forcedeth, mostly their receive paths. `tools/prefetch-vm/run.sh` builds the tree with
+and without the patch and times system calls that reach them in a VM with one CPU, CPU 2 at 4.5 GHz,
+boost off, the two kernels booted in turns, 6 boots each, ns per call, median over the boots (range):
+
+| benchmark | clang, without the patch | clang, with it | difference | gcc, same code twice |
+| --- | ---: | ---: | ---: | ---: |
+| `nullb_iopoll`, polled io_uring on `null_blk` | 680.1 (679.6..684.6) | 664.9 (663.1..668.4) | -2.25% | +0.39% |
+| `getcwd`, 40 directories deep | 912.9 (912.0..1019.4) | 901.4 (900.1..907.3) | -1.26% | +0.00% |
+| `nullb_pread`, `O_DIRECT` from `null_blk` | 1148.6 (1146.6..1156.5) | 1131.8 (1116.0..1143.3) | -1.46% | +1.73% |
+| `udp_rr` | 4641.3 (4636.4..4658.1) | 4621.9 (4598.2..4637.5) | -0.42% | +0.15% |
+| `cputime`, `CLOCK_THREAD_CPUTIME_ID` | 489.3 (489.1..494.6) | 490.7 (489.3..493.0) | +0.29% | +0.08% |
+| `times` | 498.7 (498.3..501.6) | 498.0 (496.8..500.2) | -0.13% | +0.05% |
+| `udp_stream` | 2066.2 (2063.0..2071.0) | 2069.8 (2062.2..2074.3) | +0.18% | +0.09% |
+| `tcp_rr` | 5919.6 (5909.1..5936.9) | 5920.6 (5901.8..5979.1) | +0.02% | -0.27% |
+| `tcp_stream` | 4132.0 (4128.0..4145.4) | 4139.8 (4132.7..4162.7) | +0.19% | -0.06% |
+
+gcc's two kernels have the same 62 `prefetcht0`, so their difference is the noise. Only `nullb_iopoll`
+and `getcwd` are outside it, with the ranges apart; `nullb_pread`'s -1.46% is less than gcc's +1.73%.
+This went into the patch's changelog. Not measured: the network card paths, which need hardware, and
+`task_sched_runtime()` with many threads on many CPUs, where commit `6075620b0590` measured its gain.
+
+```sh
+sudo tools/pc-bench.sh set
+TMPDIR=~/.cache/seqlz-tmp BOOTS=6 tools/prefetch-vm/run.sh <linux tree>          # clang
+TMPDIR=~/.cache/seqlz-tmp BOOTS=6 CC=gcc tools/prefetch-vm/run.sh <linux tree>   # the control
+```
 
 ## The macros of seqlz.c as inline functions: the same time in the VM, on the phone no more than where a module lands, kept
 
