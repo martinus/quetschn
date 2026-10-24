@@ -126,7 +126,8 @@ typedef void (*emit_fn)(void *ctx, const u8 *literals, unsigned int ll,
  * longer matches: less time to compress, and with the trained tables smaller
  * blocks too. A match of 4 bytes at a new offset takes about as many bits as
  * its 4 coded literals, and the greedy matcher then misses a longer match
- * behind it. Matches of 4 bytes still come from the repeated offset.
+ * behind it. Matches of 4 bytes still come from the repeated offset, and from
+ * the table where two different 5 bytes had the same hash.
  *
  * Unlike lz4 it tries every position, also after a long stretch without a
  * match, where lz4 starts to skip. Skipping needed more state in the loop:

@@ -16,7 +16,7 @@
  * A sequence has three numbers:
  *   ll:     the number of literals before the match
  *   ml:     the length of the match, at least 4 bytes; 0 for the last sequence
- *   offset: how far back the match starts, 1 to the block size
+ *   offset: how far back the match starts, 1 to the bytes before it
  *
  * Most of them are small, and many offsets are the same as the one before. So
  * ll, ml and a class of the offset share one Huffman symbol, the token, and one
@@ -27,7 +27,9 @@
  *
  * The offset classes, and the bits of the offset that follow the token:
  *   0:    the offset of the sequence before, 1 at the start of a block; none
- *   1:    2; the offset divided by 2, 1 bit
+ *   1:    2; the offset divided by 2, 1 bit, which is always 1: 0 is
+ *         offset 0, invalid. With the bit the decoder takes every class's
+ *         offset with the same shift and mask.
  *   2:    below 256; 8 bits
  *   3:    below the block size; 12 bits for blocks of 4 KiB
  *   4, 5: a multiple of 8, below 256 or below 2048; the offset divided by 8,
@@ -83,9 +85,8 @@
  * How many bits of ll and ml - 4 the token holds; larger ones need a length
  * value after the token, which costs a second table lookup. With 5 bits for the
  * match length half as many matches need one as with 4, at the same memory.
- * At most 4 and 5:
- * the decoder's token entry has 4 bits for ll and 6 for ml, see token_entry()
- * in seqlz_tables.h.
+ * At most 4 and 5: the decoder's token entry has 4 bits for ll and 6 for ml,
+ * see token_entry() in seqlz_tables.h.
  */
 #define SEQLZ_LL_BITS 4U
 #define SEQLZ_ML_BITS 5U
@@ -107,12 +108,14 @@
 /* the fewest bits that hold every token, 3072 < 4096 */
 #define SEQLZ_ESCAPE_BITS 12U
 /*
- * The longest code the escape may have. The encoder counts on 31 bits for a
- * token and its offset, the escape included, to know that zram's two pages are
- * always room enough for a compressed block; see the encoder in
- * seqlz_compress.c.
+ * The most bits a token and its offset take, the escape included. The encoder
+ * counts on it to know that zram's two pages are always room enough for a
+ * compressed block, see ENC_ROOM in seqlz_compress.c. It limits the escape's
+ * code: the longest offset follows an escaped token, in SEQLZ_BLOCK_BITS bits.
  */
-#define SEQLZ_MAX_ESCAPE_LEN (31U - SEQLZ_BLOCK_BITS - SEQLZ_ESCAPE_BITS)
+#define SEQLZ_SEQ_BITS 31U
+#define SEQLZ_MAX_ESCAPE_LEN \
+	(SEQLZ_SEQ_BITS - SEQLZ_BLOCK_BITS - SEQLZ_ESCAPE_BITS)
 /* the shortest match; a token holds ml - SEQLZ_MIN_MATCH */
 #define SEQLZ_MIN_MATCH 4U
 /* the largest ll and ml - SEQLZ_MIN_MATCH a token holds: 15 and 31 */

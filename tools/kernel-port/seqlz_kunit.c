@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * KUnit tests for seqlz: the tables against the hashes the specification
- * gives, its worked example, round trips of generated blocks at every level,
- * damaged blocks, and blocks made here from the specification's rules, each
- * valid or invalid by one rule.
+ * gives and the codes built from them, its worked example, round trips of
+ * generated blocks at every level, also with little room for the compressed
+ * block, damaged blocks, and blocks made here from the specification's rules,
+ * each valid or invalid by one rule.
  */
 #include <crypto/sha2.h>
 #include <kunit/test.h>
@@ -64,9 +65,9 @@ static void seqlz_test_tables(struct kunit *test)
 			SEQLZ_MAX_ESCAPE_LEN);
 }
 
-/* buffers for one test, freed by KUnit */
+/* buffers for one test, freed by KUnit; want: the block out should hold */
 struct bufs {
-	u8 *block, *c, *out;
+	u8 *block, *c, *out, *want;
 	void *cmem, *dmem;
 };
 
@@ -75,11 +76,13 @@ static void get_bufs(struct kunit *test, struct bufs *b)
 	b->block = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
 	b->c = kunit_kmalloc(test, SEQLZ_COMPRESS_BOUND, GFP_KERNEL);
 	b->out = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
+	b->want = kunit_kmalloc(test, SEQLZ_BLOCK_SIZE, GFP_KERNEL);
 	b->cmem = kunit_kmalloc(test, SEQLZ_MEM_COMPRESS, GFP_KERNEL);
 	b->dmem = kunit_kmalloc(test, SEQLZ_MEM_DECOMPRESS, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, b->block);
 	KUNIT_ASSERT_NOT_NULL(test, b->c);
 	KUNIT_ASSERT_NOT_NULL(test, b->out);
+	KUNIT_ASSERT_NOT_NULL(test, b->want);
 	KUNIT_ASSERT_NOT_NULL(test, b->cmem);
 	KUNIT_ASSERT_NOT_NULL(test, b->dmem);
 }
@@ -112,7 +115,8 @@ static void seqlz_test_example(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, example, sizeof(example)),
 			0);
 	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
-		KUNIT_ASSERT_EQ(test, b.out[k], k % 2 ? 'b' : 'a');
+		b.want[k] = k % 2 ? 'b' : 'a';
+	KUNIT_ASSERT_MEMEQ(test, b.out, b.want, SEQLZ_BLOCK_SIZE);
 	/* without its last byte the match is cut */
 	KUNIT_EXPECT_EQ(test,
 			decompress(test, &b, example, sizeof(example) - 1),
@@ -139,7 +143,7 @@ static void make_block(struct rnd_state *rng, unsigned int kind, u8 *p)
 	const char *w;
 	u64 v;
 
-	switch (kind % 9) {
+	switch (kind % 10) {
 	case 0: /* random bytes: raw literals, few matches */
 		prandom_bytes_state(rng, p, SEQLZ_BLOCK_SIZE);
 		break;
@@ -199,6 +203,11 @@ static void make_block(struct rnd_state *rng, unsigned int kind, u8 *p)
 				p[k] ^= 1U << prandom_u32_state(rng) % 8;
 		}
 		break;
+	case 9: /* fields of 8 bytes, each byte a bit above the one 8 before */
+		prandom_bytes_state(rng, p, 8);
+		for (k = 8; k < SEQLZ_BLOCK_SIZE; k++)
+			p[k] = p[k - 8] + prandom_u32_state(rng) % 4;
+		break;
 	case 6:
 	default: /* mostly zeros, as many swapped pages */
 		memset(p, 0, SEQLZ_BLOCK_SIZE);
@@ -214,11 +223,19 @@ static bool lits_coded(const u8 *c)
 	return get_unaligned_le16(c) & SEQLZ_LIT_CODED;
 }
 
+/* the delta of the compressed block c, see SEQLZ_LIT_DELTA_AT; 0 for none */
+static unsigned int lits_delta(const u8 *c)
+{
+	return lits_coded(c) && c[2] >> SEQLZ_LIT_DELTA_AT ? c[3] : 0;
+}
+
 static void seqlz_test_round_trip(struct kunit *test)
 {
 	struct rnd_state rng;
 	struct bufs b;
 	int round, level, len, coded = 0, own = 0, deltas = 0;
+	/* the blocks with each delta, SEQLZ_DELTA_4 to SEQLZ_DELTA_LAST */
+	int delta[SEQLZ_DELTA_LAST + 1] = {};
 
 	get_bufs(test, &b);
 	prandom_seed_state(&rng, 41);
@@ -234,13 +251,17 @@ static void seqlz_test_round_trip(struct kunit *test)
 			       (b.c[2] & SEQLZ_LIT_CODE_MASK) == SEQLZ_LIT_OWN;
 			deltas += lits_coded(b.c) &&
 				  b.c[2] >> SEQLZ_LIT_DELTA_AT;
+			KUNIT_ASSERT_LE(test, lits_delta(b.c),
+					SEQLZ_DELTA_LAST);
+			delta[lits_delta(b.c)]++;
 			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
 					0);
 			KUNIT_ASSERT_MEMEQ(test, b.out, b.block,
 					   SEQLZ_BLOCK_SIZE);
 			/*
 			 * without work memory, only blocks without coded
-			 * literals: zram's level 1 has no decompression context
+			 * literals: callers that only ever see level 1 blocks
+			 * may pass NULL
 			 */
 			memset(b.out, 0xa5, SEQLZ_BLOCK_SIZE);
 			if (lits_coded(b.c)) {
@@ -271,10 +292,13 @@ static void seqlz_test_round_trip(struct kunit *test)
 							     len + 1));
 		}
 	}
-	/* the blocks have to give both layouts, own tables and deltas */
+	/* the blocks have to give both layouts, own tables and each delta */
 	KUNIT_EXPECT_GE(test, coded, 20);
 	KUNIT_EXPECT_GE(test, own, 10);
 	KUNIT_EXPECT_GE(test, deltas, 10);
+	KUNIT_EXPECT_GT(test, delta[SEQLZ_DELTA_4], 0);
+	KUNIT_EXPECT_GT(test, delta[SEQLZ_DELTA_8], 0);
+	KUNIT_EXPECT_GT(test, delta[SEQLZ_DELTA_LAST], 0);
 	KUNIT_EXPECT_EQ(test,
 			seqlz_compress(b.block, b.c, SEQLZ_COMPRESS_BOUND,
 				       b.cmem, SEQLZ_LEVEL_MIN - 1),
@@ -283,6 +307,138 @@ static void seqlz_test_round_trip(struct kunit *test)
 			seqlz_compress(b.block, b.c, SEQLZ_COMPRESS_BOUND,
 				       b.cmem, SEQLZ_LEVEL_MAX + 1),
 			-EINVAL);
+}
+
+/*
+ * The room seqlz_compress() needs past a compressed block while it writes it,
+ * as its kernel-doc gives it
+ */
+#define COMPRESS_ROOM 32U
+
+/*
+ * Compresses b->block into the first dst_len bytes of b->c and returns what
+ * seqlz_compress() does. Nothing may be written at or behind dst_len, and a
+ * block that fits must decompress to b->block.
+ */
+static int compress_into(struct kunit *test, struct bufs *b,
+			 unsigned int dst_len, int level)
+{
+	int len;
+
+	memset(b->c, 0x5a, SEQLZ_COMPRESS_BOUND);
+	len = seqlz_compress(b->block, b->c, dst_len, b->cmem, level);
+	KUNIT_ASSERT_NULL(test, memchr_inv(b->c + dst_len, 0x5a,
+					   SEQLZ_COMPRESS_BOUND - dst_len));
+	if (len == -E2BIG)
+		return len;
+	KUNIT_ASSERT_GT(test, len, 0);
+	KUNIT_ASSERT_LE(test, len, dst_len);
+	KUNIT_ASSERT_EQ(test, decompress(test, b, b->c, len), 0);
+	KUNIT_ASSERT_MEMEQ(test, b->out, b->block, SEQLZ_BLOCK_SIZE);
+	return len;
+}
+
+/*
+ * The compressor with less room than SEQLZ_COMPRESS_BOUND: the least room in
+ * which each block fits, found by bisection, and the room around it and around
+ * the block's length. The bitstream is written from the back of dst and moved
+ * behind the literals at the end, in place where it overlaps them; and level 3
+ * writes the block once more without what it needs for deltas where it does
+ * not fit with it.
+ */
+static void seqlz_test_small_dst(struct kunit *test)
+{
+	/* less than the u16 and the room: no block fits */
+	static const unsigned int too_small[] = {
+		0, 1, 2, SEQLZ_HEADER + COMPRESS_ROOM - 1
+	};
+	unsigned int kind, k, lo, hi, least, least1 = 0, dst_len, full_len;
+	unsigned int stream;
+	int level, len, in_place = 0, retried = 0;
+	struct rnd_state rng;
+	struct bufs b;
+	u8 *full;
+
+	get_bufs(test, &b);
+	full = kunit_kmalloc(test, SEQLZ_COMPRESS_BOUND, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, full);
+	prandom_seed_state(&rng, 47);
+	for (kind = 0; kind < 10; kind++) {
+		make_block(&rng, kind, b.block);
+		for (level = SEQLZ_LEVEL_MIN; level <= SEQLZ_LEVEL_MAX;
+		     level++) {
+			for (k = 0; k < ARRAY_SIZE(too_small); k++)
+				KUNIT_ASSERT_EQ(test,
+						compress_into(test, &b,
+							      too_small[k],
+							      level),
+						-E2BIG);
+			len = compress_into(test, &b, SEQLZ_COMPRESS_BOUND,
+					    level);
+			full_len = len;
+			memcpy(full, b.c, full_len);
+			/* lo does not fit, hi does */
+			lo = too_small[ARRAY_SIZE(too_small) - 1];
+			hi = SEQLZ_COMPRESS_BOUND;
+			while (hi - lo > 1) {
+				dst_len = (lo + hi) / 2;
+				if (compress_into(test, &b, dst_len, level) > 0)
+					hi = dst_len;
+				else
+					lo = dst_len;
+			}
+			least = hi;
+			/*
+			 * Level 1: raw literals, then the bitstream of stream
+			 * bytes. In the least room the bitstream, written at
+			 * the back of dst, is least - full_len bytes behind the
+			 * literals, at most COMPRESS_ROOM; a longer bitstream
+			 * overlaps where it goes and is moved in place. Level 2
+			 * writes the block of level 1 first, so it needs the
+			 * same room.
+			 */
+			if (level == SEQLZ_LEVEL_MIN) {
+				KUNIT_EXPECT_LE(test, least,
+						full_len + COMPRESS_ROOM);
+				least1 = least;
+				stream = full_len - SEQLZ_HEADER -
+					 get_unaligned_le16(full);
+				in_place += stream > least - full_len;
+			} else if (level == SEQLZ_LEVEL_MIN + 1) {
+				KUNIT_EXPECT_EQ(test, least, least1);
+			}
+			/*
+			 * Level 3 writes the block first with what picking a
+			 * delta needs, 6 bytes per sequence with literals, and
+			 * once more without where it does not fit: in the least
+			 * room no block has deltas, also one that has them in
+			 * all the room
+			 */
+			len = compress_into(test, &b, least, level);
+			if (level == SEQLZ_LEVEL_MAX && lits_delta(full)) {
+				KUNIT_EXPECT_EQ(test, lits_delta(b.c), 0);
+				retried++;
+			}
+			for (dst_len = least; dst_len < least + 8; dst_len++) {
+				len = compress_into(test, &b, dst_len, level);
+				KUNIT_ASSERT_GT(test, len, 0);
+				/* below level 3 the same block in any room */
+				if (level < SEQLZ_LEVEL_MAX) {
+					KUNIT_ASSERT_EQ(test, len, full_len);
+					KUNIT_ASSERT_MEMEQ(test, b.c, full,
+							   full_len);
+				}
+			}
+			for (dst_len = full_len;
+			     dst_len <= full_len + COMPRESS_ROOM; dst_len++)
+				KUNIT_EXPECT_EQ(test,
+						compress_into(test, &b, dst_len,
+							      level) > 0,
+						dst_len >= least);
+		}
+	}
+	KUNIT_EXPECT_GT(test, in_place, 0);
+	KUNIT_EXPECT_GT(test, retried, 0);
 }
 
 /*
@@ -437,7 +593,57 @@ static struct maker *get_maker(struct kunit *test)
 }
 
 /*
- * A block of n raw literals k * 7 and no bits: valid only for
+ * The encoder's codes in seqlz_tables, which a program for the build host
+ * writes, against the canonical codes made here from the code lengths: of the
+ * tokens, the length values, all literal tables and the code of a block's own
+ * table. A symbol without a code has the entry 0.
+ */
+static void seqlz_test_codes(struct kunit *test)
+{
+	struct maker *m = get_maker(test);
+	struct code *lit = kunit_kmalloc(test, sizeof(*lit), GFP_KERNEL);
+	u32 *want = kunit_kcalloc(test, SEQLZ_TOKEN_SYMBOLS + 1, sizeof(u32),
+				  GFP_KERNEL);
+	u16 *want16 = kunit_kcalloc(test, SEQLZ_TOKEN_SYMBOLS + 1, sizeof(u16),
+				    GFP_KERNEL);
+	unsigned int k, s;
+
+	KUNIT_ASSERT_NOT_NULL(test, lit);
+	KUNIT_ASSERT_NOT_NULL(test, want);
+	KUNIT_ASSERT_NOT_NULL(test, want16);
+	/* code | length << TOK_ENC_LEN_AT */
+	for (s = 0; s <= SEQLZ_TOKEN_SYMBOLS; s++)
+		want16[s] = m->tok.code[s] | m->tok.len[s] << TOK_ENC_LEN_AT;
+	KUNIT_EXPECT_MEMEQ(test, seqlz_tables.token.enc, want16,
+			   sizeof(seqlz_tables.token.enc));
+	/* code | length << 16, 0 behind the last symbol */
+	memset(want, 0, sizeof(seqlz_tables.ll.enc));
+	for (s = 0; s < SEQLZ_LEN_SYMBOLS; s++)
+		want[s] = m->ll.code[s] | m->ll.len[s] << 16;
+	KUNIT_EXPECT_MEMEQ(test, seqlz_tables.ll.enc, want,
+			   sizeof(seqlz_tables.ll.enc));
+	for (s = 0; s < SEQLZ_LEN_SYMBOLS; s++)
+		want[s] = m->ml.code[s] | m->ml.len[s] << 16;
+	KUNIT_EXPECT_MEMEQ(test, seqlz_tables.ml.enc, want,
+			   sizeof(seqlz_tables.ml.enc));
+	/* length | code << 8 */
+	for (k = 0; k < SEQLZ_LIT_SETS; k++) {
+		canonical(lit, seqlz_lit_sets[k], 256);
+		for (s = 0; s < 256; s++)
+			want[s] = lit->len[s] | lit->code[s] << 8;
+		KUNIT_EXPECT_MEMEQ_MSG(test, seqlz_tables.lit[k].enc, want,
+				       sizeof(seqlz_tables.lit[k].enc),
+				       "literal table %u", k);
+	}
+	/* code | length << 8 */
+	for (s = 0; s < SEQLZ_OWN_SYMBOLS; s++)
+		want16[s] = m->own.code[s] | m->own.len[s] << 8;
+	KUNIT_EXPECT_MEMEQ(test, seqlz_tables.own.enc, want16,
+			   sizeof(seqlz_tables.own.enc));
+}
+
+/*
+ * A block of n raw literals k * 7; without bits after them valid only for
  * n = SEQLZ_BLOCK_SIZE
  */
 static unsigned int literals_only(u8 *c, unsigned int n)
@@ -448,23 +654,6 @@ static unsigned int literals_only(u8 *c, unsigned int n)
 	for (k = 0; k < n; k++)
 		c[2 + k] = k * 7;
 	return 2 + n;
-}
-
-/*
- * A block of SEQLZ_BLOCK_SIZE raw literals and a token that takes them all, of
- * class cls, its 4 offset bits if cls is 1, then ll: invalid, the last
- * sequence has no token.
- */
-static unsigned int one_sequence(struct maker *m, u8 *c, unsigned int cls)
-{
-	unsigned int len = literals_only(c, SEQLZ_BLOCK_SIZE);
-	struct bits w = { .p = c + len };
-
-	token(m, &w, SEQLZ_LL_CAP + (cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS)));
-	if (cls == 1)
-		put(&w, 1, 4);
-	put_len_value(m, &w, &m->ll, SEQLZ_BLOCK_SIZE - SEQLZ_LL_CAP);
-	return len + bytes(&w);
 }
 
 /*
@@ -484,17 +673,52 @@ static unsigned int one_match(struct maker *m, u8 *c, unsigned int *padding)
 	return 3 + bytes(&w);
 }
 
+/*
+ * A sequence's token, the bits of its offset, raw, which are those of class
+ * cls, and its length values, as the specification orders them
+ */
+static void put_seq(struct maker *m, struct bits *w, unsigned int ll,
+		    unsigned int ml, unsigned int cls, unsigned int raw)
+{
+	token(m, w,
+	      min(ll, SEQLZ_LL_CAP) |
+		      min(ml - SEQLZ_MIN_MATCH, SEQLZ_ML_CAP) << SEQLZ_LL_BITS |
+		      cls << (SEQLZ_LL_BITS + SEQLZ_ML_BITS));
+	put(w, raw, SEQLZ_RAW_BITS(cls));
+	if (ll >= SEQLZ_LL_CAP)
+		put_len_value(m, w, &m->ll, ll - SEQLZ_LL_CAP);
+	if (ml - SEQLZ_MIN_MATCH >= SEQLZ_ML_CAP)
+		put_len_value(m, w, &m->ml,
+			      ml - SEQLZ_MIN_MATCH - SEQLZ_ML_CAP);
+}
+
+/*
+ * A block of one literal and a match of ml from 1 back, then the last
+ * sequence's last literals; *w gets its bitstream, for more bits after it.
+ * Valid where the three fill the block.
+ */
+static unsigned int match_then_literals(struct maker *m, u8 *c, unsigned int ml,
+					unsigned int last, struct bits *w)
+{
+	unsigned int len = literals_only(c, 1 + last);
+
+	*w = (struct bits){ .p = c + len };
+	put_seq(m, w, 1, ml, 0, 0);
+	return len + bytes(w);
+}
+
 static void seqlz_test_one_sequence(struct kunit *test)
 {
 	struct maker *m = get_maker(test);
-	unsigned int len, padding, k;
+	unsigned int len, padding, k, before;
 	struct bufs b;
+	struct bits w;
 
 	get_bufs(test, &b);
 	len = one_match(m, b.c, &padding);
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
-	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
-		KUNIT_ASSERT_EQ(test, b.out[k], 7);
+	memset(b.want, 7, SEQLZ_BLOCK_SIZE);
+	KUNIT_ASSERT_MEMEQ(test, b.out, b.want, SEQLZ_BLOCK_SIZE);
 	/* a byte more, and if there is room, a bit after the last code */
 	b.c[len] = 0;
 	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len + 1), -EINVAL);
@@ -507,15 +731,73 @@ static void seqlz_test_one_sequence(struct kunit *test)
 	len = literals_only(b.c, SEQLZ_BLOCK_SIZE);
 	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
 	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
-		KUNIT_ASSERT_EQ(test, b.out[k], (u8)(k * 7));
+		b.want[k] = k * 7;
+	KUNIT_ASSERT_MEMEQ(test, b.out, b.want, SEQLZ_BLOCK_SIZE);
+	/*
+	 * so anything after its literals, even a 0 byte, is invalid: the
+	 * decoder reads no token there, the end check finds the byte unread
+	 */
+	b.c[len] = 0;
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len + 1), -EINVAL);
 	/* and as many literals as the block has bytes */
 	len = literals_only(b.c, SEQLZ_BLOCK_SIZE - 1);
 	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
-	/* the last sequence has no token, of any class */
-	len = one_sequence(m, b.c, 0);
-	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
-	len = one_sequence(m, b.c, 1);
-	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+
+	/*
+	 * A match that ends where the literals left fill the block, then a
+	 * token of one sequence more, with 12 bits of offset so that the block
+	 * gets at least a byte longer: the last sequence has no token.
+	 */
+	len = match_then_literals(m, b.c, SEQLZ_BLOCK_SIZE - 2, 1, &w);
+	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+	before = bytes(&w);
+	put_seq(m, &w, 1, SEQLZ_MIN_MATCH, 3, 1);
+	KUNIT_ASSERT_GT(test, bytes(&w), before);
+	KUNIT_EXPECT_EQ(test,
+			decompress(test, &b, b.c, len - before + bytes(&w)),
+			-EINVAL);
+}
+
+/*
+ * A block of 2 literals: a sequence of 1 literal and a match of 4, then the
+ * escape and the token idx in SEQLZ_ESCAPE_BITS bits for a sequence of
+ * covers bytes, then 1 literal and a match up to the block's end
+ */
+static unsigned int escaped(struct maker *m, u8 *c, unsigned int idx,
+			    unsigned int covers)
+{
+	unsigned int len = literals_only(c, 2);
+	struct bits w = { .p = c + len };
+
+	put_seq(m, &w, 1, SEQLZ_MIN_MATCH, 0, 0);
+	symbol(m, &w, &m->tok, SEQLZ_ESCAPE);
+	put(&w, idx, SEQLZ_ESCAPE_BITS);
+	put_seq(m, &w, 1, SEQLZ_BLOCK_SIZE - 2 - SEQLZ_MIN_MATCH - covers, 0,
+		0);
+	return len + bytes(&w);
+}
+
+/*
+ * A block whose first sequence has ll literals, a match of 4 and the offset
+ * raw of class cls; then 20 sequences of 1 literal and a match of 4 from 5
+ * back, which give the bitstream the length the decoder's fast path needs,
+ * one sequence with a match up to 8 bytes before the block's end, and 8
+ * literals. With ll below SEQLZ_LL_CAP the first sequence has no length value
+ * and takes the fast path, else the slow one.
+ */
+static unsigned int first_offset(struct maker *m, u8 *c, unsigned int ll,
+				 unsigned int cls, unsigned int raw)
+{
+	const unsigned int fill = 20, rest = 8;
+	unsigned int len = literals_only(c, ll + fill + 1 + rest), k,
+		     at = ll + SEQLZ_MIN_MATCH + fill * (1 + SEQLZ_MIN_MATCH);
+	struct bits w = { .p = c + len };
+
+	put_seq(m, &w, ll, SEQLZ_MIN_MATCH, cls, raw);
+	for (k = 0; k < fill; k++)
+		put_seq(m, &w, 1, SEQLZ_MIN_MATCH, 2, 5);
+	put_seq(m, &w, 1, SEQLZ_BLOCK_SIZE - at - 1 - rest, 0, 0);
+	return len + bytes(&w);
 }
 
 /* what coded_literals() does to the block it makes */
@@ -528,11 +810,13 @@ enum damage {
 	STREAM_0_LONGER, /* stream 0 a 0 byte longer than its codes */
 	BYTE_TO_STREAM_1, /* stream 0's last byte counted in stream 1 */
 	PADDING_BIT, /* the lowest bit of stream 0's last byte set */
+	SIZES_PAST_END, /* stream 7's size the largest, past the block's end */
 	/* only for a block with its own table */
 	OWN_OVERFULL, /* a third byte with a code of 1 bit */
 	OWN_ABOVE_255, /* the second byte with a code is 256 */
 	OWN_PADDING_BIT, /* the lowest bit of the table's last byte set */
 	OWN_CUT, /* the block ends in the table */
+	OWN_RUNS, /* two runs of 200 bytes first: past the 256 byte values */
 	DAMAGES,
 };
 
@@ -557,6 +841,10 @@ static void own_table(struct maker *m, struct bits *w, unsigned int x,
 {
 	u8 len[256] = {};
 
+	if (damage == OWN_RUNS) {
+		own_run(m, w, 200);
+		own_run(m, w, 200);
+	}
 	own_run(m, w, x);
 	symbol(m, w, &m->own, damage == OWN_OVERFULL ? 1 : 0);
 	own_run(m, w, damage == OWN_ABOVE_255 ? 255 - x : y - x - 1);
@@ -611,6 +899,8 @@ static unsigned int coded_literals(struct maker *m, u8 *c, unsigned int n,
 		told[0]--;
 		told[1]++;
 	}
+	if (damage == SIZES_PAST_END)
+		told[SEQLZ_LIT_STREAMS - 1] = BIT(SEQLZ_SIZE_BITS_MAX) - 1;
 	for (j = 0; j < SEQLZ_LIT_STREAMS; j++)
 		width = max_t(unsigned int, width, fls(told[j]));
 
@@ -675,7 +965,9 @@ static void check_coded(struct maker *m, struct bufs *b, unsigned int n,
 	KUNIT_ASSERT_EQ_MSG(test, decompress(test, b, b->c, len), 0,
 			    "n %u arg %u", n, arg);
 	for (k = 0; k < SEQLZ_BLOCK_SIZE; k++)
-		KUNIT_ASSERT_EQ(test, b->out[k], lit(min(k, n - 1), arg));
+		b->want[k] = lit(min(k, n - 1), arg);
+	KUNIT_ASSERT_MEMEQ_MSG(test, b->out, b->want, SEQLZ_BLOCK_SIZE,
+			       "n %u arg %u", n, arg);
 	for (d = DELTA_0; d < (own ? DAMAGES : OWN_OVERFULL); d++) {
 		if ((d == PADDING_BIT && !padding) ||
 		    (d == OWN_PADDING_BIT && !m->own_padding))
@@ -733,12 +1025,99 @@ static void seqlz_test_own_table(struct kunit *test)
 			check_coded(m, &b, n, two, pairs[i], true);
 }
 
+/*
+ * Blocks invalid by one rule each, which seqlz_test_damaged() may or may not
+ * make; where it is simple, also the block with the least change that makes it
+ * valid, so that the invalid one fails at the check meant
+ */
+static void seqlz_test_invalid(struct kunit *test)
+{
+	static const unsigned int lls[] = { 2, SEQLZ_LL_CAP + 1 };
+	struct maker *m = get_maker(test);
+	unsigned int len, padding, ll, k;
+	struct bufs b;
+	struct bits w;
+
+	get_bufs(test, &b);
+	/* shorter than the u16 every block starts with */
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, 0), -EINVAL);
+	b.c[0] = 0;
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, 1), -EINVAL);
+
+	/*
+	 * An escaped token the escape has no room for: SEQLZ_TOKEN_SYMBOLS and
+	 * above. The decoder would take it as a sequence without literals and
+	 * match, so only its check of the number rejects the block.
+	 */
+	len = escaped(m, b.c, 0, SEQLZ_MIN_MATCH);
+	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+	len = escaped(m, b.c, SEQLZ_TOKEN_SYMBOLS, 0);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+	len = escaped(m, b.c, BIT(SEQLZ_ESCAPE_BITS) - 1, 0);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+
+	/*
+	 * Offset 0, class 1 with its bit 0, and an offset past the bytes
+	 * written, on the fast path and with a literal length value on the
+	 * slow path. Offset 2, and an offset of all the bytes written, are
+	 * valid.
+	 */
+	for (k = 0; k < ARRAY_SIZE(lls); k++) {
+		ll = lls[k];
+		len = first_offset(m, b.c, ll, 1, 1);
+		KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+		len = first_offset(m, b.c, ll, 1, 0);
+		KUNIT_EXPECT_EQ_MSG(test, decompress(test, &b, b.c, len),
+				    -EINVAL, "ll %u", ll);
+		len = first_offset(m, b.c, ll, 2, ll);
+		KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+		len = first_offset(m, b.c, ll, 2, ll + 1);
+		KUNIT_EXPECT_EQ_MSG(test, decompress(test, &b, b.c, len),
+				    -EINVAL, "ll %u", ll);
+	}
+
+	/* a match one byte past the block's end */
+	len = match_then_literals(m, b.c, SEQLZ_BLOCK_SIZE - 1, 0, &w);
+	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+	len = match_then_literals(m, b.c, SEQLZ_BLOCK_SIZE, 0, &w);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+
+	/*
+	 * A block that wants more bits than it has: its match length value
+	 * 2048 ends in 11 bits 0, so its last byte is 0. Without that byte the
+	 * decoder reads the same zeros, the block decodes to the same bytes,
+	 * and only the bits it took past the end make it invalid.
+	 */
+	len = match_then_literals(m, b.c, SEQLZ_MIN_MATCH + SEQLZ_ML_CAP + 2048,
+				  SEQLZ_BLOCK_SIZE - 1 - SEQLZ_MIN_MATCH -
+					  SEQLZ_ML_CAP - 2048,
+				  &w);
+	KUNIT_ASSERT_EQ(test, b.c[len - 1], 0);
+	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len - 1), -EINVAL);
+
+	/* raw literals: more than the block has bytes, or than it holds */
+	len = literals_only(b.c, SEQLZ_BLOCK_SIZE);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len - 1), -EINVAL);
+	len = literals_only(b.c, SEQLZ_BLOCK_SIZE + 1);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+
+	/* coded literals, more than the block holds */
+	len = coded_literals(m, b.c, 100, same, 0x65, false, GOOD, &padding);
+	KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len), 0);
+	put_unaligned_le16(SEQLZ_LIT_CODED | (SEQLZ_BLOCK_SIZE + 1), b.c);
+	KUNIT_EXPECT_EQ(test, decompress(test, &b, b.c, len), -EINVAL);
+}
+
 static struct kunit_case seqlz_test_cases[] = {
 	KUNIT_CASE(seqlz_test_tables),
+	KUNIT_CASE(seqlz_test_codes),
 	KUNIT_CASE(seqlz_test_example),
 	KUNIT_CASE(seqlz_test_round_trip),
+	KUNIT_CASE(seqlz_test_small_dst),
 	KUNIT_CASE(seqlz_test_damaged),
 	KUNIT_CASE(seqlz_test_one_sequence),
+	KUNIT_CASE(seqlz_test_invalid),
 	KUNIT_CASE(seqlz_test_coded_literals),
 	KUNIT_CASE(seqlz_test_own_table),
 	{}

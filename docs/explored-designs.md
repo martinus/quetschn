@@ -331,6 +331,7 @@ One line per entry, by area, newest first: date measured, verdict, link, result,
 
 **Kernel copy, zram glue, compilers**
 
+- 2026-10-23 **kept** [Kernel copy reviewed again](#the-kernel-copy-reviewed-again-code_literals-once-per-level-20-fewer-instructions-at-level-2-kept-two-simplifications-that-cost-1-and-7-not-kept): `code_literals()` inlined into each entry point, as its comment said: `seqlz-2` compress 2.0% fewer instructions (156.6M to 153.5M per 2000 pages), cycles -1.4%; not kept, as they cost on hot loops: the `n_lit` check only in `decode_block()` with the literal header parsed after a length check (+7.0% to decode `seqlz-2`), the `dst_cap` check once in `seqlz_compress()` (+1.0% at level 1). Userspace, gcc 16.2.1, x86-64. Mi 9T, zram in its kernel, p3: `seqlz-2` writes 0.25 to 0.35 µs faster on the A55 (about 1%), the rest within `main` built twice. Code: `code_literals()`, `seqlz_code_own()`, `seqlz_decode_literals()`, `compress_block()`; branch kernel-cleanup. Now: current. Untried: the kernel VM.
 - 2026-10-10 **measurement** [Numbers formerly in source comments](#numbers-that-were-only-in-the-codecs-comments-until-10th-october-2026): Eight choices whose numbers left src/ comments (#156), e.g. copy_match() 8 bytes at a time (byte loop: slowest pages 10 times lz4), 2-byte stream sizes (5.2 and 5.5 bytes larger), token_entry() (unpacking took 18 instructions per sequence). Not re-measured. Code: commits cf5dedb, 34080eb, 21b71c9, 0cc300e, 61299db, 5c769f5; #156. Now: Numbers hold only for the commits named; none re-measured (line 6141).
 - 2026-10-10 **kept** [Kernel copy choices: -O3, one decode loop, prefetch()](#the-kernel-copys-choices-measured-in-one-boot-and-on-the-phone--o3-kept-one-decode-loop-prefetch-no-__aligned64-no-load16): -O3 vs -O2: writes 0.1 to 0.19 µs faster in x86-64 VM, 0.93 µs on A55: kept. Taken for simpler code: one out-of-order decode loop for all cores (A55 warm reads up to 0.3 µs slower), prefetch() (A55 up to 0.2 µs), no __aligned(64), get_unaligned_le16(). Code: tools/zram-vm/run.sh VARIANTS, tools/zram-phone/build.sh OPT/ALIGN; main = 9ae946f; #151, #152, #157. Now: Leftovers of #157 done in "seqlz.c split in three". Verdict current.
 - 2026-10-10 **kept** [seqlz.c split into three files like lib/lz4](#seqlzc-split-in-three-as-liblz4-is-the-kernel-copy-the-same-speed-measured-on-the-kernel-copy-itself): #157: seqlz_compress.c, seqlz_decompress.c, seqlz_codes.c, seqlz_internal.h; static helpers, __init table build, global tables. First x86-64 VM run of the kernel copy itself (PORT=1): within 0.03 µs, clang 0.02 to 0.03 µs faster. Code: src/, tools/kernel-port/port.py, tools/zram-vm/run.sh PORT=1; before = bad6224; #157. Now: current.
@@ -7041,6 +7042,73 @@ within the 2 µs its rounds move. A first run without `mc` gave 14.55 against 14
 So the functions cost nothing that these runs can show. The order of the modules was not swapped; a run
 with the functions loaded first would show the place directly. With the functions, checkpatch has no
 `MACRO_ARG_REUSE` left in `tools/kernel-port/`.
+
+## The kernel copy reviewed again: code_literals() once per level, 2.0% fewer instructions at level 2, kept; two simplifications that cost 1% and 7%, not kept
+
+Status: kept, 2026-10-23. Now: current.
+
+*Four reviewers read the kernel copy of `main` (`8a8ba61`) as a maintainer would. No memory-safety
+hole. Three findings cost or saved instructions, measured here. `code_literals()` was one out-of-line
+function in the kernel copy with gcc and clang, x86-64 and arm64, although its comment said each entry
+point gets its own copy: inlined into each, level 2 compresses with 2.0% fewer instructions, kept. Two
+simplifications cost instructions on hot loops and went back: the `n_lit` check out of
+`seqlz_decode_literals()` with its header parsed after a length check, 7% more to decode `seqlz-2`
+pages, and the `dst_cap` check once in `seqlz_compress()` instead of in `compress_block()` and
+`compress_own()`, 1% more to compress at levels 1 and 2. The rest of the review changed no machine
+code on a hot path: comments, `static_assert`s, a bound on `read_own_table()`, KUnit tests.*
+Code: `code_literals()`, `seqlz_code_own()` in `src/seqlz_compress_literals.c`,
+`seqlz_decode_literals()`, `read_own_table()` in `src/seqlz_decompress_literals.c`,
+`compress_block()`, `compress_own()` in `src/seqlz_compress.c`; branch `kernel-cleanup`.
+
+**Setup.** Userspace harness, `seqlz-bench-interleaved --decode-loop <n> [--compress]`, gcc 16.2.1,
+`-O3`, x86-64, Ryzen 9 7950X, pinned with `taskset`, 2000 pages of
+`zram0-2026-09-24-sample2000`. Instructions are `perf stat -e instructions:u` of `--decode-loop 6`
+minus `--decode-loop 1`, divided by 5: one pass over the 2000 pages, without the harness's setup.
+They repeat within a few thousand. The machine ran three `ffmpeg` jobs and its clock was not fixed,
+so cycles are the mean of 4 alternating pairs and only a second look.
+
+| change | what | `main` | change | difference |
+| --- | --- | --- | --- | --- |
+| `code_literals()` `__always_inline`, called once per entry point | `seqlz-2` compress | 156 617 174 | 153 506 720 | -2.0%, kept |
+| same | `seqlz-2` compress, cycles | 48.75M | 48.06M | -1.4%, each pair the same way |
+| same | `seqlz-3` compress | 250 393 954 | 250 176 528 | -0.1% |
+| `n_lit` check only in `decode_block()`, header after a length check | `seqlz-2` decode | 58 460 315 | 62 555 380 | +7.0%, not kept |
+| only the header after a length check, `n_lit` checked in both | `seqlz-2` decode | 58 460 315 | 60 122 914 | +2.8%, not kept |
+| `b > 256` checked in `read_own_table()`'s run branch | `seqlz-2` decode | 58 460 315 | 58 459 059 | the same, kept |
+| `dst_cap` checked once in `seqlz_compress()` | `seqlz-1` compress | 126 425 968 | 127 696 299 | +1.0%, not kept |
+| same | `seqlz-3` compress | 250 393 954 | 250 388 234 | the same |
+
+`seqlz_decode_literals()` keeps 8 streams in registers on x86-64's 16, and every change to its
+setup moved instructions into its loop; with its own `n_lit` check the compiler knows the bound of
+its loops. Its header stays parsed as before, behind the ternaries for `src_len` 2.
+
+The kernel module gets a second copy of `code_literals()`, about 10 KiB of text (x86-64, gcc); the
+Mi 9T's module grows from 89 132 to 97 196 bytes of text.
+
+**Mi 9T**, zram in its own kernel, `BUS=1 tools/zram-phone/run.sh`, 19 775 pages of p3, 3 rounds, each
+codec alone in its own process, A55 at 1.8 GHz and A76 at 2.2 GHz, NDK r21e's clang 9. `a` and `a2`
+are `main` built twice, which shows where the code lands; `b` is the branch with all its changes
+(before its KUnit tests, which do not touch `src/`). µs per page, mean of the rounds, `a` / `a2` /
+`b`:
+
+| codec | A55 write | A55 warm read | A55 cold read | A76 write | A76 warm read | A76 cold read |
+| --- | --- | --- | --- | --- | --- | --- |
+| `seqlz-1` | 28.16 / 28.12 / 28.14 | 11.44 / 11.45 / 11.46 | 28.71 / 28.24 / 28.56 | 10.46 / 10.47 / 10.41 | 3.92 / 3.92 / 4.00 | 7.30 / 7.04 / 7.30 |
+| `seqlz-2` | 32.19 / 32.09 / 31.84 | 13.09 / 13.07 / 13.06 | 32.33 / 32.18 / 32.59 | 11.83 / 11.73 / 11.80 | 4.56 / 4.57 / 4.55 | 8.40 / 7.94 / 8.13 |
+| `seqlz-3` | 51.69 / 51.57 / 51.56 | 15.77 / 15.69 / 15.72 | 37.98 / 37.79 / 37.17 | 19.28 / 19.33 / 19.26 | 5.75 / 5.67 / 5.76 | 9.83 / 9.55 / 9.84 |
+
+`seqlz-2` writes 0.25 to 0.35 µs faster on the A55, about 1%, with ranges that do not overlap
+(31.78 to 31.94 against 32.02 to 32.23), where `a` and `a2` differ by 0.10. Everything else is within
+`a` against `a2` or within what code placement moves on the A76 (0.16 to 0.22 µs); `seqlz-1`'s warm
+reads on the A76, 0.08 µs slower, overlap `main`'s range.
+
+Not measured: the kernel VM; time on x86-64 with a fixed clock. The compressed bytes are the same,
+`test/seqlz_endian.c` hash cedc1bd962af0e39.
+
+```sh
+perf stat -x, -e instructions:u -- taskset -c 3 build/seqlz-bench-interleaved --codecs seqlz-2 \
+    --corpus ~/seqlz-corpus/zram0-2026-09-24-sample2000 --decode-loop 6 --compress
+```
 
 ## The kernel copy's long functions split into inline helpers: the same time in the VM and on the phone, kept
 

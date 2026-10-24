@@ -51,10 +51,6 @@ static_assert((8U << SEQLZ_CLASS5_BITS) <= SEQLZ_BLOCK_SIZE,
 	      "class 5's offsets are inside the block");
 
 /*
- * The compressor finds the matches with its own matcher and writes each
- * sequence as soon as it is found, in one pass over the block.
- */
-/*
  * The matcher's hash table has 1 << SEQLZ_HASH_BITS entries of 2 bytes, 8 KiB
  * for blocks of 4 KiB. With 2048 entries blocks were larger and the compressor
  * no faster; with 8192 in-order cores wrote blocks slower. For blocks of 16 KiB
@@ -89,13 +85,13 @@ static inline unsigned int seqlz_token(unsigned int ll, unsigned int ml,
  * The matcher's hash table, one per CPU, cleared for each block. Once the
  * matcher is done it holds the raw literals or their deltas while they are
  * coded, and at SEQLZ_LEVEL_OWN, at its end, what the encoder needs for a
- * table of the block's own, see seqlz_code_literals().
+ * table of the block's own, see seqlz_code_own().
  */
 struct seqlz_state {
 	union {
 		u16 table[1U << SEQLZ_HASH_BITS];
 		u8 literals[SEQLZ_BLOCK_SIZE];
-		u64 work[(2U << SEQLZ_HASH_BITS) / 8U];
+		u64 work[(sizeof(u16) << SEQLZ_HASH_BITS) / sizeof(u64)];
 	};
 };
 

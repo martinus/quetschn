@@ -41,7 +41,7 @@ if [[ $(cat "$cache/head" 2>/dev/null) != "$head" ]]; then
 fi
 
 # the files port.py reads or writes outside lib/seqlz/, from the tree's HEAD
-files=(drivers/block/zram lib/Kconfig lib/Makefile MAINTAINERS Documentation/admin-guide/blockdev/zram.rst
+files=(drivers/block/zram lib/Kconfig lib/Kconfig.debug lib/Makefile MAINTAINERS Documentation/admin-guide/blockdev/zram.rst
     Documentation/staging/index.rst arch/x86/include/asm/processor.h)
 rc=0
 for a in ${ARCHS:-x86 x86-clang arm64}; do
