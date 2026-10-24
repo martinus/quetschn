@@ -310,6 +310,78 @@ static void seqlz_test_round_trip(struct kunit *test)
 }
 
 /*
+ * Records of period p: a run of n literals every gap bytes, each the byte p
+ * before plus 1 to 3, the others the byte p before
+ */
+static void make_records(struct rnd_state *rng, u8 *block, unsigned int p,
+			 unsigned int gap, unsigned int n)
+{
+	unsigned int k;
+
+	for (k = 0; k < p; k++)
+		block[k] = prandom_u32_state(rng);
+	for (; k < SEQLZ_BLOCK_SIZE; k++) {
+		block[k] = block[k - p];
+		if (k % gap < n)
+			block[k] += 1 + prandom_u32_state(rng) % 3;
+	}
+}
+
+/* how far back the byte is that a delta of block c is to, with last offset p */
+static unsigned int delta_distance(const u8 *c, unsigned int p)
+{
+	switch (lits_delta(c)) {
+	case SEQLZ_DELTA_4:
+		return 4;
+	case SEQLZ_DELTA_8:
+		return 8;
+	case SEQLZ_DELTA_LAST:
+		return seqlz_delta_last(p);
+	default:
+		return 0;
+	}
+}
+
+/*
+ * Level 3 codes the literals of make_records() as deltas to the byte of the
+ * last offset, at the distance seqlz_delta_last(p), or to the byte 4 or 8
+ * before where that is the same. The decoder's fast path adds back the 16
+ * bytes of each sequence in three ways, for distances below 8, below 16 and
+ * from 16 on, and up to 14 literals make the second 8 of those bytes count
+ * too. Every distance from 4 to 24 has to come.
+ */
+static void seqlz_test_delta_distances(struct kunit *test)
+{
+	/* the gap between runs of literals and their length */
+	static const unsigned int runs[][2] = { { 5, 1 },
+						{ 13, 8 },
+						{ 20, 14 } };
+	unsigned long dists = 0;
+	unsigned int p, r, k;
+	struct rnd_state rng;
+	struct bufs b;
+	int len;
+
+	get_bufs(test, &b);
+	prandom_seed_state(&rng, 240);
+	for (p = 1; p <= 24; p++)
+		for (r = 0; r < ARRAY_SIZE(runs); r++) {
+			make_records(&rng, b.block, p, runs[r][0], runs[r][1]);
+			len = seqlz_compress(b.block, b.c, SEQLZ_COMPRESS_BOUND,
+					     b.cmem, SEQLZ_LEVEL_MAX);
+			KUNIT_ASSERT_GT(test, len, 0);
+			KUNIT_ASSERT_EQ(test, decompress(test, &b, b.c, len),
+					0);
+			KUNIT_ASSERT_MEMEQ_MSG(test, b.out, b.block,
+					       SEQLZ_BLOCK_SIZE, "p %u gap %u",
+					       p, runs[r][0]);
+			dists |= BIT(delta_distance(b.c, p));
+		}
+	for (k = 4; k <= 24; k++)
+		KUNIT_EXPECT_TRUE_MSG(test, dists & BIT(k), "distance %u", k);
+}
+
+/*
  * The room seqlz_compress() needs past a compressed block while it writes it,
  * as its kernel-doc gives it
  */
@@ -1130,6 +1202,7 @@ static struct kunit_case seqlz_test_cases[] = {
 	KUNIT_CASE(seqlz_test_codes),
 	KUNIT_CASE(seqlz_test_example),
 	KUNIT_CASE(seqlz_test_round_trip),
+	KUNIT_CASE(seqlz_test_delta_distances),
 	KUNIT_CASE(seqlz_test_small_dst),
 	KUNIT_CASE(seqlz_test_damaged),
 	KUNIT_CASE(seqlz_test_one_sequence),

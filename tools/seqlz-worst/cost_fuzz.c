@@ -16,6 +16,10 @@
  *                             a valid page of: the decoder's instructions. A mutation changes a
  *                             sequence instead of breaking the Huffman coded stream
  *
+ * COST_LEVEL=<n> in the environment is the level of seqlz_compress() and seqlz_encode(), 1 to 3, default
+ * 2. For <codec>_cost_fuzz it is zram's algorithm_params level, default the codec's own; the seqlz
+ * codecs seqlz_1 to seqlz_3 have their level in the name and do not take one.
+ *
  * seqlz is linked without coverage instrumentation, so the counts are those of seqlz-worst
  * count and count-streams. Built with -DCOST_MAIN and without the fuzzer, the same file counts inputs
  * the fuzzer found.
@@ -96,6 +100,20 @@ static void mark(unsigned long long cost, unsigned int k, unsigned int step) {
 
 static int insn_fd = -1;
 
+#if defined(COST_CODEC) || defined(COST_COMPRESS) || defined(COST_SEQUENCES)
+/* COST_LEVEL, or def without it; for seqlz itself it aborts on a level seqlz does not have */
+static int cost_level(int def) {
+    const char* v = getenv("COST_LEVEL");
+    int level = v ? atoi(v) : def;
+
+#    ifndef COST_CODEC
+    if (level < 1 || level > (int)SEQLZ_LEVELS)
+        abort();
+#    endif
+    return level;
+}
+#endif
+
 static unsigned long long instructions(void) {
     unsigned long long v = 0;
 
@@ -129,7 +147,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     }
 #ifdef COST_CODEC
     {
-        /* as zram: params once per device with the codec's default level, the contexts per CPU, a buffer
+        /* as zram: params once per device with COST_LEVEL or the codec's default level, the contexts per CPU, a buffer
          * of two pages, pages of 3625 bytes and more stored as they are; decompression with its own
          * context where the codec has one */
         static struct bench_params params;
@@ -138,7 +156,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         unsigned int clen = sizeof c, dlen = SEQLZ_BLOCK_SIZE;
 
         if (!ready) {
-            params.level = BENCH_LEVEL_DEFAULT;
+            params.level = cost_level(BENCH_LEVEL_DEFAULT);
             params.page_size = SEQLZ_BLOCK_SIZE;
             if (COST_CODEC.setup_params(&params) || COST_CODEC.create_cctx(&params, &stream) ||
                 (COST_CODEC.create_dctx && COST_CODEC.create_dctx(&params, &dstream)))
@@ -171,12 +189,15 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     }
 #elif defined(COST_COMPRESS)
     static struct seqlz_state st;
+    static unsigned int level;
     unsigned int len;
 
+    if (!level)
+        level = (unsigned int)cost_level(2);
     if (size != SEQLZ_BLOCK_SIZE)
         return 0;
     i0 = instructions();
-    len = seqlz_compress(&st, data, c, sizeof c, 2);
+    len = seqlz_compress(&st, data, c, sizeof c, level);
     i1 = instructions();
     if (!len)
         abort();
@@ -195,6 +216,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     /* byte 0: the literals, random bytes or ones with long codes; then per sequence 4 bytes: ll, ml - 4,
      * and how the offset is chosen with its value */
     static struct seqlz_sequence seq[SEQLZ_MAX_SEQUENCES];
+    static struct seqlz_state st;
+    static unsigned int level;
     static unsigned char page[SEQLZ_BLOCK_SIZE], lits[SEQLZ_BLOCK_SIZE], pool[256];
     static unsigned int n_pool;
     unsigned int n = 0, n_lit = 0, pos = 0, last = 1, k, len;
@@ -245,7 +268,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     while (pos < SEQLZ_BLOCK_SIZE)
         page[pos++] = lits[n_lit++] = (unsigned char)(rng += 0x9e37);
     n++;
-    len = seqlz_encode(NULL, seq, n, lits, n_lit, NULL, c, sizeof c, 2);
+    /* level 3 needs a state and the page, for its deltas */
+    if (!level)
+        level = (unsigned int)cost_level(2);
+    len = seqlz_encode(&st, seq, n, lits, n_lit, page, c, sizeof c, level);
     if (!len)
         abort();
     /* COST_DUMP=<file>: the compressed page this input makes, for seqlz-worst count-streams */
